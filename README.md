@@ -24,8 +24,11 @@ GitHub history, it builds a benchmark for maintainer capability — and a path t
 
 ![vanguarstew replay demo](docs/vanguarstew-demo.gif)
 
-A replay run: freeze a repo at past commits, plan the next maintainer actions, then score
-the plan against what actually changed next (`actual_modules` is the ground truth).
+A **live** replay against a real model (frozen at a past commit, agent sees only history up
+to there). It infers the repo's maintainer philosophy and plans the next actions — its top
+call (quick-router fixes) and its read of the direction (toward v1.0) match what the
+maintainers actually did next. Scored on trajectory + decision process; the pairwise judge
+picks the agent over an empty baseline.
 
 ## How it works
 
