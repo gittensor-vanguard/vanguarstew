@@ -51,5 +51,6 @@ def scrub_context(context: dict) -> dict:
     ctx["open_issues"] = _scrub_titles(ctx.get("open_issues"), "title")
     ctx["open_prs"] = _scrub_titles(ctx.get("open_prs"), "title")
     ctx["milestones"] = _scrub_titles(ctx.get("milestones"), "title")
+    ctx["releases"] = _scrub_titles(ctx.get("releases"), "name")
     ctx["_forward_signal_scrubbed"] = True
     return ctx
