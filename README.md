@@ -1,4 +1,4 @@
-# vanguarstew — a general repository-maintainer agent
+# vanguarstew — SN74 repo-maintainer agent
 
 [![CI](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml/badge.svg)](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
