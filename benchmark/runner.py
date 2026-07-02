@@ -20,6 +20,7 @@ from agent.llm import LLM
 from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
 from benchmark.judge import pairwise_judge
+from benchmark.leakage import scrub_context
 from benchmark.score import objective_score, trajectory_overlap
 from benchmark.taskgen import generate_tasks
 
@@ -50,10 +51,12 @@ def _submission(out: dict) -> dict:
 
 def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                model=None, api_base=None, api_key=None, work_dir=None, seed=0,
-               enrich_github=False, github_token=None) -> dict:
+               enrich_github=False, github_token=None,
+               recent_bias=False, rotation_seed=None) -> dict:
     solve = load_solve(agent_file)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
-    tasks = generate_tasks(repo_path, n_tasks, horizon)
+    tasks = generate_tasks(repo_path, n_tasks, horizon,
+                           recent_bias=recent_bias, rotation_seed=rotation_seed)
     if not tasks:
         return {"error": "no usable tasks (repo too small for horizon/min_history)", "tasks": 0}
 
@@ -68,7 +71,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 shutil.rmtree(dest)
             ctx = write_frozen(repo_path, task["freeze_commit"], dest)
             if enrich_github:
-                ctx = enrich_context(ctx, repo_path, token=github_token)
+                ctx = scrub_context(enrich_context(ctx, repo_path, token=github_token))
                 with open(os.path.join(dest, CONTEXT_FILE), "w", encoding="utf-8") as f:
                     json.dump(ctx, f, indent=1)
             request = f"plan the next {horizon} maintainer actions"

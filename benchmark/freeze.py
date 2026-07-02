@@ -13,6 +13,7 @@ import subprocess
 import tarfile
 
 from agent.context import CONTEXT_FILE
+from benchmark.leakage import scrub_context
 
 
 def _git(repo, *args, check=True):
@@ -77,9 +78,11 @@ def build_context(repo: str, commit: str, lookback: int = 50) -> dict:
     }
 
 
-def write_frozen(repo: str, commit: str, dest: str, lookback: int = 50) -> dict:
+def write_frozen(repo: str, commit: str, dest: str, lookback: int = 50, scrub: bool = True) -> dict:
     export_tree(repo, commit, dest)
     ctx = build_context(repo, commit, lookback)
+    if scrub:
+        ctx = scrub_context(ctx)
     with open(os.path.join(dest, CONTEXT_FILE), "w", encoding="utf-8") as f:
         json.dump(ctx, f, indent=1)
     return ctx

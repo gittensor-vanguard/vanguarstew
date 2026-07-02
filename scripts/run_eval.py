@@ -24,12 +24,17 @@ def main() -> None:
     ap.add_argument("--enrich", action="store_true",
                     help="enrich frozen context with GitHub issues/PRs/releases knowable at T")
     ap.add_argument("--github-token", default=None, help="GitHub token (else $GITHUB_TOKEN)")
+    ap.add_argument("--recent-bias", action="store_true",
+                    help="draw freeze points only from the most recent usable window")
+    ap.add_argument("--rotation-seed", type=int, default=None,
+                    help="deterministically rotate which freeze points are chosen")
     args = ap.parse_args()
 
     result = run_replay(
         repo_path=args.repo, agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
         model=args.model, api_base=args.api_base, api_key=args.api_key, work_dir=args.work_dir,
         enrich_github=args.enrich, github_token=args.github_token,
+        recent_bias=args.recent_bias, rotation_seed=args.rotation_seed,
     )
     print(json.dumps(result, indent=2))
 

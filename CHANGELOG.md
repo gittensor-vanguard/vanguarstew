@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- M2: leakage hardening — forward-reference scrubbing (mask `#N` back-references, GitHub
+  issue/PR/commit links, and raw SHAs in the frozen context) and recent-window + deterministic
+  rotation for freeze-point selection (`--recent-bias`, `--rotation-seed`).
 - M2: the pairwise judge now evaluates the **decision process** — the agent's inferred
   maintainer philosophy and reasoning are passed to the judge and weighed alongside
   trajectory/direction match, so when two plans point the same way the sounder reasoning wins.

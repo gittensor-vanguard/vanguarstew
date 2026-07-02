@@ -7,6 +7,8 @@ those next-N commits as the **revealed maintainer actions** — the reference tr
 
 from __future__ import annotations
 
+import random
+
 from benchmark.freeze import _git
 
 
@@ -26,13 +28,32 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     return window
 
 
-def generate_tasks(repo: str, num_tasks: int = 3, horizon: int = 5, min_history: int = 10) -> list:
+def generate_tasks(repo: str, num_tasks: int = 3, horizon: int = 5, min_history: int = 10,
+                   recent_bias: bool = False, rotation_seed: int | None = None) -> list:
+    """Select freeze points from history.
+
+    - ``recent_bias``: draw only from the most recent usable window. Recent freeze points are
+      preferred by the leakage strategy (more likely past a model's training cutoff).
+    - ``rotation_seed``: deterministically rotate which freeze points are chosen, so tasks
+      vary run-to-run and answers aren't reused. Same seed -> same picks.
+    """
     commits = linear_history(repo)
     usable = [i for i in range(len(commits)) if i >= min_history and i + horizon < len(commits)]
     if not usable:
         return []
-    step = max(1, len(usable) // max(1, num_tasks))
-    picks = usable[::step][:num_tasks]
+
+    pool = usable
+    if recent_bias:
+        window = max(num_tasks * 3, num_tasks)
+        pool = usable[-window:]
+
+    if rotation_seed is not None:
+        rng = random.Random(rotation_seed)
+        picks = sorted(rng.sample(pool, min(num_tasks, len(pool))))
+    else:
+        step = max(1, len(pool) // max(1, num_tasks))
+        picks = pool[::step][:num_tasks]
+
     tasks = []
     for i in picks:
         tasks.append({

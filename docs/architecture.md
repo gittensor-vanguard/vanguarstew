@@ -34,6 +34,20 @@ per the leakage constraints), frozen snapshots, and revealed-history references 
 as a separate benchmark dataset (its own repo or a hosted dataset) once M2 produces real
 tasks. This is the most reusable asset the project produces.
 
+## Leakage defenses
+
+Because the reference is public GitHub history, the benchmark actively resists leakage:
+
+- **No internet in the sandbox** beyond the managed inference proxy.
+- **Knowable-at-T only** — the frozen context is built from commits/issues/PRs/releases that
+  existed at T; nothing created (or a release published) after T is included.
+- **Forward-reference scrubbing** (`benchmark/leakage.py`) — even within knowable-at-T text,
+  issue/PR back-references (`#N`), GitHub issue/PR/commit links, and raw SHAs are masked, so a
+  commit subject or README can't cross-reference the future.
+- **Recent-window + rotation** freeze-point selection (`benchmark/taskgen.py`) — prefer recent
+  points (past a model's training cutoff) and rotate deterministically so answers aren't reused.
+- **Repo diversity / held-out repos** (M3) — generalization is scored on unseen repos.
+
 ## Principle
 
 Create a new repo only when it has real content to hold. Keep boundaries in-code until they
