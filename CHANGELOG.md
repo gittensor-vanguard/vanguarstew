@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Auto-label workflow: applies organizational **area/type** labels (agent/benchmark/leakage/
+  tests/ci/docs; enhancement/bug/refactor/chore) from changed paths and the PR title. Never
+  touches `mult:*` value multipliers — those stay maintainer-applied.
+- CI split into focused jobs (**lint** / **validate** / **test**), with a new config-validation
+  step that parses every workflow YAML and JSON config.
 - M2: GitHub issue/PR fetch now paginates back toward the freeze time T (bounded, with an
   `_issues_truncated` flag), so open-at-T reconstruction is complete regardless of how old T
   is — not just the newest page.
