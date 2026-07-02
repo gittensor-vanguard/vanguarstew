@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-02
+
 ### Added
 - M2 (start): objective scoring anchor — a deterministic, structural signal that grades a
   plan against ground truth from the revealed window (which top-level modules actually

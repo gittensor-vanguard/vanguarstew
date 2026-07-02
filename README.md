@@ -10,6 +10,16 @@ The core question it answers is not *"did the agent write good code?"* but *"doe
 
 See [ROADMAP.md](ROADMAP.md) for milestones and [docs/architecture.md](docs/architecture.md) for the repository-topology plan.
 
+## Why this matters
+
+Software development is bottlenecked less by writing code than by **maintaining** it —
+triaging, reviewing, prioritizing, and steering a codebase over time. That maintainer
+capacity is the real ceiling on how much useful software actually ships.
+
+vanguarstew turns that bottleneck into a measurable optimization problem: *can an agent make
+the maintainer decisions a strong human maintainer would have made?* By scoring against real
+GitHub history, it builds a benchmark for maintainer capability — and a path to scaling it.
+
 ## How it works
 
 ```
