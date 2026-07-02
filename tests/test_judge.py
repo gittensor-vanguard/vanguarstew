@@ -15,7 +15,17 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
-from benchmark.judge import pairwise_judge  # noqa: E402
+from benchmark.judge import _parse_winner, pairwise_judge  # noqa: E402
+
+
+def test_parse_winner_tolerant():
+    assert _parse_winner('{"winner": "A", "why": "clear"}') == "A"
+    assert _parse_winner('{"winner":"B"}') == "B"
+    # truncated JSON with smart quotes (the real failure that live-testing surfaced)
+    assert _parse_winner('{"winner":"A","why":"aligns with the repo’s focus and its pla') == "A"
+    assert _parse_winner("winner = tie") == "tie"
+    assert _parse_winner("no verdict here") == "tie"
+    assert _parse_winner("") == "tie"
 
 
 def _sub(plan_items=0, philosophy=True, rationale=True):
