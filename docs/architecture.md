@@ -15,6 +15,47 @@ Everything lives in `vanguarstew`, split in-code by ownership:
 
 Keeping both in one repo is intentional while the design is still moving.
 
+## Layout
+
+```
+agent/                 the maintainer agent (the part a contributor/miner edits)
+  llm.py               OpenAI-compatible client (managed-inference contract)
+  context.py           loads the frozen, knowable-at-T repo state
+  philosophy.py        step 1: infer the repo's maintainer philosophy
+  planner.py           step 3a: plan the next N actions / PRs
+  decider.py           step 3b: concrete decisions (merge/triage/release/patch)
+agent.py               the fixed entrypoint: solve(repo_path, request, ...)
+benchmark/             the evaluation harness (validator-owned; miners don't edit)
+  freeze.py            freeze a repo at commit T, build leakage-safe context
+  taskgen.py           generate replay tasks from GitHub history
+  judge.py             pairwise judge over philosophy + plan + reasoning
+  score.py             objective scoring anchor (module recall + release match)
+  runner.py            orchestrate the replay eval, tally decisive wins
+scripts/run_eval.py    CLI to run an end-to-end replay
+vanguarstew_agent_files.json   manifest of miner-editable files (mirrors tau)
+```
+
+## Agent contract
+
+The harness invokes the agent with a fixed signature (generalized from ninja's `solve`):
+
+```python
+solve(
+    repo_path="/tmp/task_repo",        # frozen repo state at time T (+ .vanguarstew_context.json)
+    request="plan next 5 actions",     # the maintainer decision being asked for
+    model="validator-managed-model",
+    api_base="http://validator-proxy/v1",
+    api_key="per-run-proxy-token",
+) -> {
+    "philosophy": {...},               # inferred repo direction / values
+    "plan": [...],                     # next maintainer actions / PRs
+    "action": "merge|...|plan|patch",
+    "patch": "<unified diff>|null",
+    "rationale": "...",                # the reasoning the judge evaluates
+    "logs": "...", "steps": 0, "cost": None, "success": True,
+}
+```
+
 ## Planned split (around M2)
 
 Once the miner/validator boundary stabilizes, split into two repos, mirroring how SN66
