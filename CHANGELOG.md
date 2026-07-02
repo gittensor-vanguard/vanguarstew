@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format is based on
 - Composite score: the pairwise judge (trajectory + decision process) and the objective anchor
   (module recall, release/bump correctness) are now blended into a single per-task and mean
   score in [0, 1], with tunable weights (`--w-judge` / `--w-objective`, default 0.6 / 0.4).
+- Objective anchor: semver-aware release-bump scoring — when a genuine release appears in the
+  revealed window, `objective_score` derives the actual bump level (major/minor/patch) from
+  the semver delta between the frozen base version and the released version, and reports
+  `bump_actual` / `bump_match` against the agent's predicted `version_bump` (tags with or
+  without a leading `v`, and missing-patch/pre-release forms, all parse). The released version
+  is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
 - Judge robustness: the offline pairwise stand-in ranked submissions by raw plan **length**,

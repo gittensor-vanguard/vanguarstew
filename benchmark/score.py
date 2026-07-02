@@ -20,10 +20,85 @@ _TOK = re.compile(r"[a-z0-9]+")
 # that merely appears mid-subject — a dependency bump, a doc reference — is NOT a release.
 _RELEASE_KW = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
 _RELEASE_TAG_SUBJECT = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+\.\d+\b", re.I)
+# A semver core (major.minor[.patch]) with an optional leading v/V and an optional
+# pre-release/build suffix we deliberately ignore (e.g. "v1.2.0-rc1", "1.2.0+build").
+_SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
+_BUMP_LEVELS = ("major", "minor", "patch")
 
 
 def _tokens(text: str) -> set:
     return set(_TOK.findall((text or "").lower()))
+
+
+def parse_semver(text: str):
+    """Parse the first semver core in `text` -> (major, minor, patch), or None.
+
+    Tolerant of a leading `v` and of a missing patch (`1.2` -> (1, 2, 0)), and ignores any
+    pre-release/build suffix. Returns None when no version-looking token is present.
+    """
+    m = _SEMVER.search(text or "")
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+
+
+def _latest_semver(texts) -> tuple | None:
+    """Highest semver found across an iterable of strings (None if none parse)."""
+    versions = [v for v in (parse_semver(t) for t in texts) if v is not None]
+    return max(versions) if versions else None
+
+
+def bump_level(old, new):
+    """Classify the delta between two semver tuples as major/minor/patch.
+
+    Returns None when either side is missing or `new` is not a forward bump over `old`.
+    """
+    if not old or not new or new <= old:
+        return None
+    if new[0] != old[0]:
+        return "major"
+    if new[1] != old[1]:
+        return "minor"
+    if new[2] != old[2]:
+        return "patch"
+    return None
+
+
+def _norm_bump(bump):
+    """Normalize an agent's version_bump to a canonical level, else None."""
+    if isinstance(bump, str) and bump.strip().lower() in _BUMP_LEVELS:
+        return bump.strip().lower()
+    return None
+
+
+def released_version(revealed) -> tuple | None:
+    """Highest version from *genuine release* subjects in the window (None if none).
+
+    Only subjects that actually signal a release (`is_release_subject`) are considered, so an
+    incidental version in a non-release commit (e.g. `bump dep to v9.9.9`, `fix crash in
+    v1.2.0 parser`) can't produce a spurious `bump_actual`.
+    """
+    subjects = []
+    for r in revealed or []:
+        subj = r.get("subject", "") or ""
+        if is_release_subject(subj):
+            subjects.append(subj)
+    return _latest_semver(subjects)
+
+
+def base_from_releases(releases) -> str | None:
+    """Pick the current version at freeze T: the highest tag among frozen releases.
+
+    Accepts the context `releases` shape (`[{"tag": "v1.2.0"}, ...]`) and returns the raw
+    tag string of the highest semver, so it can be fed back as `base_version`.
+    """
+    best_tag, best_ver = None, None
+    for rel in releases or []:
+        tag = rel.get("tag") if isinstance(rel, dict) else rel
+        ver = parse_semver(tag or "")
+        if ver is not None and (best_ver is None or ver > best_ver):
+            best_tag, best_ver = tag, ver
+    return best_tag
 
 
 def _plan_tokens(plan) -> set:
@@ -88,15 +163,34 @@ def release_predicted(plan) -> bool:
     return False
 
 
-def objective_score(plan, revealed) -> dict:
-    """The deterministic anchor: module recall + release-prediction match."""
+def objective_score(plan, revealed, version_bump=None, base_version=None) -> dict:
+    """The deterministic anchor: module recall + release-prediction + bump-level match.
+
+    When a release appears in the revealed window, the actual bump level (major/minor/patch)
+    is derived from the semver delta between `base_version` (the version at freeze T, e.g.
+    from the frozen context's latest release tag) and the revealed release version, then
+    compared against the agent's predicted `version_bump`.
+
+    `bump_actual` is None when no release is revealed or the base is unknown; `bump_match` is
+    True exactly when the agent's normalized prediction equals `bump_actual` (so predicting
+    no bump when none happened also counts as a match).
+    """
     result = module_recall(plan, revealed)
     signaled = release_signaled(revealed)
     predicted = release_predicted(plan)
+
+    new_version = released_version(revealed)
+    base = parse_semver(base_version) if base_version else None
+    bump_actual = bump_level(base, new_version)
+    predicted_bump = _norm_bump(version_bump)
+
     result.update({
         "release_signaled": signaled,
         "release_predicted": predicted,
         "release_match": signaled == predicted,
+        "bump_actual": bump_actual,
+        "bump_predicted": predicted_bump,
+        "bump_match": predicted_bump == bump_actual,
     })
     return result
 

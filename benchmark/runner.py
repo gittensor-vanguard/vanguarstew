@@ -22,7 +22,12 @@ from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
 from benchmark.judge import pairwise_judge
 from benchmark.leakage import scrub_context
-from benchmark.score import composite_score, objective_score, trajectory_overlap
+from benchmark.score import (
+    base_from_releases,
+    composite_score,
+    objective_score,
+    trajectory_overlap,
+)
 from benchmark.taskgen import generate_tasks
 
 
@@ -87,7 +92,11 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                                     task["revealed"], llm, rng)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
-            obj = objective_score(challenger.get("plan"), task["revealed"])
+            obj = objective_score(
+                challenger.get("plan"), task["revealed"],
+                version_bump=challenger.get("version_bump"),
+                base_version=base_from_releases(ctx.get("releases")),
+            )
             rows.append({
                 "task": k,
                 "freeze": task["freeze_commit"][:10],
