@@ -8,14 +8,17 @@ compared against a naive baseline maintainer; in M2+ this becomes challenger-vs-
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import random
 import shutil
 import sys
 import tempfile
 
+from agent.context import CONTEXT_FILE
 from agent.llm import LLM
 from benchmark.freeze import write_frozen
+from benchmark.github_context import enrich_context
 from benchmark.judge import pairwise_judge
 from benchmark.score import trajectory_overlap
 from benchmark.taskgen import generate_tasks
@@ -37,7 +40,8 @@ def baseline_solve(repo_path, request, **_kw) -> dict:
 
 
 def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
-               model=None, api_base=None, api_key=None, work_dir=None, seed=0) -> dict:
+               model=None, api_base=None, api_key=None, work_dir=None, seed=0,
+               enrich_github=False, github_token=None) -> dict:
     solve = load_solve(agent_file)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
     tasks = generate_tasks(repo_path, n_tasks, horizon)
@@ -54,6 +58,10 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
             if os.path.exists(dest):
                 shutil.rmtree(dest)
             ctx = write_frozen(repo_path, task["freeze_commit"], dest)
+            if enrich_github:
+                ctx = enrich_context(ctx, repo_path, token=github_token)
+                with open(os.path.join(dest, CONTEXT_FILE), "w", encoding="utf-8") as f:
+                    json.dump(ctx, f, indent=1)
             request = f"plan the next {horizon} maintainer actions"
             challenger = solve(
                 repo_path=dest, request=request,
@@ -81,4 +89,5 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         "decisive_margin": tally["challenger"] - tally["baseline"],
         "rows": rows,
         "offline": llm.offline,
+        "github_enriched": enrich_github,
     }

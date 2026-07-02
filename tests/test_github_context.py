@@ -1,0 +1,70 @@
+"""Tests for GitHub context enrichment — the 'knowable at T' filtering. No network."""
+
+import os
+import sys
+from datetime import datetime, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+import benchmark.github_context as gc  # noqa: E402
+
+
+def test_parse_owner_repo():
+    assert gc.parse_owner_repo("git@github.com:foo/bar.git") == ("foo", "bar")
+    assert gc.parse_owner_repo("https://github.com/foo/bar") == ("foo", "bar")
+    assert gc.parse_owner_repo("https://github.com/foo/bar.git") == ("foo", "bar")
+
+
+def test_open_at_T_filtering(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [
+        {"number": 1, "title": "open before T", "created_at": "2023-01-01T00:00:00Z",
+         "closed_at": None, "labels": [{"name": "bug"}]},
+        {"number": 2, "title": "closed before T", "created_at": "2023-02-01T00:00:00Z",
+         "closed_at": "2023-03-01T00:00:00Z"},
+        {"number": 3, "title": "created after T", "created_at": "2023-09-01T00:00:00Z",
+         "closed_at": None},
+        {"number": 4, "title": "closed after T (open at T)", "created_at": "2023-01-15T00:00:00Z",
+         "closed_at": "2023-08-01T00:00:00Z"},
+        {"number": 5, "title": "a PR open at T", "created_at": "2023-02-01T00:00:00Z",
+         "closed_at": None, "pull_request": {"url": "x"}},
+    ]
+
+    def fake_get(url, token, timeout=20):
+        if "/issues" in url:
+            return issues
+        if "/labels" in url:
+            return [{"name": "bug"}, {"name": "enhancement"}]
+        if "/milestones" in url:
+            return [
+                {"title": "v1", "created_at": "2023-01-01T00:00:00Z", "due_on": None, "state": "open"},
+                {"title": "future", "created_at": "2023-12-01T00:00:00Z"},
+            ]
+        if "/releases" in url:
+            return [
+                {"tag_name": "v0.1", "published_at": "2023-03-01T00:00:00Z"},
+                {"tag_name": "v0.9", "published_at": "2023-11-01T00:00:00Z"},
+            ]
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+
+    assert {i["number"] for i in ctx["open_issues"]} == {1, 4}
+    assert [p["number"] for p in ctx["open_prs"]] == [5]
+    assert [m["title"] for m in ctx["milestones"]] == ["v1"]
+    assert [r["tag"] for r in ctx["releases"]] == ["v0.1"]
+    assert ctx["_source"] == "github-api"
+
+
+def test_enrich_context_degrades_on_failure(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(gc, "fetch_context_at", boom)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    base = {"frozen_at": {"date": "2023-06-01T00:00:00Z"}, "open_issues": []}
+    out = gc.enrich_context(base, "/some/repo")
+    assert "_github_error" in out and out["open_issues"] == []

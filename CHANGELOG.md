@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- M1: GitHub-API context enrichment — freeze-time snapshots can now include the maintainer's
+  real working surface (open issues, open PRs, labels, milestones, releases) reconstructed as
+  of time T, with strict "knowable at T" filtering. Enabled with `--enrich`; degrades to
+  git-only context when offline.
 - M0 scaffold: maintainer agent with a fixed `solve()` entrypoint (philosophy → plan →
   decide → implement) and an OpenAI-compatible managed-inference client with an offline mode.
 - Time-travel replay benchmark: freeze a repo at a point in time, generate tasks from git

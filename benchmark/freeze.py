@@ -22,6 +22,10 @@ def _git(repo, *args, check=True):
     return r.stdout
 
 
+def origin_url(repo: str) -> str:
+    return _git(repo, "remote", "get-url", "origin", check=False).strip()
+
+
 def export_tree(repo: str, commit: str, dest: str) -> None:
     os.makedirs(dest, exist_ok=True)
     proc = subprocess.Popen(
