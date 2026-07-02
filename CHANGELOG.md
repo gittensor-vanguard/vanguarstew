@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- M2 (start): objective scoring anchor — a deterministic, structural signal that grades a
+  plan against ground truth from the revealed window (which top-level modules actually
+  changed; whether a release happened), reported per task alongside the pairwise judge.
 - M1: GitHub-API context enrichment — freeze-time snapshots can now include the maintainer's
   real working surface (open issues, open PRs, labels, milestones, releases) reconstructed as
   of time T, with strict "knowable at T" filtering. Enabled with `--enrich`; degrades to

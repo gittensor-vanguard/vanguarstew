@@ -20,7 +20,7 @@ from agent.llm import LLM
 from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
 from benchmark.judge import pairwise_judge
-from benchmark.score import trajectory_overlap
+from benchmark.score import objective_score, trajectory_overlap
 from benchmark.taskgen import generate_tasks
 
 
@@ -78,6 +78,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 "freeze": task["freeze_commit"][:10],
                 "winner": who,
                 "overlap": trajectory_overlap(challenger.get("plan"), task["revealed"]),
+                "objective": objective_score(challenger.get("plan"), task["revealed"]),
             })
     finally:
         if not work_dir:
