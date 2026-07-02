@@ -8,7 +8,7 @@
 
 The core question it answers is not *"did the agent write good code?"* but *"does the agent understand where this repository is going, and would it have steered it the way the real maintainers did?"*
 
-See [ROADMAP.md](ROADMAP.md) for milestones.
+See [ROADMAP.md](ROADMAP.md) for milestones and [docs/architecture.md](docs/architecture.md) for the repository-topology plan.
 
 ## How it works
 
