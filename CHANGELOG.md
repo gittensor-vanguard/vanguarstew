@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- M2: GitHub issue/PR fetch now paginates back toward the freeze time T (bounded, with an
+  `_issues_truncated` flag), so open-at-T reconstruction is complete regardless of how old T
+  is — not just the newest page.
 - M2: leakage hardening — forward-reference scrubbing (mask `#N` back-references, GitHub
   issue/PR/commit links, and raw SHAs in the frozen context) and recent-window + deterministic
   rotation for freeze-point selection (`--recent-bias`, `--rotation-seed`).

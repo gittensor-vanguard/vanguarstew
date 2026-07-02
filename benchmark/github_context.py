@@ -17,6 +17,7 @@ import urllib.request
 from datetime import datetime
 
 API = "https://api.github.com"
+DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
 
 
 def parse_owner_repo(remote_url: str):
@@ -53,36 +54,57 @@ def _get(url: str, token, timeout: int = 20):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages: int):
+    """Walk issues (created desc) page by page, collecting those open at `until`.
+
+    Sorted newest-first, so pages created after T are skipped cheaply (small for recent T,
+    the preferred case), then open-at-T items are gathered until the history is exhausted
+    (a short page) or the page cap is hit. Returns (open_issues, open_prs, truncated).
+    """
+    open_issues, open_prs = [], []
+    truncated = False
+    for page in range(1, max_pages + 1):
+        batch = _get(
+            f"{base}/issues?state=all&per_page=100&sort=created&direction=desc&page={page}",
+            token, timeout,
+        )
+        if not batch:
+            break
+        for it in batch:
+            created = _parse_dt(it.get("created_at"))
+            if created is None or created > until:
+                continue          # created after T — future, skip
+            closed = _parse_dt(it.get("closed_at"))
+            if closed is not None and closed <= until:
+                continue          # already closed by T — not open
+            rec = {
+                "number": it.get("number"),
+                "title": it.get("title"),
+                "labels": [lbl.get("name") for lbl in it.get("labels", [])],
+                "created_at": it.get("created_at"),
+            }
+            (open_prs if it.get("pull_request") else open_issues).append(rec)
+        if len(batch) < 100:
+            break                 # exhausted all issues — complete
+        if page == max_pages:
+            truncated = True      # more pages remain beyond the cap
+    return open_issues, open_prs, truncated
+
+
 def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
-                     per_page: int = 100, timeout: int = 20) -> dict:
+                     per_page: int = 100, timeout: int = 20,
+                     max_issue_pages: int = DEFAULT_MAX_ISSUE_PAGES) -> dict:
     """GitHub-derived context knowable at `until` (a timezone-aware UTC datetime).
 
-    Note: issues/PRs are drawn from the most recent `per_page` items (created desc), then
-    filtered to those open at `until`. This is accurate for *recent* freeze points — which
-    the leakage strategy prefers anyway — but under-fills open_issues/open_prs for a T far in
-    the past (their open-at-T items fall outside the first page). Full historical coverage
-    would require paginating back to T; deferred.
+    Issues/PRs are paginated (created desc) back toward T so open-at-T reconstruction is
+    complete regardless of how old T is, bounded by `max_issue_pages`; `_issues_truncated`
+    flags when the cap was hit before exhausting history.
     """
     token = token or os.environ.get("GITHUB_TOKEN") or None
     base = f"{API}/repos/{owner}/{repo}"
 
-    open_issues, open_prs = [], []
-    issues = _get(f"{base}/issues?state=all&per_page={per_page}&sort=created&direction=desc",
-                  token, timeout)
-    for it in issues:
-        created = _parse_dt(it.get("created_at"))
-        closed = _parse_dt(it.get("closed_at"))
-        if created is None or created > until:
-            continue          # created after T — future, skip
-        if closed is not None and closed <= until:
-            continue          # already closed by T — not open
-        rec = {
-            "number": it.get("number"),
-            "title": it.get("title"),
-            "labels": [lbl.get("name") for lbl in it.get("labels", [])],
-            "created_at": it.get("created_at"),
-        }
-        (open_prs if it.get("pull_request") else open_issues).append(rec)
+    open_issues, open_prs, truncated = _collect_open_at(base, until, token, timeout,
+                                                        max_issue_pages)
 
     labels = [lbl.get("name") for lbl in _get(f"{base}/labels?per_page={per_page}", token, timeout)]
 
@@ -109,6 +131,7 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "releases": releases,
         "_source": "github-api",
         "_knowable_until": until.isoformat(),
+        "_issues_truncated": truncated,
     }
 
 
