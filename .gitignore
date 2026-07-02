@@ -9,3 +9,6 @@ venv/
 .vanguarstew_work/
 .tasks/
 *.log
+.coverage
+.coverage.*
+htmlcov/

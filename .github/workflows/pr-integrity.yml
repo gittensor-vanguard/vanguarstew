@@ -1,0 +1,71 @@
+name: PR integrity
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR integrity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+
+          ev = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
+          pr = ev["pull_request"]
+          num = str(pr["number"])
+          body = re.sub(r"<!--.*?-->", "", pr.get("body") or "", flags=re.DOTALL)
+          errors = []
+
+          # 1) references an issue
+          if not re.search(r"(?:fixes|closes|resolves|refs)?\s*#\d+", body, re.I):
+              errors.append("PR body must reference an issue, e.g. 'Fixes #12'.")
+
+          # 2) no AI-attribution / slop markers
+          if re.search(r"co-authored-by:.*(claude|gpt|copilot|openai|anthropic)"
+                       r"|generated with|\U0001F916", body, re.I):
+              errors.append("Remove AI-attribution content from the PR body.")
+
+          # 3) non-trivial diff
+          if (pr.get("additions", 0) + pr.get("deletions", 0)) < 1:
+              errors.append("Diff is empty.")
+
+          def gh(*args):
+              r = subprocess.run(["gh", *args], capture_output=True, text=True)
+              return r.stdout.strip()
+
+          # 4) code changes should ship tests
+          files = [f for f in gh("pr", "view", num, "--json", "files",
+                                 "--jq", ".files[].path").splitlines() if f]
+          code = [f for f in files if f.endswith(".py")
+                  and (f.startswith("agent/") or f.startswith("benchmark/") or f == "agent.py")]
+          tests = [f for f in files if f.startswith("tests/")]
+          if code and not tests:
+              errors.append("Code changed under agent/ or benchmark/ but no test was added or "
+                            "updated under tests/.")
+
+          # 5) per-author open-PR limit
+          author = pr["user"]["login"]
+          try:
+              open_count = int(gh("pr", "list", "--state", "open", "--author", author,
+                                   "--json", "number", "--jq", "length") or "0")
+          except ValueError:
+              open_count = 0
+          LIMIT = 4
+          if open_count > LIMIT:
+              errors.append(f"Open PR limit exceeded for @{author}: {open_count} > {LIMIT}.")
+
+          for e in errors:
+              print(f"::error::{e}")
+          print("PR integrity: " + ("FAILED" if errors else "passed"))
+          sys.exit(1 if errors else 0)
+          PY

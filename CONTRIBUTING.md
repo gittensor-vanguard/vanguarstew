@@ -54,7 +54,9 @@ full loop without an inference endpoint.
 3. Reference the issue you're addressing (e.g. `Fixes #12`).
 4. Fill in the PR template; describe what you changed and how you verified it.
 
-CI must be green before a PR can merge.
+CI must be green before a PR can merge. See [REVIEW.md](REVIEW.md) for exactly how
+contributions are gated, reviewed, and scored — the process is designed to be predictable and
+reproducible.
 
 ## Reporting bugs and security issues
 

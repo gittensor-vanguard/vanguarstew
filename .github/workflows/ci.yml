@@ -25,12 +25,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dev dependencies
-        run: python -m pip install --upgrade pip ruff pytest
+        run: python -m pip install --upgrade pip ruff pytest pytest-cov
 
       - name: Lint
         run: ruff check .
 
-      - name: Test (offline)
+      - name: Test (offline) with coverage floor
         env:
           VANGUARSTEW_OFFLINE: "1"
-        run: python -m pytest -q
+        run: python -m pytest -q --cov=agent --cov=benchmark --cov-report=term-missing --cov-fail-under=75

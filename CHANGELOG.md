@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Trustable contribution pipeline: a published review/scoring rubric (`REVIEW.md`), a
+  PR-integrity check (issue reference, no AI-attribution, non-trivial diff, tests-with-code,
+  per-author PR limit), `CODEOWNERS` review routing, and a CI coverage floor.
+
 ## [0.1.0] - 2026-07-02
 
 ### Added
