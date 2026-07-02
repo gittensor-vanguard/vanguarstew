@@ -49,6 +49,26 @@ priority order:
 Decisions are communicated with **status labels** that state the reason (e.g. `needs-tests`,
 `out-of-scope`, `accepted`) in the PR thread, so the rationale is always on the record.
 
+## Contribution value labels (multipliers)
+
+Once this repo is registered on gittensor, each scored PR receives a **value multiplier** from
+a single maintainer-applied label. gittensor takes the **highest** matching label — multipliers
+do not stack — so the maintainer applies the one tier that best fits. This is a transparent,
+ordered value ladder, prepared now and active on registration:
+
+| Label | Multiplier | Applies to |
+| ----- | ---------- | ---------- |
+| `mult:core-correctness` | ×2.0 | Fixes/hardens scoring correctness, judge integrity, or a bug that would skew results. |
+| `mult:leakage-integrity` | ×1.8 | Anti-leakage / task-integrity work — the benchmark's trust depends on it. |
+| `mult:capability` | ×1.5 | New agent capability or a new benchmark dimension / task-gen improvement. |
+| `mult:enhancement` | ×1.2 | Solid improvement to existing behavior. |
+| `mult:maintenance` | ×1.0 | Refactor, small fix, tests, tooling (neutral). |
+| `mult:docs` | ×0.8 | Docs-only / cosmetic — welcome, lower weight. |
+
+- Only labels set by a **maintainer** count toward the multiplier.
+- Area labels (`agent`, `benchmark`, `leakage`) are organizational only and do **not** affect scoring.
+- No label ⇒ neutral (×1.0). Values may be tuned at registration.
+
 ## Rejections
 
 Common reasons a PR is closed rather than merged: no linked issue, out of scope, missing
