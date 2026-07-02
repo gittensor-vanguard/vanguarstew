@@ -17,6 +17,7 @@ import tempfile
 
 from agent.context import CONTEXT_FILE
 from agent.llm import LLM
+from benchmark.baselines import DEFAULT_BASELINE, empty_solve, get_baseline
 from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
 from benchmark.judge import pairwise_judge
@@ -35,9 +36,8 @@ def load_solve(agent_file: str = "agent.py"):
     return module.solve
 
 
-def baseline_solve(repo_path, request, **_kw) -> dict:
-    """A naive maintainer that proposes nothing concrete — the bar to beat."""
-    return {"plan": [], "philosophy": {}, "action": "plan", "rationale": "baseline"}
+# Backwards-compatible alias; opponents now live in benchmark.baselines.
+baseline_solve = empty_solve
 
 
 def _submission(out: dict) -> dict:
@@ -52,8 +52,9 @@ def _submission(out: dict) -> dict:
 def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                model=None, api_base=None, api_key=None, work_dir=None, seed=0,
                enrich_github=False, github_token=None,
-               recent_bias=False, rotation_seed=None) -> dict:
+               recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE) -> dict:
     solve = load_solve(agent_file)
+    opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
     tasks = generate_tasks(repo_path, n_tasks, horizon,
                            recent_bias=recent_bias, rotation_seed=rotation_seed)
@@ -80,8 +81,8 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 model=model or "validator-managed-model",
                 api_base=api_base or "", api_key=api_key or "offline", n=horizon,
             )
-            baseline = baseline_solve(dest, request)
-            winner = pairwise_judge(ctx, _submission(challenger), _submission(baseline),
+            baseline_out = opponent(dest, request, context=ctx, n=horizon)
+            winner = pairwise_judge(ctx, _submission(challenger), _submission(baseline_out),
                                     task["revealed"], llm, rng)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
@@ -98,6 +99,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
 
     return {
         "tasks": len(tasks),
+        "baseline": baseline,
         "tally": tally,
         "decisive_margin": tally["challenger"] - tally["baseline"],
         "rows": rows,

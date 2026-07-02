@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from benchmark.baselines import BASELINES, DEFAULT_BASELINE
 from benchmark.runner import run_replay
 
 
@@ -15,6 +16,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="vanguarstew time-travel replay eval")
     ap.add_argument("--repo", required=True, help="path to a local git repo to replay")
     ap.add_argument("--agent", default="agent.py", help="agent entrypoint file")
+    ap.add_argument("--baseline", default=DEFAULT_BASELINE, choices=sorted(BASELINES),
+                    help="reference opponent the challenger is judged against")
     ap.add_argument("--tasks", type=int, default=3)
     ap.add_argument("--horizon", type=int, default=5, help="next-N maintainer actions to predict")
     ap.add_argument("--model", default=None)
@@ -34,7 +37,7 @@ def main() -> None:
         repo_path=args.repo, agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
         model=args.model, api_base=args.api_base, api_key=args.api_key, work_dir=args.work_dir,
         enrich_github=args.enrich, github_token=args.github_token,
-        recent_bias=args.recent_bias, rotation_seed=args.rotation_seed,
+        recent_bias=args.recent_bias, rotation_seed=args.rotation_seed, baseline=args.baseline,
     )
     print(json.dumps(result, indent=2))
 
