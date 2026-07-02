@@ -25,13 +25,19 @@ def test_scrub_context_scrubs_nested_fields_only():
         "readme_excerpt": "roadmap toward plugins; tracked in #101",
         "recent_commits": [{"sha": "x", "subject": "start work, part of #200"}],
         "open_issues": [{"number": 1, "title": "bug, dup of #300"}],
-        "releases": [{"tag": "v1.0"}],
+        "releases": [
+            {"tag": "v1.0"},
+            {"tag": "v1.1", "name": "Release v1.1 — fixes #512, see https://github.com/o/r/pull/900"},
+        ],
     }
     out = scrub_context(ctx)
     assert "#101" not in out["readme_excerpt"]
     assert "#200" not in out["recent_commits"][0]["subject"]
     assert "#300" not in out["open_issues"][0]["title"]
-    assert out["releases"] == [{"tag": "v1.0"}]  # untouched
+    assert out["releases"][0] == {"tag": "v1.0"}  # tag-only entries unchanged
+    name = out["releases"][1]["name"]
+    assert "#512" not in name and "github.com" not in name and "#ref" in name and "<link>" in name
+    assert out["releases"][1]["tag"] == "v1.1"
     assert out["_forward_signal_scrubbed"] is True
     assert ctx.get("_forward_signal_scrubbed") is None  # original not mutated
 
