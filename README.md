@@ -20,6 +20,13 @@ vanguarstew turns that bottleneck into a measurable optimization problem: *can a
 the maintainer decisions a strong human maintainer would have made?* By scoring against real
 GitHub history, it builds a benchmark for maintainer capability — and a path to scaling it.
 
+## Demo
+
+![vanguarstew replay demo](docs/vanguarstew-demo.gif)
+
+A replay run: freeze a repo at past commits, plan the next maintainer actions, then score
+the plan against what actually changed next (`actual_modules` is the ground truth).
+
 ## How it works
 
 ```
