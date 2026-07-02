@@ -1,0 +1,74 @@
+name: Auto-label
+
+# Applies organizational area/type labels only (never mult:* value multipliers — those stay
+# maintainer-applied). Uses pull_request_target so it can label fork PRs; it reads only PR
+# metadata (files, title) and never checks out or runs PR code.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply area/type labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+
+          num = str(os.environ["PR_NUMBER"])
+          title = os.environ.get("PR_TITLE", "")
+
+          def gh(*args):
+              return subprocess.run(["gh", *args], capture_output=True, text=True).stdout
+
+          files = [f for f in gh("pr", "view", num, "--json", "files",
+                                 "--jq", ".files[].path").splitlines() if f]
+
+          labels = set()
+          for f in files:                                   # area, by path
+              if f.startswith("agent/") or f == "agent.py":
+                  labels.add("agent")
+              if f.startswith("benchmark/"):
+                  labels.add("benchmark")
+              if "leakage" in f:
+                  labels.add("leakage")
+              if f.startswith("tests/"):
+                  labels.add("tests")
+              if f.startswith(".github/"):
+                  labels.add("ci")
+              if f.endswith(".md") or f.startswith("docs/"):
+                  labels.add("documentation")
+
+          m = re.match(r"\s*(feat|fix|docs|refactor|perf|test|chore)\b", title, re.I)
+          if m:                                             # type, by conventional-commit prefix
+              labels |= {
+                  "feat": {"enhancement"}, "fix": {"bug"}, "docs": {"documentation"},
+                  "test": {"tests"}, "refactor": {"refactor"}, "perf": {"refactor"},
+                  "chore": {"chore"},
+              }.get(m.group(1).lower(), set())
+
+          # Only ever apply these safe organizational labels — never mult:* or eligibility.
+          SAFE = {"agent", "benchmark", "leakage", "tests", "ci", "documentation",
+                  "enhancement", "bug", "refactor", "chore"}
+          labels &= SAFE
+
+          if labels:
+              args = []
+              for lbl in sorted(labels):
+                  args += ["--add-label", lbl]
+              gh("pr", "edit", num, *args)
+              print("added labels:", sorted(labels))
+          else:
+              print("no labels matched")
+          PY
