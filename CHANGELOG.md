@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- M2: the pairwise judge now evaluates the **decision process** — the agent's inferred
+  maintainer philosophy and reasoning are passed to the judge and weighed alongside
+  trajectory/direction match, so when two plans point the same way the sounder reasoning wins.
 - Trustable contribution pipeline: a published review/scoring rubric (`REVIEW.md`), a
   PR-integrity check (issue reference, no AI-attribution, non-trivial diff, tests-with-code,
   per-author PR limit), `CODEOWNERS` review routing, and a CI coverage floor.

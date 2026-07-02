@@ -39,6 +39,15 @@ def baseline_solve(repo_path, request, **_kw) -> dict:
     return {"plan": [], "philosophy": {}, "action": "plan", "rationale": "baseline"}
 
 
+def _submission(out: dict) -> dict:
+    """The judged view of an agent's output: philosophy + plan + reasoning."""
+    return {
+        "philosophy": out.get("philosophy"),
+        "plan": out.get("plan"),
+        "rationale": out.get("rationale"),
+    }
+
+
 def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                model=None, api_base=None, api_key=None, work_dir=None, seed=0,
                enrich_github=False, github_token=None) -> dict:
@@ -69,7 +78,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 api_base=api_base or "", api_key=api_key or "offline", n=horizon,
             )
             baseline = baseline_solve(dest, request)
-            winner = pairwise_judge(ctx, challenger.get("plan"), baseline.get("plan"),
+            winner = pairwise_judge(ctx, _submission(challenger), _submission(baseline),
                                     task["revealed"], llm, rng)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
