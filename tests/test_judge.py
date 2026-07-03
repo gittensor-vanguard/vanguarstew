@@ -15,7 +15,31 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
-from benchmark.judge import _parse_winner, pairwise_judge  # noqa: E402
+from benchmark.judge import _parse_winner, _plan_substance, pairwise_judge  # noqa: E402
+
+
+class _FakeLLM:
+    """Online judge stand-in whose verdict is driven by a chosen bias, for testing."""
+
+    def __init__(self, mode):
+        self.offline = False
+        self.mode = mode
+        self.calls = 0
+
+    def chat(self, system, user):
+        self.calls += 1
+        if self.mode == "position_first":
+            return '{"winner": "A"}'          # always picks whichever is shown FIRST
+        if self.mode == "position_second":
+            return '{"winner": "B"}'          # always picks whichever is shown SECOND
+        if self.mode == "content":
+            one = user.split("SUBMISSION ONE:")[1].split("SUBMISSION TWO:")[0]
+            return '{"winner": "A"}' if "GOOD" in one else '{"winner": "B"}'
+        return '{"winner": "tie"}'
+
+
+_GOOD = {"philosophy": {"summary": "GOOD"}, "plan": [{"title": "real"}], "rationale": "GOOD"}
+_BAD = {"philosophy": {}, "plan": [], "rationale": "meh"}
 
 
 def test_parse_winner_tolerant():
@@ -58,6 +82,65 @@ def test_decision_process_breaks_tie_when_plans_equal():
     assert pairwise_judge({}, without, with_process, [], llm) == "B"
 
 
+def test_plan_substance_rewards_concrete_fields_and_ignores_filler():
+    # Blank items and whole-title filler words carry no substance.
+    assert _plan_substance([{"title": "misc"}, {"title": "   "}, {}, {"title": "updates"}]) == 0
+    # A real title is worth 1; each structured action field adds to it.
+    assert _plan_substance([{"title": "add retry to loader"}]) == 1
+    assert _plan_substance([
+        {"title": "fix loader race", "kind": "bugfix", "files": ["core/loader.py"],
+         "rationale": "prevents a crash"},
+    ]) == 4
+    # A shorter concrete plan outweighs a longer filler one.
+    filler = [{"title": t} for t in ("misc", "various", "cleanup", "updates", "stuff")]
+    concrete = [{"title": "harden release detection", "kind": "bugfix"}]
+    assert _plan_substance(concrete) > _plan_substance(filler)
+
+
+def test_plan_substance_normalizes_scalar_items_through_filler_check():
+    # Scalar (non-dict) items go through the same filler check: bare filler words score 0,
+    # so a plan of scalar filler cannot out-rank a concrete one (regression for the review).
+    assert _plan_substance(["misc", "updates", "cleanup", "various"]) == 0
+    assert _plan_substance(["add retry to the loader"]) == 1  # scalar, non-filler
+    assert _plan_substance(["   ", ""]) == 0                   # blank scalars
+    scalar_filler = ["misc", "updates", "cleanup", "various", "stuff"]
+    concrete = [{"title": "harden release detection", "kind": "bugfix"}]
+    assert _plan_substance(concrete) > _plan_substance(scalar_filler)
+
+    llm = LLM(api_key="offline")
+    fluff = {"philosophy": {}, "plan": scalar_filler, "rationale": "general improvements"}
+    substance = {
+        "philosophy": {"direction": "stabilize"},
+        "plan": [{"title": "fix the release-detection bug", "kind": "bugfix"}],
+        "rationale": "cleared the blocker",
+    }
+    assert pairwise_judge({}, substance, fluff, [], llm) == "A"
+    assert pairwise_judge({}, fluff, substance, [], llm) == "B"
+
+
+def test_generic_filler_titles_do_not_outrank_concrete_plan():
+    # Beyond blank items (#54), a plan padded with generic *non-blank* filler titles
+    # must not beat a shorter plan of concrete, structured actions (#70). The old
+    # presence-only heuristic counted the 5 filler titles (5 > 2) and let fluff win.
+    llm = LLM(api_key="offline")
+    filler = {
+        "philosophy": {"summary": "we will improve things"},
+        "plan": [{"title": t} for t in ("misc", "updates", "cleanup", "various", "improvements")],
+        "rationale": "general improvements across the board",
+    }
+    concrete = {
+        "philosophy": {"direction": "stabilize toward v1.0", "values": ["conservative"]},
+        "plan": [
+            {"title": "fix release detection on dep bumps", "kind": "bugfix",
+             "files": ["benchmark/score.py"], "rationale": "core-correctness"},
+            {"title": "cut patch release", "kind": "release", "files": ["CHANGELOG.md"]},
+        ],
+        "rationale": "cleared the correctness bug before shipping",
+    }
+    assert pairwise_judge({}, concrete, filler, [], llm) == "A"
+    assert pairwise_judge({}, filler, concrete, [], llm) == "B"
+
+
 def test_verbose_fluff_plan_does_not_beat_concise_substance():
     # A long plan padded with empty-of-substance items must NOT beat a shorter plan
     # of real maintainer actions. Guards the length-over-substance failure (#54);
@@ -78,3 +161,28 @@ def test_verbose_fluff_plan_does_not_beat_concise_substance():
     }
     assert pairwise_judge({}, substance, fluff, [], llm) == "A"
     assert pairwise_judge({}, fluff, substance, [], llm) == "B"
+
+
+def test_dual_order_keeps_consistent_winner():
+    # A judge that genuinely prefers the stronger submission agrees across both orders.
+    llm = _FakeLLM("content")
+    assert pairwise_judge({}, _GOOD, _BAD, [], llm) == "A"
+    assert llm.calls == 2  # both presentation orders were asked
+    # winner tracks the content regardless of which argument position it's in
+    assert pairwise_judge({}, _BAD, _GOOD, [], _FakeLLM("content")) == "B"
+
+
+def test_dual_order_ties_a_position_biased_judge():
+    # "always pick the first-shown" and "always pick the second-shown" are pure position
+    # bias — dual-order must refuse to award either a spurious win.
+    assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_first")) == "tie"
+    assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_second")) == "tie"
+
+
+def test_single_order_mode_makes_one_call_and_can_be_swayed():
+    # With dual_order disabled, only one call is made and a position-biased judge decides it.
+    llm = _FakeLLM("position_first")
+    # rng.random() >= 0.5 -> no swap, submission_a shown first -> biased judge picks A.
+    result = pairwise_judge({}, _GOOD, _BAD, [], llm, random.Random(1), dual_order=False)
+    assert llm.calls == 1
+    assert result in ("A", "B")  # a (biased) decision, not forced to tie

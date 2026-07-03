@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Judge integrity: the pairwise judge now defends against LLM **position bias** with dual-order
+  consistency — it asks both presentation orders and awards a win only if it survives the swap,
+  otherwise a tie. A position-biased judge can no longer earn a spurious win, and per-task
+  variance drops. Default on; opt out via `run_replay(dual_order_judge=False)` /
+  `--single-order-judge`; the replay result reports `judge_dual_order` (#87).
 - Planner queue reconciliation (`agent/planner.py`): a deterministic pass makes the plan honor
   the open-PR queue even when the LLM disregards it — an item that restates an open PR's work
   is down-weighted to a `triage` review item and flagged with `restates_pr`, redundant items
@@ -38,6 +43,12 @@ All notable changes to this project are documented here. The format is based on
   is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
+- Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
+  `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
+  `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score
+  — filler/blank items count for nothing, and each structured action field (`kind`, `files`,
+  per-item `rationale`) beyond a real title adds weight — so length/filler never beats
+  substance (#70).
 - Judge robustness: the offline pairwise stand-in ranked submissions by raw plan **length**,
   so a plan padded with empty-of-substance items could beat a shorter, substantive one. It now
   ranks by the count of items that actually name something (non-empty `title`/`theme`), so
@@ -53,6 +64,9 @@ All notable changes to this project are documented here. The format is based on
   Both are fixed by diffing merges against their first parent and splitting on lines instead.
   Regression coverage added in `tests/test_taskgen.py` via a reusable merge-history fixture
   (#117).
+- Leakage: frozen milestone `state` is now computed as-of-T from `closed_at` instead of copying
+  the milestone's present-day state, so a milestone that existed at T but was closed *after* T
+  is no longer leaked into the context as completed (#77).
 
 ## [0.2.0] - 2026-07-03
 

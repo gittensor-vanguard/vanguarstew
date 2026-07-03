@@ -53,16 +53,19 @@ jobs:
               errors.append("Code changed under agent/ or benchmark/ but no test was added or "
                             "updated under tests/.")
 
-          # 5) per-author open-PR limit
+          # 5) per-author open-PR limit (contributors only; the maintainer is exempt)
           author = pr["user"]["login"]
-          try:
-              open_count = int(gh("pr", "list", "--state", "open", "--author", author,
-                                   "--json", "number", "--jq", "length") or "0")
-          except ValueError:
-              open_count = 0
-          LIMIT = 4
-          if open_count > LIMIT:
-              errors.append(f"Open PR limit exceeded for @{author}: {open_count} > {LIMIT}.")
+          MAINTAINERS = {"matedev01"}
+          LIMIT = 2
+          if author not in MAINTAINERS:
+              try:
+                  open_count = int(gh("pr", "list", "--state", "open", "--author", author,
+                                       "--json", "number", "--jq", "length") or "0")
+              except ValueError:
+                  open_count = 0
+              if open_count > LIMIT:
+                  errors.append(f"Open PR limit exceeded for @{author}: {open_count} > {LIMIT}. "
+                                f"Please get an existing PR merged or closed first.")
 
           for e in errors:
               print(f"::error::{e}")
