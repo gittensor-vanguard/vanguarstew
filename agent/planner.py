@@ -20,6 +20,13 @@ _STOPWORDS = frozenset({
 })
 
 _REVIEW_MARKERS = ("review", "merge", "approve", "request changes", "pull request", "pr #")
+# Explicit PR references: "#7", "PR #7", "pull request 7"
+_PR_NUMBER = re.compile(
+    r"(?:#\s*(\d+)\b|(?:pull\s+request|pr)\s+#?\s*(\d+)\b)",
+    re.I,
+)
+# Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
+_MIN_SUBJECT_PHRASE = 8
 
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
@@ -80,18 +87,61 @@ def _significant_tokens(text: str) -> set:
     }
 
 
+def _explicit_pr_number(*texts: str) -> int | None:
+    """Return an explicit PR number referenced in plan text, if any."""
+    for text in texts:
+        if not text:
+            continue
+        for match in _PR_NUMBER.finditer(text):
+            raw = match.group(1) or match.group(2)
+            if raw:
+                return int(raw)
+    return None
+
+
+def _title_contains_pr_subject(item: dict, pr: dict) -> bool:
+    """True when the plan item quotes the PR's subject as a phrase (not a lone token)."""
+    subject = (pr.get("title") or "").strip().lower()
+    if len(subject) < _MIN_SUBJECT_PHRASE:
+        return False
+    blob = f"{item.get('title', '')} {item.get('rationale', '')}".lower()
+    return subject in blob
+
+
 def _matched_pr(item: dict, prs: list):
-    """The open PR a plan item is about (by significant-token overlap), or None."""
+    """The open PR a plan item is about, or None.
+
+    Matching order: explicit ``#N`` reference, then full-subject phrase, then
+    significant-token overlap. One-word PR titles never match on overlap alone —
+    they are too ambiguous when the queue grows.
+    """
+    by_number = {p.get("number"): p for p in prs if p.get("number") is not None}
+
+    ref = _explicit_pr_number(item.get("title", ""), item.get("rationale", ""))
+    if ref is not None and ref in by_number:
+        return by_number[ref]
+
+    for pr in prs:
+        if _title_contains_pr_subject(item, pr):
+            return pr
+
     itoks = _significant_tokens(item.get("title", "")) | _significant_tokens(item.get("theme", ""))
     if not itoks:
         return None
+
     best, best_overlap = None, 0
     for pr in prs:
         ptoks = _significant_tokens(pr.get("title", ""))
         if not ptoks:
             continue
         overlap = len(itoks & ptoks)
-        if overlap > best_overlap and (overlap >= 2 or overlap == len(ptoks)):
+        if overlap == 0:
+            continue
+        n_pr = len(ptoks)
+        if n_pr == 1:
+            # Single-token PR titles are ambiguous — overlap-only matching is disabled.
+            continue
+        if overlap > best_overlap and (overlap >= 2 or overlap == n_pr):
             best, best_overlap = pr, overlap
     return best
 
