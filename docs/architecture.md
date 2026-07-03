@@ -118,6 +118,17 @@ Because the reference is public GitHub history, the benchmark actively resists l
 - **No internet in the sandbox** beyond the managed inference proxy.
 - **Knowable-at-T only** — the frozen context is built from commits/issues/PRs/releases that
   existed at T; nothing created (or a release published) after T is included.
+- **As-of-T reconstruction of mutable fields** (`benchmark/github_context.py`) — some GitHub
+  fields the live REST snapshot exposes are mutable and would otherwise leak present-day state:
+  - *Milestone state* is derived from `created_at`/`closed_at` (`_milestone_at`) — `"closed"`
+    only when it was already closed by T.
+  - *Issue/PR label membership* is reconstructed by replaying the item's timeline
+    `labeled`/`unlabeled` events up to T (`_labels_at`); when the timeline can't be read
+    (offline, rate-limited, or no label events), labels are **omitted** (`labels_as_of_t:
+    false`) rather than copied live — fail-closed, never leak.
+  - *Intentionally omitted* (not reconstructable from a cheap as-of-T source): the repo-wide
+    label list and issue/PR titles are still the live values, so consumers must not treat them
+    as historically exact; timeline-based reconstruction can be extended to more fields later.
 - **Forward-reference scrubbing** (`benchmark/leakage.py`) — even within knowable-at-T text,
   issue/PR back-references (`#N`), GitHub issue/PR/commit links, and raw SHAs are masked, so a
   commit subject or README can't cross-reference the future.
