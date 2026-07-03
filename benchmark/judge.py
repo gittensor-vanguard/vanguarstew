@@ -67,23 +67,26 @@ def _item_substance(item) -> int:
     """Substance weight of a single plan item.
 
     A blank item, or one whose whole title/theme is a generic filler word, scores 0 —
-    so stuffing a plan with content-free entries cannot inflate its rank. A concrete
-    item earns 1 for a real title/theme plus 1 for each structured action field it
-    backs it with (`kind`, `files`, per-item `rationale`), rewarding substance over the
-    mere presence of a title.
+    so stuffing a plan with content-free entries cannot inflate its rank. Scalar (non-dict)
+    items are normalized through the same filler check on their text, so `"misc"` /
+    `"updates"` never count. A concrete item earns 1 for a real title/theme plus 1 for each
+    structured action field it backs it with (`kind`, `files`, per-item `rationale`),
+    rewarding substance over the mere presence of a title.
     """
-    if not isinstance(item, dict):
-        return 1 if str(item).strip() else 0
-    title = (item.get("title") or item.get("theme") or "").strip().lower()
+    if isinstance(item, dict):
+        title = (item.get("title") or item.get("theme") or "").strip().lower()
+    else:
+        title = str(item).strip().lower()
     if not title or title in _FILLER_TITLES:
         return 0
     weight = 1
-    if (item.get("kind") or "").strip():
-        weight += 1
-    if item.get("files"):
-        weight += 1
-    if (item.get("rationale") or "").strip():
-        weight += 1
+    if isinstance(item, dict):
+        if (item.get("kind") or "").strip():
+            weight += 1
+        if item.get("files"):
+            weight += 1
+        if (item.get("rationale") or "").strip():
+            weight += 1
     return weight
 
 

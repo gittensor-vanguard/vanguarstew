@@ -73,6 +73,27 @@ def test_plan_substance_rewards_concrete_fields_and_ignores_filler():
     assert _plan_substance(concrete) > _plan_substance(filler)
 
 
+def test_plan_substance_normalizes_scalar_items_through_filler_check():
+    # Scalar (non-dict) items go through the same filler check: bare filler words score 0,
+    # so a plan of scalar filler cannot out-rank a concrete one (regression for the review).
+    assert _plan_substance(["misc", "updates", "cleanup", "various"]) == 0
+    assert _plan_substance(["add retry to the loader"]) == 1  # scalar, non-filler
+    assert _plan_substance(["   ", ""]) == 0                   # blank scalars
+    scalar_filler = ["misc", "updates", "cleanup", "various", "stuff"]
+    concrete = [{"title": "harden release detection", "kind": "bugfix"}]
+    assert _plan_substance(concrete) > _plan_substance(scalar_filler)
+
+    llm = LLM(api_key="offline")
+    fluff = {"philosophy": {}, "plan": scalar_filler, "rationale": "general improvements"}
+    substance = {
+        "philosophy": {"direction": "stabilize"},
+        "plan": [{"title": "fix the release-detection bug", "kind": "bugfix"}],
+        "rationale": "cleared the blocker",
+    }
+    assert pairwise_judge({}, substance, fluff, [], llm) == "A"
+    assert pairwise_judge({}, fluff, substance, [], llm) == "B"
+
+
 def test_generic_filler_titles_do_not_outrank_concrete_plan():
     # Beyond blank items (#54), a plan padded with generic *non-blank* filler titles
     # must not beat a shorter plan of concrete, structured actions (#70). The old
