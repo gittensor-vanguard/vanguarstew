@@ -76,6 +76,9 @@ VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo /path/to/some/git/repo -
 python -m scripts.run_eval --repo /path/to/repo --tasks 5 --horizon 5 \
     --model <validator-model> --api-base http://validator-proxy/v1 --api-key "$TOKEN"
 
+# multi-repo: replay several repos and aggregate a cross-repo composite (generalization)
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repos /path/to/a /path/to/b --tasks 2 --horizon 5
+
 # smoke test (no network, no git needed)
 VANGUARSTEW_OFFLINE=1 python -m pytest -q
 ```
@@ -85,6 +88,34 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q
 > with **no API key** — convenient for local exploration. It is for development only: the
 > scored `agent.solve` path always uses validator-supplied inference (the managed-inference
 > contract in [`agent/llm.py`](agent/llm.py)), never codex.
+
+`--repo` scores one repo; `--repos` scores several and averages each repo's own
+`composite_mean` into one cross-repo number. Each single-repo `run_replay` result carries the
+composite contract — `composite_mean` plus `composite_parts` (the `judge_mean` and
+`objective_mean` it blends, per the `weights`):
+
+```jsonc
+// single-repo (--repo) result, composite fields:
+{
+  "composite_mean": 0.6,                              // mean blended score in [0, 1]
+  "composite_parts": { "judge_mean": 1.0, "objective_mean": 0.0 },  // the two blended means
+  "weights": { "judge": 0.6, "objective": 0.4 },     // how the parts are blended
+  "rows": [ /* per-task: winner, objective, composite */ ]
+}
+```
+
+The `--repos` aggregate result shape is:
+
+```jsonc
+{
+  "repos": 2,            // repos given
+  "scored_repos": 2,     // repos that produced tasks (and a composite_mean)
+  "skipped": 0,          // repos too small for the horizon (kept below, excluded from the mean)
+  "composite_mean": 0.6, // mean of each scored repo's composite_mean
+  "composite_parts": { "judge_mean": 1.0, "objective_mean": 0.0 },  // means of the per-repo parts
+  "per_repo": [ /* each repo's full run_replay result, or its {"error": ...} */ ]
+}
+```
 
 ## Status
 
