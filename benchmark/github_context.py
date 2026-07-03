@@ -165,6 +165,33 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
     return open_issues, open_prs, truncated
 
 
+def _merge_releases(git_releases, gh_releases) -> list:
+    """Union git tags with GitHub release metadata; never drop git-only tags.
+
+    Git tags merged at T are the authoritative semver set for ``base_from_releases``.
+    GitHub releases are a subset — overlay name/published_at when present.
+    """
+    by_tag: dict[str, dict] = {}
+    order: list[str] = []
+    for rel in git_releases or []:
+        tag = rel.get("tag") if isinstance(rel, dict) else rel
+        if not tag:
+            continue
+        by_tag[tag] = dict(rel) if isinstance(rel, dict) else {"tag": tag}
+        if tag not in order:
+            order.append(tag)
+    for rel in gh_releases or []:
+        tag = rel.get("tag") if isinstance(rel, dict) else rel
+        if not tag:
+            continue
+        if tag in by_tag:
+            by_tag[tag] = {**by_tag[tag], **rel}
+        else:
+            by_tag[tag] = dict(rel) if isinstance(rel, dict) else {"tag": tag}
+            order.append(tag)
+    return [by_tag[tag] for tag in order]
+
+
 def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
                      per_page: int = 100, timeout: int = 20,
                      max_issue_pages: int = DEFAULT_MAX_ISSUE_PAGES) -> dict:
@@ -222,9 +249,10 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
             return context
         gh = fetch_context_at(owner, repo, until, token=token)
         merged = dict(context)
-        for key in ("repo", "open_issues", "open_prs", "labels", "milestones", "releases"):
+        for key in ("repo", "open_issues", "open_prs", "labels", "milestones"):
             if gh.get(key):
                 merged[key] = gh[key]
+        merged["releases"] = _merge_releases(context.get("releases"), gh.get("releases"))
         merged["_github_enriched"] = True
         return merged
     except Exception as exc:  # offline / rate-limited / private — degrade to git-only

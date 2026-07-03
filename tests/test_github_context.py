@@ -224,3 +224,34 @@ def test_truncation_flag_when_page_cap_hit(monkeypatch):
     monkeypatch.setattr(gc, "_get", _pager({1: full, 2: full, 3: full}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_issue_pages=2)
     assert ctx["_issues_truncated"] is True
+
+
+def test_merge_releases_unions_git_tags_with_github_metadata():
+    git = [{"tag": "v1.10.0"}]
+    gh = [{"tag": "v1.9.0", "name": "Nine", "published_at": "2023-03-01T00:00:00Z"}]
+    merged = gc._merge_releases(git, gh)
+    assert [r["tag"] for r in merged] == ["v1.10.0", "v1.9.0"]
+    by_tag = {r["tag"]: r for r in merged}
+    assert by_tag["v1.9.0"]["name"] == "Nine"
+
+
+def test_enrich_context_does_not_drop_git_only_tags(monkeypatch):
+    from benchmark.score import base_from_releases
+
+    base = {
+        "frozen_at": {"date": "2023-06-01T00:00:00Z"},
+        "releases": [{"tag": "v1.10.0"}],
+        "_source": "git-freeze",
+    }
+
+    def fake_fetch(owner, repo, until, token=None, **kwargs):
+        return {
+            "releases": [{"tag": "v1.9.0", "name": "Nine", "published_at": "2023-03-01T00:00:00Z"}],
+        }
+
+    monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda _path: "https://github.com/foo/bar.git")
+
+    merged = gc.enrich_context(base, "/fake/repo")
+    assert {r["tag"] for r in merged["releases"]} == {"v1.10.0", "v1.9.0"}
+    assert base_from_releases(merged["releases"]) == "v1.10.0"
