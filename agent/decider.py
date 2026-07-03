@@ -20,6 +20,25 @@ VALID_ACTIONS = (
     "release", "plan", "patch", "close", "label",
 )
 
+_BUMP_LEVELS = ("major", "minor", "patch")
+_NULL_BUMPS = frozenset({"null", "none", "n/a"})
+
+
+def normalize_version_bump(bump):
+    """Map an LLM ``version_bump`` onto major/minor/patch, else ``None``.
+
+    Matches the scoring contract in ``benchmark.score._norm_bump`` so release prediction
+    is not silently dropped because of case or synonym noise in the model output.
+    """
+    if bump is None:
+        return None
+    if not isinstance(bump, str):
+        return None
+    level = bump.strip().lower()
+    if not level or level in _NULL_BUMPS:
+        return None
+    return level if level in _BUMP_LEVELS else None
+
 
 def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     user = (
@@ -46,6 +65,7 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     if not isinstance(out, dict):
         out = dict(stub)
     out.setdefault("action", "plan")
+    out["version_bump"] = normalize_version_bump(out.get("version_bump"))
     return out
 
 
