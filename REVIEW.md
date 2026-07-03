@@ -24,7 +24,7 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q --cov=agent --cov=benchmark --cov-fail
   - no AI-attribution content;
   - the diff is non-trivial;
   - code changes under `agent/` or `benchmark/` ship a test change under `tests/`;
-  - the author is within the open-PR limit.
+  - the author is within the open-PR limit (**at most 2 open PRs** per contributor; the maintainer is exempt).
 
 If a gate is red, the PR is not mergeable — there is no human override that skips it.
 
