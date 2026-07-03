@@ -213,3 +213,29 @@ def test_stale_reference_with_no_other_match_triggers_queue_fallback():
     # and the plan-level fallback still prepends a review item for #9
     fallback = [i for i in out if i.get("restates_pr") == 9 and i.get("theme") == "PR queue"]
     assert len(fallback) == 1
+
+
+def test_nested_pr_titles_prefer_longest_match():
+    # Nested titles: the shorter is a substring of the longer. When the plan quotes the longer,
+    # more specific phrase, that PR must win regardless of queue order (#104).
+    prs = [
+        {"number": 1, "title": "Add streaming export"},
+        {"number": 2, "title": "Add streaming export docs"},
+    ]
+    longer = {"title": "Add streaming export docs", "rationale": "finish the export docs"}
+    assert _matched_pr(longer, prs)["number"] == 2
+    assert _matched_pr(longer, list(reversed(prs)))["number"] == 2  # independent of queue order
+    # quoting only the shorter title still resolves to it (longest-match is not greedy)
+    shorter = {"title": "Add streaming export", "rationale": "ship it"}
+    assert _matched_pr(shorter, prs)["number"] == 1
+
+
+def test_nested_titles_explicit_number_outranks_longest_phrase():
+    # An explicit ``#N`` reference stays the highest-priority match, even when a longer nested
+    # title is also quoted in the plan text (#104).
+    prs = [
+        {"number": 1, "title": "Add streaming export"},
+        {"number": 2, "title": "Add streaming export docs"},
+    ]
+    item = {"title": "Merge PR #1: Add streaming export docs", "kind": "triage"}
+    assert _matched_pr(item, prs)["number"] == 1

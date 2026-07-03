@@ -111,12 +111,12 @@ def _title_contains_pr_subject(item: dict, pr: dict) -> bool:
 def _matched_pr(item: dict, prs: list):
     """The open PR a plan item is about, or None.
 
-    Matching order: explicit ``#N`` reference, then full-subject phrase, then
-    significant-token overlap. One-word PR titles never match on overlap alone —
-    they are too ambiguous when the queue grows. An explicit ``#N`` that names a
-    PR no longer in the queue is treated as stale: the item is **not** matched
-    against a different open PR via fallback, since the author already committed
-    to a specific number.
+    Matching order: explicit ``#N`` reference, then full-subject phrase (the longest
+    matching title when several nested titles are quoted), then significant-token
+    overlap. One-word PR titles never match on overlap alone — they are too
+    ambiguous when the queue grows. An explicit ``#N`` that names a PR no longer in the
+    queue is treated as stale: the item is **not** matched against a different open PR
+    via fallback, since the author already committed to a specific number.
     """
     by_number = {p.get("number"): p for p in prs if p.get("number") is not None}
 
@@ -124,9 +124,13 @@ def _matched_pr(item: dict, prs: list):
     if ref is not None:
         return by_number.get(ref)  # None when stale (suppresses fallback matching)
 
-    for pr in prs:
-        if _title_contains_pr_subject(item, pr):
-            return pr
+    # Full-subject phrase match. Nested titles ("Add streaming export" is a substring of
+    # "Add streaming export docs") can both appear in the plan text; prefer the longest
+    # matching title so the more specific PR wins instead of whichever comes first in queue
+    # order.
+    subject_matches = [pr for pr in prs if _title_contains_pr_subject(item, pr)]
+    if subject_matches:
+        return max(subject_matches, key=lambda pr: len((pr.get("title") or "").strip()))
 
     itoks = _significant_tokens(item.get("title", "")) | _significant_tokens(item.get("theme", ""))
     if not itoks:
