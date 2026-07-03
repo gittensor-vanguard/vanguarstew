@@ -41,3 +41,19 @@ def test_infer_philosophy_offline_has_expected_keys():
     llm = LLM(api_key="offline")
     out = infer_philosophy({"recent_commits": [{"subject": "init"}]}, llm)
     assert EXPECTED_KEYS <= set(out)
+
+
+class _ListLLM:
+    """A model that answers with a top-level JSON array (extract_json returns a list)."""
+
+    def chat_json(self, system, user, stub=None):
+        return ["conservative", "stability-over-features"]
+
+
+def test_infer_philosophy_coerces_non_dict_to_dict():
+    # Honor the `-> dict` contract even when the model returns a non-object, so the value
+    # stays usable by the judge's `isinstance(philosophy, dict)` tiebreaker. Mirrors the
+    # guards in decider.decide and review.review_pr.
+    out = infer_philosophy({"recent_commits": [{"subject": "init"}]}, _ListLLM())
+    assert isinstance(out, dict)
+    assert EXPECTED_KEYS <= set(out)

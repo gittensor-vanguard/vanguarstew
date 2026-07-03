@@ -73,7 +73,15 @@ def infer_philosophy(context: dict, llm) -> dict:
         "direction": "unknown (offline)",
         "evidence": [],
     }
-    return llm.chat_json(SYSTEM, user, stub=stub)
+    out = llm.chat_json(SYSTEM, user, stub=stub)
+    if not isinstance(out, dict):
+        # A model may answer with a top-level JSON array (or other non-object), which
+        # `extract_json` returns verbatim. Fall back to the stub so the `-> dict` contract
+        # holds — mirrors `decider.decide` and `review.review_pr`. Otherwise a list flows
+        # into the judge's offline tiebreaker, where `isinstance(philosophy, dict)` fails
+        # and a substantive philosophy silently scores zero.
+        out = dict(stub)
+    return out
 
 
 def _render(context: dict) -> str:
