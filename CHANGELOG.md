@@ -29,6 +29,9 @@ All notable changes to this project are documented here. The format is based on
   version mentioned mid-subject (e.g. `chore(deps): bump lodash to v4.17.21`, `fix crash in
   v1.2.0 parser`). Release detection now requires explicit release wording or a version-tag
   subject, so dependency bumps no longer inflate the release-prediction signal (#57).
+- Leakage: frozen milestone `state` is now computed as-of-T from `closed_at` instead of copying
+  the milestone's present-day state, so a milestone that existed at T but was closed *after* T
+  is no longer leaked into the context as completed (#77).
 
 ## [0.2.0] - 2026-07-03
 
