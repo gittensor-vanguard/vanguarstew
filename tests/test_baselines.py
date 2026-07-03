@@ -19,6 +19,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.baselines import (  # noqa: E402
     BASELINES,
+    _infer_kind,
     empty_solve,
     get_baseline,
     heuristic_solve,
@@ -39,6 +40,19 @@ CTX = {
         {"title": "Support YAML config"},
     ],
 }
+
+
+def test_infer_kind_ignores_incidental_version_mentions():
+    # These previously matched the fragile " v1"/" v2" substring needles.
+    assert _infer_kind("Bump dependency to v10.0") == "dep"
+    assert _infer_kind("Add v2 endpoint") == "feature"
+
+
+def test_infer_kind_still_detects_genuine_release_subjects():
+    assert _infer_kind("v1.2.0") == "release"
+    assert _infer_kind("Release v2.0") == "release"
+    assert _infer_kind("Release: cut 3.0.0") == "release"
+    assert _infer_kind("Bump version to 1.2.0; update changelog") == "release"
 
 
 def test_registry_selection_and_unknown():

@@ -16,14 +16,23 @@ name via :func:`get_baseline`; the runner exposes this as ``--baseline``.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 from agent.context import load_context
 
+# A subject that *leads* with a version (optionally prefixed by "release"), e.g.
+# "v1.2.0", "Release 2.0" -- mirrors the intent of score.is_release_subject. An
+# incidental version elsewhere in the subject ("Bump dependency to v10.0", "Add v2
+# endpoint") is not a release: substring needles like " v1"/" v2" would wrongly
+# match inside "v10" or "v2 endpoint", so leading-version detection is anchored
+# instead of a bare substring check.
+_RELEASE_LEADING_VERSION = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+(?:\.\d+){1,2}\b", re.I)
+
 # Map a free-text title/subject to one of the planner's kinds. Order matters: earlier
 # entries win, so release/dep are checked before the broader "feature" verbs.
 _KIND_KEYWORDS = (
-    ("release", ("release", "changelog", "tag ", " v1", " v2", "semver")),
+    ("release", ("release", "changelog", "tag ", "semver")),
     ("dep", ("bump", "dependency", "dependencies", "deps", "upgrade", "dependabot")),
     ("docs", ("doc", "docs", "readme", "document", "guide", "example", "comment")),
     ("bugfix", ("fix", "bug", "patch", "regression", "hotfix", "error", "crash")),
@@ -37,6 +46,8 @@ _ALLOWED = {"feature", "bugfix", "refactor", "docs", "release", "dep", "triage"}
 
 def _infer_kind(text: str) -> str:
     low = (text or "").lower()
+    if _RELEASE_LEADING_VERSION.match(low):
+        return "release"
     for kind, needles in _KIND_KEYWORDS:
         if any(n in low for n in needles):
             return kind if kind in _ALLOWED else "triage"
