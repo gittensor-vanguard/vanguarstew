@@ -31,6 +31,10 @@ def main() -> None:
                     help="draw freeze points only from the most recent usable window")
     ap.add_argument("--rotation-seed", type=int, default=None,
                     help="deterministically rotate which freeze points are chosen")
+    ap.add_argument("--w-judge", type=float, default=0.6,
+                    help="composite weight on the pairwise judge (default 0.6)")
+    ap.add_argument("--w-objective", type=float, default=0.4,
+                    help="composite weight on the objective anchor (default 0.4)")
     args = ap.parse_args()
 
     result = run_replay(
@@ -38,6 +42,7 @@ def main() -> None:
         model=args.model, api_base=args.api_base, api_key=args.api_key, work_dir=args.work_dir,
         enrich_github=args.enrich, github_token=args.github_token,
         recent_bias=args.recent_bias, rotation_seed=args.rotation_seed, baseline=args.baseline,
+        w_judge=args.w_judge, w_objective=args.w_objective,
     )
     print(json.dumps(result, indent=2))
 

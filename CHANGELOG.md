@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Composite score: the pairwise judge (trajectory + decision process) and the objective anchor
+  (module recall, release/bump correctness) are now blended into a single per-task and mean
+  score in [0, 1], with tunable weights (`--w-judge` / `--w-objective`, default 0.6 / 0.4).
+
 ## [0.2.0] - 2026-07-03
 
 ### Added

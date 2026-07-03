@@ -86,6 +86,38 @@ def objective_score(plan, revealed) -> dict:
     return result
 
 
+_JUDGE_OUTCOME = {"A": 1.0, "tie": 0.5, "B": 0.0}  # challenger perspective vs. the baseline
+
+
+def objective_component(objective: dict) -> float:
+    """Collapse the objective anchor into a single value in [0, 1].
+
+    Module recall always counts. Release-prediction and (when present) bump-level correctness
+    count only when there was actually a release to get right, so a window with no release
+    isn't scored on a trivial "predicted nothing" match.
+    """
+    parts = [float(objective.get("module_recall", 0.0))]
+    if objective.get("release_signaled"):
+        parts.append(1.0 if objective.get("release_predicted") else 0.0)
+    if objective.get("bump_actual") is not None:
+        parts.append(1.0 if objective.get("bump_match") else 0.0)
+    return round(sum(parts) / len(parts), 3)
+
+
+def composite_score(winner: str, objective: dict, w_judge: float = 0.6,
+                    w_objective: float = 0.4) -> float:
+    """Blend the pairwise judge (the differentiator) with the objective anchor into [0, 1].
+
+    `winner` is the challenger-perspective outcome: "A" (win), "tie", or "B" (loss). The judge
+    already carries trajectory + decision-process; the objective anchor grounds it. Weights
+    need not sum to 1 — they're normalized.
+    """
+    judged = _JUDGE_OUTCOME.get(winner, 0.5)
+    anchored = objective_component(objective)
+    total = (w_judge + w_objective) or 1.0
+    return round((w_judge * judged + w_objective * anchored) / total, 3)
+
+
 def trajectory_overlap(plan, revealed) -> float:
     """Jaccard overlap of plan tokens vs. revealed-commit-subject tokens. Diagnostic only."""
     plan_toks = set()

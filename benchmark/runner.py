@@ -22,7 +22,7 @@ from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
 from benchmark.judge import pairwise_judge
 from benchmark.leakage import scrub_context
-from benchmark.score import objective_score, trajectory_overlap
+from benchmark.score import composite_score, objective_score, trajectory_overlap
 from benchmark.taskgen import generate_tasks
 
 
@@ -52,7 +52,8 @@ def _submission(out: dict) -> dict:
 def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                model=None, api_base=None, api_key=None, work_dir=None, seed=0,
                enrich_github=False, github_token=None,
-               recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE) -> dict:
+               recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
+               w_judge=0.6, w_objective=0.4) -> dict:
     solve = load_solve(agent_file)
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
@@ -86,22 +87,27 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                                     task["revealed"], llm, rng)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
+            obj = objective_score(challenger.get("plan"), task["revealed"])
             rows.append({
                 "task": k,
                 "freeze": task["freeze_commit"][:10],
                 "winner": who,
                 "overlap": trajectory_overlap(challenger.get("plan"), task["revealed"]),
-                "objective": objective_score(challenger.get("plan"), task["revealed"]),
+                "objective": obj,
+                "composite": composite_score(winner, obj, w_judge, w_objective),
             })
     finally:
         if not work_dir:
             shutil.rmtree(base, ignore_errors=True)
 
+    composites = [r["composite"] for r in rows]
     return {
         "tasks": len(tasks),
         "baseline": baseline,
         "tally": tally,
         "decisive_margin": tally["challenger"] - tally["baseline"],
+        "composite_mean": round(sum(composites) / len(composites), 3) if composites else 0.0,
+        "weights": {"judge": w_judge, "objective": w_objective},
         "rows": rows,
         "offline": llm.offline,
         "github_enriched": enrich_github,
