@@ -15,7 +15,11 @@ from __future__ import annotations
 import re
 
 _TOK = re.compile(r"[a-z0-9]+")
-_RELEASE = re.compile(r"\b(release|bump\s+version|changelog|v?\d+\.\d+\.\d+)\b", re.I)
+# Genuine release signal is either explicit release/version-cut wording, or a subject that
+# *is* a version tag (it leads with the version, optionally prefixed by "release"). A semver
+# that merely appears mid-subject — a dependency bump, a doc reference — is NOT a release.
+_RELEASE_KW = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
+_RELEASE_TAG_SUBJECT = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+\.\d+\b", re.I)
 
 
 def _tokens(text: str) -> set:
@@ -61,14 +65,25 @@ def module_recall(plan, revealed) -> dict:
     }
 
 
+def is_release_subject(text: str) -> bool:
+    """True only for a genuine release/version-cut subject.
+
+    Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
+    that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
+    in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
+    """
+    s = text or ""
+    return bool(_RELEASE_KW.search(s) or _RELEASE_TAG_SUBJECT.match(s))
+
+
 def release_signaled(revealed) -> bool:
-    return any(_RELEASE.search(r.get("subject", "") or "") for r in revealed or [])
+    return any(is_release_subject(r.get("subject", "") or "") for r in revealed or [])
 
 
 def release_predicted(plan) -> bool:
     for item in plan or []:
         if isinstance(item, dict):
-            if item.get("kind") == "release" or _RELEASE.search(item.get("title", "") or ""):
+            if item.get("kind") == "release" or is_release_subject(item.get("title", "") or ""):
                 return True
     return False
 
