@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import re
 
+from benchmark.kind_vocab import normalize_commit_prefix, normalize_plan_kind
+
 _TOK = re.compile(r"[a-z0-9]+")
 # Genuine release signal is either explicit release/version-cut wording, or a subject that
 # *is* a version tag (it leads with the version, optionally prefixed by "release"). A semver
@@ -153,39 +155,6 @@ def is_release_subject(text: str) -> bool:
 
 _CC_PREFIX = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
 
-# Conventional-commit type (and common synonyms) -> normalized maintainer kind.
-_COMMIT_KIND = {
-    "feat": "feat", "feature": "feat",
-    "fix": "fix", "bugfix": "fix", "bug": "fix",
-    "docs": "docs", "doc": "docs",
-    "refactor": "refactor",
-    "perf": "perf",
-    "test": "test", "tests": "test",
-    "build": "build", "deps": "chore", "dep": "chore",
-    "ci": "ci",
-    "chore": "chore",
-    "style": "style",
-    "revert": "revert",
-    "release": "release",
-}
-
-# Plan item `kind` vocabulary (see agent/planner.py) -> the same normalized kinds.
-_PLAN_KIND = {
-    "feature": "feat", "feat": "feat",
-    "bugfix": "fix", "fix": "fix", "bug": "fix",
-    "docs": "docs", "doc": "docs",
-    "refactor": "refactor",
-    "perf": "perf",
-    "test": "test",
-    "release": "release",
-    "dep": "chore", "deps": "chore", "chore": "chore",
-    "build": "build",
-    "ci": "ci",
-    "style": "style",
-    "revert": "revert",
-    # "triage" is a maintainer action, not a commit kind -> no mapping.
-}
-
 
 def commit_kind(subject: str):
     """Normalized maintainer kind for a revealed commit subject, or None.
@@ -197,7 +166,7 @@ def commit_kind(subject: str):
     subject = subject or ""
     m = _CC_PREFIX.match(subject)
     if m:
-        kind = _COMMIT_KIND.get(m.group(1).lower())
+        kind = normalize_commit_prefix(m.group(1))
         if kind:
             return kind
     if is_release_subject(subject):
@@ -207,7 +176,7 @@ def commit_kind(subject: str):
 
 def plan_kind(kind: str):
     """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind."""
-    return _PLAN_KIND.get((kind or "").strip().lower())
+    return normalize_plan_kind(kind)
 
 
 def kind_recall(plan, revealed) -> dict:
