@@ -6,7 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-03
+
 ### Added
+- M2: robust judge winner parsing — tolerant to truncated/verbose model output (found via
+  live verification against a real model).
+- M2: leakage — also scrub GitHub release `name` fields in the frozen context.
+- M2: maintainer-philosophy inference now uses few-shot examples for steadier, more
+  evidence-based output (#33, thanks @real-venus).
+- M2: selectable reference baselines for the pairwise judge — a deterministic `heuristic`
+  opponent (continue dominant themes + clear the backlog) alongside `empty`, via `--baseline`
+  (#34, thanks @real-venus).
 - Auto-label workflow: applies organizational **area/type** labels (agent/benchmark/leakage/
   tests/ci/docs; enhancement/bug/refactor/chore) from changed paths and the PR title. Never
   touches `mult:*` value multipliers — those stay maintainer-applied.
