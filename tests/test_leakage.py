@@ -20,6 +20,23 @@ def test_strip_forward_refs_masks_refs_links_and_shas():
     assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
 
 
+def test_strip_forward_refs_masks_release_and_milestone_links():
+    text = ("cut in https://github.com/o/r/releases/tag/v2.0.0 and tracked in "
+            "https://github.com/o/r/milestone/5 alongside a tags page "
+            "https://github.com/o/r/tags/v3.0.0")
+    out = strip_forward_refs(text)
+    # future version / milestone names must not survive the scrub
+    assert "v2.0.0" not in out and "milestone/5" not in out and "v3.0.0" not in out
+    assert out.count("<link>") == 3
+    assert "github.com" not in out
+
+
+def test_strip_forward_refs_preserves_stable_file_links():
+    # a file link on a branch is not forward signal and stays, so useful content survives
+    text = "see the guide at https://github.com/o/r/blob/main/docs/guide.md"
+    assert strip_forward_refs(text) == text
+
+
 def test_strip_forward_refs_preserves_plain_numbers():
     # 0-9a-f matches bare digits too (0-9 is a subset) -- a plain count/stat/year
     # is not a SHA and must survive the scrub.

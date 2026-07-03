@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- Leakage (`benchmark/leakage.py`): forward-reference scrubbing now also masks GitHub
+  **release, tag, and milestone** links (e.g. `.../releases/tag/v2.0.0`, `.../milestone/5`),
+  not just issue/PR/commit/compare links. Such a URL names a version or milestone that may not
+  exist yet at the freeze time, so leaving it in a README or commit subject leaked where the
+  project was heading. File links (`.../blob/...`, `.../tree/...`) are deliberately preserved.
+
 ## [0.3.0] - 2026-07-03
 
 ### Added

@@ -14,8 +14,16 @@ from __future__ import annotations
 
 import re
 
+# GitHub link kinds that carry forward signal: issue/PR/commit/compare (already), plus
+# release, tag, and milestone links — a URL like `.../releases/tag/v2.0.0` or `.../milestone/5`
+# names a version or milestone that may not exist yet at T. File links (`.../blob/...`,
+# `.../tree/...`) are deliberately left alone, since they point at content the agent may
+# legitimately need rather than at the future.
 _GH_LINK = re.compile(
-    r"https?://github\.com/[^\s)]+/(?:issues|pull|commit|compare)/[^\s)]+", re.I)
+    r"https?://github\.com/[^\s)]+/"
+    r"(?:issues|pull|commit|compare|releases|tags?|milestones?)/[^\s)]+",
+    re.I,
+)
 _ISSUE_REF = re.compile(r"#\d+")
 _SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
 
