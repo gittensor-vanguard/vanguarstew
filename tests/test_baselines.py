@@ -96,3 +96,19 @@ def test_replay_selects_baseline_and_tallies():
         assert res["tasks"] >= 1
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def test_infer_kind_does_not_treat_version_mentions_as_releases():
+    from benchmark.baselines import _infer_kind
+    # ordinary version mentions are NOT releases (the old " v1"/" v2" substring needles were)
+    assert _infer_kind("Bump dependency to v10.0") == "dep"
+    assert _infer_kind("Add v2 endpoint") == "feature"
+    assert _infer_kind("Fix crash parsing v1 payloads") == "bugfix"
+
+
+def test_infer_kind_still_detects_genuine_release_subjects():
+    from benchmark.baselines import _infer_kind
+    assert _infer_kind("v1.2.0") == "release"
+    assert _infer_kind("Release v2.0") == "release"
+    assert _infer_kind("Release 3.4.1: security fixes") == "release"
+    assert _infer_kind("Update changelog for the sprint") == "release"

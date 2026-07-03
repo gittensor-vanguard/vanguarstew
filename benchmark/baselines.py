@@ -16,6 +16,7 @@ name via :func:`get_baseline`; the runner exposes this as ``--baseline``.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 from agent.context import load_context
@@ -23,7 +24,7 @@ from agent.context import load_context
 # Map a free-text title/subject to one of the planner's kinds. Order matters: earlier
 # entries win, so release/dep are checked before the broader "feature" verbs.
 _KIND_KEYWORDS = (
-    ("release", ("release", "changelog", "tag ", " v1", " v2", "semver")),
+    ("release", ("release", "changelog", "semver")),
     ("dep", ("bump", "dependency", "dependencies", "deps", "upgrade", "dependabot")),
     ("docs", ("doc", "docs", "readme", "document", "guide", "example", "comment")),
     ("bugfix", ("fix", "bug", "patch", "regression", "hotfix", "error", "crash")),
@@ -31,12 +32,19 @@ _KIND_KEYWORDS = (
     ("feature", ("add", "feature", "support", "implement", "introduce", "enable", "new")),
     ("test", ("test", "coverage", "ci")),
 )
+# A genuine release-tag subject leads with a version (optionally prefixed by "release"),
+# e.g. "v1.2.0", "Release 2.0". Detecting this with an anchor avoids the old " v1"/" v2"
+# substring needles, which mislabeled ordinary version mentions ("bump to v10.0", "add v2
+# endpoint") as releases because a substring match ignores where the version appears.
+_RELEASE_TAG_SUBJECT = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
 # planner's allowed kinds; anything else collapses to "triage"
 _ALLOWED = {"feature", "bugfix", "refactor", "docs", "release", "dep", "triage"}
 
 
 def _infer_kind(text: str) -> str:
     low = (text or "").lower()
+    if _RELEASE_TAG_SUBJECT.match(text or ""):
+        return "release"
     for kind, needles in _KIND_KEYWORDS:
         if any(n in low for n in needles):
             return kind if kind in _ALLOWED else "triage"
