@@ -12,3 +12,4 @@ venv/
 .coverage
 .coverage.*
 htmlcov/
+.opencode/skills/vanguarstew-autonomous-fix/SKILL.md
