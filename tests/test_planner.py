@@ -115,3 +115,101 @@ def test_short_pr_title_matches_via_explicit_number():
     prs = [{"number": 5, "title": "export"}]
     item = {"title": "Review and merge PR #5", "kind": "triage"}
     assert _matched_pr(item, prs) == prs[0]
+
+
+# Regression tests for #83 — an explicit `#N` referencing a PR no longer in
+# the open queue must not fall back to a different open PR via token overlap.
+
+
+def test_stale_explicit_pr_reference_does_not_match():
+    """A plan item naming a closed/merged PR must not attach to a different open PR.
+
+    PR #12 ("Fix loader race") was merged before freeze time and is no longer in
+    `open_prs`; PR #9 ("Fix race in the worker pool") is open. The plan item
+    explicitly references #12 but the subject tokens also overlap with #9 —
+    without the suppression the item would be silently reattached to #9.
+    """
+    prs = [{"number": 9, "title": "Fix race in the worker pool"}]
+    item = {"title": "Land the fix from PR #12 once CI is green", "kind": "bugfix"}
+    assert _matched_pr(item, prs) is None
+
+
+def test_stale_reference_with_strong_token_overlap_does_not_match():
+    """Regression: a stale explicit `#N` must not be overridden by token overlap.
+
+    PR #12 ("Refactor auth module") is closed; PR #9 ("Refactor auth module
+    tokens") is open. The plan item explicitly references #12 but the item's
+    significant tokens overlap PR #9 on three words ("auth", "module",
+    "tokens"). Without the #83 fix, ``_matched_pr`` falls through to overlap
+    matching and returns PR #9 — silently reattaching the item to a different
+    open PR than the author named.
+    """
+    prs = [{"number": 9, "title": "Refactor auth module tokens"}]
+    item = {"title": "Land the auth module cleanup from PR #12",
+            "kind": "refactor", "rationale": "tokens rework"}
+    assert _matched_pr(item, prs) is None
+    # The corresponding reconcile path also leaves the item alone (no
+    # `restates_pr`) instead of down-weighting it to triage against PR #9.
+    out = reconcile_plan_with_queue([item], {"open_prs": prs}, 5)
+    refactor = [i for i in out if i.get("kind") == "refactor"]
+    assert len(refactor) == 1
+    assert "restates_pr" not in refactor[0]
+
+
+def test_stale_explicit_pr_reference_via_pull_request_form():
+    """Stale suppression must apply to all explicit forms (#N, PR #N, pull request N)."""
+    prs = [{"number": 9, "title": "Fix race in the worker pool"}]
+    assert _matched_pr({"title": "pull request 12 is blocked on review"}, prs) is None
+    assert _matched_pr({"title": "Merge PR #12", "rationale": "race fix"}, prs) is None
+
+
+def test_valid_explicit_pr_reference_still_wins():
+    """The fix must not regress the #82 guarantee: a matching #N still wins immediately."""
+    prs = [{"number": 12, "title": "Fix loader race"}]
+    item = {"title": "Land the fix from PR #12 once CI is green", "kind": "bugfix"}
+    assert _matched_pr(item, prs) == prs[0]
+
+
+def test_stale_reference_falls_through_to_other_queue_items():
+    """A stale explicit reference on one item does not poison the rest of the plan.
+
+    If one item names a closed PR (#12, not in queue) and another item legitimately
+    overlaps PR #9, the queue is still honored for the second item — no false
+    "ignored queue" fallback is prepended.
+    """
+    ctx = {"open_prs": [{"number": 9, "title": "Fix race in the worker pool"}]}
+    plan = [
+        {"title": "Land the fix from PR #12 once CI is green", "kind": "bugfix"},
+        {"title": "Address race in the worker pool by reverting the flag",
+         "kind": "bugfix", "rationale": "open PR #9 fix is incomplete"},
+    ]
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    # the second item legitimately matches PR #9 and is down-weighted to triage
+    pr9_items = [i for i in out if i.get("restates_pr") == 9]
+    assert len(pr9_items) == 1
+    assert pr9_items[0]["kind"] == "triage"
+    # the stale-reference item survives unchanged (no PR to attach to)
+    assert not any(i.get("restates_pr") == 12 for i in out)
+    # and no fallback review item is prepended (queue was addressed via #9)
+    assert not any(
+        i.get("theme") == "PR queue" and i.get("restates_pr") == 9
+        for i in out if i.get("title", "").startswith("Review pull request #9")
+    )
+
+
+def test_stale_reference_with_no_other_match_triggers_queue_fallback():
+    """If every plan item references stale PRs and nothing matches, the fallback fires.
+
+    The stale suppression only blocks per-item fallback matching; the plan-level
+    "ignored queue" fallback still operates on the reconciled result.
+    """
+    ctx = {"open_prs": [{"number": 9, "title": "Fix race in the worker pool"}]}
+    plan = [{"title": "Land PR #12 once CI is green", "kind": "bugfix"}]
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    # the stale item survives unchanged
+    stale = [i for i in out if i.get("kind") == "bugfix"]
+    assert len(stale) == 1
+    assert "restates_pr" not in stale[0]
+    # and the plan-level fallback still prepends a review item for #9
+    fallback = [i for i in out if i.get("restates_pr") == 9 and i.get("theme") == "PR queue"]
+    assert len(fallback) == 1

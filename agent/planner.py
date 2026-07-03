@@ -113,13 +113,16 @@ def _matched_pr(item: dict, prs: list):
 
     Matching order: explicit ``#N`` reference, then full-subject phrase, then
     significant-token overlap. One-word PR titles never match on overlap alone —
-    they are too ambiguous when the queue grows.
+    they are too ambiguous when the queue grows. An explicit ``#N`` that names a
+    PR no longer in the queue is treated as stale: the item is **not** matched
+    against a different open PR via fallback, since the author already committed
+    to a specific number.
     """
     by_number = {p.get("number"): p for p in prs if p.get("number") is not None}
 
     ref = _explicit_pr_number(item.get("title", ""), item.get("rationale", ""))
-    if ref is not None and ref in by_number:
-        return by_number[ref]
+    if ref is not None:
+        return by_number.get(ref)  # None when stale (suppresses fallback matching)
 
     for pr in prs:
         if _title_contains_pr_subject(item, pr):
