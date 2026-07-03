@@ -50,11 +50,18 @@ solve(
     "philosophy": {...},               # inferred repo direction / values
     "plan": [...],                     # next maintainer actions / PRs
     "action": "merge|...|plan|patch",
+    "version_bump": "major|minor|patch|null",  # predicted next release bump (scored)
     "patch": "<unified diff>|null",
     "rationale": "...",                # the reasoning the judge evaluates
     "logs": "...", "steps": 0, "cost": None, "success": True,
 }
 ```
+
+`version_bump` is an accepted challenger output and feeds the objective anchor: when the
+revealed window cuts a release, `benchmark/score.py` derives `bump_actual` from the semver
+delta between the last two versions seen in the revealed commit subjects, and reports
+`bump_match` (whether the agent's `version_bump` matched). Windows with fewer than two
+versions leave `bump_actual` null, so a no-release run isn't scored on a trivial match.
 
 ## Planned split (around M2)
 
