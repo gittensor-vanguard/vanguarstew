@@ -24,7 +24,7 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     for sha in commits[idx + 1: idx + 1 + n]:
         subject = _git(repo, "log", "-1", "--pretty=format:%s", sha).strip()
         files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False).split()
-        window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
+        window.append({"sha": sha[:10], "subject": subject, "files": files})
     return window
 
 
