@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format is based on
   score in [0, 1], with tunable weights (`--w-judge` / `--w-objective`, default 0.6 / 0.4).
 
 ### Fixed
+- Judge robustness: the offline pairwise stand-in ranked submissions by raw plan **length**,
+  so a plan padded with empty-of-substance items could beat a shorter, substantive one. It now
+  ranks by the count of items that actually name something (non-empty `title`/`theme`), so
+  length alone can't win over substance (#54).
 - Objective anchor: `release_signaled`/`release_predicted` no longer fire on an incidental
   version mentioned mid-subject (e.g. `chore(deps): bump lodash to v4.17.21`, `fix crash in
   v1.2.0 parser`). Release detection now requires explicit release wording or a version-tag

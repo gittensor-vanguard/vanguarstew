@@ -56,3 +56,25 @@ def test_decision_process_breaks_tie_when_plans_equal():
     with_process, without = _sub(1, True, True), _sub(1, False, False)
     assert pairwise_judge({}, with_process, without, [], llm) == "A"
     assert pairwise_judge({}, without, with_process, [], llm) == "B"
+
+
+def test_verbose_fluff_plan_does_not_beat_concise_substance():
+    # A long plan padded with empty-of-substance items must NOT beat a shorter plan
+    # of real maintainer actions. Guards the length-over-substance failure (#54);
+    # ranking on raw len(plan) would have let the fluff win 6 > 2.
+    llm = LLM(api_key="offline")
+    fluff = {
+        "philosophy": {},
+        "plan": [{"title": "   "} for _ in range(6)] + [{"note": "we will consider things"}],
+        "rationale": "we will think carefully and consider many aspects going forward",
+    }
+    substance = {
+        "philosophy": {"direction": "stabilize toward v1.0", "values": ["conservative"]},
+        "plan": [
+            {"title": "fix release false-positive", "kind": "bugfix"},
+            {"title": "cut patch release", "kind": "release"},
+        ],
+        "rationale": "cleared the release blocker before new work",
+    }
+    assert pairwise_judge({}, substance, fluff, [], llm) == "A"
+    assert pairwise_judge({}, fluff, substance, [], llm) == "B"

@@ -55,14 +55,31 @@ def _render(submission: dict) -> str:
     }, indent=1)[:4500]
 
 
+def _substantive_plan_size(plan) -> int:
+    """Count plan items that carry real content.
+
+    An item is substantive only if it names something — a non-empty ``title`` or
+    ``theme``. Blank/filler items do not count, so padding a plan with empty entries
+    cannot inflate its rank: length alone never beats substance.
+    """
+    count = 0
+    for item in plan or []:
+        if isinstance(item, dict):
+            if (item.get("title") or item.get("theme") or "").strip():
+                count += 1
+        elif str(item).strip():
+            count += 1
+    return count
+
+
 def _offline_rank(submission: dict) -> tuple:
-    """Deterministic stand-in ordering: reward a concrete plan plus real reasoning."""
+    """Deterministic stand-in ordering: reward a substantive plan plus real reasoning."""
     philosophy = submission.get("philosophy") or {}
     plan = submission.get("plan") or []
     rationale = (submission.get("rationale") or "").strip()
     philosophy_signal = 1 if isinstance(philosophy, dict) and any(
         philosophy.get(k) for k in ("summary", "direction", "values")) else 0
-    return (len(plan), philosophy_signal, 1 if rationale else 0)
+    return (_substantive_plan_size(plan), philosophy_signal, 1 if rationale else 0)
 
 
 def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng=None) -> str:
