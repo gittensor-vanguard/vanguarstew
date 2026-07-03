@@ -38,6 +38,13 @@ def test_normalize_action_passes_valid_and_falls_back_on_unknown():
     assert normalize_action(None) == "plan"
 
 
+def test_normalize_action_guards_non_string_values():
+    # The model may emit a non-string action (number, bool, list, object); these are not
+    # valid actions and must fall back to "plan" rather than crashing on .strip().
+    for bad in (123, 4.5, True, ["merge"], {"action": "merge"}, object()):
+        assert normalize_action(bad) == "plan"
+
+
 def test_decide_normalizes_llm_action_and_always_returns_valid():
     ctx = {"recent_commits": [{"subject": "init"}]}
     out = decide(ctx, {}, "should we take PR #1?", _FakeLLM({"action": "approve"}))
@@ -46,6 +53,10 @@ def test_decide_normalizes_llm_action_and_always_returns_valid():
 
     junk = decide(ctx, {}, "decide", _FakeLLM({"action": "yolo"}))
     assert junk["action"] == "plan"
+
+    # A non-string action in an otherwise-valid dict must not crash decide().
+    non_string = decide(ctx, {}, "decide", _FakeLLM({"action": 123}))
+    assert non_string["action"] == "plan"
 
     # A non-dict LLM response degrades to the offline stub, which is a valid "plan".
     degraded = decide(ctx, {}, "decide", _FakeLLM("not-json"))

@@ -36,8 +36,14 @@ _ACTION_SYNONYMS = {
 
 
 def normalize_action(action) -> str:
-    """Map a decided action onto VALID_ACTIONS, resolving synonyms; fall back to ``plan``."""
-    a = (action or "").strip().lower()
+    """Map a decided action onto VALID_ACTIONS, resolving synonyms; fall back to ``plan``.
+
+    A non-string value (a number, list, or object the model might emit for ``action``) is
+    not a valid action and falls back to ``plan`` rather than raising on ``.strip()``.
+    """
+    if not isinstance(action, str):
+        return "plan"
+    a = action.strip().lower()
     if not a:
         return "plan"
     a = _ACTION_SYNONYMS.get(a, a)
