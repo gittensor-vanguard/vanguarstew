@@ -101,12 +101,17 @@ def base_from_releases(releases) -> str | None:
     return best_tag
 
 
-def _plan_tokens(plan) -> set:
+def _plan_content_tokens(plan) -> set:
+    """Tokens from plan title/theme used for module and backlog recall.
+
+    Deliberately excludes ``kind``: commit-kind anticipation is scored separately via
+    ``kind_recall``. Including ``kind`` here let a plan item tagged ``docs`` or ``ci``
+    earn full module-recall credit for those top-level modules without ever naming them.
+    """
     toks = set()
     for item in plan or []:
         if isinstance(item, dict):
-            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", "")) \
-                | _tokens(item.get("kind", ""))
+            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", ""))
         else:
             toks |= _tokens(str(item))
     return toks
@@ -131,7 +136,7 @@ def module_recall(plan, revealed) -> dict:
     actual = changed_modules(revealed)
     if not actual:
         return {"module_recall": 0.0, "actual_modules": [], "matched_modules": []}
-    ptoks = _plan_tokens(plan)
+    ptoks = _plan_content_tokens(plan)
     matched = sorted(m for m in actual if _tokens(m) & ptoks)
     return {
         "module_recall": round(len(matched) / len(actual), 3),
@@ -270,7 +275,7 @@ def backlog_recall(plan, revealed, open_issues=None) -> dict:
             "addressed_issue_numbers": [],
             "matched_issue_numbers": [],
         }
-    plan_toks = _plan_tokens(plan)
+    plan_toks = _plan_content_tokens(plan)
     matched = []
     for issue in addressed:
         if _meaningful_overlap(_tokens(issue.get("title", "")), plan_toks):

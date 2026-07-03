@@ -45,6 +45,49 @@ def test_module_recall_matches_by_name():
     assert res["module_recall"] == round(2 / 4, 3)  # core, changelog not anticipated
 
 
+def test_module_recall_ignores_kind_tag_collisions():
+    """Kind tags must not farm module recall — that is ``kind_recall``'s job (#141)."""
+    revealed = [
+        {"subject": "chore: tidy", "files": ["docs/guide.md", "ci/workflow.yml"]},
+    ]
+    plan = [
+        {"title": "ship an unrelated feature", "kind": "docs"},
+        {"title": "some other thing", "kind": "ci"},
+    ]
+    res = module_recall(plan, revealed)
+    assert res["module_recall"] == 0.0
+    assert res["matched_modules"] == []
+
+
+def test_module_recall_still_credits_named_modules():
+    revealed = [
+        {"subject": "chore: tidy", "files": ["docs/guide.md", "ci/workflow.yml"]},
+    ]
+    plan = [
+        {"title": "refresh the docs guide", "kind": "docs"},
+        {"title": "harden ci workflow", "theme": "ci", "kind": "ci"},
+    ]
+    res = module_recall(plan, revealed)
+    assert set(res["matched_modules"]) == {"docs", "ci"}
+    assert res["module_recall"] == 1.0
+
+
+def test_kind_recall_unaffected_by_module_recall_kind_exclusion():
+    """Commit-kind scoring still reads plan ``kind`` directly."""
+    revealed = [
+        {"subject": "docs: refresh guide", "files": ["docs/guide.md"]},
+        {"subject": "ci: tune workflow", "files": ["ci/workflow.yml"]},
+    ]
+    plan = [
+        {"title": "ship an unrelated feature", "kind": "docs"},
+        {"title": "some other thing", "kind": "ci"},
+    ]
+    assert module_recall(plan, revealed)["module_recall"] == 0.0
+    res = kind_recall(plan, revealed)
+    assert set(res["matched_kinds"]) == {"ci", "docs"}
+    assert res["kind_recall"] == 1.0
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True
