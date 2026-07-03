@@ -55,21 +55,44 @@ def _render(submission: dict) -> str:
     }, indent=1)[:4500]
 
 
-def _substantive_plan_size(plan) -> int:
-    """Count plan items that carry real content.
+_GENERIC_TITLES = frozenset({
+    "action", "item", "task", "work", "todo", "tbd", "tba", "misc", "other", "general",
+    "update", "improve", "fix", "change", "next", "step", "plan",
+})
+_FILLER_TOK = re.compile(r"[a-z0-9]+")
 
-    An item is substantive only if it names something — a non-empty ``title`` or
-    ``theme``. Blank/filler items do not count, so padding a plan with empty entries
-    cannot inflate its rank: length alone never beats substance.
-    """
-    count = 0
-    for item in plan or []:
-        if isinstance(item, dict):
-            if (item.get("title") or item.get("theme") or "").strip():
-                count += 1
-        elif str(item).strip():
-            count += 1
-    return count
+
+def _title_tokens(text: str) -> set:
+    return set(_FILLER_TOK.findall((text or "").lower()))
+
+
+def _is_generic_filler(title: str) -> bool:
+    toks = _title_tokens(title)
+    return not toks or toks <= _GENERIC_TITLES
+
+
+def _item_substance(item) -> int:
+    """Score one plan item for offline ranking — rewards concrete fields, not padding."""
+    if not isinstance(item, dict):
+        return 1 if str(item).strip() else 0
+    title = (item.get("title") or "").strip()
+    theme = (item.get("theme") or "").strip()
+    has_specific = (title and not _is_generic_filler(title)) or (theme and not _is_generic_filler(theme))
+    if not has_specific:
+        return 0
+    score = 1
+    if (item.get("kind") or "").strip():
+        score += 1
+    if (item.get("rationale") or "").strip():
+        score += 1
+    if item.get("files"):
+        score += 1
+    return score
+
+
+def _substantive_plan_size(plan) -> int:
+    """Sum per-item substance scores so filler titles cannot inflate rank."""
+    return sum(_item_substance(item) for item in (plan or []))
 
 
 def _offline_rank(submission: dict) -> tuple:

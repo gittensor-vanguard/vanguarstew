@@ -58,6 +58,35 @@ def test_decision_process_breaks_tie_when_plans_equal():
     assert pairwise_judge({}, without, with_process, [], llm) == "B"
 
 
+def test_generic_filler_titles_do_not_beat_concrete_plan():
+    # Six items with generic one-word titles plus rationale must lose to two concrete actions.
+    llm = LLM(api_key="offline")
+    filler = {
+        "philosophy": {"summary": "ship fast"},
+        "plan": [
+            {"title": "Action", "kind": "feature", "rationale": "because reasons"},
+            {"title": "Update", "kind": "feature", "rationale": "keep moving"},
+            {"title": "Fix", "kind": "bugfix", "rationale": "bugs exist"},
+            {"title": "Improve", "kind": "refactor", "rationale": "quality"},
+            {"title": "Work", "kind": "misc", "rationale": "ongoing"},
+            {"title": "Next step", "kind": "misc", "rationale": "planning"},
+        ],
+        "rationale": "we have a long plan with many items",
+    }
+    concrete = {
+        "philosophy": {"direction": "stabilize scoring", "values": ["correctness"]},
+        "plan": [
+            {"title": "fix release false-positive", "kind": "bugfix",
+             "rationale": "release detector misfires on dep bumps"},
+            {"title": "cut patch release", "kind": "release",
+             "rationale": "users blocked on the false positive"},
+        ],
+        "rationale": "cleared the release blocker before new work",
+    }
+    assert pairwise_judge({}, concrete, filler, [], llm) == "A"
+    assert pairwise_judge({}, filler, concrete, [], llm) == "B"
+
+
 def test_verbose_fluff_plan_does_not_beat_concise_substance():
     # A long plan padded with empty-of-substance items must NOT beat a shorter plan
     # of real maintainer actions. Guards the length-over-substance failure (#54);
