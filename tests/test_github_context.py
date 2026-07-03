@@ -33,10 +33,10 @@ def test_open_at_T_filtering(monkeypatch):
     ]
 
     def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return []
         if "/issues" in url:
             return issues
-        if "/labels" in url:
-            return [{"name": "bug"}, {"name": "enhancement"}]
         if "/milestones" in url:
             return [
                 {"title": "v1", "created_at": "2023-01-01T00:00:00Z", "due_on": None, "state": "open"},
@@ -54,9 +54,13 @@ def test_open_at_T_filtering(monkeypatch):
 
     assert {i["number"] for i in ctx["open_issues"]} == {1, 4}
     assert [p["number"] for p in ctx["open_prs"]] == [5]
-    assert [m["title"] for m in ctx["milestones"]] == ["v1"]
+    assert ctx["open_issues"][0]["labels"] == []
+    assert ctx["open_issues"][0]["labels_as_of_t"] is False
+    assert ctx["labels"] == []
+    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
     assert [r["tag"] for r in ctx["releases"]] == ["v0.1"]
     assert ctx["_source"] == "github-api"
+    assert ctx["_github_field_policy"]["labels"] == "drop"
 
 
 def test_milestone_state_is_as_of_T():
@@ -64,7 +68,8 @@ def test_milestone_state_is_as_of_T():
     # Created before T, closed AFTER T -> was open at T (must NOT leak "closed").
     closed_after = {"title": "m", "created_at": "2023-01-01T00:00:00Z",
                     "closed_at": "2023-08-01T00:00:00Z", "state": "closed", "due_on": None}
-    assert gc._milestone_at(closed_after, T)["state"] == "open"
+    out = gc._milestone_at(closed_after, T)
+    assert out == {"title": "m", "state": "open"}
     # Created and closed before T -> closed at T.
     closed_before = {"title": "m", "created_at": "2023-01-01T00:00:00Z",
                      "closed_at": "2023-03-01T00:00:00Z", "state": "closed"}
@@ -92,7 +97,7 @@ def test_fetch_context_milestone_state_not_leaked(monkeypatch):
 
     monkeypatch.setattr(gc, "_get", fake_get)
     ctx = gc.fetch_context_at("foo", "bar", T, token=None)
-    assert ctx["milestones"] == [{"title": "v1", "due_on": None, "state": "open"}]
+    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
 
 
 def test_labels_at_reconstructs_membership_as_of_T():
@@ -101,29 +106,27 @@ def test_labels_at_reconstructs_membership_as_of_T():
         {"event": "labeled", "created_at": "2023-01-01T00:00:00Z", "label": {"name": "bug"}},
         {"event": "labeled", "created_at": "2023-02-01T00:00:00Z", "label": {"name": "wip"}},
         {"event": "unlabeled", "created_at": "2023-03-01T00:00:00Z", "label": {"name": "wip"}},
-        {"event": "commented", "created_at": "2023-02-15T00:00:00Z"},           # non-label: ignored
-        {"event": "labeled", "created_at": "2023-08-01T00:00:00Z", "label": {"name": "future"}},  # after T
-        {"event": "unlabeled", "created_at": "2023-09-01T00:00:00Z", "label": {"name": "bug"}},    # after T
+        {"event": "commented", "created_at": "2023-02-15T00:00:00Z"},
+        {"event": "labeled", "created_at": "2023-08-01T00:00:00Z", "label": {"name": "future"}},
+        {"event": "unlabeled", "created_at": "2023-09-01T00:00:00Z", "label": {"name": "bug"}},
     ]
-    # As of T: +bug (Jan), +wip (Feb) then -wip (Mar) => {bug}. Post-T add/remove don't count.
     assert gc._labels_at(events, T) == ["bug"]
 
 
 def test_labels_at_replays_events_in_chronological_order():
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
-    events = [  # deliberately out of order
+    events = [
         {"event": "unlabeled", "created_at": "2023-03-01T00:00:00Z", "label": {"name": "x"}},
         {"event": "labeled", "created_at": "2023-01-01T00:00:00Z", "label": {"name": "x"}},
         {"event": "labeled", "created_at": "2023-02-01T00:00:00Z", "label": {"name": "y"}},
     ]
-    assert gc._labels_at(events, T) == ["y"]  # +x, +y, -x
+    assert gc._labels_at(events, T) == ["y"]
 
 
 def test_labels_at_none_when_nothing_reconstructable():
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     assert gc._labels_at([], T) is None
     assert gc._labels_at([{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}], T) is None
-    # Only post-T label events => nothing knowable at T.
     assert gc._labels_at(
         [{"event": "labeled", "created_at": "2023-09-01T00:00:00Z", "label": {"name": "z"}}], T
     ) is None
@@ -131,8 +134,6 @@ def test_labels_at_none_when_nothing_reconstructable():
 
 def test_open_issue_labels_reconstructed_as_of_T(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
-    # Live label list says "shipped" — that must NOT leak; only the as-of-T set from
-    # the timeline (bug, added before T) should surface.
     issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
                "closed_at": None, "labels": [{"name": "shipped"}]}]
     timeline = [
@@ -168,7 +169,7 @@ def test_open_issue_labels_omitted_when_timeline_unavailable(monkeypatch):
 
     monkeypatch.setattr(gc, "_get", fake_get)
     iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
-    assert iss["labels"] == []            # fail-closed: omit rather than leak present-day
+    assert iss["labels"] == []
     assert iss["labels_as_of_t"] is False
 
 
@@ -224,3 +225,69 @@ def test_truncation_flag_when_page_cap_hit(monkeypatch):
     monkeypatch.setattr(gc, "_get", _pager({1: full, 2: full, 3: full}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_issue_pages=2)
     assert ctx["_issues_truncated"] is True
+
+
+def test_mutable_live_fields_are_dropped_instead_of_snapshotting(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{
+        "number": 1,
+        "title": "still open",
+        "created_at": "2023-01-01T00:00:00Z",
+        "closed_at": None,
+        "labels": [{"name": "post-T-label"}],
+    }]
+    milestones = [{
+        "title": "v1",
+        "created_at": "2023-01-01T00:00:00Z",
+        "closed_at": None,
+        "due_on": "2023-12-31T00:00:00Z",
+        "state": "open",
+    }]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return []
+        if "/issues" in url:
+            return issues
+        if "/milestones" in url:
+            return milestones
+        if "/releases" in url:
+            return []
+        raise AssertionError(f"unexpected URL {url}")
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert ctx["open_issues"] == [{
+        "number": 1,
+        "title": "still open",
+        "labels": [],
+        "labels_as_of_t": False,
+        "created_at": "2023-01-01T00:00:00Z",
+    }]
+    assert ctx["labels"] == []
+    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
+    assert ctx["_github_field_policy"]["open_issues[].labels"] == "reconstruct"
+    assert ctx["_github_field_policy"]["milestones[].due_on"] == "drop"
+
+
+def test_enrich_context_preserves_metadata_from_fetch(monkeypatch):
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    monkeypatch.setattr(gc, "fetch_context_at", lambda *a, **k: {
+        "repo": "foo/bar",
+        "open_issues": [],
+        "open_prs": [],
+        "labels": [],
+        "milestones": [],
+        "releases": [],
+        "_source": "github-api",
+        "_knowable_until": "2023-06-01T00:00:00+00:00",
+        "_issues_truncated": True,
+        "_github_field_policy": {"labels": "drop"},
+    })
+    base = {"frozen_at": {"date": "2023-06-01T00:00:00Z"}}
+    out = gc.enrich_context(base, "/some/repo")
+    assert out["_github_enriched"] is True
+    assert out["_source"] == "github-api"
+    assert out["_knowable_until"] == "2023-06-01T00:00:00+00:00"
+    assert out["_issues_truncated"] is True
+    assert out["_github_field_policy"] == {"labels": "drop"}

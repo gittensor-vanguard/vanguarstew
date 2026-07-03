@@ -1,9 +1,15 @@
 """Enrich a frozen snapshot with GitHub state that was knowable at time T.
 
 `freeze.py` gives us git-only context (commits, tags, README). This adds the maintainer's
-real working surface — open issues, open PRs, labels, milestones, releases — reconstructed
-*as of T* so nothing from the future leaks: an item counts as "open at T" only if it was
-created on or before T and was not already closed by T.
+real working surface — open issues, open PRs, milestones, releases — reconstructed *as of T*
+so nothing from the future leaks: an item counts as "open at T" only if it was created on or
+before T and was not already closed by T.
+
+Not every REST field is safely reconstructible from the current snapshot. We keep only fields
+that are either useful enough to retain (`title`, `created_at`, release publication time) or
+that we can derive as-of-T (`open at T`, milestone `state`, issue/PR label membership via
+timeline events). Mutable live-only snapshots such as repository label lists and milestone due
+dates are intentionally dropped from frozen contexts.
 
 Network access is optional. Any failure (offline, rate limit, private repo) is caught and
 the git-only context is returned unchanged, so the benchmark still runs without GitHub.
@@ -18,6 +24,17 @@ from datetime import datetime
 
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
+FIELD_POLICY = {
+    "open_issues[].labels": "reconstruct",
+    "open_prs[].labels": "reconstruct",
+    "labels": "drop",
+    "milestones[].due_on": "drop",
+    "open_issues/open_prs membership": "reconstruct",
+    "milestones[].state": "reconstruct",
+    "open_issues[].title": "keep",
+    "open_prs[].title": "keep",
+    "releases": "keep",
+}
 
 
 def parse_owner_repo(remote_url: str):
@@ -43,7 +60,7 @@ def _parse_dt(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _milestone_at(milestone: dict, until: datetime):
+def _milestone_at(milestone: dict, until: datetime) -> dict | None:
     """A milestone as knowable at `until`, or None if it didn't exist yet.
 
     Returns None when the milestone was created after T. Otherwise `state` is derived from
@@ -55,7 +72,7 @@ def _milestone_at(milestone: dict, until: datetime):
         return None
     closed = _parse_dt(milestone.get("closed_at"))
     state = "closed" if closed is not None and closed <= until else "open"
-    return {"title": milestone.get("title"), "due_on": milestone.get("due_on"), "state": state}
+    return {"title": milestone.get("title"), "state": state}
 
 
 def _get(url: str, token, timeout: int = 20):
@@ -177,10 +194,9 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
     token = token or os.environ.get("GITHUB_TOKEN") or None
     base = f"{API}/repos/{owner}/{repo}"
 
-    open_issues, open_prs, truncated = _collect_open_at(base, until, token, timeout,
-                                                        max_issue_pages)
-
-    labels = [lbl.get("name") for lbl in _get(f"{base}/labels?per_page={per_page}", token, timeout)]
+    open_issues, open_prs, truncated = _collect_open_at(
+        base, until, token, timeout, max_issue_pages
+    )
 
     milestones = []
     for m in _get(f"{base}/milestones?state=all&per_page={per_page}", token, timeout):
@@ -199,12 +215,13 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "repo": f"{owner}/{repo}",
         "open_issues": open_issues,
         "open_prs": open_prs,
-        "labels": labels,
+        "labels": [],
         "milestones": milestones,
         "releases": releases,
         "_source": "github-api",
         "_knowable_until": until.isoformat(),
         "_issues_truncated": truncated,
+        "_github_field_policy": dict(FIELD_POLICY),
     }
 
 
@@ -223,7 +240,10 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
         gh = fetch_context_at(owner, repo, until, token=token)
         merged = dict(context)
         for key in ("repo", "open_issues", "open_prs", "labels", "milestones", "releases"):
-            if gh.get(key):
+            if key in gh:
+                merged[key] = gh[key]
+        for key in ("_source", "_knowable_until", "_issues_truncated", "_github_field_policy"):
+            if key in gh:
                 merged[key] = gh[key]
         merged["_github_enriched"] = True
         return merged
