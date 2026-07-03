@@ -205,6 +205,9 @@ def test_commit_kind_conventional_prefixes():
     assert commit_kind("feat: add plugin loader") == "feat"
     assert commit_kind("Fix(core): guard nil deref") == "fix"
     assert commit_kind("docs!: rewrite readme") == "docs"
+    assert commit_kind("feat!: remove legacy parser API") == "feat"
+    assert commit_kind("fix(scope)!: correct null handling") == "fix"
+    assert commit_kind("refactor!: reshape public exports") == "refactor"
     assert commit_kind("refactor(engine): split module") == "refactor"
     assert commit_kind("chore(deps): bump lib") == "chore"
     assert commit_kind("Release v1.2.0") == "release"  # fallback, no prefix
