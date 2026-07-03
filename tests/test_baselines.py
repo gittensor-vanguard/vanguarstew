@@ -19,6 +19,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.baselines import (  # noqa: E402
     BASELINES,
+    _infer_kind,
     empty_solve,
     get_baseline,
     heuristic_solve,
@@ -73,6 +74,16 @@ def test_heuristic_baseline_derives_a_real_plan():
 def test_heuristic_is_stronger_than_empty_offline():
     # Given the same context, the heuristic proposes more than the empty floor.
     assert len(heuristic_solve(context=CTX, n=5)["plan"]) > len(empty_solve(context=CTX)["plan"])
+
+
+def test_infer_kind_uses_shared_release_predicate():
+    assert _infer_kind("Release v1.2.0") == "release"
+    assert _infer_kind("bump version to 2.0.0") == "release"
+    # Must not mislabel incidental or in-sentence versions (same bar as score.py).
+    assert _infer_kind("chore(deps): bump lodash to v4.17.21") == "dep"
+    assert _infer_kind("Bump dependency to v10.0") == "dep"
+    assert _infer_kind("add v2 dashboard") == "feature"
+    assert _infer_kind("fix crash in v1.2.0 parser") == "bugfix"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")

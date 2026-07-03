@@ -43,7 +43,11 @@ All notable changes to this project are documented here. The format is based on
   is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
-- Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
+- Heuristic baseline: release classification now calls `score.is_release_subject` instead of
+  duplicating substring needles (`" v1"`, `" v2"`, …), keeping the opponent aligned with the
+  objective anchor and avoiding false release signals on version mentions like `v10.0` or
+  `add v2` (#129).
+
   `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
   `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score
   — filler/blank items count for nothing, and each structured action field (`kind`, `files`,
