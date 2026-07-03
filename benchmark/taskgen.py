@@ -23,7 +23,15 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     window = []
     for sha in commits[idx + 1: idx + 1 + n]:
         subject = _git(repo, "log", "-1", "--pretty=format:%s", sha).strip()
-        files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False).split()
+        # `--first-parent` keeps merge commits in the timeline, but a plain
+        # `git show` of a merge yields a *combined* diff that lists no files for
+        # an ordinary clean merge — silently emptying the structural ground truth
+        # that objective scoring keys off. Take the first-parent diff (`-m
+        # --first-parent`) so merge commits report the files they actually
+        # brought in, and split on lines so paths containing spaces stay intact.
+        raw = _git(repo, "show", "-m", "--first-parent", "--name-only",
+                   "--pretty=format:", sha, check=False)
+        files = [line for line in raw.splitlines() if line.strip()]
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 
