@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format is based on
   maintenance tooling **without an API key**. Dev/ops only — it is deliberately kept out of the
   scored `agent.solve` path, which still uses only validator-supplied inference per the
   managed-inference contract (`agent/llm.py`).
+- Objective scoring: **commit-kind recall** (`benchmark/score.py`) — `objective_score` now
+  reports `kind_recall`, `actual_kinds`, and `matched_kinds`, grading whether a plan
+  anticipated the *kind* of maintainer work (feat/fix/docs/refactor/…/release) that the
+  revealed window actually did, parsed deterministically from Conventional-Commit subjects
+  (#41).
 - Maintainer-assist mode (`agent/review.py`, `scripts/review_pr.py`): the same agent the
   benchmark scores, applied to a **live** PR — it reads the PR and outputs a maintainer review
   (recommended action, best-fit `mult:*` value tier, scope/tests checks, concerns, advice).
@@ -25,6 +30,12 @@ All notable changes to this project are documented here. The format is based on
 - Composite score: the pairwise judge (trajectory + decision process) and the objective anchor
   (module recall, release/bump correctness) are now blended into a single per-task and mean
   score in [0, 1], with tunable weights (`--w-judge` / `--w-objective`, default 0.6 / 0.4).
+- Objective anchor: semver-aware release-bump scoring — when a genuine release appears in the
+  revealed window, `objective_score` derives the actual bump level (major/minor/patch) from
+  the semver delta between the frozen base version and the released version, and reports
+  `bump_actual` / `bump_match` against the agent's predicted `version_bump` (tags with or
+  without a leading `v`, and missing-patch/pre-release forms, all parse). The released version
+  is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
 - Judge robustness: the offline pairwise stand-in ranked submissions by raw plan **length**,

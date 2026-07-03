@@ -8,10 +8,16 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.score import (  # noqa: E402
+    base_from_releases,
+    bump_level,
     changed_modules,
+    commit_kind,
     is_release_subject,
+    kind_recall,
     module_recall,
     objective_score,
+    parse_semver,
+    plan_kind,
     release_predicted,
     release_signaled,
 )
@@ -100,3 +106,152 @@ def test_objective_score_no_false_release_match_on_dep_bumps():
     assert score["release_signaled"] is False
     assert score["release_predicted"] is False
     assert score["release_match"] is True   # both correctly False -> agree
+
+
+def test_parse_semver_with_and_without_leading_v():
+    assert parse_semver("v1.2.0") == (1, 2, 0)
+    assert parse_semver("1.2.0") == (1, 2, 0)
+    assert parse_semver("Release v2.0.0") == (2, 0, 0)  # embedded in a subject line
+    assert parse_semver("1.4") == (1, 4, 0)             # missing patch -> 0
+    assert parse_semver("v3.1.4-rc2") == (3, 1, 4)      # pre-release suffix ignored
+    assert parse_semver("no version here") is None
+
+
+def test_bump_level_major_minor_patch():
+    assert bump_level((1, 2, 3), (2, 0, 0)) == "major"
+    assert bump_level((1, 2, 3), (1, 3, 0)) == "minor"
+    assert bump_level((1, 2, 3), (1, 2, 4)) == "patch"
+    assert bump_level((1, 2, 3), (1, 2, 3)) is None     # no change
+    assert bump_level((1, 2, 3), (1, 1, 0)) is None     # not a forward bump
+    assert bump_level(None, (1, 0, 0)) is None           # unknown base
+
+
+def _revealed_release(tag):
+    return [
+        {"subject": "refactor core engine", "files": ["core/engine.py"]},
+        {"subject": f"Release {tag}", "files": ["CHANGELOG.md"]},
+    ]
+
+
+def test_objective_score_bump_major():
+    score = objective_score(
+        [{"title": "cut release", "kind": "release"}],
+        _revealed_release("v2.0.0"),
+        version_bump="major", base_version="v1.4.2",
+    )
+    assert score["bump_actual"] == "major"
+    assert score["bump_match"] is True
+
+
+def test_objective_score_bump_minor_handles_no_leading_v():
+    # base tag without a leading v, revealed tag with one — both must parse.
+    score = objective_score(
+        [{"title": "cut release", "kind": "release"}],
+        _revealed_release("v1.5.0"),
+        version_bump="minor", base_version="1.4.2",
+    )
+    assert score["bump_actual"] == "minor"
+    assert score["bump_match"] is True
+
+
+def test_objective_score_bump_patch_and_mismatch():
+    revealed = _revealed_release("v1.4.3")
+    score = objective_score(
+        [{"title": "cut release", "kind": "release"}], revealed,
+        version_bump="minor", base_version="v1.4.2",
+    )
+    assert score["bump_actual"] == "patch"
+    assert score["bump_match"] is False       # agent said minor, actual was patch
+    # normalization: the agent predicting the right level (any case) matches.
+    assert objective_score([], revealed, version_bump="PATCH",
+                           base_version="v1.4.2")["bump_match"] is True
+
+
+def test_objective_score_bump_none_when_no_release_or_no_base():
+    # No release in the window -> no actual bump; predicting none is a match.
+    no_release = [{"subject": "refactor core engine", "files": ["core/engine.py"]}]
+    assert objective_score([], no_release, base_version="v1.4.2")["bump_actual"] is None
+    assert objective_score([], no_release, base_version="v1.4.2")["bump_match"] is True
+    # Release present but base unknown -> can't classify the delta.
+    assert objective_score([], _revealed_release("v2.0.0"),
+                           version_bump="major")["bump_actual"] is None
+
+
+def test_base_from_releases_picks_highest_tag():
+    releases = [{"tag": "v1.2.0"}, {"tag": "v1.10.0"}, {"tag": "v1.9.3"}]
+    assert base_from_releases(releases) == "v1.10.0"   # semver, not lexical, ordering
+    assert base_from_releases([]) is None
+
+
+def test_bump_actual_ignores_version_in_non_release_commit():
+    # Reviewer case: a non-release commit that merely names a version (e.g. a dep bump)
+    # must not produce a spurious bump_actual, even when its version is the highest around.
+    revealed = [
+        {"subject": "bump dep to v9.9.9", "files": ["requirements.txt"]},
+        {"subject": "Release v1.3.0", "files": ["CHANGELOG.md"]},
+    ]
+    score = objective_score([{"title": "cut release", "kind": "release"}], revealed,
+                            version_bump="minor", base_version="v1.2.0")
+    # Only the genuine release (v1.3.0) counts, so base v1.2.0 -> v1.3.0 is a minor bump —
+    # NOT a major driven by the incidental v9.9.9.
+    assert score["bump_actual"] == "minor"
+    assert score["bump_match"] is True
+    # And with only the non-release version present, there is no actual bump at all.
+    dep_only = [{"subject": "bump dep to v9.9.9", "files": ["requirements.txt"]}]
+    assert objective_score([], dep_only, base_version="v1.2.0")["bump_actual"] is None
+
+
+def test_commit_kind_conventional_prefixes():
+    assert commit_kind("feat: add plugin loader") == "feat"
+    assert commit_kind("Fix(core): guard nil deref") == "fix"
+    assert commit_kind("docs!: rewrite readme") == "docs"
+    assert commit_kind("refactor(engine): split module") == "refactor"
+    assert commit_kind("chore(deps): bump lib") == "chore"
+    assert commit_kind("Release v1.2.0") == "release"  # fallback, no prefix
+    assert commit_kind("merge branch 'main'") is None
+    assert commit_kind("add plugin loader") is None  # no prefix, not a release
+    assert commit_kind("") is None
+
+
+def test_plan_kind_maps_to_commit_vocabulary():
+    assert plan_kind("feature") == "feat"
+    assert plan_kind("bugfix") == "fix"
+    assert plan_kind("Docs") == "docs"
+    assert plan_kind("dep") == "chore"
+    assert plan_kind("release") == "release"
+    assert plan_kind("triage") is None  # not a commit kind
+    assert plan_kind("") is None
+
+
+def test_kind_recall_matches_anticipated_kinds():
+    revealed = [
+        {"subject": "feat: streaming api", "files": ["core/api.py"]},
+        {"subject": "fix: race in loader", "files": ["core/loader.py"]},
+        {"subject": "docs: update readme", "files": ["README.md"]},
+    ]
+    plan = [
+        {"title": "ship streaming", "kind": "feature"},  # -> feat
+        {"title": "harden loader", "kind": "bugfix"},    # -> fix
+        {"title": "triage backlog", "kind": "triage"},   # -> no kind
+    ]
+    res = kind_recall(plan, revealed)
+    assert res["actual_kinds"] == ["docs", "feat", "fix"]
+    assert res["matched_kinds"] == ["feat", "fix"]
+    assert res["kind_recall"] == round(2 / 3, 3)  # docs not anticipated
+
+
+def test_kind_recall_empty_inputs():
+    assert kind_recall([], []) == {"kind_recall": 0.0, "actual_kinds": [], "matched_kinds": []}
+    # revealed has no recognizable kinds -> zero, empty lists
+    assert kind_recall([{"kind": "feature"}], [{"subject": "misc tweak"}])["actual_kinds"] == []
+
+
+def test_objective_score_includes_kind_recall():
+    plan = [{"title": "cut release", "kind": "release", "theme": "core"}]
+    score = objective_score(plan, REVEALED)
+    assert "kind_recall" in score
+    assert "actual_kinds" in score
+    assert "matched_kinds" in score
+    assert score["actual_kinds"] == ["release"]  # only "Release v1.2.0" carries a kind
+    assert score["matched_kinds"] == ["release"]
+    assert score["kind_recall"] == 1.0

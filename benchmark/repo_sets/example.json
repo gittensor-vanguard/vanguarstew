@@ -1,0 +1,64 @@
+{
+  "name": "example",
+  "description": "EXAMPLE / starter leakage-safe repo set. The sources below are placeholders (OWNER/...) and are NOT operational — copy this file, replace them with vetted repos, and load that curated config for real scoring. The schema and freeze-window hints are the contract this demonstrates.",
+  "strategy": "Mix RECENT repos (freeze windows past a model's training cutoff) with OBSCURE repos (low-traffic, unlikely to be memorized). Prefer recent commit windows and rotate freeze points so a memorized outcome cannot win. Reserve some repos as held_out to score generalization on codebases the agent was never tuned against.",
+  "repos": [
+    {
+      "name": "recent-active-a",
+      "source": "https://github.com/OWNER/recent-active-a",
+      "tier": "recent",
+      "held_out": false,
+      "freeze_window": {
+        "after": "2025-09-01",
+        "recent_bias": true,
+        "min_history": 40
+      },
+      "notes": "Active repo; choose freeze points after the training cutoff so the future isn't memorized."
+    },
+    {
+      "name": "recent-active-b",
+      "source": "https://github.com/OWNER/recent-active-b",
+      "tier": "recent",
+      "held_out": false,
+      "freeze_window": {
+        "after": "2025-10-15",
+        "recent_bias": true,
+        "rotation_seed": 7
+      },
+      "notes": "Rotate freeze points deterministically so repeated runs don't reuse the same answer window."
+    },
+    {
+      "name": "obscure-lib-c",
+      "source": "https://github.com/OWNER/obscure-lib-c",
+      "tier": "obscure",
+      "held_out": false,
+      "freeze_window": {
+        "min_history": 30
+      },
+      "notes": "Low-traffic library; obscurity is the leakage defense here rather than recency."
+    },
+    {
+      "name": "heldout-recent-d",
+      "source": "https://github.com/OWNER/heldout-recent-d",
+      "tier": "recent",
+      "held_out": true,
+      "freeze_window": {
+        "after": "2025-11-01",
+        "before": "2026-04-01",
+        "recent_bias": true
+      },
+      "notes": "Held out from tuning; used only to measure generalization (see #52)."
+    },
+    {
+      "name": "heldout-obscure-e",
+      "source": "https://github.com/OWNER/heldout-obscure-e",
+      "tier": "obscure",
+      "held_out": true,
+      "freeze_window": {
+        "min_history": 25,
+        "rotation_seed": 3
+      },
+      "notes": "Held-out obscure repo; the hardest bar — unseen and unlikely to be memorized."
+    }
+  ]
+}
