@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Development backend: `tools/codex_llm.py`, an optional `agent.llm.LLM`-compatible LLM backed
+  by the local `codex` CLI (ChatGPT / OAuth, e.g. gpt-5.5), for running the benchmark and
+  maintenance tooling **without an API key**. Dev/ops only — it is deliberately kept out of the
+  scored `agent.solve` path, which still uses only validator-supplied inference per the
+  managed-inference contract (`agent/llm.py`).
 - Maintainer-assist mode (`agent/review.py`, `scripts/review_pr.py`): the same agent the
   benchmark scores, applied to a **live** PR — it reads the PR and outputs a maintainer review
   (recommended action, best-fit `mult:*` value tier, scope/tests checks, concerns, advice).
