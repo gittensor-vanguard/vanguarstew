@@ -21,7 +21,7 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q --cov=agent --cov=benchmark --cov-fail
 - **Tests + coverage** — the suite passes and total coverage stays at or above the floor (75%).
 - **PR integrity** (see `.github/workflows/pr-integrity.yml`):
   - the PR body references an issue (e.g. `Fixes #12`);
-  - no AI-attribution content;
+  - no AI-attribution content in the PR body **or commit messages** (including `Co-authored-by:` trailers for AI assistants);
   - the diff is non-trivial;
   - code changes under `agent/` or `benchmark/` ship a test change under `tests/`;
   - the author is within the open-PR limit (**at most 2 open PRs** per contributor; the maintainer is exempt).
