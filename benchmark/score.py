@@ -201,11 +201,16 @@ _JUDGE_OUTCOME = {"A": 1.0, "tie": 0.5, "B": 0.0}  # challenger perspective vs. 
 def objective_component(objective: dict) -> float:
     """Collapse the objective anchor into a single value in [0, 1].
 
-    Module recall always counts. Release-prediction and (when present) bump-level correctness
-    count only when there was actually a release to get right, so a window with no release
-    isn't scored on a trivial "predicted nothing" match.
+    Module recall always counts — the file-weighted recall (``weighted_module_recall``) is
+    preferred when present, so the score reflects where change actually concentrated, and it
+    falls back to plain ``module_recall`` otherwise. Release-prediction and (when present)
+    bump-level correctness count only when there was actually a release to get right, so a
+    window with no release isn't scored on a trivial "predicted nothing" match.
     """
-    parts = [float(objective.get("module_recall", 0.0))]
+    recall = objective.get("weighted_module_recall")
+    if recall is None:
+        recall = objective.get("module_recall", 0.0)
+    parts = [float(recall)]
     if objective.get("release_signaled"):
         parts.append(1.0 if objective.get("release_predicted") else 0.0)
     if objective.get("bump_actual") is not None:
