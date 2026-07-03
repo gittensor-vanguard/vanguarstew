@@ -23,7 +23,13 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     window = []
     for sha in commits[idx + 1: idx + 1 + n]:
         subject = _git(repo, "log", "-1", "--pretty=format:%s", sha).strip()
-        files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False).split()
+        # `-m --first-parent` makes `git show` report the files a merge commit brought in
+        # relative to its first parent — a plain `git show` of a clean merge yields a
+        # combined diff with no files, silently emptying the ground truth objective scoring
+        # keys off. Splitting on lines (not whitespace) keeps paths containing spaces intact.
+        raw = _git(repo, "show", "-m", "--first-parent", "--name-only",
+                   "--pretty=format:", sha, check=False)
+        files = [line for line in raw.splitlines() if line]
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 
