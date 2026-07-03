@@ -19,11 +19,13 @@ from __future__ import annotations
 from collections import Counter
 
 from agent.context import load_context
+from benchmark.score import is_release_subject
 
 # Map a free-text title/subject to one of the planner's kinds. Order matters: earlier
-# entries win, so release/dep are checked before the broader "feature" verbs.
+# entries win, so dep is checked before the broader "feature" verbs. Release detection
+# itself is NOT here: it defers to score.is_release_subject (the canonical helper) so
+# baseline classification can't drift from scoring semantics.
 _KIND_KEYWORDS = (
-    ("release", ("release", "changelog", "tag ", " v1", " v2", "semver")),
     ("dep", ("bump", "dependency", "dependencies", "deps", "upgrade", "dependabot")),
     ("docs", ("doc", "docs", "readme", "document", "guide", "example", "comment")),
     ("bugfix", ("fix", "bug", "patch", "regression", "hotfix", "error", "crash")),
@@ -36,6 +38,8 @@ _ALLOWED = {"feature", "bugfix", "refactor", "docs", "release", "dep", "triage"}
 
 
 def _infer_kind(text: str) -> str:
+    if is_release_subject(text):
+        return "release"
     low = (text or "").lower()
     for kind, needles in _KIND_KEYWORDS:
         if any(n in low for n in needles):
