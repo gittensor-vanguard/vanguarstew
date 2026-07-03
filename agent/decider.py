@@ -20,6 +20,29 @@ VALID_ACTIONS = (
     "release", "plan", "patch", "close", "label",
 )
 
+# Common near-misses an LLM emits, mapped onto the canonical VALID_ACTIONS verb. Anything not
+# a synonym and not already canonical falls back to "plan" (the safe, non-committal call).
+_ACTION_SYNONYMS = {
+    "approve": "merge", "approved": "merge", "lgtm": "merge", "accept": "merge",
+    "request changes": "request-changes", "request_changes": "request-changes",
+    "request-change": "request-changes", "changes-requested": "request-changes",
+    "changes_requested": "request-changes",
+    "rejected": "reject", "decline": "reject",
+    "assign reviewer": "assign-reviewer", "assign_reviewer": "assign-reviewer",
+    "reviewer": "assign-reviewer",
+    "closed": "close", "triaged": "triage", "labeled": "label", "label-issue": "label",
+    "released": "release", "cut-release": "release",
+}
+
+
+def normalize_action(action) -> str:
+    """Map a decided action onto VALID_ACTIONS, resolving synonyms; fall back to ``plan``."""
+    a = (action or "").strip().lower()
+    if not a:
+        return "plan"
+    a = _ACTION_SYNONYMS.get(a, a)
+    return a if a in VALID_ACTIONS else "plan"
+
 
 def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     user = (
@@ -45,7 +68,7 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out = llm.chat_json(SYSTEM, user, stub=stub)
     if not isinstance(out, dict):
         out = dict(stub)
-    out.setdefault("action", "plan")
+    out["action"] = normalize_action(out.get("action"))
     return out
 
 
