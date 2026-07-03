@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Planner queue reconciliation (`agent/planner.py`): a deterministic pass makes the plan honor
+  the open-PR queue even when the LLM disregards it — an item that restates an open PR's work
+  is down-weighted to a `triage` review item and flagged with `restates_pr`, redundant items
+  targeting the same PR are collapsed, and if the plan ignores the queue entirely a review
+  item for the top PR is prepended. Keeps the output coherent and de-duplicated regardless of
+  model quality (#68).
 - Development backend: `tools/codex_llm.py`, an optional `agent.llm.LLM`-compatible LLM backed
   by the local `codex` CLI (ChatGPT / OAuth, e.g. gpt-5.5), for running the benchmark and
   maintenance tooling **without an API key**. Dev/ops only — it is deliberately kept out of the
