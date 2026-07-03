@@ -32,15 +32,26 @@ def export_tree(repo: str, commit: str, dest: str) -> None:
     proc = subprocess.Popen(
         ["git", "-C", repo, "archive", "--format=tar", commit],
         stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
-        try:
-            tf.extractall(dest, filter="data")  # py>=3.12
-        except TypeError:
-            tf.extractall(dest)
-    proc.wait()
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
+            try:
+                tf.extractall(dest, filter="data")  # py>=3.12
+            except TypeError:
+                tf.extractall(dest)
+    except tarfile.ReadError:
+        # Most likely git archive itself failed (bad/unreachable commit) and wrote
+        # nothing to stdout; the real cause surfaces below via returncode + stderr.
+        pass
+    finally:
+        # Always reap the child and collect stderr, even if extraction raised above —
+        # otherwise a failing archive leaves the subprocess unwaited.
+        stderr = proc.communicate()[1]
     if proc.returncode not in (0, None):
-        raise RuntimeError(f"git archive failed for {commit}")
+        detail = stderr.decode("utf-8", "replace").strip() if stderr else ""
+        msg = f"git archive failed for {commit}"
+        raise RuntimeError(f"{msg}: {detail}" if detail else msg)
 
 
 def file_at(repo: str, commit: str, path: str) -> str:

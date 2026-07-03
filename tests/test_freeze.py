@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.freeze import build_context  # noqa: E402
+from benchmark.freeze import build_context, export_tree  # noqa: E402
 
 
 def _git(repo, *args, env=None):
@@ -87,3 +87,37 @@ def test_build_context_release_order_is_not_lexicographic():
         assert tags != sorted(creation)      # explicitly NOT lexicographic refname order
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_export_tree_raises_clear_error_for_unreachable_commit():
+    repo = tempfile.mkdtemp()
+    dest = tempfile.mkdtemp()
+    try:
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _commit_and_tag(repo, 1, "v0.1.0")
+
+        with pytest.raises(RuntimeError, match="git archive failed"):
+            export_tree(repo, "deadbeef0000000000000000000000000000dead", dest)
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_export_tree_extracts_a_valid_commit():
+    repo = tempfile.mkdtemp()
+    dest = tempfile.mkdtemp()
+    try:
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        _commit_and_tag(repo, 1, "v0.1.0")
+
+        export_tree(repo, "HEAD", dest)
+        assert os.path.exists(os.path.join(dest, "f1.txt"))
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(dest, ignore_errors=True)
