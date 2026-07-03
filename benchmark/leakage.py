@@ -14,8 +14,18 @@ from __future__ import annotations
 
 import re
 
+# A GitHub deep-link that points at a specific item leaks where the repo went next: a later
+# issue/PR/commit, a *future release tag* (which hands over the next version outright — and
+# defeats the release/bump scoring in score.py), or a tree/blob/compare at a future ref. Mask
+# any link to such a sub-resource; the bare repo or owner URL (no item path, e.g.
+# github.com/owner/repo) is deliberately left intact so legitimate references survive.
 _GH_LINK = re.compile(
-    r"https?://github\.com/[^\s)]+/(?:issues|pull|commit|compare)/[^\s)]+", re.I)
+    r"https?://github\.com/[^\s)]+/"
+    r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|"
+    r"milestone|milestones|discussions)"
+    r"/[^\s)]+",
+    re.I,
+)
 _ISSUE_REF = re.compile(r"#\d+")
 _SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
 
