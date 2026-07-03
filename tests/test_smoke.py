@@ -45,6 +45,18 @@ def test_solve_offline_returns_decision():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_offline_plan_prioritizes_open_pr_queue():
+    from agent.llm import LLM
+    from agent.planner import plan_next_actions
+
+    ctx = {
+        "open_prs": [{"number": 7, "title": "Add streaming export"}],
+        "recent_commits": [{"sha": "1", "subject": "init"}],
+    }
+    plan = plan_next_actions(ctx, {}, 3, LLM(api_key="offline"))
+    assert any("streaming export" in item.get("title", "").lower() for item in plan)
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_replay_end_to_end_offline():
     d = tempfile.mkdtemp()
