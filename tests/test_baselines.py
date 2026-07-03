@@ -19,6 +19,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.baselines import (  # noqa: E402
     BASELINES,
+    _infer_kind,
     empty_solve,
     get_baseline,
     heuristic_solve,
@@ -96,3 +97,43 @@ def test_replay_selects_baseline_and_tallies():
         assert res["tasks"] >= 1
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+# --- Release-subject detection shared with score.is_release_subject (#129) ---
+
+
+def test_infer_kind_release_detection_matches_is_release_subject():
+    """The heuristic baseline delegates release detection to score.is_release_subject."""
+    from benchmark.score import is_release_subject
+
+    genuine = [
+        "Release v1.2.0",
+        "v2.0.0",
+        "1.3.0",
+        "release: 2.0.0",
+        "bump version to 2.0.0",
+        "update the changelog for the next cut",
+    ]
+    for subj in genuine:
+        assert _infer_kind(subj) == "release", f"expected release for {subj!r}"
+        assert is_release_subject(subj), f"is_release_subject disagrees for {subj!r}"
+
+
+def test_infer_kind_version_at_start_is_release():
+    """A subject that leads with a version tag is classified as release."""
+    assert _infer_kind("v1.2.0") == "release"
+    assert _infer_kind("1.0.0") == "release"
+    assert _infer_kind("Release 3.0.0") == "release"
+
+
+def test_infer_kind_in_sentence_version_is_not_release():
+    """An incidental version mention mid-subject must NOT be classified as release."""
+    assert _infer_kind("fix crash in v1.2.0 parser") != "release"
+    assert _infer_kind("docs: mention support for Python 3.11.0") != "release"
+
+
+def test_infer_kind_dependency_bump_is_not_release():
+    """Regression: a dependency bump must be classified as dep, not release (#129)."""
+    assert _infer_kind("Bump dependency to v10.0") == "dep"
+    assert _infer_kind("chore(deps): bump lodash to v4.17.21") == "dep"
+    assert _infer_kind("upgrade numpy to 1.26.4") == "dep"
