@@ -251,9 +251,6 @@ def _addressed_with_evidence(revealed, open_issues) -> list:
     """Open issues at T whose themes show up in the revealed commit subjects, paired with
     the commit subject that triggered the match (the diagnostic evidence for that match)."""
     out = []
-def addressed_issues(revealed, open_issues) -> list:
-    """Open issues at T whose themes show up in the revealed commit subjects."""
-    addressed = []
     for issue in open_issues or []:
         title_toks = _tokens(issue.get("title", ""))
         if not title_toks:
@@ -281,16 +278,6 @@ def backlog_recall(plan, revealed, open_issues=None) -> dict:
     """
     evidence = _addressed_with_evidence(revealed, open_issues)
     if not evidence:
-            if _meaningful_overlap(title_toks, _tokens(row.get("subject", ""))):
-                addressed.append(issue)
-                break
-    return addressed
-
-
-def backlog_recall(plan, revealed, open_issues=None) -> dict:
-    """Fraction of addressed backlog issues the plan anticipated."""
-    addressed = addressed_issues(revealed, open_issues)
-    if not addressed:
         return {
             "backlog_recall": 0.0,
             "addressed_issue_numbers": [],
@@ -313,25 +300,13 @@ def backlog_recall(plan, revealed, open_issues=None) -> dict:
         "addressed_issue_numbers": [issue.get("number") for issue, _subject in evidence],
         "matched_issue_numbers": matched,
         "addressed_backlog_diagnostics": diagnostics,
-        }
-    plan_toks = _plan_tokens(plan)
-    matched = []
-    for issue in addressed:
-        if _meaningful_overlap(_tokens(issue.get("title", "")), plan_toks):
-            matched.append(issue.get("number"))
-    return {
-        "backlog_recall": round(len(matched) / len(addressed), 3),
-        "addressed_issue_numbers": [i.get("number") for i in addressed],
-        "matched_issue_numbers": matched,
     }
 
 
 def objective_score(plan, revealed, version_bump=None, base_version=None,
-                    open_issues=None) -> dict:
+                    open_issues=None, **_) -> dict:
     """The deterministic anchor: module recall + commit-kind recall + release/bump match
     + open-issue backlog recall.
-                    open_issues=None, **_) -> dict:
-    """The deterministic anchor: module recall + commit-kind recall + release/bump match.
 
     When a release appears in the revealed window, the actual bump level (major/minor/patch)
     is derived from the semver delta between `base_version` (the version at freeze T, e.g.
