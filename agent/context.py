@@ -12,6 +12,8 @@ import json
 import os
 import subprocess
 
+from benchmark.releases import context_releases
+
 CONTEXT_FILE = ".vanguarstew_context.json"
 
 
@@ -39,7 +41,7 @@ def _context_from_git(repo_path: str) -> dict:
         if "\t" in line:
             h, subj = line.split("\t", 1)
             commits.append({"sha": h[:10], "subject": subj})
-    tags = [t for t in _git(repo_path, "tag", "--sort=-creatordate").splitlines() if t]
+    tags = [t for t in _git(repo_path, "tag", "--sort=creatordate", "--merged", "HEAD").splitlines() if t]
     readme = ""
     for name in ("README.md", "README.rst", "README.txt", "README"):
         p = os.path.join(repo_path, name)
@@ -54,7 +56,7 @@ def _context_from_git(repo_path: str) -> dict:
         "open_prs": [],
         "labels": [],
         "milestones": [],
-        "releases": [{"tag": t} for t in tags[:10]],
+        "releases": context_releases(tags),
         "readme_excerpt": readme,
         "_source": "git",
     }
