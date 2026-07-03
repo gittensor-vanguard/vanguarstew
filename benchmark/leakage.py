@@ -20,13 +20,20 @@ _ISSUE_REF = re.compile(r"#\d+")
 _SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
 
 
+def _looks_like_sha(token: str) -> bool:
+    """0-9a-f also matches a bare number (0-9 is a subset), so a hex digit is
+    required to tell a SHA apart from ordinary numeric content (counts, stats,
+    years) in prose."""
+    return any(c in "abcdefABCDEF" for c in token)
+
+
 def strip_forward_refs(text: str) -> str:
     """Mask issue/PR back-references, GitHub links, and raw SHAs in free text."""
     if not text:
         return text
     text = _GH_LINK.sub("<link>", text)
     text = _ISSUE_REF.sub("#ref", text)
-    text = _SHA.sub("<sha>", text)
+    text = _SHA.sub(lambda m: "<sha>" if _looks_like_sha(m.group()) else m.group(), text)
     return text
 
 

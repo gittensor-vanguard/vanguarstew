@@ -63,7 +63,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                model=None, api_base=None, api_key=None, work_dir=None, seed=0,
                enrich_github=False, github_token=None,
                recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
-               w_judge=0.6, w_objective=0.4) -> dict:
+               w_judge=0.6, w_objective=0.4, dual_order_judge=True) -> dict:
     solve = load_solve(agent_file)
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
@@ -94,13 +94,14 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
             )
             baseline_out = opponent(dest, request, context=ctx, n=horizon)
             winner = pairwise_judge(ctx, _submission(challenger), _submission(baseline_out),
-                                    task["revealed"], llm, rng)
+                                    task["revealed"], llm, rng, dual_order=dual_order_judge)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
             obj = objective_score(
                 challenger.get("plan"), task["revealed"],
                 version_bump=challenger.get("version_bump"),
                 base_version=base_from_releases(ctx.get("releases")),
+                open_issues=ctx.get("open_issues"),
             )
             rows.append({
                 "task": k,
@@ -136,6 +137,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         "rows": rows,
         "offline": llm.offline,
         "github_enriched": enrich_github,
+        "judge_dual_order": dual_order_judge,
     }
 
 
