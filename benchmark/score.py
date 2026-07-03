@@ -112,18 +112,34 @@ def _plan_tokens(plan) -> set:
     return toks
 
 
+def _top_module(path: str) -> str | None:
+    parts = [p for p in path.split("/") if p]
+    if not parts:
+        return None
+    top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+    return top.lower() if top else None
+
+
 def changed_modules(revealed) -> set:
     """Top-level modules touched across the revealed window (structural ground truth)."""
     mods = set()
     for r in revealed or []:
         for path in r.get("files", []):
-            parts = [p for p in path.split("/") if p]
-            if not parts:
-                continue
-            top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+            top = _top_module(path)
             if top:
-                mods.add(top.lower())
+                mods.add(top)
     return mods
+
+
+def module_file_weights(revealed) -> dict[str, int]:
+    """Changed-file counts per top-level module (where work actually concentrated)."""
+    weights: dict[str, int] = {}
+    for r in revealed or []:
+        for path in r.get("files", []):
+            top = _top_module(path)
+            if top:
+                weights[top] = weights.get(top, 0) + 1
+    return weights
 
 
 def module_recall(plan, revealed) -> dict:
@@ -137,6 +153,24 @@ def module_recall(plan, revealed) -> dict:
         "module_recall": round(len(matched) / len(actual), 3),
         "actual_modules": sorted(actual),
         "matched_modules": matched,
+    }
+
+
+def weighted_module_recall(plan, revealed) -> dict:
+    """File-weighted fraction of changed work the plan anticipated by module name."""
+    weights = module_file_weights(revealed)
+    if not weights:
+        return {
+            "weighted_module_recall": 0.0,
+            "module_file_weights": {},
+            "matched_module_weight": 0,
+        }
+    ptoks = _plan_tokens(plan)
+    matched_weight = sum(w for mod, w in weights.items() if _tokens(mod) & ptoks)
+    return {
+        "weighted_module_recall": round(matched_weight / sum(weights.values()), 3),
+        "module_file_weights": dict(sorted(weights.items())),
+        "matched_module_weight": matched_weight,
     }
 
 
@@ -296,6 +330,7 @@ def objective_score(plan, revealed, version_bump=None, base_version=None,
     no bump when none happened also counts as a match).
     """
     result = module_recall(plan, revealed)
+    result.update(weighted_module_recall(plan, revealed))
     result.update(kind_recall(plan, revealed))
     result.update(backlog_recall(plan, revealed, open_issues))
     signaled = release_signaled(revealed)

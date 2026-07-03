@@ -17,11 +17,13 @@ from benchmark.score import (  # noqa: E402
     is_release_subject,
     kind_recall,
     module_recall,
+    objective_component,
     objective_score,
     parse_semver,
     plan_kind,
     release_predicted,
     release_signaled,
+    weighted_module_recall,
 )
 
 REVEALED = [
@@ -43,6 +45,29 @@ def test_module_recall_matches_by_name():
     res = module_recall(plan, REVEALED)
     assert set(res["matched_modules"]) == {"plugins", "readme"}
     assert res["module_recall"] == round(2 / 4, 3)  # core, changelog not anticipated
+
+
+def test_weighted_module_recall_weights_by_changed_files():
+    revealed = [{
+        "subject": "large core refactor",
+        "files": [f"core/f{i}.py" for i in range(10)] + ["docs/note.md"],
+    }]
+    plan = [{"title": "refactor core engine", "theme": "core", "kind": "refactor"}]
+    res = weighted_module_recall(plan, revealed)
+    assert res["weighted_module_recall"] == round(10 / 11, 3)
+    assert module_recall(plan, revealed)["module_recall"] == 0.5  # 1 of 2 modules
+
+
+def test_objective_score_includes_weighted_module_recall():
+    revealed = [{
+        "subject": "large core refactor",
+        "files": [f"core/f{i}.py" for i in range(10)] + ["docs/note.md"],
+    }]
+    plan = [{"title": "refactor core engine", "theme": "core", "kind": "refactor"}]
+    score = objective_score(plan, revealed)
+    assert score["module_recall"] == 0.5
+    assert score["weighted_module_recall"] == round(10 / 11, 3)
+    assert objective_component(score) == round(10 / 11, 3)
 
 
 def test_release_signals():
