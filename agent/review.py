@@ -20,6 +20,52 @@ ACTIONS = ["merge", "request-changes", "reject", "comment"]
 VALUE_LABELS = ["mult:core-correctness", "mult:leakage-integrity", "mult:capability",
                 "mult:enhancement", "mult:maintenance", "mult:docs"]
 
+# Common near-misses an LLM emits, mapped onto canonical review verbs. Unknown values fall
+# back to "comment" — the safe, non-committal triage call.
+_ACTION_SYNONYMS = {
+    "approve": "merge", "approved": "merge", "lgtm": "merge", "accept": "merge",
+    "request changes": "request-changes", "request_changes": "request-changes",
+    "request-change": "request-changes", "changes-requested": "request-changes",
+    "changes_requested": "request-changes",
+    "rejected": "reject", "decline": "reject",
+}
+
+# Bare tier names without the mult: prefix, mapped onto the published value ladder.
+_VALUE_SYNONYMS = {
+    "core-correctness": "mult:core-correctness",
+    "leakage-integrity": "mult:leakage-integrity",
+    "capability": "mult:capability",
+    "enhancement": "mult:enhancement",
+    "maintenance": "mult:maintenance",
+    "docs": "mult:docs",
+}
+
+
+def normalize_review_action(action) -> str:
+    """Map a review action onto ACTIONS, resolving synonyms; fall back to ``comment``."""
+    if not isinstance(action, str):
+        return "comment"
+    a = action.strip().lower()
+    if not a:
+        return "comment"
+    a = _ACTION_SYNONYMS.get(a, a)
+    return a if a in ACTIONS else "comment"
+
+
+def normalize_value_label(label) -> str:
+    """Map a value tier onto VALUE_LABELS; fall back to ``mult:maintenance``."""
+    if not isinstance(label, str):
+        return "mult:maintenance"
+    raw = label.strip().lower()
+    if not raw:
+        return "mult:maintenance"
+    if raw in VALUE_LABELS:
+        return raw
+    mapped = _VALUE_SYNONYMS.get(raw.removeprefix("mult:"), None)
+    if mapped in VALUE_LABELS:
+        return mapped
+    return "mult:maintenance"
+
 
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
@@ -52,5 +98,6 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     out = llm.chat_json(SYSTEM, user, stub=stub)
     if not isinstance(out, dict):
         out = dict(stub)
-    out.setdefault("action", "comment")
+    out["action"] = normalize_review_action(out.get("action"))
+    out["value_label"] = normalize_value_label(out.get("value_label"))
     return out
