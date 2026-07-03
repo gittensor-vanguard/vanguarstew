@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format is based on
   maintenance tooling **without an API key**. Dev/ops only — it is deliberately kept out of the
   scored `agent.solve` path, which still uses only validator-supplied inference per the
   managed-inference contract (`agent/llm.py`).
+- Objective scoring: **commit-kind recall** (`benchmark/score.py`) — `objective_score` now
+  reports `kind_recall`, `actual_kinds`, and `matched_kinds`, grading whether a plan
+  anticipated the *kind* of maintainer work (feat/fix/docs/refactor/…/release) that the
+  revealed window actually did, parsed deterministically from Conventional-Commit subjects
+  (#41).
 - Maintainer-assist mode (`agent/review.py`, `scripts/review_pr.py`): the same agent the
   benchmark scores, applied to a **live** PR — it reads the PR and outputs a maintainer review
   (recommended action, best-fit `mult:*` value tier, scope/tests checks, concerns, advice).
