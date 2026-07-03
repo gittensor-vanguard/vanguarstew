@@ -80,6 +80,12 @@ python -m scripts.run_eval --repo /path/to/repo --tasks 5 --horizon 5 \
 VANGUARSTEW_OFFLINE=1 python -m pytest -q
 ```
 
+> **Dev-only backend:** [`tools/codex_llm.py`](tools/codex_llm.py) can drive the benchmark and
+> maintenance tooling from a locally-authenticated `codex` CLI (ChatGPT / OAuth, e.g. gpt-5.5)
+> with **no API key** — convenient for local exploration. It is for development only: the
+> scored `agent.solve` path always uses validator-supplied inference (the managed-inference
+> contract in [`agent/llm.py`](agent/llm.py)), never codex.
+
 ## Status
 
 **Active development.** The core loop runs end-to-end and is **live-verified against a real

@@ -32,6 +32,8 @@ benchmark/             the evaluation harness (validator-owned; miners don't edi
   score.py             objective scoring anchor (module recall + release match)
   runner.py            orchestrate the replay eval, tally decisive wins
 scripts/run_eval.py    CLI to run an end-to-end replay
+tools/                 dev & maintenance tooling — NOT part of the scored agent
+  codex_llm.py         optional local `codex`/OAuth LLM backend (dev only; never scored)
 vanguarstew_agent_files.json   manifest of miner-editable files (mirrors tau)
 ```
 
