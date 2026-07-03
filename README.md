@@ -3,6 +3,13 @@
 [![CI](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml/badge.svg)](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Powered by Gittensor](https://img.shields.io/badge/Powered%20by-Gittensor-6E56CF)](https://gittensor.io)
+
+> **⚡ Powered by [Gittensor](https://gittensor.io).** This repository is built and continuously
+> improved through **Gittensor** — a [Bittensor](https://bittensor.com) subnet (**SN74**) that rewards a
+> network of contributors for making real, merged improvements to open-source software. The reviews,
+> fixes, and features that land here are produced and incentivized through Gittensor. **Want to help
+> build it (and earn)?** See [how Gittensor OSS contributions work](https://docs.gittensor.io/oss-contributions.html).
 
 `vanguarstew` is an **SN74 repo-maintainer agent** and the **benchmark** that optimizes it, built to live as a repo on gittensor. It borrows the agentic-workflow + history-derived-benchmark approach of SN66 "ninja" (the coding-agent subnet) and retargets it from *"reproduce the code change"* to *"make the maintainer decisions a strong maintainer would have made."*
 
@@ -76,6 +83,9 @@ VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo /path/to/some/git/repo -
 python -m scripts.run_eval --repo /path/to/repo --tasks 5 --horizon 5 \
     --model <validator-model> --api-base http://validator-proxy/v1 --api-key "$TOKEN"
 
+# multi-repo: replay several repos and aggregate a cross-repo composite (generalization)
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repos /path/to/a /path/to/b --tasks 2 --horizon 5
+
 # smoke test (no network, no git needed)
 VANGUARSTEW_OFFLINE=1 python -m pytest -q
 ```
@@ -86,14 +96,43 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q
 > scored `agent.solve` path always uses validator-supplied inference (the managed-inference
 > contract in [`agent/llm.py`](agent/llm.py)), never codex.
 
+`--repo` scores one repo; `--repos` scores several and averages each repo's own
+`composite_mean` into one cross-repo number. Each single-repo `run_replay` result carries the
+composite contract — `composite_mean` plus `composite_parts` (the `judge_mean` and
+`objective_mean` it blends, per the `weights`):
+
+```jsonc
+// single-repo (--repo) result, composite fields:
+{
+  "composite_mean": 0.6,                              // mean blended score in [0, 1]
+  "composite_parts": { "judge_mean": 1.0, "objective_mean": 0.0 },  // the two blended means
+  "weights": { "judge": 0.6, "objective": 0.4 },     // how the parts are blended
+  "rows": [ /* per-task: winner, objective, composite */ ]
+}
+```
+
+The `--repos` aggregate result shape is:
+
+```jsonc
+{
+  "repos": 2,            // repos given
+  "scored_repos": 2,     // repos that produced tasks (and a composite_mean)
+  "skipped": 0,          // repos too small for the horizon (kept below, excluded from the mean)
+  "composite_mean": 0.6, // mean of each scored repo's composite_mean
+  "composite_parts": { "judge_mean": 1.0, "objective_mean": 0.0 },  // means of the per-repo parts
+  "per_repo": [ /* each repo's full run_replay result, or its {"error": ...} */ ]
+}
+```
+
 ## Status
 
 **Active development.** The core loop runs end-to-end and is **live-verified against a real
-model** (see the demo above). Shipped so far (M0–M2): history-derived replay, an objective
-scoring anchor plus a decision-process judge, leakage defenses, and knowable-at-T GitHub
-context. Open source (MIT), CI green on Python 3.10–3.12, and registered on gittensor. Next:
-generalization across diverse repos (M3) and the fully agentic loop (M4). See
-[ROADMAP.md](ROADMAP.md).
+model** (see the demo above). Shipped so far (M0–M3): history-derived replay, an objective
+scoring anchor plus a decision-process judge, leakage defenses, knowable-at-T GitHub context,
+and **generalization** — multi-repo replay with an aggregated cross-repo composite and a
+leakage-safe, versioned repo-set config. Open source (MIT), CI green on Python 3.10–3.12, and
+registered on gittensor. Next: held-out generalization scoring (finishing M3) and the fully
+agentic loop (M4). See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 

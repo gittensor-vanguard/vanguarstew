@@ -9,12 +9,15 @@ import argparse
 import json
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
-from benchmark.runner import run_replay
+from benchmark.runner import run_multi_replay, run_replay
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="vanguarstew time-travel replay eval")
-    ap.add_argument("--repo", required=True, help="path to a local git repo to replay")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--repo", help="path to a single local git repo to replay")
+    src.add_argument("--repos", nargs="+",
+                     help="two or more git repos to replay and aggregate into a composite_mean")
     ap.add_argument("--agent", default="agent.py", help="agent entrypoint file")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, choices=sorted(BASELINES),
                     help="reference opponent the challenger is judged against")
@@ -35,15 +38,23 @@ def main() -> None:
                     help="composite weight on the pairwise judge (default 0.6)")
     ap.add_argument("--w-objective", type=float, default=0.4,
                     help="composite weight on the objective anchor (default 0.4)")
+    ap.add_argument("--single-order-judge", action="store_true",
+                    help="ask the judge one randomized order instead of both "
+                         "(cheaper, but no position-swap consistency check)")
     args = ap.parse_args()
 
-    result = run_replay(
-        repo_path=args.repo, agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
+    common = dict(
+        agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
         model=args.model, api_base=args.api_base, api_key=args.api_key, work_dir=args.work_dir,
         enrich_github=args.enrich, github_token=args.github_token,
         recent_bias=args.recent_bias, rotation_seed=args.rotation_seed, baseline=args.baseline,
         w_judge=args.w_judge, w_objective=args.w_objective,
+        dual_order_judge=not args.single_order_judge,
     )
+    if args.repos:
+        result = run_multi_replay(args.repos, **common)
+    else:
+        result = run_replay(repo_path=args.repo, **common)
     print(json.dumps(result, indent=2))
 
 

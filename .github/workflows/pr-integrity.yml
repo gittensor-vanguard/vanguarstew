@@ -53,16 +53,28 @@ jobs:
               errors.append("Code changed under agent/ or benchmark/ but no test was added or "
                             "updated under tests/.")
 
-          # 5) per-author open-PR limit
+          # 4b) no AI co-authorship / attribution in the COMMIT messages (not just the body) —
+          #     this is where Co-authored-by trailers hide and slip past the body check above.
+          commit_msgs = gh("pr", "view", num, "--json", "commits",
+                           "--jq", "[.commits[] | .messageHeadline + \"\\n\" + .messageBody] | join(\"\\n\")")
+          if re.search(r"co-authored-by:|generated with|\U0001F916", commit_msgs, re.I):
+              errors.append("Remove AI co-authorship / attribution from the commit messages "
+                            "(e.g. 'Co-authored-by:' trailers) — this repo does not accept "
+                            "AI-attributed contributions.")
+
+          # 5) per-author open-PR limit (contributors only; the maintainer is exempt)
           author = pr["user"]["login"]
-          try:
-              open_count = int(gh("pr", "list", "--state", "open", "--author", author,
-                                   "--json", "number", "--jq", "length") or "0")
-          except ValueError:
-              open_count = 0
-          LIMIT = 4
-          if open_count > LIMIT:
-              errors.append(f"Open PR limit exceeded for @{author}: {open_count} > {LIMIT}.")
+          MAINTAINERS = {"matedev01"}
+          LIMIT = 2
+          if author not in MAINTAINERS:
+              try:
+                  open_count = int(gh("pr", "list", "--state", "open", "--author", author,
+                                       "--json", "number", "--jq", "length") or "0")
+              except ValueError:
+                  open_count = 0
+              if open_count > LIMIT:
+                  errors.append(f"Open PR limit exceeded for @{author}: {open_count} > {LIMIT}. "
+                                f"Please get an existing PR merged or closed first.")
 
           for e in errors:
               print(f"::error::{e}")

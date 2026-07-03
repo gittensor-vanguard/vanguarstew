@@ -77,6 +77,40 @@ per the leakage constraints), frozen snapshots, and revealed-history references 
 as a separate benchmark dataset (its own repo or a hosted dataset) once M2 produces real
 tasks. This is the most reusable asset the project produces.
 
+### Repo-set config + loader
+
+The list of repositories the benchmark replays is a **checked-in JSON config**, not a
+hardcoded array — so the curated, leakage-safe selection is reviewable and versioned. The
+shipped `benchmark/repo_sets/example.json` is a **starter/example** whose sources are
+placeholders (`OWNER/...`) — copy it and swap in vetted repos for a real run. `benchmark/
+repo_set.py` loads and **strictly validates** any config, at both the **top level** (only
+`name` / `description` / `strategy` / `repos` allowed; metadata must be strings; a stray or
+misspelled key is rejected) and per entry — since a leakage-safe set is only as trustworthy
+as its config.
+
+Each entry carries:
+
+- `name` — unique id; `source` — git URL or local path.
+- `tier` — `recent` or `obscure`, the two leakage-resistance strategies (past-cutoff recency
+  vs. low-traffic obscurity).
+- `held_out` — reserve the repo for generalization scoring (see the held-out eval above).
+- `freeze_window` — hints that map onto `run_replay`'s knobs: `recent_bias`, `rotation_seed`,
+  and `after` / `before` / `min_history` bounds for freeze-point selection.
+
+The loader returns a typed `RepoSet` with `tuned()` / `held_out()` / `by_tier()` /
+`sources()` views, so the runner consumes a validated selection instead of ad-hoc paths:
+
+`load_repo_set(path)` takes a **required** path — there is no implicit default, so a config
+is always chosen deliberately (never the placeholder starter by accident). Use the exported
+`EXAMPLE_REPO_SET` to load the shipped example explicitly.
+
+```python
+from benchmark.repo_set import EXAMPLE_REPO_SET, load_repo_set
+rs = load_repo_set("path/to/curated.json")   # or load_repo_set(EXAMPLE_REPO_SET) for the starter
+tuned   = [e.source for e in rs.tuned()]
+heldout = [e.source for e in rs.held_out()]
+```
+
 ## Leakage defenses
 
 Because the reference is public GitHub history, the benchmark actively resists leakage:
@@ -84,6 +118,17 @@ Because the reference is public GitHub history, the benchmark actively resists l
 - **No internet in the sandbox** beyond the managed inference proxy.
 - **Knowable-at-T only** — the frozen context is built from commits/issues/PRs/releases that
   existed at T; nothing created (or a release published) after T is included.
+- **As-of-T reconstruction of mutable fields** (`benchmark/github_context.py`) — some GitHub
+  fields the live REST snapshot exposes are mutable and would otherwise leak present-day state:
+  - *Milestone state* is derived from `created_at`/`closed_at` (`_milestone_at`) — `"closed"`
+    only when it was already closed by T.
+  - *Issue/PR label membership* is reconstructed by replaying the item's timeline
+    `labeled`/`unlabeled` events up to T (`_labels_at`); when the timeline can't be read
+    (offline, rate-limited, or no label events), labels are **omitted** (`labels_as_of_t:
+    false`) rather than copied live — fail-closed, never leak.
+  - *Intentionally omitted* (not reconstructable from a cheap as-of-T source): the repo-wide
+    label list and issue/PR titles are still the live values, so consumers must not treat them
+    as historically exact; timeline-based reconstruction can be extended to more fields later.
 - **Forward-reference scrubbing** (`benchmark/leakage.py`) — even within knowable-at-T text,
   issue/PR back-references (`#N`), GitHub issue/PR/commit links, and raw SHAs are masked, so a
   commit subject or README can't cross-reference the future.

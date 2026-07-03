@@ -12,11 +12,12 @@ Field stability (``fetch_context_at``)
 --------------------------------------
 Derived as-of-T (safe):
   - Issue/PR membership: ``created_at`` / ``closed_at`` gate open-at-T selection.
+  - Issue/PR labels: reconstructed from timeline ``labeled``/``unlabeled`` events when
+    available; omitted (not copied live) when the timeline is unavailable.
   - Milestone ``state``: derived from ``closed_at`` relative to T, not the live API field.
   - Releases: filtered by ``published_at <= T``.
 
 Live-only (present-day REST snapshot — documented, not reconstructable without Events API):
-  - ``labels`` on issues/PRs: label application timestamps are unavailable.
   - Repo ``labels`` list: no created-at on the labels endpoint.
   - Milestone ``due_on``: may be edited after T; we keep the current value as best-effort.
 """
@@ -67,12 +68,16 @@ def _item_open_at(item: dict, until: datetime) -> bool:
     return closed is None or closed > until
 
 
-def _issue_record(item: dict) -> dict:
-    """Minimal issue/PR fields copied into the frozen context."""
+def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int) -> dict:
+    """Minimal issue/PR fields copied into the frozen context as-of ``until``."""
+    as_of_t = _labels_at(
+        _issue_timeline(base, item.get("number"), token, timeout), until
+    )
     return {
         "number": item.get("number"),
         "title": item.get("title"),
-        "labels": [lbl.get("name") for lbl in item.get("labels", [])],
+        "labels": as_of_t if as_of_t is not None else [],
+        "labels_as_of_t": as_of_t is not None,
         "created_at": item.get("created_at"),
     }
 
@@ -106,6 +111,57 @@ def _get(url: str, token, timeout: int = 20):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _labels_at(events, until: datetime):
+    """Reconstruct an issue/PR's label set *as of `until`* from its timeline.
+
+    Replays ``labeled`` / ``unlabeled`` events in chronological order, ignoring any
+    event after T, so the result reflects membership at the freeze time rather than
+    today's live labels. Returns a sorted list of label names, or ``None`` when the
+    timeline carries no usable label event at/or before T — the caller then falls
+    back to omitting labels rather than leaking the present-day set.
+    """
+    relevant = []
+    for ev in events or []:
+        if ev.get("event") not in ("labeled", "unlabeled"):
+            continue
+        ts = _parse_dt(ev.get("created_at"))
+        if ts is None or ts > until:
+            continue
+        name = (ev.get("label") or {}).get("name")
+        if name:
+            relevant.append((ts, ev.get("event"), name))
+    if not relevant:
+        return None
+    relevant.sort(key=lambda x: x[0])
+    labels = set()
+    for _, etype, name in relevant:
+        if etype == "labeled":
+            labels.add(name)
+        else:
+            labels.discard(name)
+    return sorted(labels)
+
+
+def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
+    """Fetch an issue/PR's timeline events (paginated). Returns ``[]`` on any error,
+    so label reconstruction degrades to the safe omit-labels fallback offline."""
+    if number is None:
+        return []
+    events = []
+    for page in range(1, max_pages + 1):
+        try:
+            batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
+                         token, timeout)
+        except Exception:
+            break
+        if not batch:
+            break
+        events.extend(batch)
+        if len(batch) < 100:
+            break
+    return events
+
+
 def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages: int):
     """Walk issues (created desc) page by page, collecting those open at `until`.
 
@@ -125,7 +181,7 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
         for it in batch:
             if not _item_open_at(it, until):
                 continue
-            rec = _issue_record(it)
+            rec = _issue_record_at(base, it, until, token, timeout)
             (open_prs if it.get("pull_request") else open_issues).append(rec)
         if len(batch) < 100:
             break                 # exhausted all issues — complete

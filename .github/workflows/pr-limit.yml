@@ -1,0 +1,81 @@
+name: PR limit
+
+# Enforce the per-contributor open-PR limit by auto-closing the excess. Runs when a PR is
+# opened/reopened (closes it if it puts the author over the limit) and on a periodic sweep
+# (closes any lingering excess). The maintainer is exempt. Uses pull_request_target so it has a
+# write token for fork PRs; it never checks out PR code, so there is no code-execution risk.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+  schedule:
+    - cron: "0 * * * *"   # hourly sweep for existing excess
+  workflow_dispatch: {}
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: pr-limit
+  cancel-in-progress: false
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce per-author open-PR limit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import collections, json, os, subprocess
+
+          LIMIT = 2
+          MAINTAINERS = {"matedev01"}
+
+          def gh(*a):
+              return subprocess.run(["gh", *a], capture_output=True, text=True).stdout.strip()
+
+          def close(num, keep, author):
+              kept = ", ".join(f"#{k}" for k in keep)
+              body = (f"Closing automatically: you already have {LIMIT} open PRs, which is the "
+                      f"per-contributor limit on this repository. Your {LIMIT} earliest open PRs "
+                      f"({kept}) stay open — please get one merged or closed before opening "
+                      f"another. Thanks for understanding!")
+              gh("pr", "comment", str(num), "--body", body)
+              gh("pr", "close", str(num))
+              print(f"closed #{num} (@{author} over the {LIMIT}-open-PR limit)")
+
+          # author -> their open PR numbers, oldest first
+          data = json.loads(gh("pr", "list", "--state", "open", "--limit", "300",
+                               "--json", "number,author") or "[]")
+          by = collections.defaultdict(list)
+          for p in data:
+              by[p["author"]["login"]].append(p["number"])
+          for a in by:
+              by[a].sort()
+
+          ev_path = os.environ.get("GITHUB_EVENT_PATH")
+          ev = json.load(open(ev_path)) if ev_path and os.path.exists(ev_path) else {}
+          pr = ev.get("pull_request")
+
+          if pr:  # PR event -> only act on the triggering PR
+              author, num = pr["user"]["login"], pr["number"]
+              nums = by.get(author, [])
+              keep = nums[:LIMIT]
+              if author not in MAINTAINERS and len(nums) > LIMIT and num not in keep:
+                  close(num, keep, author)
+              else:
+                  print(f"@{author}: within limit or exempt ({len(nums)} open)")
+          else:  # scheduled / manual sweep -> enforce across everyone
+              closed = 0
+              for author, nums in by.items():
+                  if author in MAINTAINERS or len(nums) <= LIMIT:
+                      continue
+                  keep = nums[:LIMIT]
+                  for num in nums[LIMIT:]:
+                      close(num, keep, author)
+                      closed += 1
+              print(f"sweep done — closed {closed} over-limit PR(s)")
+          PY

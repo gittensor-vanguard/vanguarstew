@@ -20,23 +20,61 @@ def test_strip_forward_refs_masks_refs_links_and_shas():
     assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
 
 
+def test_strip_forward_refs_preserves_plain_numbers():
+    # 0-9a-f matches bare digits too (0-9 is a subset) -- a plain count/stat/year
+    # is not a SHA and must survive the scrub.
+    text = "supports 2500000 requests per second, up from 1200000 last year"
+    out = strip_forward_refs(text)
+    assert "2500000" in out and "1200000" in out
+    assert "<sha>" not in out
+
+
+def test_strip_forward_refs_still_masks_hex_shas_among_plain_numbers():
+    text = "supports 2500000 requests per second; see commit 1a2b3c4d5e6f7a8b"
+    out = strip_forward_refs(text)
+    assert "2500000" in out
+    assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
+
+
+def test_strip_forward_refs_preserves_bare_numeric_tokens_at_sha_length():
+    text = "Supports 123456 requests/s, 1234567 active users, and 2500000 cached rows."
+    out = strip_forward_refs(text)
+    assert out == text
+    assert "<sha>" not in out
+
+
+def test_strip_forward_refs_masks_mixed_case_sha_like_tokens_only():
+    text = "See AbC1234 and deadBEEF1234, but keep incident 1234567 visible."
+    out = strip_forward_refs(text)
+    assert "AbC1234" not in out and "deadBEEF1234" not in out
+    assert out.count("<sha>") == 2
+    assert "1234567" in out
+
+
 def test_scrub_context_scrubs_nested_fields_only():
     ctx = {
-        "readme_excerpt": "roadmap toward plugins; tracked in #101",
-        "recent_commits": [{"sha": "x", "subject": "start work, part of #200"}],
-        "open_issues": [{"number": 1, "title": "bug, dup of #300"}],
+        "readme_excerpt": "roadmap toward plugins; tracked in #101 after commit aBc1234; "
+                          "supports 2500000 requests/s",
+        "recent_commits": [{"sha": "x", "subject": "start work, part of #200 via deadBEEF"}],
+        "open_issues": [{"number": 1, "title": "bug, dup of #300 after a1b2c3d4"}],
         "releases": [
             {"tag": "v1.0"},
-            {"tag": "v1.1", "name": "Release v1.1 — fixes #512, see https://github.com/o/r/pull/900"},
+            {"tag": "v1.1", "name": "Release v1.1 — fixes #512, see "
+                                   "https://github.com/o/r/pull/900 at f00ba47"},
         ],
     }
     out = scrub_context(ctx)
     assert "#101" not in out["readme_excerpt"]
+    assert "aBc1234" not in out["readme_excerpt"] and "<sha>" in out["readme_excerpt"]
+    assert "2500000" in out["readme_excerpt"]  # numeric prose is intentionally preserved
     assert "#200" not in out["recent_commits"][0]["subject"]
+    assert "deadBEEF" not in out["recent_commits"][0]["subject"]
     assert "#300" not in out["open_issues"][0]["title"]
+    assert "a1b2c3d4" not in out["open_issues"][0]["title"]
     assert out["releases"][0] == {"tag": "v1.0"}  # tag-only entries unchanged
     name = out["releases"][1]["name"]
     assert "#512" not in name and "github.com" not in name and "#ref" in name and "<link>" in name
+    assert "f00ba47" not in name and "<sha>" in name
     assert out["releases"][1]["tag"] == "v1.1"
     assert out["_forward_signal_scrubbed"] is True
     assert ctx.get("_forward_signal_scrubbed") is None  # original not mutated
