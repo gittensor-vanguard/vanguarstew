@@ -80,8 +80,26 @@ def _significant_tokens(text: str) -> set:
     }
 
 
+def _referenced_pr_numbers(item: dict) -> set:
+    """Explicit PR numbers a plan item names in its title or rationale (e.g. ``#7``)."""
+    text = f"{item.get('title', '')} {item.get('rationale', '')}"
+    return {int(m) for m in re.findall(r"#(\d+)", text)}
+
+
 def _matched_pr(item: dict, prs: list):
-    """The open PR a plan item is about (by significant-token overlap), or None."""
+    """The open PR a plan item is about, or None.
+
+    An explicit PR-number reference in the item's title or rationale (``#7``) is
+    authoritative and preferred over fuzzy matching. Otherwise fall back to
+    significant-token overlap, which requires a strong (>= 2 shared tokens) signal
+    so a single generic word shared with a short PR title cannot force a match and
+    down-weight unrelated work to triage.
+    """
+    refs = _referenced_pr_numbers(item)
+    if refs:
+        for pr in prs:
+            if pr.get("number") in refs:
+                return pr
     itoks = _significant_tokens(item.get("title", "")) | _significant_tokens(item.get("theme", ""))
     if not itoks:
         return None
@@ -91,7 +109,7 @@ def _matched_pr(item: dict, prs: list):
         if not ptoks:
             continue
         overlap = len(itoks & ptoks)
-        if overlap > best_overlap and (overlap >= 2 or overlap == len(ptoks)):
+        if overlap > best_overlap and overlap >= 2:
             best, best_overlap = pr, overlap
     return best
 
