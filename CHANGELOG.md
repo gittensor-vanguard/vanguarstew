@@ -47,6 +47,16 @@ All notable changes to this project are documented here. The format is based on
   is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
+- Objective anchor cross-metric leakage (#141, audited under #144): `module_recall` folded a
+  plan item's `kind` tag into its token set, so a plan merely tagged `kind: docs` (or `test`,
+  `ci`, `build`, …) harvested module-recall credit for any top-level module whose name
+  collided with that kind word — without ever naming it — double-counting with `kind_recall`
+  and letting the deterministic anchor be gamed. `module_recall` now reads only the
+  name-bearing `title`/`theme` fields. Audited the other score helpers for the same class of
+  leak: none remained (`kind_recall` already reads only `kind`; `release_predicted`
+  intentionally reads both a `release` kind and release-worded titles as independent
+  first-party signals), and the metric ownership boundary is now documented on
+  `objective_score` and covered by regression tests.
 - Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
   `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
   `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score

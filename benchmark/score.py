@@ -102,11 +102,17 @@ def base_from_releases(releases) -> str | None:
 
 
 def _plan_tokens(plan) -> set:
+    # Name-bearing fields only. `module_recall` credits a module when the plan actually
+    # *names* it in prose (title/theme); the `kind` field is a category label, not a module
+    # name. Folding `kind` in here leaked the kind signal into module scoring: a plan tagged
+    # e.g. `kind: docs` harvested module-recall credit for any top-level module whose name
+    # collides with a kind word (`docs`, `test`, `ci`, `build`, ...) without ever naming it,
+    # double-counting with the dedicated `kind_recall` metric (#141, #144). Matching a plan's
+    # `kind` against revealed kinds is `kind_recall`'s job (via `plan_kind`), not this one's.
     toks = set()
     for item in plan or []:
         if isinstance(item, dict):
-            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", "")) \
-                | _tokens(item.get("kind", ""))
+            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", ""))
         else:
             toks |= _tokens(str(item))
     return toks
@@ -294,6 +300,17 @@ def objective_score(plan, revealed, version_bump=None, base_version=None,
     `bump_actual` is None when no release is revealed or the base is unknown; `bump_match` is
     True exactly when the agent's normalized prediction equals `bump_actual` (so predicting
     no bump when none happened also counts as a match).
+
+    Metric ownership boundary (audited in #144 after #141 found `module_recall` farming
+    credit from plan `kind` tags): each component reads only the plan field(s) that are its
+    own ground truth, so one metric's signal can't be borrowed to inflate another.
+    - `module_recall` reads `title`/`theme` only — a module must be *named*, never merely
+      collided with by a category label such as `kind: docs`.
+    - `kind_recall` reads `kind` only (via `plan_kind`) — title/theme prose that happens to
+      contain a kind word (e.g. a title mentioning "test") cannot farm kind credit.
+    - `release_predicted` reads both `kind == "release"` and a release-worded/version-tag
+      `title` — intentionally, because each is a genuine first-party release signal in its
+      own right, not one metric's field standing in for another's.
     """
     result = module_recall(plan, revealed)
     result.update(kind_recall(plan, revealed))
