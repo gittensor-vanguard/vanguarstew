@@ -31,10 +31,15 @@ _SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
 
 
 def _looks_like_sha(token: str) -> bool:
-    """0-9a-f also matches a bare number (0-9 is a subset), so a hex digit is
-    required to tell a SHA apart from ordinary numeric content (counts, stats,
-    years) in prose."""
-    return any(c in "abcdefABCDEF" for c in token)
+    """True when a free-text token should be treated as a raw commit SHA.
+
+    Bare numeric tokens are intentionally preserved. They are technically valid hex, but in
+    prose they are far more likely to be counts, years, IDs, or measurements; masking them
+    destroys useful benchmark content. Requiring at least one hex letter keeps realistic SHAs
+    scrubbed while avoiding broad numeric false positives.
+    """
+    low = (token or "").lower()
+    return bool(_SHA.fullmatch(low) and any(c in "abcdef" for c in low))
 
 
 def strip_forward_refs(text: str) -> str:
@@ -43,7 +48,7 @@ def strip_forward_refs(text: str) -> str:
         return text
     text = _GH_LINK.sub("<link>", text)
     text = _ISSUE_REF.sub("#ref", text)
-    text = _SHA.sub(lambda m: "<sha>" if _looks_like_sha(m.group()) else m.group(), text)
+    text = _SHA.sub(lambda m: "<sha>" if _looks_like_sha(m.group(0)) else m.group(0), text)
     return text
 
 
