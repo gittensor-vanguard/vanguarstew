@@ -34,6 +34,30 @@ def test_objective_component_includes_bump_when_present():
     assert objective_component(obj) == round(2 / 3, 3)
 
 
+def test_objective_component_prefers_weighted_module_recall():
+    # When file-weighted recall is present it is used instead of plain recall, so the
+    # score reflects where change actually concentrated (#61).
+    assert objective_component({"module_recall": 0.5, "weighted_module_recall": 0.9}) == 0.9
+    # It blends with the release/bump signals exactly like plain recall does.
+    obj = {"module_recall": 0.2, "weighted_module_recall": 0.8,
+           "release_signaled": True, "release_predicted": True}
+    assert objective_component(obj) == round((0.8 + 1.0) / 2, 3)
+
+
+def test_objective_component_falls_back_to_plain_recall_when_unweighted():
+    # No weighted recall available (e.g. the weighted producer is not present yet):
+    # plain module_recall is used, so behavior is unchanged until it lands.
+    assert objective_component({"module_recall": 0.5}) == 0.5
+    # An explicit None weighted value falls back rather than being treated as 0.0.
+    assert objective_component({"module_recall": 0.4, "weighted_module_recall": None}) == 0.4
+
+
+def test_composite_uses_weighted_recall_end_to_end():
+    # The composite reflects weighted recall through objective_component (#61).
+    obj = {"module_recall": 0.0, "weighted_module_recall": 1.0}
+    assert composite_score("tie", obj) == 0.7  # 0.6*0.5 + 0.4*1.0
+
+
 def test_composite_blends_judge_and_objective():
     obj = {"module_recall": 0.5}
     assert composite_score("A", obj) == 0.8    # 0.6*1.0 + 0.4*0.5

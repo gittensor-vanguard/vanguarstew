@@ -8,6 +8,8 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.score import (  # noqa: E402
+    addressed_issues,
+    backlog_recall,
     base_from_releases,
     bump_level,
     changed_modules,
@@ -62,6 +64,44 @@ def test_empty_inputs():
     res = module_recall([], [])
     assert res["module_recall"] == 0.0
     assert objective_score([], [])["release_match"] is True  # neither signaled nor predicted
+    assert backlog_recall([], [], [])["backlog_recall"] == 0.0
+
+
+def test_backlog_recall_matches_addressed_issues():
+    open_issues = [
+        {"number": 12, "title": "Memory leak under load"},
+        {"number": 15, "title": "Support YAML config"},
+        {"number": 99, "title": "Unrelated roadmap item"},
+    ]
+    revealed = [
+        {"subject": "fix: memory leak under heavy load", "files": []},
+        {"subject": "docs: tweak readme", "files": []},
+    ]
+    assert [i["number"] for i in addressed_issues(revealed, open_issues)] == [12]
+    plan = [{"title": "Fix memory leak under load", "kind": "bugfix"}]
+    res = backlog_recall(plan, revealed, open_issues)
+    assert res["matched_issue_numbers"] == [12]
+    assert res["backlog_recall"] == 1.0
+    score = objective_score(plan, revealed, open_issues=open_issues)
+    assert score["backlog_recall"] == 1.0
+
+
+def test_git_only_backlog_does_not_change_core_objective_score():
+    """Empty or unaddressed backlog must not shift module/release/bump signals."""
+    plan = [{"title": "build plugin system", "theme": "plugins", "kind": "feature"}]
+    baseline = objective_score(plan, REVEALED)
+    with_empty = objective_score(plan, REVEALED, open_issues=[])
+    with_unaddressed = objective_score(plan, REVEALED, open_issues=[
+        {"number": 1, "title": "Future feature nobody touched"},
+    ])
+    for score in (with_empty, with_unaddressed):
+        assert score["module_recall"] == baseline["module_recall"]
+        assert score["kind_recall"] == baseline["kind_recall"]
+        assert score["release_signaled"] == baseline["release_signaled"]
+        assert score["release_predicted"] == baseline["release_predicted"]
+        assert score["release_match"] == baseline["release_match"]
+        assert score["backlog_recall"] == 0.0
+        assert score["matched_issue_numbers"] == []
 
 
 def test_is_release_subject_accepts_genuine_releases():
