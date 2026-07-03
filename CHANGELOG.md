@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Objective anchor: open-issue **backlog recall** (`benchmark/score.py`) — when frozen
+  `open_issues` are knowable at T, `objective_score` reports `backlog_recall`,
+  `addressed_issue_numbers`, and `matched_issue_numbers`, scoring whether a plan anticipated
+  issues the revealed window actually addressed (title ↔ commit-subject overlap). Also reports
+  `addressed_backlog_diagnostics` — the issue number, title, and matched commit subject behind
+  each addressed issue — for maintainer-facing inspection; purely additive, doesn't change
+  scoring. Git-only runs or an empty backlog degrade gracefully (#44, #135).
 - Planner queue reconciliation (`agent/planner.py`): a deterministic pass makes the plan honor
   the open-PR queue even when the LLM disregards it — an item that restates an open PR's work
   is down-weighted to a `triage` review item and flagged with `restates_pr`, redundant items
