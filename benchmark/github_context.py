@@ -7,6 +7,18 @@ created on or before T and was not already closed by T.
 
 Network access is optional. Any failure (offline, rate limit, private repo) is caught and
 the git-only context is returned unchanged, so the benchmark still runs without GitHub.
+
+Field stability (``fetch_context_at``)
+--------------------------------------
+Derived as-of-T (safe):
+  - Issue/PR membership: ``created_at`` / ``closed_at`` gate open-at-T selection.
+  - Milestone ``state``: derived from ``closed_at`` relative to T, not the live API field.
+  - Releases: filtered by ``published_at <= T``.
+
+Live-only (present-day REST snapshot — documented, not reconstructable without Events API):
+  - ``labels`` on issues/PRs: label application timestamps are unavailable.
+  - Repo ``labels`` list: no created-at on the labels endpoint.
+  - Milestone ``due_on``: may be edited after T; we keep the current value as best-effort.
 """
 
 from __future__ import annotations
@@ -18,6 +30,9 @@ from datetime import datetime
 
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
+
+# Metadata keys copied from ``fetch_context_at`` into an enriched git-only context.
+_ENRICH_META_KEYS = ("_issues_truncated", "_knowable_until", "_source")
 
 
 def parse_owner_repo(remote_url: str):
@@ -41,6 +56,43 @@ def _parse_dt(value):
     if not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _item_open_at(item: dict, until: datetime) -> bool:
+    """True when an issue/PR was open at ``until`` (created on/before T, not closed by T)."""
+    created = _parse_dt(item.get("created_at"))
+    if created is None or created > until:
+        return False
+    closed = _parse_dt(item.get("closed_at"))
+    return closed is None or closed > until
+
+
+def _issue_record(item: dict) -> dict:
+    """Minimal issue/PR fields copied into the frozen context."""
+    return {
+        "number": item.get("number"),
+        "title": item.get("title"),
+        "labels": [lbl.get("name") for lbl in item.get("labels", [])],
+        "created_at": item.get("created_at"),
+    }
+
+
+def _milestone_at(milestone: dict, until: datetime) -> dict | None:
+    """A milestone as knowable at ``until``, or None if it did not exist yet.
+
+    ``state`` is derived from ``closed_at`` as-of T — ``"closed"`` only when the milestone
+    was already closed by T — rather than the milestone's present-day ``state`` field.
+    """
+    created = _parse_dt(milestone.get("created_at"))
+    if created is None or created > until:
+        return None
+    closed = _parse_dt(milestone.get("closed_at"))
+    state = "closed" if closed is not None and closed <= until else "open"
+    return {
+        "title": milestone.get("title"),
+        "due_on": milestone.get("due_on"),
+        "state": state,
+    }
 
 
 def _get(url: str, token, timeout: int = 20):
@@ -71,18 +123,9 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
         if not batch:
             break
         for it in batch:
-            created = _parse_dt(it.get("created_at"))
-            if created is None or created > until:
-                continue          # created after T — future, skip
-            closed = _parse_dt(it.get("closed_at"))
-            if closed is not None and closed <= until:
-                continue          # already closed by T — not open
-            rec = {
-                "number": it.get("number"),
-                "title": it.get("title"),
-                "labels": [lbl.get("name") for lbl in it.get("labels", [])],
-                "created_at": it.get("created_at"),
-            }
+            if not _item_open_at(it, until):
+                continue
+            rec = _issue_record(it)
             (open_prs if it.get("pull_request") else open_issues).append(rec)
         if len(batch) < 100:
             break                 # exhausted all issues — complete
@@ -110,10 +153,9 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
 
     milestones = []
     for m in _get(f"{base}/milestones?state=all&per_page={per_page}", token, timeout):
-        created = _parse_dt(m.get("created_at"))
-        if created is not None and created <= until:
-            milestones.append({"title": m.get("title"), "due_on": m.get("due_on"),
-                               "state": m.get("state")})
+        rec = _milestone_at(m, until)
+        if rec is not None:
+            milestones.append(rec)
 
     releases = []
     for r in _get(f"{base}/releases?per_page={per_page}", token, timeout):
@@ -151,6 +193,9 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
         merged = dict(context)
         for key in ("repo", "open_issues", "open_prs", "labels", "milestones", "releases"):
             if gh.get(key):
+                merged[key] = gh[key]
+        for key in _ENRICH_META_KEYS:
+            if key in gh:
                 merged[key] = gh[key]
         merged["_github_enriched"] = True
         return merged

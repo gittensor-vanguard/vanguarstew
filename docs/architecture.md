@@ -87,6 +87,10 @@ Because the reference is public GitHub history, the benchmark actively resists l
 - **Forward-reference scrubbing** (`benchmark/leakage.py`) — even within knowable-at-T text,
   issue/PR back-references (`#N`), GitHub issue/PR/commit links, and raw SHAs are masked, so a
   commit subject or README can't cross-reference the future.
+- **As-of-T field guards** (`benchmark/github_context.py`) — mutable API fields such as
+  milestone `state` are derived from timestamps (`closed_at` vs. T), not copied from the live
+  response. Fields the REST API cannot time-filter (issue label sets, repo label lists) are
+  documented inline as live-only best-effort snapshots.
 - **Recent-window + rotation** freeze-point selection (`benchmark/taskgen.py`) — prefer recent
   points (past a model's training cutoff) and rotate deterministically so answers aren't reused.
 - **Repo diversity / held-out repos** (M3) — generalization is scored on unseen repos.

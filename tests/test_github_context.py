@@ -59,6 +59,72 @@ def test_open_at_T_filtering(monkeypatch):
     assert ctx["_source"] == "github-api"
 
 
+def test_item_open_at_gates_by_created_and_closed():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._item_open_at({"created_at": "2023-01-01T00:00:00Z", "closed_at": None}, T)
+    assert gc._item_open_at({"created_at": "2023-01-01T00:00:00Z",
+                             "closed_at": "2023-08-01T00:00:00Z"}, T)
+    assert not gc._item_open_at({"created_at": "2023-09-01T00:00:00Z", "closed_at": None}, T)
+    assert not gc._item_open_at({"created_at": "2023-01-01T00:00:00Z",
+                                 "closed_at": "2023-03-01T00:00:00Z"}, T)
+
+
+def test_milestone_state_is_as_of_T():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    closed_after = {"title": "m", "created_at": "2023-01-01T00:00:00Z",
+                    "closed_at": "2023-08-01T00:00:00Z", "state": "closed", "due_on": None}
+    assert gc._milestone_at(closed_after, T)["state"] == "open"
+    closed_before = {"title": "m", "created_at": "2023-01-01T00:00:00Z",
+                     "closed_at": "2023-03-01T00:00:00Z", "state": "closed"}
+    assert gc._milestone_at(closed_before, T)["state"] == "closed"
+    never = {"title": "m", "created_at": "2023-01-01T00:00:00Z", "closed_at": None,
+             "state": "open"}
+    assert gc._milestone_at(never, T)["state"] == "open"
+    future = {"title": "m", "created_at": "2023-12-01T00:00:00Z", "closed_at": None}
+    assert gc._milestone_at(future, T) is None
+
+
+def test_fetch_context_milestone_state_not_leaked(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_get(url, token, timeout=20):
+        if "/milestones" in url:
+            return [
+                {"title": "v1", "created_at": "2023-01-01T00:00:00Z",
+                 "closed_at": "2023-08-01T00:00:00Z", "state": "closed", "due_on": None},
+            ]
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert ctx["milestones"] == [{"title": "v1", "due_on": None, "state": "open"}]
+
+
+def test_enrich_context_preserves_truncation_metadata(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_fetch(*a, **k):
+        return {
+            "repo": "foo/bar",
+            "open_issues": [],
+            "open_prs": [],
+            "labels": [],
+            "milestones": [],
+            "releases": [],
+            "_source": "github-api",
+            "_knowable_until": T.isoformat(),
+            "_issues_truncated": True,
+        }
+
+    monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    base = {"frozen_at": {"date": "2023-06-01T00:00:00Z"}, "open_issues": []}
+    out = gc.enrich_context(base, "/some/repo")
+    assert out["_issues_truncated"] is True
+    assert out["_knowable_until"] == T.isoformat()
+    assert out["_source"] == "github-api"
+
+
 def test_enrich_context_degrades_on_failure(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("offline")
