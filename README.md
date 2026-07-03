@@ -127,11 +127,12 @@ The `--repos` aggregate result shape is:
 ## Status
 
 **Active development.** The core loop runs end-to-end and is **live-verified against a real
-model** (see the demo above). Shipped so far (M0–M2): history-derived replay, an objective
-scoring anchor plus a decision-process judge, leakage defenses, and knowable-at-T GitHub
-context. Open source (MIT), CI green on Python 3.10–3.12, and registered on gittensor. Next:
-generalization across diverse repos (M3) and the fully agentic loop (M4). See
-[ROADMAP.md](ROADMAP.md).
+model** (see the demo above). Shipped so far (M0–M3): history-derived replay, an objective
+scoring anchor plus a decision-process judge, leakage defenses, knowable-at-T GitHub context,
+and **generalization** — multi-repo replay with an aggregated cross-repo composite and a
+leakage-safe, versioned repo-set config. Open source (MIT), CI green on Python 3.10–3.12, and
+registered on gittensor. Next: held-out generalization scoring (finishing M3) and the fully
+agentic loop (M4). See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 
