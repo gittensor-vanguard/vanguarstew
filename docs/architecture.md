@@ -126,6 +126,9 @@ Because the reference is public GitHub history, the benchmark actively resists l
     `labeled`/`unlabeled` events up to T (`_labels_at`); when the timeline can't be read
     (offline, rate-limited, or no label events), labels are **omitted** (`labels_as_of_t:
     false`) rather than copied live — fail-closed, never leak.
+    Consumers must treat issue/PR `labels` as historically exact only when
+    `labels_as_of_t` is true; `labels: []` with `labels_as_of_t: false` means
+    "history unavailable", not "there were no labels at T".
   - *Intentionally omitted* (not reconstructable from a cheap as-of-T source): the repo-wide
     label list and issue/PR titles are still the live values, so consumers must not treat them
     as historically exact; timeline-based reconstruction can be extended to more fields later.

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+from agent.context import prompt_context
+
 SYSTEM = (
     "You are an experienced repository maintainer making a concrete decision. Decide as the "
     "maintainers of THIS repo would, given its philosophy. Explain the tradeoffs, priority, "
@@ -50,8 +52,4 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
 
 
 def _render(context: dict) -> str:
-    keep = {k: context.get(k) for k in (
-        "frozen_at", "recent_commits", "open_issues", "open_prs",
-        "labels", "milestones", "releases", "readme_excerpt",
-    )}
-    return json.dumps(keep, indent=1)[:12000]
+    return json.dumps(prompt_context(context), indent=1)[:12000]

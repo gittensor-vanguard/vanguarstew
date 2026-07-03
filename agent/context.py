@@ -13,6 +13,10 @@ import os
 import subprocess
 
 CONTEXT_FILE = ".vanguarstew_context.json"
+PROMPT_CONTEXT_KEYS = (
+    "frozen_at", "recent_commits", "open_issues", "open_prs",
+    "labels", "milestones", "releases", "readme_excerpt",
+)
 
 
 def _git(repo_path, *args):
@@ -29,6 +33,34 @@ def load_context(repo_path: str) -> dict:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     return _context_from_git(repo_path)
+
+
+def prompt_context(context: dict) -> dict:
+    """Context projection for LLM prompts.
+
+    Issue/PR label history is only historically exact when `labels_as_of_t` is true.
+    When reconstruction was unavailable, the frozen context stores `labels: []` as a
+    fail-closed sentinel; prompt consumers must not present that as "no labels at T".
+    This view normalizes those entries to `labels: null` while preserving the explicit
+    `labels_as_of_t: false` marker.
+    """
+    keep = {k: context.get(k) for k in PROMPT_CONTEXT_KEYS}
+    keep["open_issues"] = _prompt_issue_pr_items(keep.get("open_issues"))
+    keep["open_prs"] = _prompt_issue_pr_items(keep.get("open_prs"))
+    return keep
+
+
+def _prompt_issue_pr_items(items):
+    out = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        rec = dict(item)
+        if rec.get("labels_as_of_t") is False:
+            rec["labels"] = None
+        out.append(rec)
+    return out
 
 
 def _context_from_git(repo_path: str) -> dict:
