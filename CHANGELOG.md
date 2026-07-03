@@ -46,6 +46,15 @@ All notable changes to this project are documented here. The format is based on
   version mentioned mid-subject (e.g. `chore(deps): bump lodash to v4.17.21`, `fix crash in
   v1.2.0 parser`). Release detection now requires explicit release wording or a version-tag
   subject, so dependency bumps no longer inflate the release-prediction signal (#57).
+- Objective anchor: `module_recall` no longer grants credit from a plan item's `kind` tag —
+  only `title`/`theme` (name-bearing fields) can name a module. A plan merely tagged `kind:
+  docs` was farming module-recall credit for any top-level module whose name collided with a
+  kind word (`docs`, `test`, `ci`, `build`, …) without ever naming it, double-counting with
+  the dedicated `kind_recall` metric (#141). Audited the rest of `score.py` for the same class
+  of cross-metric leakage (#144): no other case found; the reverse boundary — `kind_recall`
+  reading only `kind`, never title/theme prose — was already correct and is now covered by a
+  regression test, and the ownership boundary between metrics is documented on
+  `objective_score`.
 
 ## [0.2.0] - 2026-07-03
 
