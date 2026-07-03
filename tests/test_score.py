@@ -8,12 +8,15 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.score import (  # noqa: E402
+    actual_bump,
     changed_modules,
     is_release_subject,
     module_recall,
     objective_score,
+    parse_semver,
     release_predicted,
     release_signaled,
+    semver_bump_level,
 )
 
 REVEALED = [
@@ -100,3 +103,51 @@ def test_objective_score_no_false_release_match_on_dep_bumps():
     assert score["release_signaled"] is False
     assert score["release_predicted"] is False
     assert score["release_match"] is True   # both correctly False -> agree
+
+
+def test_parse_semver_with_and_without_v():
+    assert parse_semver("v1.2.0") == (1, 2, 0)
+    assert parse_semver("1.2.0") == (1, 2, 0)
+    assert parse_semver("Release v2.10.3") == (2, 10, 3)
+    assert parse_semver("no version here") is None
+    assert parse_semver("") is None
+
+
+def test_semver_bump_level_major_minor_patch():
+    assert semver_bump_level("1.4.2", "2.0.0") == "major"
+    assert semver_bump_level("1.4.2", "1.5.0") == "minor"
+    assert semver_bump_level("1.4.2", "1.4.3") == "patch"
+    assert semver_bump_level("1.4.2", "1.4.2") is None  # no change
+    assert semver_bump_level("v1.0.0", "v1.1.0") == "minor"  # tolerates leading v
+    assert semver_bump_level("nope", "1.0.0") is None  # unparseable
+
+
+def test_actual_bump_from_revealed_window():
+    minor = [
+        {"subject": "Release v1.4.0", "files": ["CHANGELOG.md"]},
+        {"subject": "add feature", "files": ["core/x.py"]},
+        {"subject": "Release v1.5.0", "files": ["CHANGELOG.md"]},
+    ]
+    assert actual_bump(minor) == "minor"
+    # a single version in the window can't establish a delta
+    assert actual_bump(REVEALED) is None
+
+
+def test_objective_score_reports_bump_match():
+    window = [
+        {"subject": "Release v1.0.0", "files": ["CHANGELOG.md"]},
+        {"subject": "Release v2.0.0", "files": ["CHANGELOG.md"]},
+    ]
+    plan = [{"title": "cut the next release", "kind": "release"}]
+    hit = objective_score(plan, window, version_bump="major")
+    assert hit["bump_actual"] == "major"
+    assert hit["bump_match"] is True
+
+    miss = objective_score(plan, window, version_bump="patch")
+    assert miss["bump_actual"] == "major"
+    assert miss["bump_match"] is False
+
+    # no bump inferable -> bump fields stay neutral (not scored downstream)
+    none = objective_score(plan, REVEALED, version_bump="minor")
+    assert none["bump_actual"] is None
+    assert none["bump_match"] is None

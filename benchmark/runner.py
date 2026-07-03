@@ -87,7 +87,8 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                                     task["revealed"], llm, rng)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
-            obj = objective_score(challenger.get("plan"), task["revealed"])
+            obj = objective_score(challenger.get("plan"), task["revealed"],
+                                  challenger.get("version_bump"))
             rows.append({
                 "task": k,
                 "freeze": task["freeze_commit"][:10],

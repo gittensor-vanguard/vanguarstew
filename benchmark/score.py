@@ -88,15 +88,81 @@ def release_predicted(plan) -> bool:
     return False
 
 
-def objective_score(plan, revealed) -> dict:
-    """The deterministic anchor: module recall + release-prediction match."""
+_SEMVER = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+_BUMP_LEVELS = ("major", "minor", "patch")
+
+
+def parse_semver(text: str):
+    """Extract the first ``(major, minor, patch)`` semver tuple from text.
+
+    Accepts a bare version or one embedded in a subject line, with or without a leading
+    ``v`` (``"v1.2.0"``, ``"1.2.0"``, ``"Release v1.2.0"``). Returns None when absent.
+    """
+    if not text:
+        return None
+    m = _SEMVER.search(text)
+    if not m:
+        return None
+    return tuple(int(part) for part in m.groups())
+
+
+def semver_bump_level(old, new):
+    """Classify the delta between two versions as ``"major"``, ``"minor"``, ``"patch"``.
+
+    Each argument may be a version string or a ``(major, minor, patch)`` tuple. The level
+    is the most-significant component that differs; identical (or unparseable) versions
+    return None.
+    """
+    old = parse_semver(old) if isinstance(old, str) else old
+    new = parse_semver(new) if isinstance(new, str) else new
+    if not old or not new:
+        return None
+    for level, o, n in zip(_BUMP_LEVELS, old, new):
+        if o != n:
+            return level
+    return None
+
+
+def _revealed_versions(revealed) -> list:
+    """Semver tuples appearing in revealed-commit subjects, in chronological order,
+    with consecutive duplicates collapsed."""
+    versions = []
+    for r in revealed or []:
+        v = parse_semver(r.get("subject", "") or "")
+        if v and (not versions or versions[-1] != v):
+            versions.append(v)
+    return versions
+
+
+def actual_bump(revealed):
+    """The semver bump level realized across the revealed window.
+
+    Determined from the transition between the last two distinct versions seen; None when
+    the window carries fewer than two versions (so the level can't be inferred).
+    """
+    versions = _revealed_versions(revealed)
+    if len(versions) < 2:
+        return None
+    return semver_bump_level(versions[-2], versions[-1])
+
+
+def objective_score(plan, revealed, version_bump=None) -> dict:
+    """The deterministic anchor: module recall + release-prediction match.
+
+    When the revealed window shows a concrete semver bump, ``bump_actual`` records its
+    level and ``bump_match`` reports whether the agent's ``version_bump`` matched it.
+    """
     result = module_recall(plan, revealed)
     signaled = release_signaled(revealed)
     predicted = release_predicted(plan)
+    bump = actual_bump(revealed)
+    predicted_bump = (version_bump or "").strip().lower() or None
     result.update({
         "release_signaled": signaled,
         "release_predicted": predicted,
         "release_match": signaled == predicted,
+        "bump_actual": bump,
+        "bump_match": (predicted_bump == bump) if bump is not None else None,
     })
     return result
 
