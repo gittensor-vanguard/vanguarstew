@@ -18,6 +18,7 @@ from datetime import datetime
 
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
+DEFAULT_MAX_RELEASE_PAGES = 10  # bound on release pages fetched (100 items/page)
 
 
 def parse_owner_repo(remote_url: str):
@@ -165,14 +166,37 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
     return open_issues, open_prs, truncated
 
 
+def _collect_releases_at(base: str, until: datetime, token, timeout: int, per_page: int,
+                         max_pages: int) -> tuple[list, bool]:
+    """Paginate GitHub releases and keep those published on or before ``until``."""
+    releases = []
+    truncated = False
+    for page in range(1, max_pages + 1):
+        batch = _get(f"{base}/releases?per_page={per_page}&page={page}", token, timeout)
+        if not batch:
+            break
+        for r in batch:
+            published = _parse_dt(r.get("published_at"))
+            if published is not None and published <= until:
+                releases.append({"tag": r.get("tag_name"), "name": r.get("name"),
+                                 "published_at": r.get("published_at")})
+        if len(batch) < per_page:
+            break
+        if page == max_pages:
+            truncated = True
+    return releases, truncated
+
+
 def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
                      per_page: int = 100, timeout: int = 20,
-                     max_issue_pages: int = DEFAULT_MAX_ISSUE_PAGES) -> dict:
+                     max_issue_pages: int = DEFAULT_MAX_ISSUE_PAGES,
+                     max_release_pages: int = DEFAULT_MAX_RELEASE_PAGES) -> dict:
     """GitHub-derived context knowable at `until` (a timezone-aware UTC datetime).
 
     Issues/PRs are paginated (created desc) back toward T so open-at-T reconstruction is
     complete regardless of how old T is, bounded by `max_issue_pages`; `_issues_truncated`
-    flags when the cap was hit before exhausting history.
+    flags when the cap was hit before exhausting history. Releases are paginated similarly
+    with `_releases_truncated`.
     """
     token = token or os.environ.get("GITHUB_TOKEN") or None
     base = f"{API}/repos/{owner}/{repo}"
@@ -188,12 +212,8 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         if rec is not None:
             milestones.append(rec)
 
-    releases = []
-    for r in _get(f"{base}/releases?per_page={per_page}", token, timeout):
-        published = _parse_dt(r.get("published_at"))
-        if published is not None and published <= until:
-            releases.append({"tag": r.get("tag_name"), "name": r.get("name"),
-                             "published_at": r.get("published_at")})
+    releases, releases_truncated = _collect_releases_at(
+        base, until, token, timeout, per_page, max_release_pages)
 
     return {
         "repo": f"{owner}/{repo}",
@@ -205,6 +225,7 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "_source": "github-api",
         "_knowable_until": until.isoformat(),
         "_issues_truncated": truncated,
+        "_releases_truncated": releases_truncated,
     }
 
 
@@ -226,6 +247,8 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
             if gh.get(key):
                 merged[key] = gh[key]
         merged["_github_enriched"] = True
+        if gh.get("_releases_truncated"):
+            merged["_releases_truncated"] = True
         return merged
     except Exception as exc:  # offline / rate-limited / private — degrade to git-only
         merged = dict(context)

@@ -224,3 +224,47 @@ def test_truncation_flag_when_page_cap_hit(monkeypatch):
     monkeypatch.setattr(gc, "_get", _pager({1: full, 2: full, 3: full}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_issue_pages=2)
     assert ctx["_issues_truncated"] is True
+
+
+def _release(tag, published, name=None):
+    return {"tag_name": tag, "name": name or tag, "published_at": published}
+
+
+def test_release_pagination_reaches_older_release(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    page1 = [_release(f"v2.{i}.0", "2023-09-01T00:00:00Z") for i in range(100)]
+    page2 = [
+        _release("v1.0.0", "2023-01-01T00:00:00Z"),
+        _release("v0.9.0", "2022-06-01T00:00:00Z"),
+    ]
+
+    def fake_get(url, token, timeout=20):
+        if "/releases" in url:
+            m = re.search(r"[?&]page=(\d+)", url)
+            return {1: page1, 2: page2}.get(int(m.group(1)) if m else 1, [])
+        if "/issues" in url:
+            return []
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert [r["tag"] for r in ctx["releases"]] == ["v1.0.0", "v0.9.0"]
+    assert ctx["_releases_truncated"] is False
+
+
+def test_releases_truncation_flag_when_page_cap_hit(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    full = [_release(f"v1.{i}.0", "2023-01-01T00:00:00Z") for i in range(100)]
+
+    def fake_get(url, token, timeout=20):
+        if "/releases" in url:
+            m = re.search(r"[?&]page=(\d+)", url)
+            page = int(m.group(1)) if m else 1
+            return full if page <= 3 else []
+        if "/issues" in url:
+            return []
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_release_pages=2)
+    assert ctx["_releases_truncated"] is True
