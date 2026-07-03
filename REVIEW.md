@@ -24,7 +24,7 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q --cov=agent --cov=benchmark --cov-fail
   - no AI-attribution content in the PR body **or commit messages** (including `Co-authored-by:` trailers for AI assistants);
   - the diff is non-trivial;
   - code changes under `agent/` or `benchmark/` ship a test change under `tests/`;
-  - the author is within the open-PR limit (**at most 2 open PRs** per contributor; the maintainer is exempt).
+  - the author is within the open-PR limit (**at most 2 open PRs** per contributor; the maintainer is exempt). Over-limit PRs are **auto-closed** by the `PR limit` workflow (`.github/workflows/pr-limit.yml`) — it keeps your 2 earliest open PRs and closes newer extras, at open time and on a periodic sweep.
 
 If a gate is red, the PR is not mergeable — there is no human override that skips it.
 
