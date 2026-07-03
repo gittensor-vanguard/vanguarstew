@@ -12,6 +12,7 @@ Neither is the final ranking (that's the pairwise judge); the objective score an
 
 from __future__ import annotations
 
+import math
 import re
 
 _TOK = re.compile(r"[a-z0-9]+")
@@ -379,6 +380,59 @@ def composite_score(winner: str, objective: dict, w_judge: float = 0.6,
     anchored = objective_component(objective)
     total = (w_judge + w_objective) or 1.0
     return round((w_judge * judged + w_objective * anchored) / total, 3)
+
+
+_WHO_TO_OUTCOME = {"challenger": "A", "tie": "tie", "baseline": "B"}
+
+
+def default_weight_grid(step: float = 0.25) -> list:
+    """Grid of ``(w_judge, w_objective)`` pairs to sweep.
+
+    ``w_judge`` walks ``[0, 1]`` in increments of ``step`` and ``w_objective`` is its
+    complement, so every pair sums to 1.0. Both endpoints are always included: when ``step``
+    doesn't divide 1.0 evenly (e.g. ``0.3``) the final increment is shortened so the grid
+    still reaches ``w_judge == 1.0`` rather than stopping at ``0.9``. ``step`` must be in
+    ``(0, 1]`` — a larger step would overshoot the documented contract and is rejected.
+    """
+    if not 0 < step <= 1:
+        raise ValueError("step must be in (0, 1]")
+    n = math.ceil(round(1.0 / step, 9))  # increments needed to span [0, 1]
+    grid = []
+    for i in range(n + 1):
+        w_judge = min(round(i * step, 3), 1.0)
+        if not grid or grid[-1][0] != w_judge:  # clamp to 1.0, drop any duplicate endpoint
+            grid.append((w_judge, round(1.0 - w_judge, 3)))
+    return grid
+
+
+def sweep_composite(rows, grid=None) -> list:
+    """Recompute ``composite_mean`` across a grid of judge/objective weightings.
+
+    ``rows`` are the per-task result rows produced by the runner (each carrying a
+    ``winner`` of ``"challenger"``/``"baseline"``/``"tie"`` and an ``objective`` dict).
+    The judge outcome and objective anchor are fixed once an eval has run, so the blend
+    can be retuned here without re-invoking the judge or the agents. Returns one
+    ``{"w_judge", "w_objective", "composite_mean"}`` entry per weighting.
+    """
+    grid = grid if grid is not None else default_weight_grid()
+    rows = list(rows)
+    swept = []
+    for w_judge, w_objective in grid:
+        if rows:
+            comps = [
+                composite_score(_WHO_TO_OUTCOME.get(r.get("winner"), "tie"),
+                                r.get("objective") or {}, w_judge, w_objective)
+                for r in rows
+            ]
+            mean = round(sum(comps) / len(comps), 3)
+        else:
+            mean = 0.0
+        swept.append({
+            "w_judge": round(w_judge, 3),
+            "w_objective": round(w_objective, 3),
+            "composite_mean": mean,
+        })
+    return swept
 
 
 def trajectory_overlap(plan, revealed) -> float:
