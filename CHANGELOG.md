@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Maintainer-assist mode (`agent/review.py`, `scripts/review_pr.py`): the same agent the
+  benchmark scores, applied to a **live** PR — it reads the PR and outputs a maintainer review
+  (recommended action, best-fit `mult:*` value tier, scope/tests checks, concerns, advice).
+  This is the "how it helps a maintainer" side: real triage/review assistance, not just scoring.
 - Composite score: the pairwise judge (trajectory + decision process) and the objective anchor
   (module recall, release/bump correctness) are now blended into a single per-task and mean
   score in [0, 1], with tunable weights (`--w-judge` / `--w-objective`, default 0.6 / 0.4).
