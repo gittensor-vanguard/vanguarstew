@@ -67,7 +67,9 @@ All notable changes to this project are documented here. The format is based on
   split file lists on whitespace, corrupting attribution for paths containing spaces (#116).
   Both are fixed by diffing merges against their first parent and splitting on lines instead.
   Regression coverage added in `tests/test_taskgen.py` via a reusable merge-history fixture
-  (#117).
+  (#117). File extraction now uses NUL-delimited (`-z`) `git show` output instead of
+  line-splitting, so a path containing a literal newline (which git can track, unlike a path
+  containing NUL) no longer gets corrupted into a C-quoted/escaped token (#120).
 - Leakage: frozen milestone `state` is now computed as-of-T from `closed_at` instead of copying
   the milestone's present-day state, so a milestone that existed at T but was closed *after* T
   is no longer leaked into the context as completed (#77).

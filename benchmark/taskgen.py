@@ -26,10 +26,12 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
         # `-m --first-parent` makes `git show` report the files a merge commit brought in
         # relative to its first parent — a plain `git show` of a clean merge yields a
         # combined diff with no files, silently emptying the ground truth objective scoring
-        # keys off. Splitting on lines (not whitespace) keeps paths containing spaces intact.
-        raw = _git(repo, "show", "-m", "--first-parent", "--name-only",
+        # keys off. `-z` NUL-delimits (and stops C-quoting) the path list, so splitting on
+        # "\x00" is robust to every byte a path can contain, including embedded newlines —
+        # unlike splitting on lines, which still breaks if a path itself has a newline in it.
+        raw = _git(repo, "show", "-m", "--first-parent", "--name-only", "-z",
                    "--pretty=format:", sha, check=False)
-        files = [line for line in raw.splitlines() if line]
+        files = [p for p in raw.split("\x00") if p]
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 

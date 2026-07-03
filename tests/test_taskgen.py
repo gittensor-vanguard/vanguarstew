@@ -101,3 +101,23 @@ def test_revealed_window_preserves_paths_with_spaces():
         assert window[0]["files"] == ["a file.py"]
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_revealed_window_preserves_paths_with_newlines():
+    # Git can track a path containing a literal newline; line-delimited parsing would split
+    # it into two bogus entries. NUL-delimited output (#120) keeps it as one real path.
+    repo = tempfile.mkdtemp()
+    try:
+        _run(repo, "init", "-q")
+        _run(repo, "config", "user.email", "t@t")
+        _run(repo, "config", "user.name", "t")
+        _commit(repo, "base.py", "x = 0\n", "base")
+        _commit(repo, "weird\nname.py", "y = 1\n", "add newline path")
+
+        commits = linear_history(repo)
+        window = revealed_window(repo, commits, 0, 1)
+
+        assert window[0]["files"] == ["weird\nname.py"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
