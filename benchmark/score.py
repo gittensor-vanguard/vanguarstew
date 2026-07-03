@@ -239,7 +239,51 @@ def release_predicted(plan) -> bool:
     return False
 
 
-def objective_score(plan, revealed, version_bump=None, base_version=None) -> dict:
+def _meaningful_overlap(a: set, b: set) -> bool:
+    """True when two token sets share enough substance to count as a theme match."""
+    if not a or not b:
+        return False
+    shared = a & b
+    return len(shared) >= max(2, min(len(a), len(b)) // 2)
+
+
+def addressed_issues(revealed, open_issues) -> list:
+    """Open issues at T whose themes show up in the revealed commit subjects."""
+    addressed = []
+    for issue in open_issues or []:
+        title_toks = _tokens(issue.get("title", ""))
+        if not title_toks:
+            continue
+        for row in revealed or []:
+            if _meaningful_overlap(title_toks, _tokens(row.get("subject", ""))):
+                addressed.append(issue)
+                break
+    return addressed
+
+
+def backlog_recall(plan, revealed, open_issues=None) -> dict:
+    """Fraction of addressed backlog issues the plan anticipated."""
+    addressed = addressed_issues(revealed, open_issues)
+    if not addressed:
+        return {
+            "backlog_recall": 0.0,
+            "addressed_issue_numbers": [],
+            "matched_issue_numbers": [],
+        }
+    plan_toks = _plan_tokens(plan)
+    matched = []
+    for issue in addressed:
+        if _meaningful_overlap(_tokens(issue.get("title", "")), plan_toks):
+            matched.append(issue.get("number"))
+    return {
+        "backlog_recall": round(len(matched) / len(addressed), 3),
+        "addressed_issue_numbers": [i.get("number") for i in addressed],
+        "matched_issue_numbers": matched,
+    }
+
+
+def objective_score(plan, revealed, version_bump=None, base_version=None,
+                    open_issues=None, **_) -> dict:
     """The deterministic anchor: module recall + commit-kind recall + release/bump match.
 
     When a release appears in the revealed window, the actual bump level (major/minor/patch)
@@ -253,6 +297,7 @@ def objective_score(plan, revealed, version_bump=None, base_version=None) -> dic
     """
     result = module_recall(plan, revealed)
     result.update(kind_recall(plan, revealed))
+    result.update(backlog_recall(plan, revealed, open_issues))
     signaled = release_signaled(revealed)
     predicted = release_predicted(plan)
 

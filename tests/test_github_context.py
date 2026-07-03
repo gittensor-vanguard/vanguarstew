@@ -95,6 +95,83 @@ def test_fetch_context_milestone_state_not_leaked(monkeypatch):
     assert ctx["milestones"] == [{"title": "v1", "due_on": None, "state": "open"}]
 
 
+def test_labels_at_reconstructs_membership_as_of_T():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        {"event": "labeled", "created_at": "2023-01-01T00:00:00Z", "label": {"name": "bug"}},
+        {"event": "labeled", "created_at": "2023-02-01T00:00:00Z", "label": {"name": "wip"}},
+        {"event": "unlabeled", "created_at": "2023-03-01T00:00:00Z", "label": {"name": "wip"}},
+        {"event": "commented", "created_at": "2023-02-15T00:00:00Z"},           # non-label: ignored
+        {"event": "labeled", "created_at": "2023-08-01T00:00:00Z", "label": {"name": "future"}},  # after T
+        {"event": "unlabeled", "created_at": "2023-09-01T00:00:00Z", "label": {"name": "bug"}},    # after T
+    ]
+    # As of T: +bug (Jan), +wip (Feb) then -wip (Mar) => {bug}. Post-T add/remove don't count.
+    assert gc._labels_at(events, T) == ["bug"]
+
+
+def test_labels_at_replays_events_in_chronological_order():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [  # deliberately out of order
+        {"event": "unlabeled", "created_at": "2023-03-01T00:00:00Z", "label": {"name": "x"}},
+        {"event": "labeled", "created_at": "2023-01-01T00:00:00Z", "label": {"name": "x"}},
+        {"event": "labeled", "created_at": "2023-02-01T00:00:00Z", "label": {"name": "y"}},
+    ]
+    assert gc._labels_at(events, T) == ["y"]  # +x, +y, -x
+
+
+def test_labels_at_none_when_nothing_reconstructable():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._labels_at([], T) is None
+    assert gc._labels_at([{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}], T) is None
+    # Only post-T label events => nothing knowable at T.
+    assert gc._labels_at(
+        [{"event": "labeled", "created_at": "2023-09-01T00:00:00Z", "label": {"name": "z"}}], T
+    ) is None
+
+
+def test_open_issue_labels_reconstructed_as_of_T(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    # Live label list says "shipped" — that must NOT leak; only the as-of-T set from
+    # the timeline (bug, added before T) should surface.
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "shipped"}]}]
+    timeline = [
+        {"event": "labeled", "created_at": "2023-01-02T00:00:00Z", "label": {"name": "bug"}},
+        {"event": "labeled", "created_at": "2023-08-01T00:00:00Z", "label": {"name": "shipped"}},
+    ]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return timeline
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == ["bug"]
+    assert "shipped" not in iss["labels"]
+    assert iss["labels_as_of_t"] is True
+
+
+def test_open_issue_labels_omitted_when_timeline_unavailable(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "shipped"}]}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            raise RuntimeError("timeline unavailable")
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == []            # fail-closed: omit rather than leak present-day
+    assert iss["labels_as_of_t"] is False
+
+
 def test_enrich_context_degrades_on_failure(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("offline")
