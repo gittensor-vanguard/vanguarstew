@@ -27,6 +27,15 @@ def test_extract_json():
     assert extract_json('noise {"x": [1, 2]} trailing') == {"x": [1, 2]}
 
 
+def test_extract_json_object_after_non_json_bracket_span():
+    # A non-JSON `[...]` span before the real object must not mask it (regression: the
+    # leftmost-alternation span captured the bracket and dropped the following object).
+    assert extract_json('note [see item 1] then {"a": 1}') == {"a": 1}
+    assert extract_json('Based on the diff [PR #30]:\n{"action": "merge"}') == {"action": "merge"}
+    # A genuine array response with a prose prefix still parses as a list (no regression).
+    assert extract_json('Here is the plan: [{"title": "x"}]') == [{"title": "x"}]
+
+
 def test_solve_offline_returns_decision():
     d = tempfile.mkdtemp()
     try:

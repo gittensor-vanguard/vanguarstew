@@ -74,6 +74,15 @@ def extract_json(text: str):
     brace = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
     if brace:
         candidates.append(brace.group(1))
+    # The alternation above yields only the *leftmost* of a `{...}`/`[...]` span, so a non-JSON
+    # bracket span appearing before the real JSON (e.g. a "[PR #30]" citation ahead of a `{...}`
+    # object) would mask it. Add the object and array spans independently as later fallbacks;
+    # they are reached only when the earlier candidates fail to parse, so nothing that already
+    # parses (including a genuine array response) changes.
+    for pat in (r"\{.*\}", r"\[.*\]"):
+        span = re.search(pat, text, re.DOTALL)
+        if span:
+            candidates.append(span.group(0))
     for c in candidates:
         try:
             return json.loads(c)
