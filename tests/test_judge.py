@@ -18,6 +18,30 @@ from agent.llm import LLM  # noqa: E402
 from benchmark.judge import _parse_winner, _plan_substance, pairwise_judge  # noqa: E402
 
 
+class _FakeLLM:
+    """Online judge stand-in whose verdict is driven by a chosen bias, for testing."""
+
+    def __init__(self, mode):
+        self.offline = False
+        self.mode = mode
+        self.calls = 0
+
+    def chat(self, system, user):
+        self.calls += 1
+        if self.mode == "position_first":
+            return '{"winner": "A"}'          # always picks whichever is shown FIRST
+        if self.mode == "position_second":
+            return '{"winner": "B"}'          # always picks whichever is shown SECOND
+        if self.mode == "content":
+            one = user.split("SUBMISSION ONE:")[1].split("SUBMISSION TWO:")[0]
+            return '{"winner": "A"}' if "GOOD" in one else '{"winner": "B"}'
+        return '{"winner": "tie"}'
+
+
+_GOOD = {"philosophy": {"summary": "GOOD"}, "plan": [{"title": "real"}], "rationale": "GOOD"}
+_BAD = {"philosophy": {}, "plan": [], "rationale": "meh"}
+
+
 def test_parse_winner_tolerant():
     assert _parse_winner('{"winner": "A", "why": "clear"}') == "A"
     assert _parse_winner('{"winner":"B"}') == "B"
@@ -137,3 +161,28 @@ def test_verbose_fluff_plan_does_not_beat_concise_substance():
     }
     assert pairwise_judge({}, substance, fluff, [], llm) == "A"
     assert pairwise_judge({}, fluff, substance, [], llm) == "B"
+
+
+def test_dual_order_keeps_consistent_winner():
+    # A judge that genuinely prefers the stronger submission agrees across both orders.
+    llm = _FakeLLM("content")
+    assert pairwise_judge({}, _GOOD, _BAD, [], llm) == "A"
+    assert llm.calls == 2  # both presentation orders were asked
+    # winner tracks the content regardless of which argument position it's in
+    assert pairwise_judge({}, _BAD, _GOOD, [], _FakeLLM("content")) == "B"
+
+
+def test_dual_order_ties_a_position_biased_judge():
+    # "always pick the first-shown" and "always pick the second-shown" are pure position
+    # bias — dual-order must refuse to award either a spurious win.
+    assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_first")) == "tie"
+    assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_second")) == "tie"
+
+
+def test_single_order_mode_makes_one_call_and_can_be_swayed():
+    # With dual_order disabled, only one call is made and a position-biased judge decides it.
+    llm = _FakeLLM("position_first")
+    # rng.random() >= 0.5 -> no swap, submission_a shown first -> biased judge picks A.
+    result = pairwise_judge({}, _GOOD, _BAD, [], llm, random.Random(1), dual_order=False)
+    assert llm.calls == 1
+    assert result in ("A", "B")  # a (biased) decision, not forced to tie
