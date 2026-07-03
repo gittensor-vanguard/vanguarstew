@@ -16,6 +16,16 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Objective anchor cross-metric leakage (#141, audited under #144): `module_recall` folded a
+  plan item's `kind` tag into its token set, so a plan merely tagged `kind: docs` (or `test`,
+  `ci`, `build`, …) harvested module-recall credit for any top-level module whose name
+  collided with that kind word — without ever naming it — double-counting with `kind_recall`
+  and letting the deterministic anchor be gamed. `module_recall` now reads only the
+  name-bearing `title`/`theme`/`files` fields. Audited the other score helpers for the same
+  class of leak: none remained (`kind_recall` already reads only `kind`; `release_predicted`
+  intentionally reads both a `release` kind and release-worded titles as independent
+  first-party signals), and the metric ownership boundary is now documented on
+  `objective_score` and covered by regression tests.
 - Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
   and `releases` were read from only the first API page, so a repo with more than 100 of
   either silently dropped the rest — which can hide a milestone that was open at T or an

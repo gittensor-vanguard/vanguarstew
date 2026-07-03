@@ -76,6 +76,37 @@ def test_backlog_recall_honors_plan_files_for_issue_titles():
     assert res["backlog_recall"] == 1.0
 
 
+def test_module_recall_ignores_kind_tags():
+    # Cross-metric leakage guard (#141/#144): a plan that only *tags* a kind must earn no
+    # module-recall credit for an infra module whose name collides with that kind word. Here
+    # the plan never names `docs` or `ci` — it only sets `kind` — so module recall must be 0,
+    # leaving kind matching to the dedicated kind_recall metric.
+    revealed = [{"subject": "chore: tidy repo", "files": ["docs/guide.md", "ci/build.yml"]}]
+    plan = [
+        {"title": "ship a new export format", "kind": "docs"},
+        {"title": "tune the planner", "kind": "ci"},
+    ]
+    res = module_recall(plan, revealed)
+    assert res["matched_modules"] == []
+    assert res["module_recall"] == 0.0
+    # A plan that actually *names* the module in title/theme still gets credit.
+    named = module_recall([{"title": "revise the docs site", "theme": "ci"}], revealed)
+    assert set(named["matched_modules"]) == {"docs", "ci"}
+
+
+def test_kind_recall_ignores_title_and_theme_prose():
+    # The reverse boundary: kind_recall reads only the `kind` field. A title/theme that
+    # merely contains a kind word must not farm kind-recall credit.
+    revealed = [{"subject": "test: add coverage", "files": ["tests/t.py"]}]
+    prose_only = kind_recall([{"title": "write tests", "theme": "test harness",
+                               "kind": "feature"}], revealed)
+    assert prose_only["matched_kinds"] == []
+    assert prose_only["kind_recall"] == 0.0
+    # The kind field itself is what counts.
+    tagged = kind_recall([{"title": "unrelated", "kind": "test"}], revealed)
+    assert tagged["matched_kinds"] == ["test"]
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True

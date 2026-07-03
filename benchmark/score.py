@@ -102,11 +102,18 @@ def base_from_releases(releases) -> str | None:
 
 
 def _plan_tokens(plan) -> set:
+    # Name-bearing fields only. `module_recall` credits a module when the plan actually
+    # *names* it — in prose (title/theme) or via a structured file path. The `kind` field is
+    # a category label, not a module name. Folding `kind` in here leaked the kind signal into
+    # module scoring: a plan tagged e.g. `kind: docs` harvested module-recall credit for any
+    # top-level module whose name collides with a kind word (`docs`, `test`, `ci`, `build`,
+    # ...) without ever naming it, double-counting with the dedicated `kind_recall` metric
+    # (#141, #144). Matching a plan's `kind` against revealed kinds is `kind_recall`'s job
+    # (via `plan_kind`), not this one's.
     toks = set()
     for item in plan or []:
         if isinstance(item, dict):
-            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", "")) \
-                | _tokens(item.get("kind", ""))
+            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", ""))
             # Structured `files` are part of a concrete plan item (the judge counts them
             # toward substance); tokenize path segments so module recall can match on the
             # top-level module even when the title omits it.
@@ -342,6 +349,18 @@ def objective_score(plan, revealed, version_bump=None, base_version=None,
 
     `open_issues` is optional; git-only runs (or an empty backlog) degrade gracefully to a
     neutral `backlog_recall` of 0.0 with no addressed issues, and don't affect any other field.
+
+    Metric ownership boundary (audited in #144 after #141 found `module_recall` farming
+    credit from plan `kind` tags): each component reads only the plan field(s) that are its
+    own ground truth, so one metric's signal can't be borrowed to inflate another.
+    - `module_recall` reads the name-bearing `title`/`theme`/`files` fields only — a module
+      must be *named*, never merely collided with by a category label such as `kind: docs`.
+    - `kind_recall` reads `kind` only (via `plan_kind`) — title/theme prose that happens to
+      contain a kind word (e.g. a title mentioning "test") cannot farm kind credit.
+    - `release_predicted` reads both a normalized `release` kind (via `plan_kind`) and a
+      release-worded/version-tag `title` — intentionally, because each is a genuine
+      first-party release signal in its own right, not one metric's field standing in for
+      another's.
     """
     result = module_recall(plan, revealed)
     result.update(kind_recall(plan, revealed))
