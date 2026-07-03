@@ -9,7 +9,7 @@ import argparse
 import json
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
-from benchmark.runner import run_multi_replay, run_replay
+from benchmark.runner import run_multi_replay, run_replay, run_repo_set_replay
 
 
 def main() -> None:
@@ -18,6 +18,11 @@ def main() -> None:
     src.add_argument("--repo", help="path to a single local git repo to replay")
     src.add_argument("--repos", nargs="+",
                      help="two or more git repos to replay and aggregate into a composite_mean")
+    src.add_argument("--repo-set",
+                     help="path to a validated repo-set JSON config (see benchmark/repo_sets/)")
+    ap.add_argument("--repo-set-partition", default="tuned",
+                    choices=["tuned", "held_out", "all"],
+                    help="which repos from --repo-set to replay (default: tuned)")
     ap.add_argument("--agent", default="agent.py", help="agent entrypoint file")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, choices=sorted(BASELINES),
                     help="reference opponent the challenger is judged against")
@@ -51,7 +56,9 @@ def main() -> None:
         w_judge=args.w_judge, w_objective=args.w_objective,
         dual_order_judge=not args.single_order_judge,
     )
-    if args.repos:
+    if args.repo_set:
+        result = run_repo_set_replay(args.repo_set, partition=args.repo_set_partition, **common)
+    elif args.repos:
         result = run_multi_replay(args.repos, **common)
     else:
         result = run_replay(repo_path=args.repo, **common)

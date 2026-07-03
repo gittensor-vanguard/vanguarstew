@@ -62,13 +62,15 @@ def _submission(out: dict) -> dict:
 def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                model=None, api_base=None, api_key=None, work_dir=None, seed=0,
                enrich_github=False, github_token=None,
-               recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
+               recent_bias=False, rotation_seed=None, min_history=10,
+               baseline=DEFAULT_BASELINE,
                w_judge=0.6, w_objective=0.4, dual_order_judge=True) -> dict:
     solve = load_solve(agent_file)
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
     tasks = generate_tasks(repo_path, n_tasks, horizon,
-                           recent_bias=recent_bias, rotation_seed=rotation_seed)
+                           recent_bias=recent_bias, rotation_seed=rotation_seed,
+                           min_history=min_history)
     if not tasks:
         return {"error": "no usable tasks (repo too small for horizon/min_history)", "tasks": 0}
 
@@ -176,6 +178,50 @@ def run_multi_replay(repos, **kwargs) -> dict:
         "repos": len(per_repo),
         "scored_repos": len(composites),
         "skipped": len(per_repo) - len(composites),
+        "composite_mean": _mean(composites),
+        "composite_parts": {
+            "judge_mean": _mean(judge_parts),
+            "objective_mean": _mean(objective_parts),
+        },
+        "per_repo": per_repo,
+    }
+
+
+def run_repo_set_replay(repo_set_path, partition="tuned", **kwargs) -> dict:
+    """Replay every repo in a validated repo-set config and aggregate composites.
+
+    Each entry's ``freeze_window`` hints are mapped onto per-repo ``run_replay`` kwargs
+    (``recent_bias``, ``rotation_seed``, ``min_history``). ``after``/``before`` bounds are
+    curator documentation for now — they are recorded in the config but not yet enforced by
+    ``generate_tasks``.
+    """
+    from benchmark.repo_set import load_repo_set, replay_kwargs
+
+    rs = load_repo_set(repo_set_path)
+    entries = rs.partition(partition)
+    per_repo = []
+    composites = []
+    judge_parts = []
+    objective_parts = []
+    for entry in entries:
+        res = run_replay(entry.source, **replay_kwargs(entry), **kwargs)
+        per_repo.append({"name": entry.name, "tier": entry.tier, "held_out": entry.held_out,
+                         "source": entry.source, **res})
+        if res.get("tasks", 0) > 0:
+            composites.append(res["composite_mean"])
+            parts = res.get("composite_parts", {})
+            judge_parts.append(parts.get("judge_mean", 0.0))
+            objective_parts.append(parts.get("objective_mean", 0.0))
+
+    def _mean(xs):
+        return round(sum(xs) / len(xs), 3) if xs else 0.0
+
+    return {
+        "repo_set": rs.name or repo_set_path,
+        "partition": partition,
+        "repos": len(entries),
+        "scored_repos": len(composites),
+        "skipped": len(entries) - len(composites),
         "composite_mean": _mean(composites),
         "composite_parts": {
             "judge_mean": _mean(judge_parts),

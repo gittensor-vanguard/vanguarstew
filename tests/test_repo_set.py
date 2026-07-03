@@ -15,9 +15,11 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.repo_set import (  # noqa: E402
+    CURATED_REPO_SET,
     EXAMPLE_REPO_SET,
     RepoSetError,
     load_repo_set,
+    replay_kwargs,
     validate_repo_set,
 )
 
@@ -135,3 +137,24 @@ def test_example_json_is_parseable_directly():
     # sanity: the shipped file is literally valid JSON
     with open(EXAMPLE_REPO_SET, "r", encoding="utf-8") as f:
         json.load(f)
+
+
+def test_curated_config_loads_and_has_real_sources():
+    rs = load_repo_set(CURATED_REPO_SET)
+    assert rs.name == "curated"
+    assert len(rs) >= 3
+    assert all("OWNER/" not in e.source for e in rs)
+    assert all(e.source.startswith("https://github.com/") for e in rs)
+    assert rs.tuned() and rs.held_out()
+    assert rs.by_tier("recent") and rs.by_tier("obscure")
+
+
+def test_partition_and_replay_kwargs():
+    rs = validate_repo_set(VALID)
+    assert [e.name for e in rs.partition("tuned")] == ["a"]
+    assert [e.name for e in rs.partition("held_out")] == ["b"]
+    assert len(rs.partition("all")) == 2
+    with pytest.raises(RepoSetError, match="unknown partition"):
+        rs.partition("weekly")
+    assert replay_kwargs(rs.entries[0]) == {"recent_bias": True, "min_history": 30}
+    assert replay_kwargs(rs.entries[1]) == {"rotation_seed": 5}

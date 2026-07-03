@@ -34,6 +34,7 @@ _FREEZE_KEYS = {
 # A checked-in *starter* config with placeholder sources — replace with vetted repos before
 # real scoring. Named "example" (not "default") so it can't be mistaken for an operational set.
 EXAMPLE_REPO_SET = os.path.join(os.path.dirname(__file__), "repo_sets", "example.json")
+CURATED_REPO_SET = os.path.join(os.path.dirname(__file__), "repo_sets", "curated.json")
 
 
 class RepoSetError(ValueError):
@@ -81,6 +82,29 @@ class RepoSet:
         if tier not in TIERS:
             raise RepoSetError(f"unknown tier {tier!r}; expected one of {TIERS}")
         return [e for e in self.entries if e.tier == tier]
+
+    def partition(self, which: str = "tuned"):
+        """Return entries for ``tuned``, ``held_out``, or ``all``."""
+        if which == "tuned":
+            return self.tuned()
+        if which == "held_out":
+            return self.held_out()
+        if which == "all":
+            return list(self.entries)
+        raise RepoSetError(f"unknown partition {which!r}; expected 'tuned', 'held_out', or 'all'")
+
+
+def replay_kwargs(entry: RepoEntry) -> dict:
+    """Map a repo-set entry's freeze_window hints onto ``run_replay`` keyword args."""
+    fw = entry.freeze_window or {}
+    kwargs = {}
+    if "recent_bias" in fw:
+        kwargs["recent_bias"] = fw["recent_bias"]
+    if "rotation_seed" in fw:
+        kwargs["rotation_seed"] = fw["rotation_seed"]
+    if "min_history" in fw:
+        kwargs["min_history"] = fw["min_history"]
+    return kwargs
 
 
 def _require(cond, message):
@@ -166,7 +190,7 @@ def load_repo_set(path) -> RepoSet:
 
     `path` is required — there is no implicit default, so a config is always chosen on purpose
     (never the placeholder starter by accident). Pass `EXAMPLE_REPO_SET` to load the shipped
-    example, or a curated config's path for a real scoring run.
+    example, or `CURATED_REPO_SET` / a custom path for operational scoring runs.
     """
     _require(os.path.exists(path), f"repo-set config not found: {path}")
     try:

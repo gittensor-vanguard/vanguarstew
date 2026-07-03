@@ -3,6 +3,7 @@
     VANGUARSTEW_OFFLINE=1 python -m pytest -q
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -17,7 +18,7 @@ if ROOT not in sys.path:
 
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
-from benchmark.runner import run_multi_replay, run_replay  # noqa: E402
+from benchmark.runner import run_multi_replay, run_replay, run_repo_set_replay  # noqa: E402
 
 AGENT = os.path.join(ROOT, "agent.py")
 
@@ -108,3 +109,33 @@ def test_multi_repo_skips_zero_task_repo_without_diluting():
     finally:
         shutil.rmtree(good, ignore_errors=True)
         shutil.rmtree(tiny, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_repo_set_replay_aggregates_tuned_entries(tmp_path):
+    a = _tiny_repo(tempfile.mkdtemp(), prefix="alpha")
+    b = _tiny_repo(tempfile.mkdtemp(), prefix="beta")
+    cfg = tmp_path / "set.json"
+    cfg.write_text(json.dumps({
+        "name": "tmp",
+        "repos": [
+            {"name": "a", "source": a, "tier": "recent",
+             "freeze_window": {"recent_bias": True, "min_history": 10}},
+            {"name": "b", "source": b, "tier": "obscure", "held_out": True,
+             "freeze_window": {"rotation_seed": 2, "min_history": 10}},
+        ],
+    }), encoding="utf-8")
+    try:
+        tuned = run_repo_set_replay(str(cfg), partition="tuned",
+                                    agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
+        assert tuned["partition"] == "tuned"
+        assert tuned["repos"] == 1
+        assert tuned["per_repo"][0]["name"] == "a"
+        assert tuned["scored_repos"] == 1
+
+        all_res = run_repo_set_replay(str(cfg), partition="all",
+                                      agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
+        assert all_res["repos"] == 2
+    finally:
+        shutil.rmtree(a, ignore_errors=True)
+        shutil.rmtree(b, ignore_errors=True)

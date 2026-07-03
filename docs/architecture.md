@@ -82,7 +82,9 @@ tasks. This is the most reusable asset the project produces.
 The list of repositories the benchmark replays is a **checked-in JSON config**, not a
 hardcoded array — so the curated, leakage-safe selection is reviewable and versioned. The
 shipped `benchmark/repo_sets/example.json` is a **starter/example** whose sources are
-placeholders (`OWNER/...`) — copy it and swap in vetted repos for a real run. `benchmark/
+placeholders (`OWNER/...`) — copy it and swap in vetted repos for a real run.
+`benchmark/repo_sets/curated.json` is the **operational** set with vetted public
+repositories; see `benchmark/repo_sets/README.md` for tier vetting criteria. `benchmark/
 repo_set.py` loads and **strictly validates** any config, at both the **top level** (only
 `name` / `description` / `strategy` / `repos` allowed; metadata must be strings; a stray or
 misspelled key is rejected) and per entry — since a leakage-safe set is only as trustworthy
@@ -105,10 +107,18 @@ is always chosen deliberately (never the placeholder starter by accident). Use t
 `EXAMPLE_REPO_SET` to load the shipped example explicitly.
 
 ```python
-from benchmark.repo_set import EXAMPLE_REPO_SET, load_repo_set
-rs = load_repo_set("path/to/curated.json")   # or load_repo_set(EXAMPLE_REPO_SET) for the starter
+from benchmark.repo_set import CURATED_REPO_SET, EXAMPLE_REPO_SET, load_repo_set
+rs = load_repo_set(CURATED_REPO_SET)          # operational vetted set
+# rs = load_repo_set(EXAMPLE_REPO_SET)      # schema starter only
 tuned   = [e.source for e in rs.tuned()]
 heldout = [e.source for e in rs.held_out()]
+```
+
+CLI replay from a repo set (paths in the config must exist locally — clone first):
+
+```bash
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval \
+  --repo-set benchmark/repo_sets/curated.json --tasks 2 --horizon 5
 ```
 
 ## Leakage defenses

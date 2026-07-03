@@ -86,6 +86,9 @@ python -m scripts.run_eval --repo /path/to/repo --tasks 5 --horizon 5 \
 # multi-repo: replay several repos and aggregate a cross-repo composite (generalization)
 VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repos /path/to/a /path/to/b --tasks 2 --horizon 5
 
+# repo-set: replay a checked-in curated config (clone listed repos locally first)
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo-set benchmark/repo_sets/curated.json --tasks 2 --horizon 5
+
 # smoke test (no network, no git needed)
 VANGUARSTEW_OFFLINE=1 python -m pytest -q
 ```
