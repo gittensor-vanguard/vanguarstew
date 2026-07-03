@@ -10,10 +10,12 @@ if ROOT not in sys.path:
 from benchmark.score import (  # noqa: E402
     changed_modules,
     is_release_subject,
+    module_file_counts,
     module_recall,
     objective_score,
     release_predicted,
     release_signaled,
+    weighted_module_recall,
 )
 
 REVEALED = [
@@ -56,6 +58,29 @@ def test_empty_inputs():
     res = module_recall([], [])
     assert res["module_recall"] == 0.0
     assert objective_score([], [])["release_match"] is True  # neither signaled nor predicted
+    assert weighted_module_recall([], [])["weighted_module_recall"] == 0.0
+
+
+def test_weighted_module_recall_weights_by_file_count():
+    revealed = [
+        {"subject": "expand benchmark", "files": [
+            "benchmark/a.py", "benchmark/b.py", "benchmark/c.py", "docs/note.md",
+        ]},
+    ]
+    assert module_file_counts(revealed) == {"benchmark": 3, "docs": 1}
+    plan = [{"title": "improve benchmark scoring", "theme": "benchmark", "kind": "feature"}]
+    res = weighted_module_recall(plan, revealed)
+    assert res["weighted_matched_modules"] == ["benchmark"]
+    assert res["weighted_module_recall"] == round(3 / 4, 3)
+    assert module_recall(plan, revealed)["module_recall"] == 0.5  # 1 of 2 modules
+
+
+def test_objective_score_includes_weighted_module_recall():
+    plan = [{"title": "prepare release v1.2.0", "kind": "release", "theme": "core"}]
+    score = objective_score(plan, REVEALED)
+    assert "weighted_module_recall" in score
+    assert "module_weights" in score
+    assert "weighted_matched_modules" in score
 
 
 def test_is_release_subject_accepts_genuine_releases():

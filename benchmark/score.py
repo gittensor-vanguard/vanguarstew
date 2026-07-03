@@ -37,18 +37,28 @@ def _plan_tokens(plan) -> set:
     return toks
 
 
+def _top_level_module(path: str) -> str | None:
+    parts = [p for p in path.split("/") if p]
+    if not parts:
+        return None
+    top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+    return top.lower() if top else None
+
+
 def changed_modules(revealed) -> set:
     """Top-level modules touched across the revealed window (structural ground truth)."""
-    mods = set()
+    return set(module_file_counts(revealed))
+
+
+def module_file_counts(revealed) -> dict:
+    """File-change counts per top-level module across the revealed window."""
+    counts: dict[str, int] = {}
     for r in revealed or []:
         for path in r.get("files", []):
-            parts = [p for p in path.split("/") if p]
-            if not parts:
-                continue
-            top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+            top = _top_level_module(path)
             if top:
-                mods.add(top.lower())
-    return mods
+                counts[top] = counts.get(top, 0) + 1
+    return counts
 
 
 def module_recall(plan, revealed) -> dict:
@@ -62,6 +72,26 @@ def module_recall(plan, revealed) -> dict:
         "module_recall": round(len(matched) / len(actual), 3),
         "actual_modules": sorted(actual),
         "matched_modules": matched,
+    }
+
+
+def weighted_module_recall(plan, revealed) -> dict:
+    """File-weighted fraction of revealed effort the plan anticipated."""
+    weights = module_file_counts(revealed)
+    if not weights:
+        return {
+            "weighted_module_recall": 0.0,
+            "module_weights": {},
+            "weighted_matched_modules": [],
+        }
+    ptoks = _plan_tokens(plan)
+    matched = sorted(m for m in weights if _tokens(m) & ptoks)
+    total = sum(weights.values())
+    matched_weight = sum(weights[m] for m in matched)
+    return {
+        "weighted_module_recall": round(matched_weight / total, 3),
+        "module_weights": dict(sorted(weights.items())),
+        "weighted_matched_modules": matched,
     }
 
 
@@ -89,8 +119,9 @@ def release_predicted(plan) -> bool:
 
 
 def objective_score(plan, revealed) -> dict:
-    """The deterministic anchor: module recall + release-prediction match."""
+    """The deterministic anchor: module recall + weighted recall + release prediction."""
     result = module_recall(plan, revealed)
+    result.update(weighted_module_recall(plan, revealed))
     signaled = release_signaled(revealed)
     predicted = release_predicted(plan)
     result.update({

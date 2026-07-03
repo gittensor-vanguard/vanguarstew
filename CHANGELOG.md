@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format is based on
 - Composite score: the pairwise judge (trajectory + decision process) and the objective anchor
   (module recall, release/bump correctness) are now blended into a single per-task and mean
   score in [0, 1], with tunable weights (`--w-judge` / `--w-objective`, default 0.6 / 0.4).
+- M2: file-weighted module recall in the objective anchor — top-level modules are weighted
+  by how many revealed-window file changes they received, so the score reflects where
+  maintainer effort actually concentrated (#43).
 
 ### Fixed
 - Objective anchor: `release_signaled`/`release_predicted` no longer fire on an incidental
