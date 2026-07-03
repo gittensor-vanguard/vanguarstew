@@ -102,11 +102,15 @@ def base_from_releases(releases) -> str | None:
 
 
 def _plan_tokens(plan) -> set:
+    # Only name-bearing fields (title, theme) — `module_recall` credits a module when the
+    # plan *names* it. `kind` is a category label, not a module name; folding it in lets a
+    # plan farm module-recall credit on infra modules whose names collide with kind words
+    # (docs, test, ci, build, ...) without ever naming them. Commit-kind matching is the
+    # separate, dedicated job of `kind_recall`.
     toks = set()
     for item in plan or []:
         if isinstance(item, dict):
-            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", "")) \
-                | _tokens(item.get("kind", ""))
+            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", ""))
         else:
             toks |= _tokens(str(item))
     return toks

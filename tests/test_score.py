@@ -43,6 +43,25 @@ def test_module_recall_matches_by_name():
     assert res["module_recall"] == round(2 / 4, 3)  # core, changelog not anticipated
 
 
+def test_module_recall_ignores_kind_tags():
+    # A plan that merely *tags* a kind must not get module-recall credit for an infra
+    # module whose name happens to collide with a kind word (docs, ci, ...). Crediting it
+    # would double-count with kind_recall and let the "un-gameable" anchor be gamed.
+    revealed = [{"subject": "chore: tidy", "files": ["docs/guide.md", "ci/workflow.yml"]}]
+    plan = [
+        {"title": "ship an unrelated feature", "kind": "docs"},
+        {"title": "some other thing", "kind": "ci"},
+    ]
+    res = module_recall(plan, revealed)
+    assert res["module_recall"] == 0.0
+    assert res["matched_modules"] == []
+
+    # …but a plan that actually names the module still earns the credit.
+    named = module_recall([{"title": "update the docs and ci config"}], revealed)
+    assert named["module_recall"] == 1.0
+    assert set(named["matched_modules"]) == {"docs", "ci"}
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True
