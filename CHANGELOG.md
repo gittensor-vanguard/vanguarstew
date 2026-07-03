@@ -28,6 +28,10 @@ All notable changes to this project are documented here. The format is based on
   anticipated the *kind* of maintainer work (feat/fix/docs/refactor/…/release) that the
   revealed window actually did, parsed deterministically from Conventional-Commit subjects
   (#41).
+- M2: open-issue **backlog recall** in the objective anchor — when frozen `open_issues` are
+  knowable at T, score whether the plan anticipated issues the revealed window actually
+  addressed (title ↔ commit-subject overlap); git-only runs with an empty backlog degrade
+  gracefully (#44).
 - Maintainer-assist mode (`agent/review.py`, `scripts/review_pr.py`): the same agent the
   benchmark scores, applied to a **live** PR — it reads the PR and outputs a maintainer review
   (recommended action, best-fit `mult:*` value tier, scope/tests checks, concerns, advice).

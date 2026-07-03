@@ -101,6 +101,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 challenger.get("plan"), task["revealed"],
                 version_bump=challenger.get("version_bump"),
                 base_version=base_from_releases(ctx.get("releases")),
+                open_issues=ctx.get("open_issues"),
             )
             rows.append({
                 "task": k,
