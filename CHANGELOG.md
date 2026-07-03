@@ -11,6 +11,12 @@ All notable changes to this project are documented here. The format is based on
   (module recall, release/bump correctness) are now blended into a single per-task and mean
   score in [0, 1], with tunable weights (`--w-judge` / `--w-objective`, default 0.6 / 0.4).
 
+### Fixed
+- Objective anchor: `release_signaled`/`release_predicted` no longer fire on an incidental
+  version mentioned mid-subject (e.g. `chore(deps): bump lodash to v4.17.21`, `fix crash in
+  v1.2.0 parser`). Release detection now requires explicit release wording or a version-tag
+  subject, so dependency bumps no longer inflate the release-prediction signal (#57).
+
 ## [0.2.0] - 2026-07-03
 
 ### Added
