@@ -60,6 +60,10 @@ All notable changes to this project are documented here. The format is based on
   is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
+- Agent contract: `decider.decide()` now normalizes `version_bump` to the documented
+  `major`/`minor`/`patch`/`null` before returning, via `normalize_version_bump()`. A near-miss
+  level from the model (`"MINOR"`, `" patch "`, `"bump major"`) is canonicalized instead of
+  passing through verbatim and silently scoring as "no bump" downstream (#164).
 - Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
   `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
   `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score
