@@ -58,7 +58,13 @@ def build_context(repo: str, commit: str, lookback: int = 50) -> dict:
         parts = line.split("\t", 2)
         if len(parts) == 3:
             commits.append({"sha": parts[0][:10], "date": parts[1], "subject": parts[2]})
-    tags = [t for t in _git(repo, "tag", "--merged", commit, check=False).splitlines() if t]
+    # `git tag --merged` defaults to refname order, which is wrong for versions like
+    # v1.10.0 vs v1.9.0. Sort by creation date so `tags[-10:]` is truly the recent window.
+    tags = [
+        t
+        for t in _git(repo, "tag", "--sort=creatordate", "--merged", commit, check=False).splitlines()
+        if t
+    ]
     readme = ""
     for name in ("README.md", "README.rst", "README", "docs/README.md"):
         content = file_at(repo, commit, name)
