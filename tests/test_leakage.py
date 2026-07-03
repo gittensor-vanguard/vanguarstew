@@ -20,6 +20,22 @@ def test_strip_forward_refs_masks_refs_links_and_shas():
     assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
 
 
+def test_strip_forward_refs_preserves_plain_numbers():
+    # 0-9a-f matches bare digits too (0-9 is a subset) -- a plain count/stat/year
+    # is not a SHA and must survive the scrub.
+    text = "supports 2500000 requests per second, up from 1200000 last year"
+    out = strip_forward_refs(text)
+    assert "2500000" in out and "1200000" in out
+    assert "<sha>" not in out
+
+
+def test_strip_forward_refs_still_masks_hex_shas_among_plain_numbers():
+    text = "supports 2500000 requests per second; see commit 1a2b3c4d5e6f7a8b"
+    out = strip_forward_refs(text)
+    assert "2500000" in out
+    assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
+
+
 def test_scrub_context_scrubs_nested_fields_only():
     ctx = {
         "readme_excerpt": "roadmap toward plugins; tracked in #101",
