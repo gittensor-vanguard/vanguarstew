@@ -23,7 +23,12 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     window = []
     for sha in commits[idx + 1: idx + 1 + n]:
         subject = _git(repo, "log", "-1", "--pretty=format:%s", sha).strip()
-        files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False).split()
+        # Split on line boundaries, not str.split(): a changed path can contain spaces, and
+        # this file list is structural ground truth for score.changed_modules/module_recall,
+        # so a fragmented path would invent or miss a top-level module. The empty subject line
+        # from --pretty=format: shows up as a blank line and is dropped.
+        show = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False)
+        files = [line for line in show.splitlines() if line.strip()]
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 
