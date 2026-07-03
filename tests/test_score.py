@@ -11,10 +11,13 @@ from benchmark.score import (  # noqa: E402
     base_from_releases,
     bump_level,
     changed_modules,
+    commit_kind,
     is_release_subject,
+    kind_recall,
     module_recall,
     objective_score,
     parse_semver,
+    plan_kind,
     release_predicted,
     release_signaled,
 )
@@ -196,3 +199,59 @@ def test_bump_actual_ignores_version_in_non_release_commit():
     # And with only the non-release version present, there is no actual bump at all.
     dep_only = [{"subject": "bump dep to v9.9.9", "files": ["requirements.txt"]}]
     assert objective_score([], dep_only, base_version="v1.2.0")["bump_actual"] is None
+
+
+def test_commit_kind_conventional_prefixes():
+    assert commit_kind("feat: add plugin loader") == "feat"
+    assert commit_kind("Fix(core): guard nil deref") == "fix"
+    assert commit_kind("docs!: rewrite readme") == "docs"
+    assert commit_kind("refactor(engine): split module") == "refactor"
+    assert commit_kind("chore(deps): bump lib") == "chore"
+    assert commit_kind("Release v1.2.0") == "release"  # fallback, no prefix
+    assert commit_kind("merge branch 'main'") is None
+    assert commit_kind("add plugin loader") is None  # no prefix, not a release
+    assert commit_kind("") is None
+
+
+def test_plan_kind_maps_to_commit_vocabulary():
+    assert plan_kind("feature") == "feat"
+    assert plan_kind("bugfix") == "fix"
+    assert plan_kind("Docs") == "docs"
+    assert plan_kind("dep") == "chore"
+    assert plan_kind("release") == "release"
+    assert plan_kind("triage") is None  # not a commit kind
+    assert plan_kind("") is None
+
+
+def test_kind_recall_matches_anticipated_kinds():
+    revealed = [
+        {"subject": "feat: streaming api", "files": ["core/api.py"]},
+        {"subject": "fix: race in loader", "files": ["core/loader.py"]},
+        {"subject": "docs: update readme", "files": ["README.md"]},
+    ]
+    plan = [
+        {"title": "ship streaming", "kind": "feature"},  # -> feat
+        {"title": "harden loader", "kind": "bugfix"},    # -> fix
+        {"title": "triage backlog", "kind": "triage"},   # -> no kind
+    ]
+    res = kind_recall(plan, revealed)
+    assert res["actual_kinds"] == ["docs", "feat", "fix"]
+    assert res["matched_kinds"] == ["feat", "fix"]
+    assert res["kind_recall"] == round(2 / 3, 3)  # docs not anticipated
+
+
+def test_kind_recall_empty_inputs():
+    assert kind_recall([], []) == {"kind_recall": 0.0, "actual_kinds": [], "matched_kinds": []}
+    # revealed has no recognizable kinds -> zero, empty lists
+    assert kind_recall([{"kind": "feature"}], [{"subject": "misc tweak"}])["actual_kinds"] == []
+
+
+def test_objective_score_includes_kind_recall():
+    plan = [{"title": "cut release", "kind": "release", "theme": "core"}]
+    score = objective_score(plan, REVEALED)
+    assert "kind_recall" in score
+    assert "actual_kinds" in score
+    assert "matched_kinds" in score
+    assert score["actual_kinds"] == ["release"]  # only "Release v1.2.0" carries a kind
+    assert score["matched_kinds"] == ["release"]
+    assert score["kind_recall"] == 1.0

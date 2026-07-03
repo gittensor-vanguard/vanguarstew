@@ -59,6 +59,42 @@ def test_open_at_T_filtering(monkeypatch):
     assert ctx["_source"] == "github-api"
 
 
+def test_milestone_state_is_as_of_T():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    # Created before T, closed AFTER T -> was open at T (must NOT leak "closed").
+    closed_after = {"title": "m", "created_at": "2023-01-01T00:00:00Z",
+                    "closed_at": "2023-08-01T00:00:00Z", "state": "closed", "due_on": None}
+    assert gc._milestone_at(closed_after, T)["state"] == "open"
+    # Created and closed before T -> closed at T.
+    closed_before = {"title": "m", "created_at": "2023-01-01T00:00:00Z",
+                     "closed_at": "2023-03-01T00:00:00Z", "state": "closed"}
+    assert gc._milestone_at(closed_before, T)["state"] == "closed"
+    # Never closed -> open at T.
+    never = {"title": "m", "created_at": "2023-01-01T00:00:00Z", "closed_at": None,
+             "state": "open"}
+    assert gc._milestone_at(never, T)["state"] == "open"
+    # Created after T -> not knowable at T at all.
+    future = {"title": "m", "created_at": "2023-12-01T00:00:00Z", "closed_at": None}
+    assert gc._milestone_at(future, T) is None
+
+
+def test_fetch_context_milestone_state_not_leaked(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_get(url, token, timeout=20):
+        if "/milestones" in url:
+            return [
+                # live state is "closed", but it was closed after T -> open at T
+                {"title": "v1", "created_at": "2023-01-01T00:00:00Z",
+                 "closed_at": "2023-08-01T00:00:00Z", "state": "closed", "due_on": None},
+            ]
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert ctx["milestones"] == [{"title": "v1", "due_on": None, "state": "open"}]
+
+
 def test_enrich_context_degrades_on_failure(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("offline")

@@ -151,6 +151,82 @@ def is_release_subject(text: str) -> bool:
     return bool(_RELEASE_KW.search(s) or _RELEASE_TAG_SUBJECT.match(s))
 
 
+_CC_PREFIX = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
+
+# Conventional-commit type (and common synonyms) -> normalized maintainer kind.
+_COMMIT_KIND = {
+    "feat": "feat", "feature": "feat",
+    "fix": "fix", "bugfix": "fix", "bug": "fix",
+    "docs": "docs", "doc": "docs",
+    "refactor": "refactor",
+    "perf": "perf",
+    "test": "test", "tests": "test",
+    "build": "build", "deps": "chore", "dep": "chore",
+    "ci": "ci",
+    "chore": "chore",
+    "style": "style",
+    "revert": "revert",
+    "release": "release",
+}
+
+# Plan item `kind` vocabulary (see agent/planner.py) -> the same normalized kinds.
+_PLAN_KIND = {
+    "feature": "feat", "feat": "feat",
+    "bugfix": "fix", "fix": "fix", "bug": "fix",
+    "docs": "docs", "doc": "docs",
+    "refactor": "refactor",
+    "perf": "perf",
+    "test": "test",
+    "release": "release",
+    "dep": "chore", "deps": "chore", "chore": "chore",
+    "build": "build",
+    "ci": "ci",
+    "style": "style",
+    "revert": "revert",
+    # "triage" is a maintainer action, not a commit kind -> no mapping.
+}
+
+
+def commit_kind(subject: str):
+    """Normalized maintainer kind for a revealed commit subject, or None.
+
+    Prefers a Conventional-Commit prefix (`feat:`, `fix(scope):`, `docs!:`), then falls
+    back to release subjects (`Release v1.2.0`, `bump version`). Merge commits and
+    prefix-less subjects carry no reliable kind and return None.
+    """
+    subject = subject or ""
+    m = _CC_PREFIX.match(subject)
+    if m:
+        kind = _COMMIT_KIND.get(m.group(1).lower())
+        if kind:
+            return kind
+    if is_release_subject(subject):
+        return "release"
+    return None
+
+
+def plan_kind(kind: str):
+    """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind."""
+    return _PLAN_KIND.get((kind or "").strip().lower())
+
+
+def kind_recall(plan, revealed) -> dict:
+    """Fraction of revealed maintainer kinds the plan anticipated. Deterministic."""
+    actual = {k for k in (commit_kind(r.get("subject", "")) for r in revealed or []) if k}
+    if not actual:
+        return {"kind_recall": 0.0, "actual_kinds": [], "matched_kinds": []}
+    planned = {
+        plan_kind(item.get("kind", "")) for item in plan or [] if isinstance(item, dict)
+    }
+    planned.discard(None)
+    matched = sorted(actual & planned)
+    return {
+        "kind_recall": round(len(matched) / len(actual), 3),
+        "actual_kinds": sorted(actual),
+        "matched_kinds": matched,
+    }
+
+
 def release_signaled(revealed) -> bool:
     return any(is_release_subject(r.get("subject", "") or "") for r in revealed or [])
 
@@ -164,7 +240,7 @@ def release_predicted(plan) -> bool:
 
 
 def objective_score(plan, revealed, version_bump=None, base_version=None) -> dict:
-    """The deterministic anchor: module recall + release-prediction + bump-level match.
+    """The deterministic anchor: module recall + commit-kind recall + release/bump match.
 
     When a release appears in the revealed window, the actual bump level (major/minor/patch)
     is derived from the semver delta between `base_version` (the version at freeze T, e.g.
@@ -176,6 +252,7 @@ def objective_score(plan, revealed, version_bump=None, base_version=None) -> dic
     no bump when none happened also counts as a match).
     """
     result = module_recall(plan, revealed)
+    result.update(kind_recall(plan, revealed))
     signaled = release_signaled(revealed)
     predicted = release_predicted(plan)
 

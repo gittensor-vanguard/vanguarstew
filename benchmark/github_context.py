@@ -43,6 +43,21 @@ def _parse_dt(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _milestone_at(milestone: dict, until: datetime):
+    """A milestone as knowable at `until`, or None if it didn't exist yet.
+
+    Returns None when the milestone was created after T. Otherwise `state` is derived from
+    `closed_at` *as of T* — `"closed"` only when it was already closed by T — rather than the
+    milestone's present-day state, so a milestone closed after T isn't leaked as completed.
+    """
+    created = _parse_dt(milestone.get("created_at"))
+    if created is None or created > until:
+        return None
+    closed = _parse_dt(milestone.get("closed_at"))
+    state = "closed" if closed is not None and closed <= until else "open"
+    return {"title": milestone.get("title"), "due_on": milestone.get("due_on"), "state": state}
+
+
 def _get(url: str, token, timeout: int = 20):
     req = urllib.request.Request(
         url,
@@ -110,10 +125,9 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
 
     milestones = []
     for m in _get(f"{base}/milestones?state=all&per_page={per_page}", token, timeout):
-        created = _parse_dt(m.get("created_at"))
-        if created is not None and created <= until:
-            milestones.append({"title": m.get("title"), "due_on": m.get("due_on"),
-                               "state": m.get("state")})
+        rec = _milestone_at(m, until)
+        if rec is not None:
+            milestones.append(rec)
 
     releases = []
     for r in _get(f"{base}/releases?per_page={per_page}", token, timeout):

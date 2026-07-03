@@ -25,10 +25,15 @@ from benchmark.leakage import scrub_context
 from benchmark.score import (
     base_from_releases,
     composite_score,
+    objective_component,
     objective_score,
     trajectory_overlap,
 )
 from benchmark.taskgen import generate_tasks
+
+# Challenger-perspective judge outcome per row (mirrors score._JUDGE_OUTCOME, keyed by the
+# runner's decoded winner label): a win is 1.0, a tie 0.5, a loss 0.0.
+_JUDGE_COMPONENT = {"challenger": 1.0, "tie": 0.5, "baseline": 0.0}
 
 
 def load_solve(agent_file: str = "agent.py"):
@@ -109,15 +114,70 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         if not work_dir:
             shutil.rmtree(base, ignore_errors=True)
 
+    # The single-repo composite output contract: the mean blended score, plus the two
+    # component means it blends (judge outcome + objective anchor) so the number is
+    # inspectable and the multi-repo aggregate has explicit parts to average.
     composites = [r["composite"] for r in rows]
+    judge_parts = [_JUDGE_COMPONENT[r["winner"]] for r in rows]
+    objective_parts = [objective_component(r["objective"]) for r in rows]
     return {
         "tasks": len(tasks),
         "baseline": baseline,
         "tally": tally,
         "decisive_margin": tally["challenger"] - tally["baseline"],
         "composite_mean": round(sum(composites) / len(composites), 3) if composites else 0.0,
+        "composite_parts": {
+            "judge_mean": round(sum(judge_parts) / len(judge_parts), 3) if judge_parts else 0.0,
+            "objective_mean": (
+                round(sum(objective_parts) / len(objective_parts), 3) if objective_parts else 0.0
+            ),
+        },
         "weights": {"judge": w_judge, "objective": w_objective},
         "rows": rows,
         "offline": llm.offline,
         "github_enriched": enrich_github,
+    }
+
+
+def run_multi_replay(repos, **kwargs) -> dict:
+    """Replay several repos and aggregate their composites (proposal §4 / M3 generalization).
+
+    Runs `run_replay` once per repo — preserving every per-repo result — and averages each
+    repo's own `composite_mean` into an overall cross-repo `composite_mean`. This is the
+    generalization signal: how the agent scores *across* codebases, not just within one.
+
+    Only repos that actually produced tasks are aggregated — gated on `tasks > 0`, so a short
+    repo (which returns `tasks == 0` and no real composite) can't dilute the mean or be
+    miscounted as scored.
+
+    Deterministic given a fixed `seed` (passed through to each run and the judge's RNG).
+    Repos too small to yield tasks are kept in `per_repo` with their error and excluded from
+    the mean (and counted in `skipped`).
+    """
+    per_repo = []
+    composites = []
+    judge_parts = []
+    objective_parts = []
+    for repo in repos:
+        res = run_replay(repo, **kwargs)
+        per_repo.append({"repo": repo, **res})
+        if res.get("tasks", 0) > 0:
+            composites.append(res["composite_mean"])
+            parts = res.get("composite_parts", {})
+            judge_parts.append(parts.get("judge_mean", 0.0))
+            objective_parts.append(parts.get("objective_mean", 0.0))
+
+    def _mean(xs):
+        return round(sum(xs) / len(xs), 3) if xs else 0.0
+
+    return {
+        "repos": len(per_repo),
+        "scored_repos": len(composites),
+        "skipped": len(per_repo) - len(composites),
+        "composite_mean": _mean(composites),
+        "composite_parts": {
+            "judge_mean": _mean(judge_parts),
+            "objective_mean": _mean(objective_parts),
+        },
+        "per_repo": per_repo,
     }
