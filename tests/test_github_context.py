@@ -172,6 +172,42 @@ def test_open_issue_labels_omitted_when_timeline_unavailable(monkeypatch):
     assert iss["labels_as_of_t"] is False
 
 
+def test_as_of_t_record_whitelists_immutable_fields():
+    raw = {
+        "number": 9, "title": "do the thing", "created_at": "2023-01-01T00:00:00Z",
+        # everything below is mutable / future-leaking and must be excluded from the base record:
+        "state": "closed", "closed_at": "2024-01-01T00:00:00Z", "merged_at": "2024-01-02",
+        "labels": [{"name": "wontfix"}], "assignees": [{"login": "x"}], "reactions": {"+1": 3},
+        "updated_at": "2024-05-05T00:00:00Z", "comments": 12,
+    }
+    assert gc._as_of_t_record(raw) == {
+        "number": 9, "title": "do the thing", "created_at": "2023-01-01T00:00:00Z",
+    }
+
+
+def test_field_provenance_audits_every_snapshot_field(monkeypatch):
+    prov = gc.FIELD_PROVENANCE
+    assert "reconstructed from timeline" in prov["issue_or_pr.labels"]
+    assert "false means label history was unavailable" in prov["issue_or_pr.labels_as_of_t"]
+    assert "unreconstructable" in prov["issue_or_pr.title"]
+    assert "approximately stable" in prov["labels"]
+    assert "best-effort" in prov["milestones.due_on"]
+    monkeypatch.setattr(gc, "_get", lambda url, token, timeout=20: [])
+    ctx = gc.fetch_context_at("foo", "bar", datetime(2023, 6, 1, tzinfo=timezone.utc), token=None)
+    assert ctx["_field_provenance"] is prov
+
+
+def test_enrich_context_carries_field_provenance(monkeypatch):
+    monkeypatch.setattr(
+        gc,
+        "fetch_context_at",
+        lambda owner, repo, until, token=None: {"_field_provenance": {"issue_or_pr.labels": "x"}},
+    )
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    out = gc.enrich_context({"frozen_at": {"date": "2023-06-01T00:00:00Z"}}, "/some/repo")
+    assert out["_field_provenance"] == {"issue_or_pr.labels": "x"}
+
+
 def test_enrich_context_degrades_on_failure(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("offline")

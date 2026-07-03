@@ -19,6 +19,63 @@ from datetime import datetime
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
 
+# As-of-T provenance for every field surfaced by `fetch_context_at`, from a focused audit of
+# mutable GitHub fields (issue #79). Each field is an immutable creation fact, guarded by an
+# explicit as-of-T filter, or DROPPED because the list APIs cannot reconstruct its value at T
+# (so present-day state would otherwise leak into a snapshot that claims to be frozen at T).
+FIELD_PROVENANCE = {
+    "issue_or_pr.number": "immutable creation fact",
+    "issue_or_pr.created_at": "immutable creation fact",
+    "issue_or_pr.title": (
+        "mutable (editable after T); the list API exposes no edit history, so the as-of-T "
+        "title is unreconstructable — kept best-effort, as it rarely encodes future outcome"
+    ),
+    "issue_or_pr.labels": (
+        "reconstructed from timeline labeled/unlabeled events up to T; the live label list is "
+        "never copied directly because it can include outcome / mult:* / duplicate labels "
+        "applied after T"
+    ),
+    "issue_or_pr.labels_as_of_t": (
+        "true only when label membership was reconstructed from timeline events at/or before T; "
+        "false means label history was unavailable, not that the item had no labels at T"
+    ),
+    "issue_or_pr.membership": (
+        "guarded: an item is included only if created_at <= T and not closed by T; its live "
+        "state/closed_at drive membership only and are never copied"
+    ),
+    "labels": (
+        "current repo label vocabulary; GitHub's labels API exposes no creation time, so an "
+        "as-of-T set is unreconstructable — treated as approximately stable"
+    ),
+    "milestones.title": "created_at-filtered milestone title; mutable after T, kept best-effort",
+    "milestones.state": "derived from closed_at as-of-T rather than copied from the live state",
+    "milestones.due_on": (
+        "mutable editable due date; no cheap historical reconstruction, so the snapshot keeps "
+        "the live value best-effort rather than claiming it is exact as-of-T"
+    ),
+    "releases.tag": "published_at-guarded immutable release tag",
+    "releases.name": (
+        "published_at-guarded release name; mutable after T, kept best-effort and "
+        "forward-reference scrubbed"
+    ),
+    "releases.published_at": "published_at-guarded release timestamp",
+}
+
+# The only issue/PR fields safe to copy into an as-of-T snapshot: immutable creation facts.
+# Everything else a raw GitHub item carries (labels, current state/closed_at, assignees,
+# reactions, updated_at, …) is mutable and cannot be reconstructed as-of-T from the list API.
+_AS_OF_T_ITEM_FIELDS = ("number", "title", "created_at")
+
+
+def _as_of_t_record(item: dict) -> dict:
+    """Project a raw GitHub issue/PR down to its immutable core fields.
+
+    Whitelisting (rather than copy-then-delete) means a newly-added mutable field on a GitHub
+    item can never silently leak future state into a frozen snapshot. As-of-T label membership
+    is added separately from the item's timeline.
+    """
+    return {field: item.get(field) for field in _AS_OF_T_ITEM_FIELDS}
+
 
 def parse_owner_repo(remote_url: str):
     """Extract (owner, repo) from an ssh or https GitHub remote URL."""
@@ -150,13 +207,9 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
             as_of_t = _labels_at(
                 _issue_timeline(base, it.get("number"), token, timeout), until
             )
-            rec = {
-                "number": it.get("number"),
-                "title": it.get("title"),
-                "labels": as_of_t if as_of_t is not None else [],
-                "labels_as_of_t": as_of_t is not None,
-                "created_at": it.get("created_at"),
-            }
+            rec = _as_of_t_record(it)
+            rec["labels"] = as_of_t if as_of_t is not None else []
+            rec["labels_as_of_t"] = as_of_t is not None
             (open_prs if it.get("pull_request") else open_issues).append(rec)
         if len(batch) < 100:
             break                 # exhausted all issues — complete
@@ -205,6 +258,7 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "_source": "github-api",
         "_knowable_until": until.isoformat(),
         "_issues_truncated": truncated,
+        "_field_provenance": FIELD_PROVENANCE,
     }
 
 
@@ -225,6 +279,8 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
         for key in ("repo", "open_issues", "open_prs", "labels", "milestones", "releases"):
             if gh.get(key):
                 merged[key] = gh[key]
+        if gh.get("_field_provenance"):
+            merged["_field_provenance"] = gh["_field_provenance"]
         merged["_github_enriched"] = True
         return merged
     except Exception as exc:  # offline / rate-limited / private — degrade to git-only
