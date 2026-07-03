@@ -20,6 +20,35 @@ ACTIONS = ["merge", "request-changes", "reject", "comment"]
 VALUE_LABELS = ["mult:core-correctness", "mult:leakage-integrity", "mult:capability",
                 "mult:enhancement", "mult:maintenance", "mult:docs"]
 
+# Near-miss verbs a live model tends to emit, mapped onto the canonical vocabulary.
+_ACTION_SYNONYMS = {
+    "approve": "merge", "approved": "merge", "accept": "merge", "lgtm": "merge",
+    "request changes": "request-changes", "request_changes": "request-changes",
+    "request-change": "request-changes", "changes-requested": "request-changes",
+    "close": "reject", "closed": "reject", "decline": "reject", "deny": "reject",
+    "commented": "comment", "abstain": "comment", "no-op": "comment",
+}
+
+
+def _normalize_action(value) -> str:
+    """Canonical review action, mapping synonyms and falling back to ``comment``."""
+    s = str(value or "").strip().lower()
+    if s in ACTIONS:
+        return s
+    for key in (s, s.replace(" ", "-"), s.replace(" ", "_"), s.replace("_", " ")):
+        if key in _ACTION_SYNONYMS:
+            return _ACTION_SYNONYMS[key]
+    return "comment"
+
+
+def _normalize_value_label(value) -> str:
+    """Canonical ``mult:*`` tier, tolerating a missing prefix and falling back to
+    ``mult:maintenance`` (the neutral tier) for unknown input."""
+    s = str(value or "").strip().lower()
+    if s and not s.startswith("mult:"):
+        s = "mult:" + s
+    return s if s in VALUE_LABELS else "mult:maintenance"
+
 
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
@@ -52,5 +81,9 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     out = llm.chat_json(SYSTEM, user, stub=stub)
     if not isinstance(out, dict):
         out = dict(stub)
-    out.setdefault("action", "comment")
+    # A live model can emit near-miss verbs ("approve") or a bare tier
+    # ("maintenance"); always coerce to the canonical vocabulary so downstream
+    # triage/labeling never sees an out-of-vocabulary value.
+    out["action"] = _normalize_action(out.get("action"))
+    out["value_label"] = _normalize_value_label(out.get("value_label"))
     return out
