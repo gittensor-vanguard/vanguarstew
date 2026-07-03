@@ -180,3 +180,47 @@ def run_multi_replay(repos, **kwargs) -> dict:
         },
         "per_repo": per_repo,
     }
+
+
+def split_heldout(repos, holdout, seed=0):
+    """Deterministically split a repo set into (tuned, held_out).
+
+    `holdout` is a fraction in (0, 1) — rounded up to at least one repo — or a whole count.
+    The split is deterministic given `seed`: repos are sorted first, then a seeded RNG draws
+    the held-out set, so the same inputs always partition the same way (no leakage from run
+    order). Returns two path lists, each in stable sorted order.
+    """
+    ordered = sorted(repos)
+    n = len(ordered)
+    if isinstance(holdout, float) and 0 < holdout < 1:
+        k = max(1, round(holdout * n))
+    else:
+        k = int(holdout)
+    k = max(0, min(k, n))
+    held = set(random.Random(seed).sample(ordered, k)) if k else set()
+    tuned = [r for r in ordered if r not in held]
+    held_out = [r for r in ordered if r in held]
+    return tuned, held_out
+
+
+def run_heldout_eval(tuned_repos, heldout_repos, **kwargs) -> dict:
+    """Score tuned vs held-out repo groups, reporting the held-out composite separately (M3).
+
+    Generalization is the held-out number: how the agent scores on repos it was never tuned
+    against. `generalization_gap` = tuned - held_out (positive => the agent looks better on
+    its tuned repos than on unseen ones, i.e. it overfit). Each group is a full
+    `run_multi_replay`, so per-repo detail is preserved under `tuned`/`heldout`. Deterministic
+    given a fixed `seed` in kwargs.
+    """
+    tuned = run_multi_replay(tuned_repos, **kwargs) if tuned_repos else None
+    heldout = run_multi_replay(heldout_repos, **kwargs) if heldout_repos else None
+    tuned_cm = tuned["composite_mean"] if tuned else None
+    heldout_cm = heldout["composite_mean"] if heldout else None
+    gap = round(tuned_cm - heldout_cm, 3) if (tuned_cm is not None and heldout_cm is not None) else None
+    return {
+        "tuned_composite_mean": tuned_cm,
+        "heldout_composite_mean": heldout_cm,
+        "generalization_gap": gap,
+        "tuned": tuned,
+        "heldout": heldout,
+    }

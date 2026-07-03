@@ -9,7 +9,12 @@ import argparse
 import json
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
-from benchmark.runner import run_multi_replay, run_replay
+from benchmark.runner import (
+    run_heldout_eval,
+    run_multi_replay,
+    run_replay,
+    split_heldout,
+)
 
 
 def main() -> None:
@@ -18,6 +23,12 @@ def main() -> None:
     src.add_argument("--repo", help="path to a single local git repo to replay")
     src.add_argument("--repos", nargs="+",
                      help="two or more git repos to replay and aggregate into a composite_mean")
+    ap.add_argument("--holdout", type=float, default=None,
+                    help="with --repos, hold out this many repos (>=1) or this fraction "
+                         "(0<f<1) for a separate generalization score (deterministic by --seed)")
+    ap.add_argument("--heldout-repos", nargs="+", default=None,
+                    help="explicit held-out repos; --repos are then the tuned set")
+    ap.add_argument("--seed", type=int, default=0, help="seed for the held-out split and judge")
     ap.add_argument("--agent", default="agent.py", help="agent entrypoint file")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, choices=sorted(BASELINES),
                     help="reference opponent the challenger is judged against")
@@ -45,9 +56,16 @@ def main() -> None:
         model=args.model, api_base=args.api_base, api_key=args.api_key, work_dir=args.work_dir,
         enrich_github=args.enrich, github_token=args.github_token,
         recent_bias=args.recent_bias, rotation_seed=args.rotation_seed, baseline=args.baseline,
-        w_judge=args.w_judge, w_objective=args.w_objective,
+        w_judge=args.w_judge, w_objective=args.w_objective, seed=args.seed,
     )
-    if args.repos:
+    if args.heldout_repos:
+        result = run_heldout_eval(args.repos or [], args.heldout_repos, **common)
+    elif args.holdout is not None:
+        if not args.repos:
+            ap.error("--holdout requires --repos")
+        tuned, held = split_heldout(args.repos, args.holdout, seed=args.seed)
+        result = run_heldout_eval(tuned, held, **common)
+    elif args.repos:
         result = run_multi_replay(args.repos, **common)
     else:
         result = run_replay(repo_path=args.repo, **common)

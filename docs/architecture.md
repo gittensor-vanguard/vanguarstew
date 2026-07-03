@@ -77,6 +77,38 @@ per the leakage constraints), frozen snapshots, and revealed-history references 
 as a separate benchmark dataset (its own repo or a hosted dataset) once M2 produces real
 tasks. This is the most reusable asset the project produces.
 
+## Generalization (M3): held-out repos
+
+A maintainer agent should be judged on repos it was **not** tuned against — otherwise a high
+score can just mean it overfit to a handful of familiar codebases. So the harness scores two
+groups and reports them separately:
+
+- **Tuned set** — repos used while developing/tuning the agent.
+- **Held-out set** — repos withheld from tuning; this is the generalization signal.
+
+`benchmark/runner.py` provides:
+
+- `split_heldout(repos, holdout, seed)` — deterministically partition one repo set into
+  `(tuned, held_out)`. `holdout` is a count (`>=1`) or a fraction (`0<f<1`); repos are sorted
+  before a seeded draw, so the split never depends on run order (no order leakage).
+- `run_heldout_eval(tuned_repos, heldout_repos, ...)` — run each group as a full
+  `run_multi_replay` and return `tuned_composite_mean`, **`heldout_composite_mean`** (reported
+  separately, the headline generalization number), and `generalization_gap` = tuned − held-out.
+  A large positive gap means the agent looks better on its tuned repos than on unseen ones —
+  i.e. it overfit.
+
+From the CLI:
+
+```bash
+# auto-split: hold out 1 of N repos (deterministic under --seed)
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repos repoA repoB repoC --holdout 1 --seed 0
+# or name the held-out repos explicitly; --repos become the tuned set
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repos repoA repoB --heldout-repos repoC repoD
+```
+
+Held-out scoring composes with the leakage defenses below: unseen repos + past-cutoff freeze
+points are what make a high held-out score hard to fake by memorization.
+
 ## Leakage defenses
 
 Because the reference is public GitHub history, the benchmark actively resists leakage:
