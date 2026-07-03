@@ -10,6 +10,46 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip ruff
+      - name: Lint
+        run: ruff check .
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip pyyaml
+      - name: Validate workflows and JSON config
+        run: |
+          python3 - <<'PY'
+          import glob, json, sys, yaml
+          bad = False
+          for f in glob.glob(".github/**/*.yml", recursive=True):
+              try:
+                  yaml.safe_load(open(f))
+              except Exception as e:
+                  bad = True
+                  print(f"::error file={f}::invalid YAML: {e}")
+          for f in glob.glob("**/*.json", recursive=True):
+              try:
+                  json.load(open(f))
+              except Exception as e:
+                  bad = True
+                  print(f"::error file={f}::invalid JSON: {e}")
+          print("config INVALID" if bad else "config valid")
+          sys.exit(1 if bad else 0)
+          PY
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -18,18 +58,10 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Install dev dependencies
-        run: python -m pip install --upgrade pip ruff pytest pytest-cov
-
-      - name: Lint
-        run: ruff check .
-
+      - run: python -m pip install --upgrade pip pytest pytest-cov
       - name: Test (offline) with coverage floor
         env:
           VANGUARSTEW_OFFLINE: "1"

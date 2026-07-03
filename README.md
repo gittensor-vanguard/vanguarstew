@@ -8,7 +8,7 @@
 
 The core question it answers is not *"did the agent write good code?"* but *"does the agent understand where this repository is going, and would it have steered it the way the real maintainers did?"*
 
-See [ROADMAP.md](ROADMAP.md) for milestones and [docs/architecture.md](docs/architecture.md) for the repository-topology plan.
+See [ROADMAP.md](ROADMAP.md) for milestones and [docs/architecture.md](docs/architecture.md) for the architecture (module layout, agent contract, topology, leakage defenses).
 
 ## Why this matters
 
@@ -42,25 +42,29 @@ reveal the actual history T→T+N  ──>  pairwise judge: whose plan is more
 
 The agent is judged on **direction/theme match** (not exact-PR match), with an **objective anchor** (concrete decisions that have a hard ground truth — merge/reject, labels, reviewer, version bump) and a **judged layer** (trajectory + decision process), scored **pairwise** like ninja, averaged over many freeze-points and repos.
 
-## Layout
+## The agent — what it actually does
 
-```
-agent/                 the maintainer agent (the part a miner edits)
-  llm.py               OpenAI-compatible client (managed-inference contract)
-  context.py           loads the frozen, knowable-at-T repo state
-  philosophy.py        step 1: infer the repo's maintainer philosophy
-  planner.py           step 3a: plan the next N actions / PRs
-  decider.py           step 3b: concrete decisions (merge/triage/release/patch)
-agent.py               the fixed entrypoint: solve(repo_path, request, ...)
-benchmark/             the evaluation harness (validator-owned; miners don't edit)
-  freeze.py            freeze a repo at commit T, build leakage-safe context
-  taskgen.py           generate replay tasks from GitHub history
-  judge.py             pairwise LLM judge (challenger vs current-best)
-  score.py             objective scoring of concrete decisions
-  runner.py            orchestrate the replay eval, tally decisive wins
-scripts/run_eval.py    CLI to run an end-to-end replay
-vanguarstew_agent_files.json   manifest of miner-editable files (mirrors tau)
-```
+The agent is the part contributors improve (it lives in [`agent/`](agent/)). Given a repo
+frozen at a moment in time, it decides what a strong maintainer would do next — in four steps:
+
+1. **Infer the "maintainer philosophy."** Before deciding anything, it reads the repo's
+   history, README, and recent activity to work out the project's values and direction —
+   conservative or fast-moving? refactor-first? heading toward a 1.0 release? This grounds
+   everything that follows, and it's the hardest, most important part.
+2. **Read the situation.** Open issues, open PRs, recent commits, releases — the maintainer's
+   working surface as of that moment (and nothing from the future).
+3. **Plan and decide.** Propose the next maintainer actions / PRs and the concrete calls
+   (merge / request-changes / reject, triage, reviewer, release) — each with its reasoning.
+4. **Implement when needed.** Produce an actual code patch when that's the right move — but
+   writing code is only one of the actions a maintainer takes.
+
+The benchmark then scores those decisions against what the maintainers **actually did next**.
+So a better agent = better philosophy inference, planning, and judgment — that's what you
+improve.
+
+> New here? The module layout and the full agent contract are in
+> [docs/architecture.md](docs/architecture.md). The friendliest place to start is a
+> [`good first issue`](https://github.com/gittensor-vanguard/vanguarstew/labels/good%20first%20issue).
 
 ## Quickstart
 
@@ -78,25 +82,20 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q
 
 ## Status
 
-MVP scaffold — Milestone **M0** (see [ROADMAP.md](ROADMAP.md)). The loop runs end-to-end in offline mode; live LLM judging, richer GitHub context (issues/PRs via API), and leakage hardening land in M1–M2.
+**Active development.** The core loop runs end-to-end and is **live-verified against a real
+model** (see the demo above). Shipped so far (M0–M2): history-derived replay, an objective
+scoring anchor plus a decision-process judge, leakage defenses, and knowable-at-T GitHub
+context. Open source (MIT), CI green on Python 3.10–3.12, and registered on gittensor. Next:
+generalization across diverse repos (M3) and the fully agentic loop (M4). See
+[ROADMAP.md](ROADMAP.md).
 
-## Agent contract
+## Contributing
 
-The harness invokes the agent with a fixed signature (generalized from ninja's `solve`):
+Contributions are welcome — the surface is open. Start with [CONTRIBUTING.md](CONTRIBUTING.md)
+for setup, and [REVIEW.md](REVIEW.md) for exactly how contributions are gated, reviewed, and
+scored (the process is designed to be predictable and reproducible). Browse open
+[issues](https://github.com/gittensor-vanguard/vanguarstew/issues) — especially
+[`good first issue`](https://github.com/gittensor-vanguard/vanguarstew/labels/good%20first%20issue)
+and [`help wanted`](https://github.com/gittensor-vanguard/vanguarstew/labels/help%20wanted).
 
-```python
-solve(
-    repo_path="/tmp/task_repo",        # frozen repo state at time T (+ .vanguarstew_context.json)
-    request="plan next 5 actions",     # the maintainer decision being asked for
-    model="validator-managed-model",
-    api_base="http://validator-proxy/v1",
-    api_key="per-run-proxy-token",
-) -> {
-    "philosophy": {...},               # inferred repo direction / values
-    "plan": [...],                     # next maintainer actions / PRs
-    "action": "merge|...|plan|patch",
-    "patch": "<unified diff>|null",
-    "rationale": "...",                # the reasoning the judge evaluates
-    "logs": "...", "steps": 0, "cost": None, "success": True,
-}
-```
+The module layout and full agent contract live in [docs/architecture.md](docs/architecture.md).
