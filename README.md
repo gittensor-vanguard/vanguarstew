@@ -136,7 +136,7 @@ agentic loop (M4). See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 
-Contributions are welcome — the surface is open. Start with [CONTRIBUTING.md](CONTRIBUTING.md)
+Contributions are welcome — the surface is open. **Open PRs against the `test` branch, not `main`** — `main` is maintainer-promoted from `test` (see [CONTRIBUTING → Branches](CONTRIBUTING.md#branches)). Start with [CONTRIBUTING.md](CONTRIBUTING.md)
 for setup, and [REVIEW.md](REVIEW.md) for exactly how contributions are gated, reviewed, and
 scored (the process is designed to be predictable and reproducible). Browse open
 [issues](https://github.com/gittensor-vanguard/vanguarstew/issues) — especially

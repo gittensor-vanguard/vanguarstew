@@ -62,7 +62,7 @@ full loop without an inference endpoint.
 
 ## Pull requests
 
-1. Branch off `main`, keep the change focused and small.
+1. Branch off **`test`** and **target `test`** — never `main` (see [Branches](#branches) below). Keep the change focused and small.
 2. Make sure `ruff check .` and the offline test suite pass locally.
 3. Reference the issue you're addressing (e.g. `Fixes #12`).
 4. Fill in the PR template; describe what you changed and how you verified it.
@@ -70,6 +70,15 @@ full loop without an inference endpoint.
 CI must be green before a PR can merge. See [REVIEW.md](REVIEW.md) for exactly how
 contributions are gated, reviewed, and scored — the process is designed to be predictable and
 reproducible.
+
+## Branches
+
+**Open every PR against `test`, never `main`.** This is a strong rule (see #221).
+
+- **`test`** — staging and validation for `main`. Branch off `test`, target `test`; requires a PR and green CI.
+- **`main`** — production, **maintainer-only**. A CI check (`pr-source-check`) rejects any PR into `main` that doesn't come from `test`, and the maintainer (**@matedev01**) promotes `test` → `main`.
+
+This mirrors how [Gittensor](https://gittensor.io) itself runs its repository (`entrius/gittensor`).
 
 ## Reporting bugs and security issues
 

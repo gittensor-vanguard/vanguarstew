@@ -1,0 +1,20 @@
+name: pr-source-check
+
+# Enforce the branching rule (#221): PRs into `main` may only come from `test`.
+# Contributors target `test`; the maintainer promotes `test` -> `main`.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  pr-source-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce source = test for PRs into main
+        run: |
+          if [ "${{ github.event.pull_request.head.ref }}" != "test" ]; then
+            echo "::error::PRs into 'main' must originate from 'test'. Head is '${{ github.event.pull_request.head.ref }}'."
+            echo "::error::Open your PR against the 'test' branch instead. 'main' only advances via a maintainer promotion from 'test'."
+            exit 1
+          fi
+          echo "PR source is 'test' - allowed."

@@ -1,3 +1,5 @@
+> ⛔ **Target the `test` branch, not `main`.** PRs into `main` from anywhere but `test` are auto-rejected — see [CONTRIBUTING → Branches](../CONTRIBUTING.md#branches).
+
 ## Summary
 
 <!-- What does this change do, and why? -->
