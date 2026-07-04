@@ -6,7 +6,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-03
+
 ### Added
+- Generalization (M3): **multi-repo replay** — `run_multi_replay` / `scripts/run_eval.py --repos`
+  runs several repos and averages each repo's own `composite_mean` into one cross-repo number
+  (per-repo results retained; too-small repos skipped), so the agent is scored on breadth rather
+  than a single tuned repo (#51).
+- Generalization (M3): **leakage-safe repo-set config + loader** (`benchmark/repo_set.py`,
+  `benchmark/repo_sets/`) — the replay repo list is a checked-in, strictly-validated JSON config
+  (recent/obscure tier, `held_out`, freeze-window hints) instead of a hardcoded array, so the
+  curated selection is reviewable and versioned (#55).
+- Composite: **file-weighted module recall** now feeds the composite score — the objective anchor
+  weights modules by how much of the revealed maintainer effort landed in each, so the blended
+  score better reflects where the work actually concentrated (#91).
 - Judge integrity: the pairwise judge now defends against LLM **position bias** with dual-order
   consistency — it asks both presentation orders and awards a win only if it survives the swap,
   otherwise a tie. A position-biased judge can no longer earn a spurious win, and per-task
