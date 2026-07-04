@@ -23,6 +23,21 @@ def _git(repo, *args, check=True):
     return r.stdout
 
 
+def parse_path_list(out: str) -> list:
+    """Parse a NUL-delimited (``git ... -z``) path list into individual paths.
+
+    Git's ``-z`` output separates each path with a NUL byte, so filenames that
+    contain spaces, tabs, newlines, or shell-sensitive characters survive intact.
+    Splitting on whitespace or lines instead would corrupt such paths — and since
+    benchmark scoring attributes work by file, that corruption is a hygiene bug.
+
+    Leading/trailing NULs yield empty fields (e.g. the terminating separator), which
+    we drop. Prefer this over ``str.split()``/``str.splitlines()`` for any git output
+    that is a list of paths.
+    """
+    return [field for field in out.split("\0") if field]
+
+
 def origin_url(repo: str) -> str:
     return _git(repo, "remote", "get-url", "origin", check=False).strip()
 
