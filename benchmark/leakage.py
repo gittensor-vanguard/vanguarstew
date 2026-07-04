@@ -30,10 +30,15 @@ _URL_STOP = "<>()[]{}\"'`"
 # never runs past a closing delimiter, and the recognized link *types* live in a
 # single readable alternation that is straightforward to extend (additional link
 # classes are tracked separately in #108).
+#
+# The masked types all point *forward* — a later issue/PR/commit, a diff
+# range, or a release/milestone that names a future version. File links
+# (blob/tree) are deliberately excluded: they reference content the agent may
+# legitimately need, not the repo’s future state.
 _GH_LINK = re.compile(
     r"https?://github\.com"
     r"/[^\s" + re.escape(_URL_STOP) + r"]+/"                  # owner/repo/
-    r"(?:issues|pull|commit|compare)/"              # a deep-link type
+    r"(?:issues|pull|commit|compare|releases|milestone)/"              # a deep-link type
     r"[^\s" + re.escape(_URL_STOP) + r"]+",                    # referenced id / path
     re.I,
 )

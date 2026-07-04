@@ -158,3 +158,21 @@ def test_generate_tasks_respects_after_before_bounds(monkeypatch):
     tasks = taskgen.generate_tasks(
         "x", num_tasks=10, horizon=2, min_history=2, after="2026-01-05", before="2026-01-08")
     assert [t["freeze_index"] for t in tasks] == [4, 5, 6, 7]
+
+
+def test_strip_forward_refs_masks_release_and_milestone_links():
+    # Release and milestone deep-links name a future version/milestone that may not
+    # exist at freeze time; they must be masked like issue/PR/commit links (#210).
+    out = strip_forward_refs("notes at https://github.com/o/r/releases/tag/v2.0.0 today")
+    assert "github.com" not in out and "v2.0.0" not in out and "<link>" in out
+
+    out = strip_forward_refs("tracked in https://github.com/o/r/milestone/5 for later")
+    assert "github.com" not in out and "<link>" in out
+
+
+def test_strip_forward_refs_preserves_blob_and_tree_file_links():
+    # File links (blob/tree) point at content the agent may legitimately need, so they
+    # are intentionally left intact rather than masked (#210).
+    keep = ("see https://github.com/o/r/blob/main/README.md and "
+            "https://github.com/o/r/tree/main")
+    assert strip_forward_refs(keep) == keep
