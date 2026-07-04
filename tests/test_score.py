@@ -98,6 +98,34 @@ def test_release_predicted_ignores_inline_version_but_honors_kind():
     assert release_predicted([{"title": "Release v1.2.0", "kind": "misc"}]) is True      # subject
 
 
+def test_release_predicted_honors_cased_and_whitespaced_kind():
+    # An LLM plan isn't forced to lowercase output; release_predicted must match "release"
+    # through the same normalized vocabulary as every other kind check (plan_kind/kind_recall).
+    # See issue #237.
+    assert release_predicted([{"title": "prepare the next cut", "kind": "Release"}]) is True
+    assert release_predicted([{"title": "prepare the next cut", "kind": " RELEASE "}]) is True
+
+
+def test_release_predicted_tolerates_non_string_kind():
+    # A malformed plan item's kind (e.g. a number or list) must not crash release_predicted,
+    # and must not be spuriously counted as a release.
+    assert release_predicted([{"title": "prepare the next cut", "kind": 123}]) is False
+    assert release_predicted([{"title": "misc work", "kind": ["release"]}]) is False
+
+
+def test_plan_kind_tolerates_non_string_input():
+    assert plan_kind(123) is None
+    assert plan_kind(["release"]) is None
+    assert plan_kind(None) is None
+
+
+def test_objective_score_honors_capitalized_release_kind():
+    plan = [{"title": "prepare the next cut", "kind": "Release"}]
+    score = objective_score(plan, REVEALED)
+    assert score["release_predicted"] is True
+    assert score["release_match"] is True
+
+
 def test_objective_score_no_false_release_match_on_dep_bumps():
     # Window is only dep bumps; a plan that mentions a version must not score a release match.
     revealed = [{"subject": "chore(deps): bump lodash to v4.17.21", "files": ["package.json"]}]
