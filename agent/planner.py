@@ -19,7 +19,13 @@ _STOPWORDS = frozenset({
     "bugfix", "refactor", "docs", "release", "work", "that", "this",
 })
 
-_REVIEW_MARKERS = ("review", "merge", "approve", "request changes", "pull request", "pr #")
+# Word-boundary match so an incidental substring ("preview" ⊃ "review", "emergency" ⊃
+# "merge") doesn't misclassify greenfield work as an existing review item. Anchored only
+# at the start, so real suffixes ("reviews", "merged", "approved") still count.
+_REVIEW_MARKER_RE = re.compile(
+    r"\b(?:review|merge|approve|request\s+changes|pull\s+request|pr\s*#)",
+    re.I,
+)
 # Explicit PR references: "#7", "PR #7", "pull request 7"
 _PR_NUMBER = re.compile(
     r"(?:#\s*(\d+)\b|(?:pull\s+request|pr)\s+#?\s*(\d+)\b)",
@@ -153,8 +159,7 @@ def _is_review_item(item: dict) -> bool:
     """True when the item already frames the work as reviewing/triaging a PR."""
     if (item.get("kind") or "").strip().lower() == "triage":
         return True
-    title = (item.get("title") or "").lower()
-    return any(marker in title for marker in _REVIEW_MARKERS)
+    return bool(_REVIEW_MARKER_RE.search(item.get("title") or ""))
 
 
 def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
