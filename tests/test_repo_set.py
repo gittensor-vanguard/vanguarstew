@@ -111,6 +111,23 @@ def test_freeze_window_validation():
         validate_repo_set(_mutate(freeze_window={"rotation_seed": True}))
 
 
+def test_freeze_window_value_validation():
+    # min_history is a positive history requirement; 0/negative would let task generation
+    # pick the very first commit (no prior history), defeating the bound.
+    for bad in (0, -1, -30):
+        with pytest.raises(RepoSetError, match="min_history must be >= 1"):
+            validate_repo_set(_mutate(freeze_window={"min_history": bad}))
+    # empty date bounds are useless and rejected
+    with pytest.raises(RepoSetError, match="after must be a non-empty string"):
+        validate_repo_set(_mutate(freeze_window={"after": ""}))
+    with pytest.raises(RepoSetError, match="before must be a non-empty string"):
+        validate_repo_set(_mutate(freeze_window={"before": "  "}))
+    # a positive min_history and real date bounds still validate
+    rs = validate_repo_set(_mutate(
+        freeze_window={"min_history": 1, "after": "2025-01-01", "before": "2025-06-01"}))
+    assert rs.entries[0].freeze_window["min_history"] == 1
+
+
 def test_unknown_entry_key_rejected():
     with pytest.raises(RepoSetError, match="unknown keys"):
         validate_repo_set(_mutate(extra="x"))

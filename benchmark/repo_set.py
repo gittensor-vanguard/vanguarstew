@@ -96,11 +96,18 @@ def _validate_freeze_window(fw, where):
         expected = _FREEZE_KEYS[key]
         if expected == "str":
             _require(isinstance(value, str), f"{where}: freeze_window.{key} must be a string")
+            # A date bound is only useful if it names a date; reject empty strings.
+            _require(value.strip(), f"{where}: freeze_window.{key} must be a non-empty string")
         elif expected == "bool":
             _require(isinstance(value, bool), f"{where}: freeze_window.{key} must be a boolean")
         elif expected == "int":
             _require(isinstance(value, int) and not isinstance(value, bool),
                      f"{where}: freeze_window.{key} must be an integer")
+    # `min_history` must leave real prior history to freeze on; 0/negative would let task
+    # generation pick the very first commit (no history), defeating the bound's purpose.
+    if "min_history" in fw:
+        _require(fw["min_history"] >= 1,
+                 f"{where}: freeze_window.min_history must be >= 1, got {fw['min_history']}")
     return dict(fw)
 
 

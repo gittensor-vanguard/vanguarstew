@@ -13,6 +13,13 @@ All notable changes to this project are documented here. The format is based on
   only: scoring semantics are unchanged, and it degrades to an empty list for an empty backlog
   or a git-only run (#135).
 
+### Fixed
+- Repo-set integrity: the config loader now validates freeze-window *values*, not just types —
+  `freeze_window.min_history` must be `>= 1` (a `0`/negative bound would let task generation
+  freeze at the very first commit, with no prior history, defeating the bound), and
+  `after`/`before` date bounds must be non-empty strings. Keeps the "leakage-safe config" as
+  trustworthy as it claims to be (#232).
+
 ## [0.3.0] - 2026-07-03
 
 ### Added
