@@ -8,16 +8,53 @@ the agent legitimately needs to infer trajectory.
 
 This is deterministic and offline; it is one layer of the leakage strategy (see
 docs/architecture.md), alongside the no-internet sandbox and recent/obscure repo selection.
+
+The GitHub-link matcher is boundary-aware: it stops at the structural characters
+that surround a URL in prose or markdown (parens, square/angle brackets, quotes)
+and peels trailing sentence punctuation (.,;!) back into the surrounding text, so
+legitimate context survives while the forward reference itself is masked. Bare
+owner/repo URLs (which carry no specific forward reference) are left untouched.
 """
 
 from __future__ import annotations
 
 import re
 
+# Characters that surround a URL in prose or markdown and are never part of it.
+# Stopping at them keeps the surrounding syntax — parentheses, square/angle
+# brackets, quotes — intact instead of swallowing it into the mask.
+_URL_STOP = "<>()[]{}\"'`"
+
+# A GitHub deep-link whose target references the repo's future state. The owner/
+# repo and trailing id/path segments are bounded by ``_URL_STOP`` so the matcher
+# never runs past a closing delimiter, and the recognized link *types* live in a
+# single readable alternation that is straightforward to extend (additional link
+# classes are tracked separately in #108).
 _GH_LINK = re.compile(
-    r"https?://github\.com/[^\s)]+/(?:issues|pull|commit|compare)/[^\s)]+", re.I)
+    r"https?://github\.com"
+    r"/[^\s" + re.escape(_URL_STOP) + r"]+/"                  # owner/repo/
+    r"(?:issues|pull|commit|compare)/"              # a deep-link type
+    r"[^\s" + re.escape(_URL_STOP) + r"]+",                    # referenced id / path
+    re.I,
+)
+
+# Trailing sentence punctuation the greedy id/path segment may swallow; we peel
+# it back off so a trailing ".", ",", ";", or "!" stays in the surrounding prose
+# rather than vanishing into <link>. Query ("?") / fragment ("#") separators are
+# NOT here — they are legitimate URL characters and must remain masked.
+_TRAILING_PUNCT = ".,;!"
+
 _ISSUE_REF = re.compile(r"#\d+")
 _SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
+
+
+def _mask_link(match) -> str:
+    """Replace a GitHub deep-link with ``<link>``, preserving trailing punctuation."""
+    url = match.group(0)
+    cut = len(url)
+    while cut > 0 and url[cut - 1] in _TRAILING_PUNCT:
+        cut -= 1
+    return "<link>" + url[cut:]
 
 
 def _looks_like_sha(token: str) -> bool:
@@ -36,7 +73,7 @@ def strip_forward_refs(text: str) -> str:
     """Mask issue/PR back-references, GitHub links, and raw SHAs in free text."""
     if not text:
         return text
-    text = _GH_LINK.sub("<link>", text)
+    text = _GH_LINK.sub(_mask_link, text)
     text = _ISSUE_REF.sub("#ref", text)
     text = _SHA.sub(lambda m: "<sha>" if _looks_like_sha(m.group(0)) else m.group(0), text)
     return text
