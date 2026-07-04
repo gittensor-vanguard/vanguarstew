@@ -111,6 +111,18 @@ tuned   = [e.source for e in rs.tuned()]
 heldout = [e.source for e in rs.held_out()]
 ```
 
+Config-driven replay flows through the validated loader rather than bypassing it. The
+multi-repo runner accepts `repo_set="path/to/curated.json"`, replays the config's
+**tuned** entries by default, and applies each entry's `freeze_window` hints directly to
+freeze-point selection (`recent_bias`, `rotation_seed`, `after`, `before`, `min_history`).
+Held-out entries stay reserved unless explicitly included, and the shipped `example.json`
+fails loudly at execution time because its `OWNER/...` sources are placeholders, not real
+benchmark inputs.
+
+```bash
+python -m scripts.run_eval --repo-set path/to/curated.json --tasks 2 --horizon 5
+```
+
 ## Leakage defenses
 
 Because the reference is public GitHub history, the benchmark actively resists leakage:

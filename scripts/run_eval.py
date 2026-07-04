@@ -18,6 +18,8 @@ def main() -> None:
     src.add_argument("--repo", help="path to a single local git repo to replay")
     src.add_argument("--repos", nargs="+",
                      help="two or more git repos to replay and aggregate into a composite_mean")
+    src.add_argument("--repo-set",
+                     help="path to a validated repo-set JSON config to replay")
     ap.add_argument("--agent", default="agent.py", help="agent entrypoint file")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, choices=sorted(BASELINES),
                     help="reference opponent the challenger is judged against")
@@ -34,6 +36,8 @@ def main() -> None:
                     help="draw freeze points only from the most recent usable window")
     ap.add_argument("--rotation-seed", type=int, default=None,
                     help="deterministically rotate which freeze points are chosen")
+    ap.add_argument("--include-held-out", action="store_true",
+                    help="include held_out repo-set entries in the replay aggregate")
     ap.add_argument("--w-judge", type=float, default=0.6,
                     help="composite weight on the pairwise judge (default 0.6)")
     ap.add_argument("--w-objective", type=float, default=0.4,
@@ -51,7 +55,10 @@ def main() -> None:
         w_judge=args.w_judge, w_objective=args.w_objective,
         dual_order_judge=not args.single_order_judge,
     )
-    if args.repos:
+    if args.repo_set:
+        result = run_multi_replay(repo_set=args.repo_set, include_held_out=args.include_held_out,
+                                  **common)
+    elif args.repos:
         result = run_multi_replay(args.repos, **common)
     else:
         result = run_replay(repo_path=args.repo, **common)

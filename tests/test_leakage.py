@@ -101,3 +101,24 @@ def test_rotation_seed_is_deterministic(monkeypatch):
     c = taskgen.generate_tasks("x", num_tasks=4, horizon=5, rotation_seed=99)
     assert [t["freeze_index"] for t in a] == [t["freeze_index"] for t in b]
     assert [t["freeze_index"] for t in a] != [t["freeze_index"] for t in c]
+
+
+def test_after_before_window_filters_freeze_dates(monkeypatch):
+    monkeypatch.setattr(
+        taskgen,
+        "history_with_dates",
+        lambda repo: [
+            {"sha": f"sha{i:03d}", "date": f"2026-01-{i + 1:02d}T00:00:00+00:00"}
+            for i in range(12)
+        ],
+    )
+    monkeypatch.setattr(taskgen, "revealed_window", lambda *a, **k: [])
+    tasks = taskgen.generate_tasks(
+        "x",
+        num_tasks=10,
+        horizon=2,
+        min_history=0,
+        after="2026-01-04",
+        before="2026-01-06",
+    )
+    assert [t["freeze_index"] for t in tasks] == [3, 4, 5]

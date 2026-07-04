@@ -18,6 +18,17 @@ def linear_history(repo: str) -> list:
     return [line for line in out.splitlines() if line]
 
 
+def history_with_dates(repo: str) -> list[dict]:
+    """First-parent commit history with ISO dates, oldest -> newest."""
+    out = _git(repo, "log", "--first-parent", "--reverse", "--format=%H%x09%cI", "HEAD")
+    history = []
+    for line in out.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2 and parts[0]:
+            history.append({"sha": parts[0], "date": parts[1]})
+    return history
+
+
 def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     """The next `n` maintainer actions after the freeze commit (the reference)."""
     window = []
@@ -29,16 +40,38 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
 
 
 def generate_tasks(repo: str, num_tasks: int = 3, horizon: int = 5, min_history: int = 10,
-                   recent_bias: bool = False, rotation_seed: int | None = None) -> list:
+                   recent_bias: bool = False, rotation_seed: int | None = None,
+                   after: str | None = None, before: str | None = None) -> list:
     """Select freeze points from history.
 
     - ``recent_bias``: draw only from the most recent usable window. Recent freeze points are
       preferred by the leakage strategy (more likely past a model's training cutoff).
     - ``rotation_seed``: deterministically rotate which freeze points are chosen, so tasks
       vary run-to-run and answers aren't reused. Same seed -> same picks.
+    - ``after`` / ``before``: optional YYYY-MM-DD bounds on the freeze commit date.
     """
-    commits = linear_history(repo)
-    usable = [i for i in range(len(commits)) if i >= min_history and i + horizon < len(commits)]
+    dates = None
+    if after is not None or before is not None:
+        history = history_with_dates(repo)
+        commits = [item["sha"] for item in history]
+        dates = [item["date"][:10] for item in history]
+    else:
+        commits = linear_history(repo)
+
+    def _in_window(index: int) -> bool:
+        if dates is None:
+            return True
+        day = dates[index]
+        if after is not None and day < after:
+            return False
+        if before is not None and day > before:
+            return False
+        return True
+
+    usable = [
+        i for i in range(len(commits))
+        if i >= min_history and i + horizon < len(commits) and _in_window(i)
+    ]
     if not usable:
         return []
 

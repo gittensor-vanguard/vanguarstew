@@ -12,6 +12,7 @@ import json
 import os
 import random
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -22,6 +23,7 @@ from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
 from benchmark.judge import pairwise_judge
 from benchmark.leakage import scrub_context
+from benchmark.repo_set import RepoSetError, load_repo_set
 from benchmark.score import (
     base_from_releases,
     composite_score,
@@ -59,16 +61,81 @@ def _submission(out: dict) -> dict:
     }
 
 
+def _is_git_url(source: str) -> bool:
+    return "://" in source or source.startswith("git@")
+
+
+def _is_placeholder_source(source: str) -> bool:
+    return (
+        "github.com/OWNER/" in source
+        or source.startswith("OWNER/")
+        or ":OWNER/" in source
+    )
+
+
+def _clone_repo(source: str, dest: str) -> str:
+    proc = subprocess.run(
+        ["git", "clone", "--quiet", source, dest],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"git clone failed for {source}: {proc.stderr.strip()}")
+    return dest
+
+
+def _resolve_repo_path(source: str, repo_set_dir: str, clone_root: str, name: str) -> str:
+    if _is_git_url(source):
+        safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in name) or "repo"
+        return _clone_repo(source, os.path.join(clone_root, safe))
+    if os.path.isabs(source):
+        return source
+    return os.path.abspath(os.path.join(repo_set_dir, source))
+
+
+def _repo_set_targets(repo_set: str, include_held_out: bool, base_kwargs: dict,
+                      clone_root: str) -> list[dict]:
+    repo_set_path = os.path.abspath(repo_set)
+    loaded = load_repo_set(repo_set_path)
+    entries = loaded.entries if include_held_out else loaded.tuned()
+    if not entries:
+        scope = "entries" if include_held_out else "tuned entries"
+        raise RepoSetError(f"repo set has no replayable {scope}")
+    placeholders = [entry.name for entry in entries if _is_placeholder_source(entry.source)]
+    if placeholders:
+        raise RepoSetError(
+            "repo set contains placeholder sources; replace OWNER/... entries before replay: "
+            + ", ".join(placeholders)
+        )
+
+    repo_set_dir = os.path.dirname(repo_set_path)
+    targets = []
+    for entry in entries:
+        replay_kwargs = dict(base_kwargs)
+        replay_kwargs.update(entry.freeze_window)
+        targets.append({
+            "repo": entry.source,
+            "repo_name": entry.name,
+            "tier": entry.tier,
+            "held_out": entry.held_out,
+            "repo_path": _resolve_repo_path(entry.source, repo_set_dir, clone_root, entry.name),
+            "replay_kwargs": replay_kwargs,
+        })
+    return targets
+
+
 def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                model=None, api_base=None, api_key=None, work_dir=None, seed=0,
                enrich_github=False, github_token=None,
-               recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
+               recent_bias=False, rotation_seed=None, min_history=10,
+               after=None, before=None, baseline=DEFAULT_BASELINE,
                w_judge=0.6, w_objective=0.4, dual_order_judge=True) -> dict:
     solve = load_solve(agent_file)
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
     tasks = generate_tasks(repo_path, n_tasks, horizon,
-                           recent_bias=recent_bias, rotation_seed=rotation_seed)
+                           min_history=min_history, recent_bias=recent_bias,
+                           rotation_seed=rotation_seed, after=after, before=before)
     if not tasks:
         return {"error": "no usable tasks (repo too small for horizon/min_history)", "tasks": 0}
 
@@ -141,7 +208,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
     }
 
 
-def run_multi_replay(repos, **kwargs) -> dict:
+def run_multi_replay(repos=None, repo_set=None, include_held_out=False, **kwargs) -> dict:
     """Replay several repos and aggregate their composites (proposal §4 / M3 generalization).
 
     Runs `run_replay` once per repo — preserving every per-repo result — and averages each
@@ -156,18 +223,34 @@ def run_multi_replay(repos, **kwargs) -> dict:
     Repos too small to yield tasks are kept in `per_repo` with their error and excluded from
     the mean (and counted in `skipped`).
     """
+    if (repos is None) == (repo_set is None):
+        raise ValueError("pass exactly one of repos or repo_set")
+
     per_repo = []
     composites = []
     judge_parts = []
     objective_parts = []
-    for repo in repos:
-        res = run_replay(repo, **kwargs)
-        per_repo.append({"repo": repo, **res})
-        if res.get("tasks", 0) > 0:
-            composites.append(res["composite_mean"])
-            parts = res.get("composite_parts", {})
-            judge_parts.append(parts.get("judge_mean", 0.0))
-            objective_parts.append(parts.get("objective_mean", 0.0))
+    clone_root = tempfile.mkdtemp(prefix="vanguarstew_repo_set_")
+    try:
+        if repo_set is not None:
+            targets = _repo_set_targets(repo_set, include_held_out, kwargs, clone_root)
+        else:
+            targets = [{"repo": repo, "repo_path": repo, "replay_kwargs": dict(kwargs)} for repo in repos]
+
+        for target in targets:
+            res = run_replay(target["repo_path"], **target["replay_kwargs"])
+            row = {"repo": target["repo"], **res}
+            for key in ("repo_name", "tier", "held_out"):
+                if key in target:
+                    row[key] = target[key]
+            per_repo.append(row)
+            if res.get("tasks", 0) > 0:
+                composites.append(res["composite_mean"])
+                parts = res.get("composite_parts", {})
+                judge_parts.append(parts.get("judge_mean", 0.0))
+                objective_parts.append(parts.get("objective_mean", 0.0))
+    finally:
+        shutil.rmtree(clone_root, ignore_errors=True)
 
     def _mean(xs):
         return round(sum(xs) / len(xs), 3) if xs else 0.0

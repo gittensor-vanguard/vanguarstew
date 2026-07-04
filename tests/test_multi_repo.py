@@ -3,6 +3,7 @@
     VANGUARSTEW_OFFLINE=1 python -m pytest -q
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -17,6 +18,7 @@ if ROOT not in sys.path:
 
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
+from benchmark.repo_set import EXAMPLE_REPO_SET, RepoSetError  # noqa: E402
 from benchmark.runner import run_multi_replay, run_replay  # noqa: E402
 
 AGENT = os.path.join(ROOT, "agent.py")
@@ -108,3 +110,51 @@ def test_multi_repo_skips_zero_task_repo_without_diluting():
     finally:
         shutil.rmtree(good, ignore_errors=True)
         shutil.rmtree(tiny, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_repo_set_replay_uses_validated_tuned_entries_and_freeze_hints(tmp_path):
+    tuned = _tiny_repo(tempfile.mkdtemp(), n=20, prefix="tuned")
+    held = _tiny_repo(tempfile.mkdtemp(), n=20, prefix="held")
+    cfg = tmp_path / "repos.json"
+    cfg.write_text(json.dumps({
+        "name": "curated",
+        "repos": [
+            {
+                "name": "tuned-a",
+                "source": tuned,
+                "tier": "recent",
+                "freeze_window": {"min_history": 12, "rotation_seed": 9},
+            },
+            {
+                "name": "held-b",
+                "source": held,
+                "tier": "obscure",
+                "held_out": True,
+                "freeze_window": {"min_history": 11},
+            },
+        ],
+    }), encoding="utf-8")
+    try:
+        kw = dict(agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
+        expected = run_replay(tuned, min_history=12, rotation_seed=9, **kw)
+        res = run_multi_replay(repo_set=str(cfg), **kw)
+        assert res["repos"] == 1
+        row = res["per_repo"][0]
+        assert row["repo"] == tuned
+        assert row["repo_name"] == "tuned-a"
+        assert row["tier"] == "recent"
+        assert row["held_out"] is False
+        assert {k: row[k] for k in expected} == expected
+
+        with_held = run_multi_replay(repo_set=str(cfg), include_held_out=True, **kw)
+        assert with_held["repos"] == 2
+        assert [r["repo_name"] for r in with_held["per_repo"]] == ["tuned-a", "held-b"]
+    finally:
+        shutil.rmtree(tuned, ignore_errors=True)
+        shutil.rmtree(held, ignore_errors=True)
+
+
+def test_repo_set_replay_rejects_placeholder_sources():
+    with pytest.raises(RepoSetError, match="placeholder sources"):
+        run_multi_replay(repo_set=EXAMPLE_REPO_SET, agent_file=AGENT, n_tasks=1, horizon=1, seed=0)
