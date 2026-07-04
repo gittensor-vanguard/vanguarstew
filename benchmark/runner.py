@@ -20,7 +20,7 @@ from agent.llm import LLM
 from benchmark.baselines import DEFAULT_BASELINE, empty_solve, get_baseline
 from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
-from benchmark.judge import pairwise_judge
+from benchmark.judge import judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
 from benchmark.score import (
     base_from_releases,
@@ -93,8 +93,9 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 api_base=api_base or "", api_key=api_key or "offline", n=horizon,
             )
             baseline_out = opponent(dest, request, context=ctx, n=horizon)
-            winner = pairwise_judge(ctx, _submission(challenger), _submission(baseline_out),
-                                    task["revealed"], llm, rng, dual_order=dual_order_judge)
+            winner, judge_order = judge_verbose(
+                ctx, _submission(challenger), _submission(baseline_out),
+                task["revealed"], llm, rng, dual_order=dual_order_judge)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
             obj = objective_score(
@@ -107,6 +108,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 "task": k,
                 "freeze": task["freeze_commit"][:10],
                 "winner": who,
+                "judge_order": judge_order,
                 "overlap": trajectory_overlap(challenger.get("plan"), task["revealed"]),
                 "objective": obj,
                 "composite": composite_score(winner, obj, w_judge, w_objective),
@@ -135,6 +137,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         },
         "weights": {"judge": w_judge, "objective": w_objective},
         "rows": rows,
+        "judge_order_stats": summarize_judge_orders(r.get("judge_order") for r in rows),
         "offline": llm.offline,
         "github_enriched": enrich_github,
         "judge_dual_order": dual_order_judge,
@@ -160,6 +163,7 @@ def run_multi_replay(repos, **kwargs) -> dict:
     composites = []
     judge_parts = []
     objective_parts = []
+    judge_orders = []
     for repo in repos:
         res = run_replay(repo, **kwargs)
         per_repo.append({"repo": repo, **res})
@@ -168,6 +172,7 @@ def run_multi_replay(repos, **kwargs) -> dict:
             parts = res.get("composite_parts", {})
             judge_parts.append(parts.get("judge_mean", 0.0))
             objective_parts.append(parts.get("objective_mean", 0.0))
+            judge_orders.extend(r.get("judge_order") for r in res.get("rows", []))
 
     def _mean(xs):
         return round(sum(xs) / len(xs), 3) if xs else 0.0
@@ -181,5 +186,6 @@ def run_multi_replay(repos, **kwargs) -> dict:
             "judge_mean": _mean(judge_parts),
             "objective_mean": _mean(objective_parts),
         },
+        "judge_order_stats": summarize_judge_orders(judge_orders),
         "per_repo": per_repo,
     }
