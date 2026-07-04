@@ -134,6 +134,11 @@ Because the reference is public GitHub history, the benchmark actively resists l
   commit subject or README can't cross-reference the future.
 - **Recent-window + rotation** freeze-point selection (`benchmark/taskgen.py`) — prefer recent
   points (past a model's training cutoff) and rotate deterministically so answers aren't reused.
+- **Judge-order telemetry** (`benchmark/judge.py`, `benchmark/runner.py`) — replay artifacts
+  persist each row's `judge_order` plus aggregate `judge_order_stats`, including
+  `disagreement_rate` when dual-order judging is enabled. If that rate rises, treat it as
+  a judge-stability warning worth inspecting for prompt/model drift or noisier scoring, not
+  as evidence that challenger and baseline are necessarily converging.
 - **Repo diversity / held-out repos** (M3) — generalization is scored on unseen repos.
 
 ## Principle

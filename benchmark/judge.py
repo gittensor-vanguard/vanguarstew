@@ -128,20 +128,28 @@ def _judge_order(context: dict, first, second, revealed, llm) -> str:
     return {"A": "first", "B": "second"}.get(w, "tie")
 
 
-def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng=None,
-                   dual_order: bool = True) -> str:
-    """Return 'A' (submission_a wins), 'B' (submission_b wins), or 'tie'.
+def judge_verbose(context: dict, submission_a, submission_b, revealed, llm, rng=None,
+                  dual_order: bool = True) -> tuple[str, str]:
+    """Return ``(winner, judge_order)`` for a pairwise judgment.
 
     With ``dual_order`` (default), the judge is asked both presentation orders and a win is
     awarded only if it survives the swap — a position-biased judge that just picks whichever
     submission is shown first then resolves to a tie instead of a spurious win. With
     ``dual_order=False`` a single randomized-order call is made (cheaper, higher variance).
+
+    ``judge_order`` records how the verdict arose:
+    - ``agree``: both orders agreed on the same decisive winner
+    - ``disagree``: the two orders disagreed, so the final verdict was forced to ``tie``
+    - ``tie``: both orders independently tied
+    - ``single``: dual-order was disabled
+    - ``offline``: deterministic offline fallback, so no order-sensitivity check ran
     """
     rng = rng or random.Random(0)
 
     if llm.offline:
         ra, rb = _offline_rank(submission_a), _offline_rank(submission_b)
-        return "A" if ra > rb else ("B" if rb > ra else "tie")
+        winner = "A" if ra > rb else ("B" if rb > ra else "tie")
+        return winner, "offline"
 
     if dual_order:
         # A shown first: 'first'->A, 'second'->B. B shown first: 'first'->B, 'second'->A.
@@ -150,13 +158,44 @@ def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng
         v_ba = _judge_order(context, submission_b, submission_a, revealed, llm)
         w_ba = {"first": "B", "second": "A"}.get(v_ba, "tie")
         # Only a verdict consistent across both orders stands; otherwise it's a tie.
-        return w_ab if w_ab == w_ba and w_ab in ("A", "B") else "tie"
+        if w_ab == w_ba and w_ab in ("A", "B"):
+            return w_ab, "agree"
+        if w_ab == w_ba == "tie":
+            return "tie", "tie"
+        return "tie", "disagree"
 
     swap = rng.random() < 0.5  # if True, submission_b is shown FIRST
     first, second = (submission_b, submission_a) if swap else (submission_a, submission_b)
     v = _judge_order(context, first, second, revealed, llm)
     if v == "tie":
-        return "tie"
+        return "tie", "single"
     winner_is_first = v == "first"
     first_is_a = not swap
-    return "A" if winner_is_first == first_is_a else "B"
+    return ("A" if winner_is_first == first_is_a else "B"), "single"
+
+
+def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng=None,
+                   dual_order: bool = True) -> str:
+    """Return 'A' (submission_a wins), 'B' (submission_b wins), or 'tie'."""
+    winner, _ = judge_verbose(
+        context, submission_a, submission_b, revealed, llm, rng, dual_order=dual_order)
+    return winner
+
+
+def summarize_judge_orders(categories) -> dict:
+    """Aggregate order-sensitivity telemetry for replay artifacts.
+
+    A rising ``disagreement_rate`` means more verdicts depend on presentation order, which is
+    a judge-stability warning. Treat that as prompt/model drift or scoring noise to inspect,
+    not as evidence that challenger and baseline are closer in quality.
+    """
+    stats = {key: 0 for key in ("agree", "disagree", "tie", "single", "offline")}
+    for category in categories:
+        if category in stats:
+            stats[category] += 1
+    dual_order_tasks = stats["agree"] + stats["disagree"] + stats["tie"]
+    stats["dual_order_tasks"] = dual_order_tasks
+    stats["disagreement_rate"] = (
+        round(stats["disagree"] / dual_order_tasks, 3) if dual_order_tasks else None
+    )
+    return stats

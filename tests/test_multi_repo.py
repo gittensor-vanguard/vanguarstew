@@ -46,9 +46,12 @@ def test_single_run_reports_composite_mean_and_parts():
         assert all(0.0 <= parts[k] <= 1.0 for k in ("judge_mean", "objective_mean"))
         assert res["weights"] == {"judge": 0.6, "objective": 0.4}
         # each task row carries both the objective anchor and the blended composite
-        assert res["rows"] and all("objective" in r and "composite" in r for r in res["rows"])
+        assert res["rows"] and all(
+            "objective" in r and "composite" in r and "judge_order" in r for r in res["rows"])
         assert res["composite_mean"] == round(
             sum(r["composite"] for r in res["rows"]) / len(res["rows"]), 3)
+        assert res["judge_order_stats"]["offline"] == len(res["rows"])
+        assert res["judge_order_stats"]["disagreement_rate"] is None
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -77,6 +80,8 @@ def test_multi_repo_aggregates_and_is_deterministic():
             "objective_mean": round(sum(r["composite_parts"]["objective_mean"]
                                         for r in res["per_repo"]) / 2, 3),
         }
+        assert res["judge_order_stats"]["offline"] == sum(
+            len(r["rows"]) for r in res["per_repo"])
 
         # deterministic under a fixed seed
         res2 = run_multi_replay([a, b], **kw)

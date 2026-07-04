@@ -15,7 +15,13 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
-from benchmark.judge import _parse_winner, _plan_substance, pairwise_judge  # noqa: E402
+from benchmark.judge import (  # noqa: E402
+    _parse_winner,
+    _plan_substance,
+    judge_verbose,
+    pairwise_judge,
+    summarize_judge_orders,
+)
 
 
 class _FakeLLM:
@@ -179,6 +185,21 @@ def test_dual_order_ties_a_position_biased_judge():
     assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_second")) == "tie"
 
 
+def test_judge_verbose_categorizes_dual_order_and_offline_modes():
+    winner, judge_order = judge_verbose({}, _GOOD, _BAD, [], _FakeLLM("content"))
+    assert (winner, judge_order) == ("A", "agree")
+
+    winner, judge_order = judge_verbose({}, _GOOD, _BAD, [], _FakeLLM("position_first"))
+    assert (winner, judge_order) == ("tie", "disagree")
+
+    winner, judge_order = judge_verbose({}, _GOOD, _BAD, [], _FakeLLM("tie"))
+    assert (winner, judge_order) == ("tie", "tie")
+
+    winner, judge_order = judge_verbose({}, _GOOD, _BAD, [], LLM(api_key="offline"))
+    assert judge_order == "offline"
+    assert winner in ("A", "B", "tie")
+
+
 def test_single_order_mode_makes_one_call_and_can_be_swayed():
     # With dual_order disabled, only one call is made and a position-biased judge decides it.
     llm = _FakeLLM("position_first")
@@ -186,3 +207,19 @@ def test_single_order_mode_makes_one_call_and_can_be_swayed():
     result = pairwise_judge({}, _GOOD, _BAD, [], llm, random.Random(1), dual_order=False)
     assert llm.calls == 1
     assert result in ("A", "B")  # a (biased) decision, not forced to tie
+    assert judge_verbose({}, _GOOD, _BAD, [], _FakeLLM("position_first"),
+                         random.Random(1), dual_order=False)[1] == "single"
+
+
+def test_summarize_judge_orders_reports_disagreement_rate():
+    stats = summarize_judge_orders(["agree", "disagree", "tie", "single", "offline"])
+    assert stats == {
+        "agree": 1,
+        "disagree": 1,
+        "tie": 1,
+        "single": 1,
+        "offline": 1,
+        "dual_order_tasks": 3,
+        "disagreement_rate": 0.333,
+    }
+    assert summarize_judge_orders(["offline", "single"])["disagreement_rate"] is None
