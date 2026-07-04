@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format is based on
   `weighted_module_recall` (and `module_weights`) inside `objective_score`, weighting each
   anticipated module by how many revealed file changes landed in it, so the blended score
   reflects where the maintainer effort actually concentrated, as the 0.3.0 notes described.
+- Benchmark hygiene: `benchmark/taskgen.py::revealed_window` now parses changed-file
+  lists from NUL-delimited `git show --name-only -z` output via a reusable
+  `benchmark.freeze.parse_path_list` helper, instead of whitespace `.split()`. Filenames
+  containing spaces or shell-sensitive characters are no longer corrupted (which would
+  mis-attribute file-weighted scoring); first-parent merges still yield an empty file
+  list as before. Adds `tests/test_taskgen.py` regression coverage (#137).
 
 ## [0.3.0] - 2026-07-03
 
