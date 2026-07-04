@@ -23,7 +23,10 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     window = []
     for sha in commits[idx + 1: idx + 1 + n]:
         subject = _git(repo, "log", "-1", "--pretty=format:%s", sha).strip()
-        files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False).split()
+        # --first-parent lists the files a merge brought to the main line; git show's
+        # default combined diff omits them, leaving clean merges with no files.
+        files = _git(repo, "show", "--first-parent", "--name-only", "--pretty=format:", sha,
+                     check=False).split()
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 
