@@ -18,6 +18,7 @@ from agent.llm import LLM  # noqa: E402
 from benchmark.judge import (  # noqa: E402
     _parse_winner,
     _plan_substance,
+    build_judge_report,
     judge_verbose,
     pairwise_judge,
     summarize_judge_orders,
@@ -223,3 +224,21 @@ def test_summarize_judge_orders_reports_disagreement_rate():
         "disagreement_rate": 0.333,
     }
     assert summarize_judge_orders(["offline", "single"])["disagreement_rate"] is None
+
+
+def test_build_judge_report_summarizes_outcomes_and_disagreement():
+    stats = summarize_judge_orders(["agree", "disagree", "tie", "single", "offline"])
+    report = build_judge_report({"challenger": 4, "baseline": 2, "tie": 3}, stats)
+    assert report == {
+        "wins": 4,
+        "losses": 2,
+        "ties": 3,
+        "dual_order_tasks": 3,
+        "disagreements": 1,
+        "disagreement_rate": 0.333,
+        "summary": "judge W-L-T 4-2-3; disagreement_rate=33.3% (1/3 dual-order tasks)",
+    }
+
+
+def test_build_judge_report_none_without_stats():
+    assert build_judge_report({"challenger": 1, "baseline": 0, "tie": 0}, None) is None

@@ -138,7 +138,10 @@ Because the reference is public GitHub history, the benchmark actively resists l
   - *Issue/PR label membership* is reconstructed by replaying the item's timeline
     `labeled`/`unlabeled` events up to T (`_labels_at`); when the timeline can't be read
     (offline, rate-limited, or no label events), labels are **omitted** (`labels_as_of_t:
-    false`) rather than copied live — fail-closed, never leak.
+    false`) rather than copied live — fail-closed, never leak. Consumers must treat
+    `labels` as historically exact **only when** `labels_as_of_t` is true; `labels_as_of_t:
+    false` means "label history unavailable", not "this item had no labels at T". The
+    agent-facing prompt view follows that contract by omitting `labels` on such items.
   - *Intentionally omitted* (not reconstructable from a cheap as-of-T source): the repo-wide
     label catalog and milestone `due_on` are dropped from the enriched context rather than
     copied live. Issue/PR titles are still the live values, so consumers must not treat them
