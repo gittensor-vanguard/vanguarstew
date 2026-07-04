@@ -1,9 +1,9 @@
 """Enrich a frozen snapshot with GitHub state that was knowable at time T.
 
 `freeze.py` gives us git-only context (commits, tags, README). This adds the maintainer's
-real working surface — open issues, open PRs, labels, milestones, releases — reconstructed
-*as of T* so nothing from the future leaks: an item counts as "open at T" only if it was
-created on or before T and was not already closed by T.
+real working surface — open issues, open PRs, milestones, releases, and other fields we can
+defend *as of T* — so nothing from the future leaks: an item counts as "open at T" only if it
+was created on or before T and was not already closed by T.
 
 Network access is optional. Any failure (offline, rate limit, private repo) is caught and
 the git-only context is returned unchanged, so the benchmark still runs without GitHub.
@@ -18,8 +18,11 @@ Derived as-of-T (safe):
   - Releases: filtered by ``published_at <= T``.
 
 Live-only (present-day REST snapshot — documented, not reconstructable without Events API):
-  - Repo ``labels`` list: no created-at on the labels endpoint.
-  - Milestone ``due_on``: may be edited after T; we keep the current value as best-effort.
+  - Repo ``labels`` list: no created-at on the labels endpoint; kept as the live snapshot.
+
+Omitted (would leak future edits, not reconstructable as-of-T):
+  - Milestone ``due_on``: the REST value is today's editable due date, so a post-T edit would
+    leak; dropped rather than carried as a possibly-future value.
 """
 
 from __future__ import annotations
@@ -85,19 +88,19 @@ def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int
 def _milestone_at(milestone: dict, until: datetime) -> dict | None:
     """A milestone as knowable at ``until``, or None if it did not exist yet.
 
-    ``state`` is derived from ``closed_at`` as-of T — ``"closed"`` only when the milestone
-    was already closed by T — rather than the milestone's present-day ``state`` field.
+    Returns None when the milestone was created after T. Otherwise ``state`` is derived from
+    ``closed_at`` *as of T* — ``"closed"`` only when it was already closed by T — rather than
+    the milestone's present-day state, so a milestone closed after T isn't leaked as completed.
+
+    ``due_on`` is intentionally omitted: the REST snapshot is today's editable due date, and we
+    do not have a cheap historical edit stream to reconstruct it reliably as-of-T.
     """
     created = _parse_dt(milestone.get("created_at"))
     if created is None or created > until:
         return None
     closed = _parse_dt(milestone.get("closed_at"))
     state = "closed" if closed is not None and closed <= until else "open"
-    return {
-        "title": milestone.get("title"),
-        "due_on": milestone.get("due_on"),
-        "state": state,
-    }
+    return {"title": milestone.get("title"), "state": state}
 
 
 def _get(url: str, token, timeout: int = 20):
@@ -205,8 +208,6 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
     open_issues, open_prs, truncated = _collect_open_at(base, until, token, timeout,
                                                         max_issue_pages)
 
-    labels = [lbl.get("name") for lbl in _get(f"{base}/labels?per_page={per_page}", token, timeout)]
-
     milestones = []
     for m in _get(f"{base}/milestones?state=all&per_page={per_page}", token, timeout):
         rec = _milestone_at(m, until)
@@ -224,7 +225,6 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "repo": f"{owner}/{repo}",
         "open_issues": open_issues,
         "open_prs": open_prs,
-        "labels": labels,
         "milestones": milestones,
         "releases": releases,
         "_source": "github-api",

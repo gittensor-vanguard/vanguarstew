@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import random
 
-from benchmark.freeze import _git
+from benchmark.freeze import _git, parse_path_list
 
 
 def linear_history(repo: str) -> list:
@@ -23,7 +23,12 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     window = []
     for sha in commits[idx + 1: idx + 1 + n]:
         subject = _git(repo, "log", "-1", "--pretty=format:%s", sha).strip()
-        files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False).split()
+        # `-z` emits NUL-delimited paths so filenames with spaces or shell-sensitive
+        # characters aren't split apart (whitespace `.split()` corrupts them). For a
+        # first-parent merge the combined diff lists no files, so this stays empty —
+        # matching the prior behavior.
+        out = _git(repo, "show", "--name-only", "-z", "--pretty=format:", sha, check=False)
+        files = parse_path_list(out)
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 
