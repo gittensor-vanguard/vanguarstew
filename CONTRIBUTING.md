@@ -3,6 +3,19 @@
 Thanks for your interest in improving vanguarstew. This guide covers how the repo is
 organized, how to set up a dev environment, and what a good pull request looks like.
 
+## Powered by Gittensor
+
+This repository is built and continuously improved through **[Gittensor](https://gittensor.io)** — a
+[Bittensor](https://bittensor.com) subnet (**SN74**) that directs and rewards a network of contributors
+to make real, merged improvements to open-source repositories. Development here is **powered by
+Gittensor**: contributors are rewarded through the subnet for merged work, and that incentive network is
+what drives the project forward.
+
+- **Get involved (and earn) through Gittensor** — see [how OSS contributions
+  work](https://docs.gittensor.io/oss-contributions.html) and the [Gittensor docs](https://docs.gittensor.io).
+- You can also open a PR the normal way (below); everything that lands here flows through the same
+  Gittensor-scored review process either way.
+
 ## Project layout
 
 Two halves with different rules:
