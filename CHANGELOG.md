@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Benchmark diagnostics: each replay task row now carries `backlog_diagnostics` — for every
+  addressed open-issue-at-T, the issue number, its title, and the commit subject that caused
+  it to count as addressed — so maintainers can see *why* a backlog item scored. Diagnostics
+  only: scoring semantics are unchanged, and it degrades to an empty list for an empty backlog
+  or a git-only run (#135).
+
 ## [0.3.0] - 2026-07-03
 
 ### Added

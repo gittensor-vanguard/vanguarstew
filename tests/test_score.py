@@ -9,6 +9,7 @@ if ROOT not in sys.path:
 
 from benchmark.score import (  # noqa: E402
     addressed_issues,
+    backlog_diagnostics,
     backlog_recall,
     base_from_releases,
     bump_level,
@@ -84,6 +85,40 @@ def test_backlog_recall_matches_addressed_issues():
     assert res["backlog_recall"] == 1.0
     score = objective_score(plan, revealed, open_issues=open_issues)
     assert score["backlog_recall"] == 1.0
+
+
+def test_backlog_diagnostics_report_issue_and_matching_subject():
+    open_issues = [
+        {"number": 12, "title": "Memory leak under load"},
+        {"number": 15, "title": "Support YAML config"},   # addressed by a later commit
+        {"number": 99, "title": "Unrelated roadmap item"},  # not addressed
+    ]
+    revealed = [
+        {"subject": "fix: memory leak under heavy load", "files": []},
+        {"subject": "feat: support yaml config parsing", "files": []},
+        {"subject": "docs: tweak readme", "files": []},
+    ]
+    diags = backlog_diagnostics(revealed, open_issues)
+    # one diagnostic per addressed issue, each naming the commit subject that matched
+    assert diags == [
+        {"issue_number": 12, "issue_title": "Memory leak under load",
+         "commit_subject": "fix: memory leak under heavy load"},
+        {"issue_number": 15, "issue_title": "Support YAML config",
+         "commit_subject": "feat: support yaml config parsing"},
+    ]
+    # diagnostics mirror the addressed set exactly (no scoring involved)
+    assert [d["issue_number"] for d in diags] == \
+        [i["number"] for i in addressed_issues(revealed, open_issues)]
+
+
+def test_backlog_diagnostics_empty_for_empty_or_git_only_backlog():
+    revealed = [{"subject": "fix: memory leak under load", "files": []}]
+    assert backlog_diagnostics(revealed, None) == []          # git-only run, no issues
+    assert backlog_diagnostics(revealed, []) == []            # empty backlog
+    # a blank/untokenizable issue title is skipped rather than crashing
+    assert backlog_diagnostics(revealed, [{"number": 1, "title": ""}]) == []
+    # an issue nothing addressed produces no diagnostic
+    assert backlog_diagnostics(revealed, [{"number": 2, "title": "Totally unrelated work"}]) == []
 
 
 def test_git_only_backlog_does_not_change_core_objective_score():

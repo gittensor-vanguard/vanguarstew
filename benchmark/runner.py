@@ -23,6 +23,7 @@ from benchmark.github_context import enrich_context
 from benchmark.judge import pairwise_judge
 from benchmark.leakage import scrub_context
 from benchmark.score import (
+    backlog_diagnostics,
     base_from_releases,
     composite_score,
     objective_component,
@@ -110,6 +111,8 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 "overlap": trajectory_overlap(challenger.get("plan"), task["revealed"]),
                 "objective": obj,
                 "composite": composite_score(winner, obj, w_judge, w_objective),
+                "backlog_diagnostics": backlog_diagnostics(
+                    task["revealed"], ctx.get("open_issues")),
             })
     finally:
         if not work_dir:

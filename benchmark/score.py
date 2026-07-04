@@ -261,6 +261,33 @@ def addressed_issues(revealed, open_issues) -> list:
     return addressed
 
 
+def backlog_diagnostics(revealed, open_issues) -> list:
+    """Human-readable evidence for each addressed backlog issue.
+
+    For every open-at-T issue whose theme shows up in the revealed window, record the issue
+    number, its title, and the first commit subject that caused it to count as addressed — so
+    a maintainer can see *why* a backlog item scored. Diagnostics only: this does not affect
+    `backlog_recall` or any score, and it degrades to an empty list for an empty backlog or a
+    git-only run with no `open_issues`.
+    """
+    diagnostics = []
+    for issue in open_issues or []:
+        title = issue.get("title", "")
+        title_toks = _tokens(title)
+        if not title_toks:
+            continue
+        for row in revealed or []:
+            subject = row.get("subject", "")
+            if _meaningful_overlap(title_toks, _tokens(subject)):
+                diagnostics.append({
+                    "issue_number": issue.get("number"),
+                    "issue_title": title,
+                    "commit_subject": subject,
+                })
+                break
+    return diagnostics
+
+
 def backlog_recall(plan, revealed, open_issues=None) -> dict:
     """Fraction of addressed backlog issues the plan anticipated."""
     addressed = addressed_issues(revealed, open_issues)
