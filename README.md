@@ -3,6 +3,13 @@
 [![CI](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml/badge.svg)](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Powered by Gittensor](https://img.shields.io/badge/Powered%20by-Gittensor-6E56CF)](https://gittensor.io)
+
+> **⚡ Powered by [Gittensor](https://gittensor.io).** This repository is built and continuously
+> improved through **Gittensor** — a [Bittensor](https://bittensor.com) subnet (**SN74**) that rewards a
+> network of contributors for making real, merged improvements to open-source software. The reviews,
+> fixes, and features that land here are produced and incentivized through Gittensor. **Want to help
+> build it (and earn)?** See [how Gittensor OSS contributions work](https://docs.gittensor.io/oss-contributions.html).
 
 `vanguarstew` is an **SN74 repo-maintainer agent** and the **benchmark** that optimizes it, built to live as a repo on gittensor. It borrows the agentic-workflow + history-derived-benchmark approach of SN66 "ninja" (the coding-agent subnet) and retargets it from *"reproduce the code change"* to *"make the maintainer decisions a strong maintainer would have made."*
 
@@ -120,11 +127,12 @@ The `--repos` aggregate result shape is:
 ## Status
 
 **Active development.** The core loop runs end-to-end and is **live-verified against a real
-model** (see the demo above). Shipped so far (M0–M2): history-derived replay, an objective
-scoring anchor plus a decision-process judge, leakage defenses, and knowable-at-T GitHub
-context. Open source (MIT), CI green on Python 3.10–3.12, and registered on gittensor. Next:
-generalization across diverse repos (M3) and the fully agentic loop (M4). See
-[ROADMAP.md](ROADMAP.md).
+model** (see the demo above). Shipped so far (M0–M3): history-derived replay, an objective
+scoring anchor plus a decision-process judge, leakage defenses, knowable-at-T GitHub context,
+and **generalization** — multi-repo replay with an aggregated cross-repo composite and a
+leakage-safe, versioned repo-set config. Open source (MIT), CI green on Python 3.10–3.12, and
+registered on gittensor. Next: held-out generalization scoring (finishing M3) and the fully
+agentic loop (M4). See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 
