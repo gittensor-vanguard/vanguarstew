@@ -18,6 +18,8 @@ def main() -> None:
     src.add_argument("--repo", help="path to a single local git repo to replay")
     src.add_argument("--repos", nargs="+",
                      help="two or more git repos to replay and aggregate into a composite_mean")
+    src.add_argument("--repo-set",
+                     help="validated repo-set JSON config to replay instead of ad-hoc repos")
     ap.add_argument("--agent", default="agent.py", help="agent entrypoint file")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, choices=sorted(BASELINES),
                     help="reference opponent the challenger is judged against")
@@ -41,7 +43,11 @@ def main() -> None:
     ap.add_argument("--single-order-judge", action="store_true",
                     help="ask the judge one randomized order instead of both "
                          "(cheaper, but no position-swap consistency check)")
+    ap.add_argument("--held-out", action="store_true",
+                    help="with --repo-set, replay the held-out slice instead of tuned repos")
     args = ap.parse_args()
+    if args.held_out and not args.repo_set:
+        ap.error("--held-out requires --repo-set")
 
     common = dict(
         agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
@@ -51,7 +57,9 @@ def main() -> None:
         w_judge=args.w_judge, w_objective=args.w_objective,
         dual_order_judge=not args.single_order_judge,
     )
-    if args.repos:
+    if args.repo_set:
+        result = run_multi_replay(repo_set=args.repo_set, held_out=args.held_out, **common)
+    elif args.repos:
         result = run_multi_replay(args.repos, **common)
     else:
         result = run_replay(repo_path=args.repo, **common)
