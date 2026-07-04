@@ -14,14 +14,18 @@ from benchmark.score import (  # noqa: E402
     bump_level,
     changed_modules,
     commit_kind,
+    composite_score,
     is_release_subject,
     kind_recall,
     module_recall,
+    module_weights,
+    objective_component,
     objective_score,
     parse_semver,
     plan_kind,
     release_predicted,
     release_signaled,
+    weighted_module_recall,
 )
 
 REVEALED = [
@@ -43,6 +47,73 @@ def test_module_recall_matches_by_name():
     res = module_recall(plan, REVEALED)
     assert set(res["matched_modules"]) == {"plugins", "readme"}
     assert res["module_recall"] == round(2 / 4, 3)  # core, changelog not anticipated
+
+
+# A window where effort is unevenly distributed: 'core' saw 3 file changes, 'readme' 1.
+WEIGHTED_REVEALED = [
+    {"subject": "feat: expand core engine", "files": ["core/a.py", "core/b.py", "core/c.py"]},
+    {"subject": "docs: tweak readme", "files": ["README.md"]},
+]
+
+
+def test_module_weights_counts_files_per_module():
+    assert module_weights(WEIGHTED_REVEALED) == {"core": 3, "readme": 1}
+    # keys are exactly changed_modules — the two never disagree on path -> module mapping
+    assert set(module_weights(WEIGHTED_REVEALED)) == changed_modules(WEIGHTED_REVEALED)
+    assert module_weights([]) == {}
+
+
+def test_weighted_module_recall_weights_by_effort():
+    # Anticipating 'core' (3 of 4 changed files) beats anticipating 'readme' (1 of 4), even
+    # though each names one module out of two — plain recall can't tell them apart.
+    core_plan = [{"title": "work on core engine", "theme": "core"}]
+    readme_plan = [{"title": "polish the readme", "theme": "readme"}]
+
+    core = weighted_module_recall(core_plan, WEIGHTED_REVEALED)
+    readme = weighted_module_recall(readme_plan, WEIGHTED_REVEALED)
+
+    assert core["weighted_module_recall"] == round(3 / 4, 3)
+    assert readme["weighted_module_recall"] == round(1 / 4, 3)
+    assert core["weighted_module_recall"] > readme["weighted_module_recall"]
+    assert core["matched_module_weight"] == 3 and core["total_module_weight"] == 4
+    # plain recall is blind to the imbalance: both name 1 of 2 modules
+    assert (module_recall(core_plan, WEIGHTED_REVEALED)["module_recall"]
+            == module_recall(readme_plan, WEIGHTED_REVEALED)["module_recall"] == 0.5)
+
+
+def test_weighted_module_recall_equals_plain_when_uniform():
+    # One file per module -> uniform weights -> weighted recall collapses to plain recall.
+    revealed = [
+        {"subject": "a", "files": ["core/x.py"]},
+        {"subject": "b", "files": ["plugins/y.py"]},
+    ]
+    plan = [{"title": "touch core", "theme": "core"}]
+    assert (weighted_module_recall(plan, revealed)["weighted_module_recall"]
+            == module_recall(plan, revealed)["module_recall"] == 0.5)
+
+
+def test_weighted_module_recall_empty_window():
+    res = weighted_module_recall([], [])
+    assert res["weighted_module_recall"] == 0.0
+    assert res["module_weights"] == {}
+    assert res["matched_module_weight"] == 0 and res["total_module_weight"] == 0
+
+
+def test_objective_score_reports_weighted_module_recall():
+    plan = [{"title": "expand core engine", "theme": "core"}]
+    score = objective_score(plan, WEIGHTED_REVEALED)
+    assert score["weighted_module_recall"] == round(3 / 4, 3)  # core anticipated (weight 3 of 4)
+    assert score["module_weights"] == {"core": 3, "readme": 1}
+    assert score["module_recall"] == 0.5  # plain recall still reported alongside
+
+
+def test_composite_uses_produced_weighted_recall_end_to_end():
+    # Regression: objective_score now PRODUCES weighted_module_recall, so objective_component
+    # (and the composite the runner blends) reflect it instead of falling back to plain recall.
+    plan = [{"title": "expand core engine", "theme": "core"}]
+    score = objective_score(plan, WEIGHTED_REVEALED)
+    assert objective_component(score) == score["weighted_module_recall"]  # no release in window
+    assert composite_score("tie", score) == round(0.6 * 0.5 + 0.4 * 0.75, 3)
 
 
 def test_release_signals():

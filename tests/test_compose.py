@@ -45,8 +45,8 @@ def test_objective_component_prefers_weighted_module_recall():
 
 
 def test_objective_component_falls_back_to_plain_recall_when_unweighted():
-    # No weighted recall available (e.g. the weighted producer is not present yet):
-    # plain module_recall is used, so behavior is unchanged until it lands.
+    # No weighted recall in the dict (a caller reporting only plain recall, or a legacy
+    # objective dict): plain module_recall is used, so those callers are unaffected.
     assert objective_component({"module_recall": 0.5}) == 0.5
     # An explicit None weighted value falls back rather than being treated as 0.0.
     assert objective_component({"module_recall": 0.4, "weighted_module_recall": None}) == 0.4

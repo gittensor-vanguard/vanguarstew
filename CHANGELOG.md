@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- Objective anchor: the composite now actually uses **file-weighted module recall**. Since
+  0.3.0 the consumer (`objective_component`) preferred `weighted_module_recall` when present,
+  but no code ever produced it, so `objective_score` never emitted the field and every
+  composite silently fell back to unweighted `module_recall`. `benchmark/score.py` now computes
+  `weighted_module_recall` (and `module_weights`) inside `objective_score`, weighting each
+  anticipated module by how many revealed file changes landed in it, so the blended score
+  reflects where the maintainer effort actually concentrated, as the 0.3.0 notes described.
+
 ## [0.3.0] - 2026-07-03
 
 ### Added

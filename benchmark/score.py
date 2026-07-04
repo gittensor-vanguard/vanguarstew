@@ -112,18 +112,47 @@ def _plan_tokens(plan) -> set:
     return toks
 
 
+def _top_module(path: str) -> str:
+    """Top-level module name for a changed-file path, lowercased ('' when the path is empty).
+
+    A nested path keys on its first component (``agent/planner.py`` -> ``agent``); a top-level
+    file keys on its stem (``README.md`` -> ``readme``), matching how a maintainer refers to
+    "the agent module" or "the readme". Shared by ``changed_modules`` and ``module_weights`` so
+    the two never disagree on how a path maps to a module.
+    """
+    parts = [p for p in (path or "").split("/") if p]
+    if not parts:
+        return ""
+    top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+    return top.lower()
+
+
 def changed_modules(revealed) -> set:
     """Top-level modules touched across the revealed window (structural ground truth)."""
     mods = set()
     for r in revealed or []:
         for path in r.get("files", []):
-            parts = [p for p in path.split("/") if p]
-            if not parts:
-                continue
-            top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+            top = _top_module(path)
             if top:
-                mods.add(top.lower())
+                mods.add(top)
     return mods
+
+
+def module_weights(revealed) -> dict:
+    """How much revealed maintainer effort landed in each top-level module.
+
+    Every changed-file path in the revealed window adds 1 to its module's weight, so a module
+    that absorbed ten file changes outweighs one that saw a single touch. Keys are exactly
+    ``changed_modules(revealed)``; values are positive ints. This is the ground-truth
+    distribution of *where the work actually concentrated*, used to weight recall.
+    """
+    weights: dict = {}
+    for r in revealed or []:
+        for path in r.get("files", []):
+            top = _top_module(path)
+            if top:
+                weights[top] = weights.get(top, 0) + 1
+    return weights
 
 
 def module_recall(plan, revealed) -> dict:
@@ -137,6 +166,39 @@ def module_recall(plan, revealed) -> dict:
         "module_recall": round(len(matched) / len(actual), 3),
         "actual_modules": sorted(actual),
         "matched_modules": matched,
+    }
+
+
+def weighted_module_recall(plan, revealed) -> dict:
+    """File-weighted fraction of revealed maintainer effort the plan anticipated. Deterministic.
+
+    ``module_recall`` counts every changed module equally; this weights each anticipated module
+    by how many revealed file changes landed in it (``module_weights``), so anticipating the
+    module that absorbed most of the work scores higher than naming a one-file afterthought.
+    Matching is identical to ``module_recall`` — a module counts as anticipated when a plan
+    token overlaps its name — so the two always agree on *which* modules matched and differ only
+    in weighting.
+
+    Consumed by ``objective_component``, which prefers ``weighted_module_recall`` over plain
+    ``module_recall`` when present, so the composite reflects where change actually concentrated.
+    """
+    weights = module_weights(revealed)
+    total = sum(weights.values())
+    if not total:
+        return {
+            "weighted_module_recall": 0.0,
+            "module_weights": {},
+            "matched_module_weight": 0,
+            "total_module_weight": 0,
+        }
+    ptoks = _plan_tokens(plan)
+    matched = sorted(m for m in weights if _tokens(m) & ptoks)
+    matched_weight = sum(weights[m] for m in matched)
+    return {
+        "weighted_module_recall": round(matched_weight / total, 3),
+        "module_weights": dict(sorted(weights.items())),
+        "matched_module_weight": matched_weight,
+        "total_module_weight": total,
     }
 
 
@@ -286,6 +348,10 @@ def objective_score(plan, revealed, version_bump=None, base_version=None,
                     open_issues=None, **_) -> dict:
     """The deterministic anchor: module recall + commit-kind recall + release/bump match.
 
+    Reports both plain ``module_recall`` and file-weighted ``weighted_module_recall`` (each
+    anticipated module weighted by how many revealed file changes landed in it); the composite
+    prefers the weighted form via ``objective_component``.
+
     When a release appears in the revealed window, the actual bump level (major/minor/patch)
     is derived from the semver delta between `base_version` (the version at freeze T, e.g.
     from the frozen context's latest release tag) and the revealed release version, then
@@ -296,6 +362,7 @@ def objective_score(plan, revealed, version_bump=None, base_version=None,
     no bump when none happened also counts as a match).
     """
     result = module_recall(plan, revealed)
+    result.update(weighted_module_recall(plan, revealed))
     result.update(kind_recall(plan, revealed))
     result.update(backlog_recall(plan, revealed, open_issues))
     signaled = release_signaled(revealed)
