@@ -136,6 +136,32 @@ Because the reference is public GitHub history, the benchmark actively resists l
   points (past a model's training cutoff) and rotate deterministically so answers aren't reused.
 - **Repo diversity / held-out repos** (M3) — generalization is scored on unseen repos.
 
+### Forward-reference scrubbing policy
+
+`strip_forward_refs()` (`benchmark/leakage.py`) neutralizes future-pointing references in the
+free-text fields of the frozen context (commit subjects, issue/PR titles, README excerpt,
+release/milestone names). It masks exactly three things:
+
+- **Issue/PR back-references** — `#123` → `#ref`.
+- **GitHub deep links** — `https://github.com/owner/repo/{issues,pull,commit,compare}/…` → `<link>`.
+- **Raw commit SHAs** — a 7–40 char hex token → `<sha>`, **but only when it contains a hex
+  letter (`a`–`f`)**.
+
+**Why bare numeric tokens are preserved:** a SHA's alphabet `[0-9a-f]` is a superset of the
+digits, so an all-numeric token (a count, a percentage, a year like `2024`, a version part) is
+indistinguishable from a short hex SHA by shape alone. Masking those would corrupt legitimate
+numeric content the agent needs, so `_looks_like_sha()` requires at least one `a`–`f` letter
+before a token is treated as a SHA. The trade-off is deliberate: an all-numeric SHA-shaped
+token is left intact rather than risk shredding real numbers — masking is scoped to tokens that
+are *unambiguously* hex.
+
+This policy is pinned by regression tests in `tests/test_leakage.py`:
+`test_strip_forward_refs_masks_refs_links_and_shas`,
+`test_strip_forward_refs_preserves_plain_numbers`, and
+`test_strip_forward_refs_still_masks_hex_shas_among_plain_numbers` (hex SHAs are still masked
+even when surrounded by plain numbers). Changes to the masking behavior should update these
+tests and this note together.
+
 ## Principle
 
 Create a new repo only when it has real content to hold. Keep boundaries in-code until they
