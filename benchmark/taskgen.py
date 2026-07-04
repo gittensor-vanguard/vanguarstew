@@ -23,7 +23,11 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     window = []
     for sha in commits[idx + 1: idx + 1 + n]:
         subject = _git(repo, "log", "-1", "--pretty=format:%s", sha).strip()
-        files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False).split()
+        # One path per line; splitting on ALL whitespace (str.split()) fragments any path
+        # that contains a space (e.g. "docs/User Guide.md" -> "docs/User", "Guide.md"),
+        # corrupting the changed-file list that objective scoring treats as ground truth.
+        raw_files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False)
+        files = [f for f in raw_files.splitlines() if f]
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 
