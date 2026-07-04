@@ -111,6 +111,19 @@ tuned   = [e.source for e in rs.tuned()]
 heldout = [e.source for e in rs.held_out()]
 ```
 
+Replay execution can consume that same config directly:
+
+```bash
+python -m scripts.run_eval --repo-set path/to/curated.json --tasks 2 --horizon 5
+python -m scripts.run_eval --repo-set path/to/curated.json --held-out --tasks 2 --horizon 5
+```
+
+The runner loads the config through `load_repo_set()`, replays the selected slice (`tuned`
+by default, `held_out` with `--held-out`), and applies each entry's `freeze_window` hints
+(`recent_bias`, `rotation_seed`, `after`, `before`, `min_history`) to task selection. The
+checked-in `example.json` remains schema-valid but **must** fail at execution time because
+its `OWNER/...` sources are placeholders, not vetted repos.
+
 ## Leakage defenses
 
 Because the reference is public GitHub history, the benchmark actively resists leakage:
