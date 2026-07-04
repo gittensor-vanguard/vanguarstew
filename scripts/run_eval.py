@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
+from benchmark.report import format_run_summary, save_result
 from benchmark.runner import run_multi_replay, run_replay
 
 
@@ -41,6 +43,12 @@ def main() -> None:
     ap.add_argument("--single-order-judge", action="store_true",
                     help="ask the judge one randomized order instead of both "
                          "(cheaper, but no position-swap consistency check)")
+    ap.add_argument("--save", default=None,
+                    help="persist the full replay result to this JSON path "
+                         "(carries judge_order_stats when dual-order judging is on)")
+    ap.add_argument("--summary", action="store_true",
+                    help="print a human summary (win/tie + judge disagreement rate) "
+                         "to stderr after the JSON result")
     args = ap.parse_args()
 
     common = dict(
@@ -56,6 +64,10 @@ def main() -> None:
     else:
         result = run_replay(repo_path=args.repo, **common)
     print(json.dumps(result, indent=2))
+    if args.save:
+        save_result(result, args.save)
+    if args.summary:
+        print(format_run_summary(result), file=sys.stderr)
 
 
 if __name__ == "__main__":
