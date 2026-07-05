@@ -27,16 +27,12 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
         # `-m --first-parent` makes `git show` report the files a merge commit brought in
         # relative to its first parent — a plain `git show` of a clean merge yields a
         # combined diff with no files, silently emptying the ground truth objective scoring
-        # keys off. Splitting on lines (not whitespace) keeps paths containing spaces intact.
-        raw = _git(repo, "show", "-m", "--first-parent", "--name-only",
+        # keys off (#113). `-z` NUL-delimits the path list (parsed via `parse_path_list`) so
+        # paths containing spaces, newlines, or other shell-sensitive characters survive
+        # intact instead of being split apart (#116, #120, #137).
+        raw = _git(repo, "show", "-m", "--first-parent", "--name-only", "-z",
                    "--pretty=format:", sha, check=False)
-        files = [line for line in raw.splitlines() if line]
-        # `-z` emits NUL-delimited paths so filenames with spaces or shell-sensitive
-        # characters aren't split apart (whitespace `.split()` corrupts them). For a
-        # first-parent merge the combined diff lists no files, so this stays empty —
-        # matching the prior behavior.
-        out = _git(repo, "show", "--name-only", "-z", "--pretty=format:", sha, check=False)
-        files = parse_path_list(out)
+        files = parse_path_list(raw)
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 
