@@ -19,6 +19,54 @@ from datetime import datetime
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
 
+# Inventory of how each GitHub-derived context field is handled for leakage safety.
+# See docs/architecture.md § "As-of-T reconstruction of mutable fields".
+GITHUB_FIELD_POLICY = {
+    "repo": {
+        "policy": "static",
+        "reason": "Repository identifier; not a mutable snapshot field.",
+    },
+    "open_issues": {
+        "policy": "reconstruct",
+        "reason": "Included only when open at freeze time T (created <= T, not closed by T).",
+    },
+    "open_prs": {
+        "policy": "reconstruct",
+        "reason": "Same open-at-T filter as issues; split by pull_request presence.",
+    },
+    "open_issues.title": {
+        "policy": "live_caveat",
+        "reason": "Titles are copied from the live REST snapshot; treat as approximate at T.",
+    },
+    "open_issues.labels": {
+        "policy": "reconstruct",
+        "reason": "Replay labeled/unlabeled timeline events through T via _labels_at.",
+    },
+    "open_issues.labels_as_of_t": {
+        "policy": "metadata",
+        "reason": "True when label membership was reconstructed; false means omit, not 'no labels'.",
+    },
+    "milestones": {
+        "policy": "reconstruct",
+        "reason": "Included when created <= T; state derived from closed_at as-of-T.",
+    },
+    "milestones.due_on": {
+        "policy": "omit",
+        "reason": "Editable due date with no cheap as-of-T reconstruction source.",
+    },
+    "releases": {
+        "policy": "filter",
+        "reason": "Included only when published_at <= T.",
+    },
+    "labels": {
+        "policy": "omit",
+        "reason": "Repo-wide label catalog reflects present-day state only.",
+    },
+}
+
+# Keys merged from GitHub enrichment into a git-freeze context (labels catalog excluded).
+_ENRICH_KEYS = ("repo", "open_issues", "open_prs", "milestones", "releases")
+
 
 def parse_owner_repo(remote_url: str):
     """Extract (owner, repo) from an ssh or https GitHub remote URL."""
@@ -205,6 +253,7 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "_source": "github-api",
         "_knowable_until": until.isoformat(),
         "_issues_truncated": truncated,
+        "_github_field_policy": GITHUB_FIELD_POLICY,
     }
 
 
@@ -222,10 +271,11 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
             return context
         gh = fetch_context_at(owner, repo, until, token=token)
         merged = dict(context)
-        for key in ("repo", "open_issues", "open_prs", "labels", "milestones", "releases"):
+        for key in _ENRICH_KEYS:
             if gh.get(key):
                 merged[key] = gh[key]
         merged["_github_enriched"] = True
+        merged["_github_field_policy"] = GITHUB_FIELD_POLICY
         return merged
     except Exception as exc:  # offline / rate-limited / private — degrade to git-only
         merged = dict(context)

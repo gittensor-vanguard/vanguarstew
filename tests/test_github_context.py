@@ -244,3 +244,76 @@ def test_truncation_flag_when_page_cap_hit(monkeypatch):
     monkeypatch.setattr(gc, "_get", _pager({1: full, 2: full, 3: full}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_issue_pages=2)
     assert ctx["_issues_truncated"] is True
+
+
+def test_github_field_policy_inventory_covers_mutable_fields():
+    policy = gc.GITHUB_FIELD_POLICY
+    assert policy["labels"]["policy"] == "omit"
+    assert policy["milestones.due_on"]["policy"] == "omit"
+    assert policy["open_issues.labels"]["policy"] == "reconstruct"
+    assert policy["milestones"]["policy"] == "reconstruct"
+    assert policy["open_issues.title"]["policy"] == "live_caveat"
+
+
+def test_fetch_context_attaches_field_policy(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(gc, "_get", lambda *a, **k: [])
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert ctx["_github_field_policy"] is gc.GITHUB_FIELD_POLICY
+    assert "labels" not in ctx
+
+
+def test_enrich_context_propagates_field_policy(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_fetch(owner, repo, until, token=None, **kw):
+        return {
+            "repo": f"{owner}/{repo}",
+            "open_issues": [{"number": 1, "title": "x", "labels": [], "labels_as_of_t": False,
+                             "created_at": "2023-01-01T00:00:00Z"}],
+            "open_prs": [],
+            "milestones": [{"title": "v1", "state": "open"}],
+            "releases": [],
+            "_github_field_policy": gc.GITHUB_FIELD_POLICY,
+        }
+
+    monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    base = {"frozen_at": {"date": T.isoformat()}, "labels": ["legacy-live-catalog"]}
+    out = gc.enrich_context(base, "/some/repo")
+    assert out["_github_enriched"] is True
+    assert out["_github_field_policy"] is gc.GITHUB_FIELD_POLICY
+    assert out["labels"] == ["legacy-live-catalog"]  # git-freeze labels not overwritten
+    assert "due_on" not in out["milestones"][0]
+
+
+def test_future_due_on_and_label_mutations_do_not_leak(monkeypatch):
+    """Regression for #86: present-day due_on and post-T labels must not appear as frozen facts."""
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "shipped-today"}]}]
+    timeline = [
+        {"event": "labeled", "created_at": "2023-01-02T00:00:00Z", "label": {"name": "bug"}},
+        {"event": "labeled", "created_at": "2023-09-01T00:00:00Z", "label": {"name": "shipped-today"}},
+    ]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return timeline
+        if "/issues" in url:
+            return issues
+        if "/milestones" in url:
+            return [{
+                "title": "v1",
+                "created_at": "2023-01-01T00:00:00Z",
+                "closed_at": None,
+                "due_on": "2024-12-31T00:00:00Z",
+                "state": "open",
+            }]
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert ctx["open_issues"][0]["labels"] == ["bug"]
+    assert "shipped-today" not in ctx["open_issues"][0]["labels"]
+    assert "due_on" not in ctx["milestones"][0]

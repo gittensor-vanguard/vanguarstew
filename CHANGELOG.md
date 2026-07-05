@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format is based on
   top-level JSON array) back to the offline stub, mirroring the guard already used by
   `decider.decide` and `review.review_pr`. Previously a substantive-but-list philosophy
   silently forfeited the offline judge's `philosophy_signal` tiebreaker (#190).
+- GitHub enrichment: document and enforce the as-of-T field policy for mutable REST
+  snapshots — `GITHUB_FIELD_POLICY` inventories each field (reconstruct / omit / live
+  caveat), repo `labels` and milestone `due_on` stay omitted, and enriched context carries
+  `_github_field_policy` for auditability (#86).
 - Benchmark hygiene: `benchmark/taskgen.py::revealed_window` now parses changed-file
   lists from NUL-delimited `git show --name-only -z` output via a reusable
   `benchmark.freeze.parse_path_list` helper, instead of whitespace `.split()`. Filenames

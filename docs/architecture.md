@@ -146,6 +146,20 @@ Because the reference is public GitHub history, the benchmark actively resists l
     label catalog and milestone `due_on` are dropped from the enriched context rather than
     copied live. Issue/PR titles are still the live values, so consumers must not treat them
     as historically exact; timeline-based reconstruction can be extended to more fields later.
+
+    The authoritative per-field inventory lives in `benchmark/github_context.py` as
+    `GITHUB_FIELD_POLICY` and is attached to enriched context as `_github_field_policy`:
+
+    | Field | Policy | Handling |
+    | ----- | ------ | -------- |
+    | `repo` | static | Owner/repo identifier |
+    | `open_issues` / `open_prs` | reconstruct | Open-at-T membership filter |
+    | `open_issues.labels` | reconstruct | Timeline replay; omit when unavailable |
+    | `open_issues.title` | live caveat | Present-day REST snapshot |
+    | `milestones` | reconstruct | State from `closed_at` as-of-T |
+    | `milestones.due_on` | omit | Not copied |
+    | `releases` | filter | `published_at <= T` |
+    | `labels` (repo catalog) | omit | Never fetched or merged |
 - **Forward-reference scrubbing** (`benchmark/leakage.py`) — even within knowable-at-T text,
   issue/PR back-references (`#N`), GitHub issue/PR/commit links, and raw SHAs are masked, so a
   commit subject or README can't cross-reference the future.
