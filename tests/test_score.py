@@ -98,6 +98,16 @@ def test_objective_score_propagates_weighted_recall():
     assert score["weighted_module_recall"] == score["module_recall"]
 
 
+def test_module_recall_ignores_non_string_plan_text_fields():
+    res = module_recall(
+        [{"title": ["Add foo", "alt title"], "theme": {"area": "agent"}, "kind": ["feature"]}],
+        [{"files": ["agent/foo.py"]}],
+    )
+    assert res["actual_modules"] == ["agent"]
+    assert res["matched_modules"] == []
+    assert res["module_recall"] == 0.0
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True
@@ -223,6 +233,11 @@ def test_release_predicted_ignores_inline_version_but_honors_kind():
     assert release_predicted([{"title": "bump pytest to 8.0.0", "kind": "dep"}]) is False
     assert release_predicted([{"title": "prepare v1.2.0", "kind": "release"}]) is True   # kind
     assert release_predicted([{"title": "Release v1.2.0", "kind": "misc"}]) is True      # subject
+
+
+def test_release_predicted_ignores_non_string_title():
+    assert release_predicted([{"title": ["Release v2.0"], "kind": "feature"}]) is False
+    assert release_predicted([{"title": ["ignored"], "kind": "release"}]) is True
 
 
 def test_objective_score_no_false_release_match_on_dep_bumps():
@@ -407,6 +422,15 @@ def test_kind_vocabulary_singular_plural_and_dep_aliases():
 
     # "triage" is a plan-only maintainer action with no commit-kind counterpart.
     assert plan_kind("triage") is None
+
+
+def test_plan_kind_non_string_and_kind_recall_degrade_safely():
+    assert plan_kind(["release"]) is None
+    res = kind_recall(
+        [{"title": "ship it", "kind": ["release"]}],
+        [{"subject": "Release v1.2.0", "files": ["CHANGELOG.md"]}],
+    )
+    assert res == {"kind_recall": 0.0, "actual_kinds": ["release"], "matched_kinds": []}
 
 
 def test_kind_recall_matches_anticipated_kinds():

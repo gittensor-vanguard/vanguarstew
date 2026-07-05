@@ -14,6 +14,10 @@ All notable changes to this project are documented here. The format is based on
   or a git-only run (#135).
 
 ### Fixed
+- Objective scoring: non-string plan-item `title` / `theme` / `kind` values no longer crash the
+  deterministic anchor. `benchmark/score.py` now treats non-string text inputs as empty text, so
+  malformed LLM JSON degrades to "no signal" instead of aborting the whole replay run, and
+  regression tests cover the `_tokens`, `is_release_subject`, and `plan_kind` crash paths (#251).
 - Repo-set integrity: the config loader now validates freeze-window *values*, not just types —
   `freeze_window.min_history` must be `>= 1` (a `0`/negative bound would let task generation
   freeze at the very first commit, with no prior history, defeating the bound), and

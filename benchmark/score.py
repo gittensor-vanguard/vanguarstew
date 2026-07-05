@@ -27,8 +27,13 @@ _SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
 _BUMP_LEVELS = ("major", "minor", "patch")
 
 
+def _text(value) -> str:
+    """Return `value` only when it is already a string; otherwise treat it as empty text."""
+    return value if isinstance(value, str) else ""
+
+
 def _tokens(text: str) -> set:
-    return set(_TOK.findall((text or "").lower()))
+    return set(_TOK.findall(_text(text).lower()))
 
 
 def parse_semver(text: str):
@@ -40,7 +45,7 @@ def parse_semver(text: str):
     (``1.2`` -> (1, 2, 0)), and ignores any pre-release/build suffix. Returns None
     when no version-looking token is present.
     """
-    matches = _SEMVER.findall(text or "")
+    matches = _SEMVER.findall(_text(text))
     if not matches:
         return None
     m = matches[-1]
@@ -179,7 +184,7 @@ def is_release_subject(text: str) -> bool:
     that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
     in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
     """
-    s = text or ""
+    s = _text(text)
     return bool(_RELEASE_KW.search(s) or _RELEASE_TAG_SUBJECT.match(s))
 
 
@@ -226,7 +231,7 @@ def commit_kind(subject: str):
     back to release subjects (`Release v1.2.0`, `bump version`). Merge commits and
     prefix-less subjects carry no reliable kind and return None.
     """
-    subject = subject or ""
+    subject = _text(subject)
     m = _CC_PREFIX.match(subject)
     if m:
         kind = _COMMIT_KIND.get(m.group(1).lower())
@@ -239,7 +244,7 @@ def commit_kind(subject: str):
 
 def plan_kind(kind: str):
     """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind."""
-    return _PLAN_KIND.get((kind or "").strip().lower())
+    return _PLAN_KIND.get(_text(kind).strip().lower())
 
 
 def kind_recall(plan, revealed) -> dict:
