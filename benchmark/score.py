@@ -112,18 +112,35 @@ def _plan_tokens(plan) -> set:
     return toks
 
 
+def _top_module(path: str) -> str | None:
+    """Top-level module name for a changed file path, or None when unparseable."""
+    parts = [p for p in (path or "").split("/") if p]
+    if not parts:
+        return None
+    top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+    return top.lower() if top else None
+
+
 def changed_modules(revealed) -> set:
     """Top-level modules touched across the revealed window (structural ground truth)."""
     mods = set()
     for r in revealed or []:
         for path in r.get("files", []):
-            parts = [p for p in path.split("/") if p]
-            if not parts:
-                continue
-            top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
-            if top:
-                mods.add(top.lower())
+            mod = _top_module(path)
+            if mod:
+                mods.add(mod)
     return mods
+
+
+def module_file_weights(revealed) -> dict[str, int]:
+    """Count changed files per top-level module across the revealed window."""
+    weights: dict[str, int] = {}
+    for r in revealed or []:
+        for path in r.get("files", []):
+            mod = _top_module(path)
+            if mod:
+                weights[mod] = weights.get(mod, 0) + 1
+    return weights
 
 
 def module_recall(plan, revealed) -> dict:
@@ -137,6 +154,30 @@ def module_recall(plan, revealed) -> dict:
         "module_recall": round(len(matched) / len(actual), 3),
         "actual_modules": sorted(actual),
         "matched_modules": matched,
+    }
+
+
+def weighted_module_recall(plan, revealed) -> dict:
+    """File-weighted fraction of revealed maintainer effort the plan anticipated.
+
+    Unlike plain ``module_recall``, each module is weighted by how many files changed in it,
+    so matching where most of the work landed counts more than matching a one-file touch.
+    """
+    weights = module_file_weights(revealed)
+    if not weights:
+        return {
+            "weighted_module_recall": 0.0,
+            "module_file_weights": {},
+            "weighted_matched_modules": [],
+        }
+    ptoks = _plan_tokens(plan)
+    matched = sorted(m for m in weights if _tokens(m) & ptoks)
+    total = sum(weights.values())
+    matched_weight = sum(weights[m] for m in matched)
+    return {
+        "weighted_module_recall": round(matched_weight / total, 3),
+        "module_file_weights": dict(sorted(weights.items())),
+        "weighted_matched_modules": matched,
     }
 
 
@@ -307,6 +348,7 @@ def objective_score(plan, revealed, version_bump=None, base_version=None,
     no bump when none happened also counts as a match).
     """
     result = module_recall(plan, revealed)
+    result.update(weighted_module_recall(plan, revealed))
     result.update(kind_recall(plan, revealed))
     result.update(backlog_recall(plan, revealed, open_issues))
     signaled = release_signaled(revealed)

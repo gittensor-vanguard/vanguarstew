@@ -16,12 +16,14 @@ from benchmark.score import (  # noqa: E402
     commit_kind,
     is_release_subject,
     kind_recall,
+    module_file_weights,
     module_recall,
     objective_score,
     parse_semver,
     plan_kind,
     release_predicted,
     release_signaled,
+    weighted_module_recall,
 )
 
 REVEALED = [
@@ -43,6 +45,38 @@ def test_module_recall_matches_by_name():
     res = module_recall(plan, REVEALED)
     assert set(res["matched_modules"]) == {"plugins", "readme"}
     assert res["module_recall"] == round(2 / 4, 3)  # core, changelog not anticipated
+
+
+def test_weighted_module_recall_weights_by_changed_files():
+    revealed = [
+        {"subject": "core work", "files": ["core/a.py", "core/b.py", "core/c.py"]},
+        {"subject": "docs tweak", "files": ["docs/guide.md"]},
+    ]
+    weights = module_file_weights(revealed)
+    assert weights == {"core": 3, "docs": 1}
+    # Plan names only core — plain recall is 1/2, weighted recall is 3/4.
+    plan = [{"title": "harden core engine", "kind": "refactor"}]
+    res = weighted_module_recall(plan, revealed)
+    assert res["weighted_matched_modules"] == ["core"]
+    assert res["weighted_module_recall"] == 0.75
+    assert module_recall(plan, revealed)["module_recall"] == 0.5
+
+
+def test_weighted_module_recall_empty_inputs():
+    assert weighted_module_recall([], []) == {
+        "weighted_module_recall": 0.0,
+        "module_file_weights": {},
+        "weighted_matched_modules": [],
+    }
+
+
+def test_objective_score_includes_weighted_module_recall():
+    plan = [{"title": "build plugin system", "theme": "plugins", "kind": "feature"}]
+    score = objective_score(plan, REVEALED)
+    assert "weighted_module_recall" in score
+    assert "module_file_weights" in score
+    assert score["module_file_weights"]["plugins"] == 1
+    assert score["weighted_module_recall"] == round(1 / 4, 3)  # 1 of 4 changed files
 
 
 def test_release_signals():
