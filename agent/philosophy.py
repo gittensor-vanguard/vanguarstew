@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+from agent.context import context_for_agent
+
 SYSTEM = (
     "You are an expert analyst of open-source project maintenance. Given a snapshot of a "
     "repository's state and recent history, infer the maintainers' implicit philosophy: "
@@ -77,7 +79,8 @@ def infer_philosophy(context: dict, llm) -> dict:
 
 
 def _render(context: dict) -> str:
-    keep = {k: context.get(k) for k in (
+    ctx = context_for_agent(context)
+    keep = {k: ctx.get(k) for k in (
         "frozen_at", "recent_commits", "open_issues", "open_prs",
         "labels", "milestones", "releases", "readme_excerpt",
     )}
