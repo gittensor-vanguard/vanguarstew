@@ -205,9 +205,16 @@ def commit_kind(subject: str):
     return None
 
 
-def plan_kind(kind: str):
-    """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind."""
-    return _PLAN_KIND.get((kind or "").strip().lower())
+def plan_kind(kind):
+    """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind.
+
+    Tolerant of the varied shapes an LLM-emitted plan `kind` can take: surrounding whitespace
+    and case are ignored, and a non-string value (a number/list/object the model might emit) is
+    treated as "no recognizable kind" rather than raising on ``.strip()``.
+    """
+    if not isinstance(kind, str):
+        return None
+    return _PLAN_KIND.get(kind.strip().lower())
 
 
 def kind_recall(plan, revealed) -> dict:
@@ -234,7 +241,11 @@ def release_signaled(revealed) -> bool:
 def release_predicted(plan) -> bool:
     for item in plan or []:
         if isinstance(item, dict):
-            if item.get("kind") == "release" or is_release_subject(item.get("title", "") or ""):
+            # Resolve the release *kind* through the shared, case/whitespace-insensitive
+            # vocabulary (as kind_recall does) instead of an exact "release" string, so a plan
+            # item labelled "Release" / " release " still counts as predicting a release.
+            if plan_kind(item.get("kind")) == "release" \
+                    or is_release_subject(item.get("title", "") or ""):
                 return True
     return False
 

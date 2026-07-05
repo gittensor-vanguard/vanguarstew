@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import re
 
+from agent.context import context_for_agent
+
 # Generic verbs / queue words dropped before matching a plan item to a PR, so the match
 # keys on the real subject ("loader race") not the framing ("review the PR to fix ...").
 _STOPWORDS = frozenset({
@@ -229,7 +231,8 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
 
 
 def _render(context: dict) -> str:
-    keep = {k: context.get(k) for k in (
+    ctx = context_for_agent(context)
+    keep = {k: ctx.get(k) for k in (
         "frozen_at", "recent_commits", "open_issues", "open_prs",
         "labels", "milestones", "releases", "readme_excerpt",
     )}
