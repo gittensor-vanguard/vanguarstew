@@ -26,8 +26,17 @@ _SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
 _BUMP_LEVELS = ("major", "minor", "patch")
 
 
-def _tokens(text: str) -> set:
-    return set(_TOK.findall((text or "").lower()))
+def _tokens(text) -> set:
+    """Tokenize free text, or an empty set if `text` isn't a string.
+
+    `title`/`theme` fields on a plan item are LLM-emitted and may take a non-string shape
+    (a list/dict/number). `(text or "").lower()` only falls back for falsy input, so a
+    truthy non-string value would still reach `.lower()` and raise; treat it the same way
+    `plan_kind` treats a non-string `kind` — no recognizable signal, not a crash.
+    """
+    if not isinstance(text, str):
+        return set()
+    return set(_TOK.findall(text.lower()))
 
 
 def parse_semver(text: str):
@@ -145,15 +154,20 @@ def module_recall(plan, revealed) -> dict:
     }
 
 
-def is_release_subject(text: str) -> bool:
+def is_release_subject(text) -> bool:
     """True only for a genuine release/version-cut subject.
 
     Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
     that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
     in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
+
+    `title` is an LLM-emitted, potentially non-string field (see `_tokens`) — `text or ""`
+    only falls back for falsy input, so a truthy non-string would still reach the regexes
+    and raise `TypeError`. Treat it as "not a release subject" instead.
     """
-    s = text or ""
-    return bool(_RELEASE_KW.search(s) or _RELEASE_TAG_SUBJECT.match(s))
+    if not isinstance(text, str):
+        return False
+    return bool(_RELEASE_KW.search(text) or _RELEASE_TAG_SUBJECT.match(text))
 
 
 _CC_PREFIX = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)

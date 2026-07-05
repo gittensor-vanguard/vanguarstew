@@ -62,6 +62,19 @@ def test_backlog_recall_honors_plan_files_for_issue_titles():
     assert res["backlog_recall"] == 1.0
 
 
+def test_module_recall_tolerates_non_string_title_theme_kind():
+    # An LLM can emit a structured value instead of a plain string for any of these
+    # fields; module_recall must not crash on it (fails on old code: AttributeError).
+    plan = [
+        {"title": ["Add plugin support", "alt title"], "theme": "plugins", "kind": "feature"},
+        {"title": "update readme", "theme": {"area": "docs"}, "kind": ["docs"]},
+    ]
+    res = module_recall(plan, REVEALED)
+    # The non-string fields contribute no tokens (not a crash); the string fields on the
+    # same items still score normally.
+    assert set(res["matched_modules"]) == {"plugins", "readme"}
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True
@@ -137,6 +150,20 @@ def test_is_release_subject_rejects_incidental_versions():
     assert not is_release_subject("fix crash in v1.2.0 parser")
     assert not is_release_subject("docs: mention support for Python 3.11.0")
     assert not is_release_subject("add retry logic")
+
+
+def test_is_release_subject_tolerates_non_string_input():
+    # Fails on old code: TypeError (regex methods require str, not list/dict/etc).
+    assert is_release_subject(["Release v2.0"]) is False
+    assert is_release_subject({"text": "Release v2.0"}) is False
+    assert is_release_subject(None) is False
+
+
+def test_release_predicted_tolerates_non_string_title():
+    # kind="feature" (not "release") forces evaluation past the kind short-circuit and
+    # into is_release_subject(title) — fails on old code: TypeError.
+    plan = [{"title": ["Release v2.0"], "kind": "feature"}]
+    assert release_predicted(plan) is False
 
 
 def test_release_signaled_ignores_dependency_bumps():
