@@ -123,6 +123,18 @@ def test_objective_score_shape():
     assert score["release_match"] is True
 
 
+def test_objective_score_degrades_on_non_string_plan_fields():
+    score = objective_score(
+        [{"title": ["Release v9.9.9"], "theme": {"area": "core"}, "kind": ["release"]}],
+        [{"subject": "Release v1.2.0", "files": ["CHANGELOG.md"]}],
+    )
+    assert score["module_recall"] == 0.0
+    assert score["kind_recall"] == 0.0
+    assert score["release_signaled"] is True
+    assert score["release_predicted"] is False
+    assert score["release_match"] is False
+
+
 def test_empty_inputs():
     res = module_recall([], [])
     assert res["module_recall"] == 0.0
