@@ -111,6 +111,19 @@ tuned   = [e.source for e in rs.tuned()]
 heldout = [e.source for e in rs.held_out()]
 ```
 
+Replay execution can consume that same config directly:
+
+```bash
+python -m scripts.run_eval --repo-set path/to/curated.json --tasks 2 --horizon 5
+python -m scripts.run_eval --repo-set path/to/curated.json --held-out --tasks 2 --horizon 5
+```
+
+The runner loads the config through `load_repo_set()`, replays the selected slice (`tuned`
+by default, `held_out` with `--held-out`), and applies each entry's `freeze_window` hints
+(`recent_bias`, `rotation_seed`, `after`, `before`, `min_history`) to task selection. The
+checked-in `example.json` remains schema-valid but **must** fail at execution time because
+its `OWNER/...` sources are placeholders, not vetted repos.
+
 ## Leakage defenses
 
 Because the reference is public GitHub history, the benchmark actively resists leakage:
@@ -125,7 +138,10 @@ Because the reference is public GitHub history, the benchmark actively resists l
   - *Issue/PR label membership* is reconstructed by replaying the item's timeline
     `labeled`/`unlabeled` events up to T (`_labels_at`); when the timeline can't be read
     (offline, rate-limited, or no label events), labels are **omitted** (`labels_as_of_t:
-    false`) rather than copied live — fail-closed, never leak.
+    false`) rather than copied live — fail-closed, never leak. Consumers must treat
+    `labels` as historically exact **only when** `labels_as_of_t` is true; `labels_as_of_t:
+    false` means "label history unavailable", not "this item had no labels at T". The
+    agent-facing prompt view follows that contract by omitting `labels` on such items.
   - *Intentionally omitted* (not reconstructable from a cheap as-of-T source): the repo-wide
     label catalog and milestone `due_on` are dropped from the enriched context rather than
     copied live. Issue/PR titles are still the live values, so consumers must not treat them
@@ -135,6 +151,11 @@ Because the reference is public GitHub history, the benchmark actively resists l
   commit subject or README can't cross-reference the future.
 - **Recent-window + rotation** freeze-point selection (`benchmark/taskgen.py`) — prefer recent
   points (past a model's training cutoff) and rotate deterministically so answers aren't reused.
+- **Judge-order telemetry** (`benchmark/judge.py`, `benchmark/runner.py`) — replay artifacts
+  persist each row's `judge_order` plus aggregate `judge_order_stats`, including
+  `disagreement_rate` when dual-order judging is enabled. If that rate rises, treat it as
+  a judge-stability warning worth inspecting for prompt/model drift or noisier scoring, not
+  as evidence that challenger and baseline are necessarily converging.
 - **Repo diversity / held-out repos** (M3) — generalization is scored on unseen repos.
 
 ### Forward-reference scrubbing policy
