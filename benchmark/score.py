@@ -107,6 +107,11 @@ def _plan_tokens(plan) -> set:
         if isinstance(item, dict):
             toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", "")) \
                 | _tokens(item.get("kind", ""))
+            # Structured `files` are part of a concrete plan item (the judge counts them
+            # toward substance); tokenize path segments so module recall can match on the
+            # top-level module even when the title omits it.
+            for path in item.get("files") or []:
+                toks |= _tokens((path or "").replace("/", " "))
         else:
             toks |= _tokens(str(item))
     return toks
