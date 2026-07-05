@@ -56,7 +56,7 @@ def test_open_at_T_filtering(monkeypatch):
     assert [p["number"] for p in ctx["open_prs"]] == [5]
     assert [m["title"] for m in ctx["milestones"]] == ["v1"]
     assert "due_on" not in ctx["milestones"][0]
-    assert ctx["labels"] == []
+    assert "labels" not in ctx
     assert ctx["_github_field_policy"]["labels"] == "drop"
     assert ctx["_github_field_policy"]["milestones[].due_on"] == "drop"
     assert [r["tag"] for r in ctx["releases"]] == ["v0.1"]
@@ -97,6 +97,29 @@ def test_fetch_context_milestone_state_not_leaked(monkeypatch):
     monkeypatch.setattr(gc, "_get", fake_get)
     ctx = gc.fetch_context_at("foo", "bar", T, token=None)
     assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
+
+
+def test_fetch_context_omits_unsupported_live_only_fields(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_get(url, token, timeout=20):
+        if "/labels" in url:
+            raise AssertionError("repo label catalog should be omitted, not fetched live")
+        if "/milestones" in url:
+            return [{
+                "title": "v1",
+                "created_at": "2023-01-01T00:00:00Z",
+                "closed_at": None,
+                "due_on": "2023-12-31T00:00:00Z",
+                "state": "open",
+            }]
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert "labels" not in ctx
+    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
+    assert ctx["_github_field_policy"]["labels"] == "drop"
 
 
 def test_labels_at_reconstructs_membership_as_of_T():
@@ -174,34 +197,6 @@ def test_open_issue_labels_omitted_when_timeline_unavailable(monkeypatch):
     iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
     assert iss["labels"] == []            # fail-closed: omit rather than leak present-day
     assert iss["labels_as_of_t"] is False
-
-
-def test_live_only_fields_are_not_copied(monkeypatch):
-    """Repo label catalog and milestone due_on must not leak present-day REST values."""
-    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
-    labels_called = False
-
-    def fake_get(url, token, timeout=20):
-        nonlocal labels_called
-        if "/labels" in url:
-            labels_called = True
-            return [{"name": "future-label"}]
-        if "/milestones" in url:
-            return [{
-                "title": "v1",
-                "created_at": "2023-01-01T00:00:00Z",
-                "closed_at": None,
-                "state": "open",
-                "due_on": "2024-12-31T00:00:00Z",  # edited after T — must not appear
-            }]
-        return []
-
-    monkeypatch.setattr(gc, "_get", fake_get)
-    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
-    assert labels_called is False
-    assert ctx["labels"] == []
-    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
-    assert "due_on" not in ctx["milestones"][0]
 
 
 def test_enrich_context_degrades_on_failure(monkeypatch):

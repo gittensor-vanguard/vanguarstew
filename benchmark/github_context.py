@@ -1,9 +1,9 @@
 """Enrich a frozen snapshot with GitHub state that was knowable at time T.
 
 `freeze.py` gives us git-only context (commits, tags, README). This adds the maintainer's
-real working surface — open issues, open PRs, milestones, releases — reconstructed *as of T*
-so nothing from the future leaks: an item counts as "open at T" only if it was created on or
-before T and was not already closed by T.
+real working surface — open issues, open PRs, milestones, releases, and other fields we can
+defend *as of T* — so nothing from the future leaks: an item counts as "open at T" only if it
+was created on or before T and was not already closed by T.
 
 Some REST fields are mutable and cannot be copied from the live snapshot without leaking
 present-day state. See ``GITHUB_FIELD_POLICY`` for how each field is handled.
@@ -70,6 +70,9 @@ def _milestone_at(milestone: dict, until: datetime):
     Returns None when the milestone was created after T. Otherwise `state` is derived from
     `closed_at` *as of T* — `"closed"` only when it was already closed by T — rather than the
     milestone's present-day state, so a milestone closed after T isn't leaked as completed.
+
+    `due_on` is intentionally omitted: the REST snapshot is today's editable due date, and we
+    do not have a cheap historical edit stream to reconstruct it reliably as-of-T.
     """
     created = _parse_dt(milestone.get("created_at"))
     if created is None or created > until:
@@ -218,7 +221,6 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "repo": f"{owner}/{repo}",
         "open_issues": open_issues,
         "open_prs": open_prs,
-        "labels": [],  # repo-wide catalog is live-only; see GITHUB_FIELD_POLICY
         "milestones": milestones,
         "releases": releases,
         "_source": "github-api",
