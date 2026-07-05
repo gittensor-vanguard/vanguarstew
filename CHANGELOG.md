@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `tests/test_taskgen.py`: direct unit coverage of `parse_path_list` handling a path
+  containing an embedded newline, pinning the exact claim already made in its own
+  docstring ("filenames that contain spaces, tabs, newlines... survive intact") — the
+  integration-level case through `revealed_window` is now covered by
+  `test_revealed_window_preserves_paths_with_newlines` (landed via #136) (#120).
+
 ### Fixed
 - Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
   `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
