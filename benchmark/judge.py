@@ -135,6 +135,9 @@ def _judge_order(context: dict, first, second, revealed, llm) -> str:
 #   'single'   — single-order mode (no swap check was run)
 #   'offline'  — deterministic offline stand-in (no LLM calls)
 _DUAL_ORDER_CATEGORIES = ("agree", "disagree", "tie")
+# 'single'/'offline' are non-dual-order outcomes: still counted for reporting, but excluded
+# from the disagreement rate (which is only meaningful over tasks judged in both orders).
+_ORDER_CATEGORIES = (*_DUAL_ORDER_CATEGORIES, "single", "offline")
 
 
 def judge_verbose(context: dict, submission_a, submission_b, revealed, llm, rng=None,
@@ -192,10 +195,42 @@ def summarize_judge_orders(categories) -> dict:
     The rate is over the tasks actually judged in dual-order mode (agree+disagree+tie);
     'single'/'offline' tasks are excluded, and the rate is None when there are none.
     """
-    counts = {c: 0 for c in _DUAL_ORDER_CATEGORIES}
+    counts = {c: 0 for c in _ORDER_CATEGORIES}
     for c in categories or []:
         if c in counts:
             counts[c] += 1
-    dual_total = sum(counts.values())
+    dual_total = sum(counts[c] for c in _DUAL_ORDER_CATEGORIES)
     rate = round(counts["disagree"] / dual_total, 3) if dual_total else None
     return {**counts, "dual_order_tasks": dual_total, "disagreement_rate": rate}
+
+
+def build_judge_report(tally: dict | None, stats: dict | None) -> dict | None:
+    """Compact, artifact-friendly judge summary for replay history/reporting.
+
+    Keeps the raw `judge_order_stats` as the source of truth, but adds a stable summary that
+    makes it easy to trend disagreement alongside win/loss/tie outcomes across saved results.
+    Returns ``None`` when no order stats are available (for example, a zero-task replay).
+    """
+    if not isinstance(stats, dict):
+        return None
+    tally = tally or {}
+    wins = int(tally.get("challenger", 0))
+    losses = int(tally.get("baseline", 0))
+    ties = int(tally.get("tie", 0))
+    dual_order_tasks = int(stats.get("dual_order_tasks", 0))
+    disagreements = int(stats.get("disagree", 0))
+    rate = stats.get("disagreement_rate")
+    rate_text = "n/a" if rate is None else f"{rate:.1%}"
+    summary = (
+        f"judge W-L-T {wins}-{losses}-{ties}; "
+        f"disagreement_rate={rate_text} ({disagreements}/{dual_order_tasks} dual-order tasks)"
+    )
+    return {
+        "wins": wins,
+        "losses": losses,
+        "ties": ties,
+        "dual_order_tasks": dual_order_tasks,
+        "disagreements": disagreements,
+        "disagreement_rate": rate,
+        "summary": summary,
+    }

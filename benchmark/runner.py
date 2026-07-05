@@ -21,7 +21,7 @@ from agent.llm import LLM
 from benchmark.baselines import DEFAULT_BASELINE, empty_solve, get_baseline
 from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
-from benchmark.judge import judge_verbose, summarize_judge_orders
+from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
 from benchmark.repo_set import RepoSetError, load_repo_set
 from benchmark.score import (
@@ -171,7 +171,6 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         "offline": llm.offline,
         "github_enriched": enrich_github,
         "judge_dual_order": dual_order_judge,
-        "judge_order_stats": summarize_judge_orders(r["judge_order"] for r in rows),
     }
 
 
