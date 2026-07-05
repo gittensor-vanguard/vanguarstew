@@ -104,6 +104,10 @@ def replay_kwargs(entry: RepoEntry) -> dict:
         kwargs["rotation_seed"] = fw["rotation_seed"]
     if "min_history" in fw:
         kwargs["min_history"] = fw["min_history"]
+    if "after" in fw:
+        kwargs["after"] = fw["after"]
+    if "before" in fw:
+        kwargs["before"] = fw["before"]
     return kwargs
 
 

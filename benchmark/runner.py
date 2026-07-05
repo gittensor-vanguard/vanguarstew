@@ -12,6 +12,7 @@ import json
 import os
 import random
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -20,8 +21,9 @@ from agent.llm import LLM
 from benchmark.baselines import DEFAULT_BASELINE, empty_solve, get_baseline
 from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
-from benchmark.judge import pairwise_judge
+from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
+from benchmark.repo_set import RepoSetError, load_repo_set
 from benchmark.score import (
     base_from_releases,
     composite_score,
@@ -59,18 +61,42 @@ def _submission(out: dict) -> dict:
     }
 
 
+def _is_placeholder_source(source: str) -> bool:
+    return "OWNER/" in source
+
+
+def _materialize_repo_source(source: str, checkout_root: str | None) -> tuple[str, bool]:
+    """Return a local repo path for a repo-set source plus whether it should be cleaned up."""
+    if _is_placeholder_source(source):
+        raise RepoSetError(
+            f"repo-set source {source!r} is a placeholder (OWNER/...); "
+            "copy the example config and replace placeholder sources with vetted repos"
+        )
+    if os.path.isdir(source):
+        return source, False
+    if checkout_root is None:
+        raise RepoSetError(f"repo-set source not found locally: {source}")
+    dest = os.path.join(checkout_root, f"repo_{len(os.listdir(checkout_root))}")
+    try:
+        subprocess.run(["git", "clone", "-q", source, dest], check=True, capture_output=True,
+                       text=True)
+    except subprocess.CalledProcessError as exc:
+        raise RepoSetError(f"failed to clone repo-set source {source!r}: {exc.stderr.strip()}") from exc
+    return dest, True
+
+
 def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                model=None, api_base=None, api_key=None, work_dir=None, seed=0,
                enrich_github=False, github_token=None,
-               recent_bias=False, rotation_seed=None, min_history=10,
-               baseline=DEFAULT_BASELINE,
-               w_judge=0.6, w_objective=0.4, dual_order_judge=True) -> dict:
+               recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
+               w_judge=0.6, w_objective=0.4, dual_order_judge=True,
+               min_history=10, after=None, before=None) -> dict:
     solve = load_solve(agent_file)
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
-    tasks = generate_tasks(repo_path, n_tasks, horizon,
-                           recent_bias=recent_bias, rotation_seed=rotation_seed,
-                           min_history=min_history)
+    tasks = generate_tasks(
+        repo_path, n_tasks, horizon, min_history=min_history,
+        recent_bias=recent_bias, rotation_seed=rotation_seed, after=after, before=before)
     if not tasks:
         return {"error": "no usable tasks (repo too small for horizon/min_history)", "tasks": 0}
 
@@ -95,8 +121,9 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 api_base=api_base or "", api_key=api_key or "offline", n=horizon,
             )
             baseline_out = opponent(dest, request, context=ctx, n=horizon)
-            winner = pairwise_judge(ctx, _submission(challenger), _submission(baseline_out),
-                                    task["revealed"], llm, rng, dual_order=dual_order_judge)
+            winner, judge_order = judge_verbose(
+                ctx, _submission(challenger), _submission(baseline_out),
+                task["revealed"], llm, rng, dual_order=dual_order_judge)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
             obj = objective_score(
@@ -109,6 +136,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 "task": k,
                 "freeze": task["freeze_commit"][:10],
                 "winner": who,
+                "judge_order": judge_order,
                 "overlap": trajectory_overlap(challenger.get("plan"), task["revealed"]),
                 "objective": obj,
                 "composite": composite_score(winner, obj, w_judge, w_objective),
@@ -123,6 +151,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
     composites = [r["composite"] for r in rows]
     judge_parts = [_JUDGE_COMPONENT[r["winner"]] for r in rows]
     objective_parts = [objective_component(r["objective"]) for r in rows]
+    judge_order_stats = summarize_judge_orders(r.get("judge_order") for r in rows)
     return {
         "tasks": len(tasks),
         "baseline": baseline,
@@ -137,13 +166,16 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         },
         "weights": {"judge": w_judge, "objective": w_objective},
         "rows": rows,
+        "judge_order_stats": judge_order_stats,
+        "judge_report": build_judge_report(tally, judge_order_stats),
         "offline": llm.offline,
         "github_enriched": enrich_github,
         "judge_dual_order": dual_order_judge,
     }
 
 
-def run_multi_replay(repos, **kwargs) -> dict:
+def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partition=None,
+                     **kwargs) -> dict:
     """Replay several repos and aggregate their composites (proposal §4 / M3 generalization).
 
     Runs `run_replay` once per repo — preserving every per-repo result — and averages each
@@ -158,23 +190,76 @@ def run_multi_replay(repos, **kwargs) -> dict:
     Repos too small to yield tasks are kept in `per_repo` with their error and excluded from
     the mean (and counted in `skipped`).
     """
+    if (repos is None) == (repo_set is None):
+        raise ValueError("pass exactly one of 'repos' or 'repo_set'")
+
+    repo_set_meta = None
+    selected = []
+    checkout_root = None
+    if repo_set is not None:
+        rs = load_repo_set(repo_set)
+        if repo_set_partition:
+            entries = rs.partition(repo_set_partition)
+            selection = repo_set_partition
+        elif held_out:
+            entries = rs.held_out()
+            selection = "held_out"
+        else:
+            entries = rs.tuned()
+            selection = "tuned"
+        if not entries:
+            raise RepoSetError(f"repo set {repo_set!r} has no {selection} repos to replay")
+        repo_set_meta = {
+            "path": repo_set,
+            "name": rs.name,
+            "selection": selection,
+        }
+        checkout_root = tempfile.mkdtemp(prefix="vanguarstew_repo_set_")
+        for entry in entries:
+            repo_path, cleanup = _materialize_repo_source(entry.source, checkout_root)
+            selected.append({
+                "repo": entry.source,
+                "repo_name": entry.name,
+                "tier": entry.tier,
+                "held_out": entry.held_out,
+                "freeze_window": dict(entry.freeze_window),
+                "repo_path": repo_path,
+                "cleanup": cleanup,
+            })
+    else:
+        selected = [{"repo": repo, "repo_path": repo, "cleanup": False} for repo in repos]
+
     per_repo = []
     composites = []
     judge_parts = []
     objective_parts = []
-    for repo in repos:
-        res = run_replay(repo, **kwargs)
-        per_repo.append({"repo": repo, **res})
-        if res.get("tasks", 0) > 0:
-            composites.append(res["composite_mean"])
-            parts = res.get("composite_parts", {})
-            judge_parts.append(parts.get("judge_mean", 0.0))
-            objective_parts.append(parts.get("objective_mean", 0.0))
+    judge_orders = []
+    tally = {"challenger": 0, "baseline": 0, "tie": 0}
+    try:
+        for repo in selected:
+            repo_kwargs = dict(kwargs)
+            for key, value in repo.get("freeze_window", {}).items():
+                repo_kwargs[key] = value
+            res = run_replay(repo["repo_path"], **repo_kwargs)
+            meta = {k: v for k, v in repo.items() if k not in ("repo_path", "cleanup")}
+            per_repo.append({**meta, **res})
+            for outcome in tally:
+                tally[outcome] += int((res.get("tally") or {}).get(outcome, 0))
+            if res.get("tasks", 0) > 0:
+                composites.append(res["composite_mean"])
+                parts = res.get("composite_parts", {})
+                judge_parts.append(parts.get("judge_mean", 0.0))
+                objective_parts.append(parts.get("objective_mean", 0.0))
+                judge_orders.extend(r.get("judge_order") for r in res.get("rows", []))
+    finally:
+        if checkout_root:
+            shutil.rmtree(checkout_root, ignore_errors=True)
 
     def _mean(xs):
         return round(sum(xs) / len(xs), 3) if xs else 0.0
 
-    return {
+    judge_order_stats = summarize_judge_orders(judge_orders)
+    result = {
         "repos": len(per_repo),
         "scored_repos": len(composites),
         "skipped": len(per_repo) - len(composites),
@@ -183,49 +268,10 @@ def run_multi_replay(repos, **kwargs) -> dict:
             "judge_mean": _mean(judge_parts),
             "objective_mean": _mean(objective_parts),
         },
+        "judge_order_stats": judge_order_stats,
+        "judge_report": build_judge_report(tally, judge_order_stats),
         "per_repo": per_repo,
     }
-
-
-def run_repo_set_replay(repo_set_path, partition="tuned", **kwargs) -> dict:
-    """Replay every repo in a validated repo-set config and aggregate composites.
-
-    Each entry's ``freeze_window`` hints are mapped onto per-repo ``run_replay`` kwargs
-    (``recent_bias``, ``rotation_seed``, ``min_history``). ``after``/``before`` bounds are
-    curator documentation for now — they are recorded in the config but not yet enforced by
-    ``generate_tasks``.
-    """
-    from benchmark.repo_set import load_repo_set, replay_kwargs
-
-    rs = load_repo_set(repo_set_path)
-    entries = rs.partition(partition)
-    per_repo = []
-    composites = []
-    judge_parts = []
-    objective_parts = []
-    for entry in entries:
-        res = run_replay(entry.source, **replay_kwargs(entry), **kwargs)
-        per_repo.append({"name": entry.name, "tier": entry.tier, "held_out": entry.held_out,
-                         "source": entry.source, **res})
-        if res.get("tasks", 0) > 0:
-            composites.append(res["composite_mean"])
-            parts = res.get("composite_parts", {})
-            judge_parts.append(parts.get("judge_mean", 0.0))
-            objective_parts.append(parts.get("objective_mean", 0.0))
-
-    def _mean(xs):
-        return round(sum(xs) / len(xs), 3) if xs else 0.0
-
-    return {
-        "repo_set": rs.name or repo_set_path,
-        "partition": partition,
-        "repos": len(entries),
-        "scored_repos": len(composites),
-        "skipped": len(entries) - len(composites),
-        "composite_mean": _mean(composites),
-        "composite_parts": {
-            "judge_mean": _mean(judge_parts),
-            "objective_mean": _mean(objective_parts),
-        },
-        "per_repo": per_repo,
-    }
+    if repo_set_meta is not None:
+        result["repo_set"] = repo_set_meta
+    return result

@@ -156,5 +156,7 @@ def test_partition_and_replay_kwargs():
     assert len(rs.partition("all")) == 2
     with pytest.raises(RepoSetError, match="unknown partition"):
         rs.partition("weekly")
-    assert replay_kwargs(rs.entries[0]) == {"recent_bias": True, "min_history": 30}
+    assert replay_kwargs(rs.entries[0]) == {
+        "recent_bias": True, "min_history": 30, "after": "2025-09-01",
+    }
     assert replay_kwargs(rs.entries[1]) == {"rotation_seed": 5}
