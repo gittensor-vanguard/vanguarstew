@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.freeze import build_context  # noqa: E402
+from benchmark.freeze import RELEASE_WINDOW, build_context  # noqa: E402
 
 
 def _git(repo, *args, env=None):
@@ -63,7 +63,13 @@ def test_build_context_keeps_ten_most_recent_releases():
             _commit_and_tag(repo, seq, tag)
 
         ctx = build_context(repo, "HEAD")
-        assert [r["tag"] for r in ctx["releases"]] == tags[-10:]
+        assert len(ctx["releases"]) == RELEASE_WINDOW
+        assert [r["tag"] for r in ctx["releases"]] == tags[-RELEASE_WINDOW:]
+        # Single- vs double-digit minor boundary must stay chronological inside the window.
+        idx_9 = next(i for i, r in enumerate(ctx["releases"]) if r["tag"] == "v1.9.0")
+        idx_10 = next(i for i, r in enumerate(ctx["releases"]) if r["tag"] == "v1.10.0")
+        assert idx_9 < idx_10
+        assert "v1.1.0" not in {r["tag"] for r in ctx["releases"]}
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 

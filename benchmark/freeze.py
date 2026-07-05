@@ -15,6 +15,10 @@ import tarfile
 from agent.context import CONTEXT_FILE
 from benchmark.leakage import scrub_context
 
+# How many release tags `build_context` retains from git history. Tags are sorted by
+# creation date (not refname) before windowing so v1.10.0 is not dropped before v1.9.0.
+RELEASE_WINDOW = 10
+
 
 def _git(repo, *args, check=True):
     r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
@@ -93,7 +97,7 @@ def build_context(repo: str, commit: str, lookback: int = 50) -> dict:
         "open_prs": [],
         "labels": [],
         "milestones": [],
-        "releases": [{"tag": t} for t in tags[-10:]],
+        "releases": [{"tag": t} for t in tags[-RELEASE_WINDOW:]],
         "readme_excerpt": readme,
         "_source": "git-freeze",
     }

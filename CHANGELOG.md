@@ -15,6 +15,9 @@ All notable changes to this project are documented here. The format is based on
   top-level JSON array) back to the offline stub, mirroring the guard already used by
   `decider.decide` and `review.review_pr`. Previously a substantive-but-list philosophy
   silently forfeited the offline judge's `philosophy_signal` tiebreaker (#190).
+- Freeze context: name the release-tag window (`RELEASE_WINDOW = 10`) and pin regression
+  coverage that the retained tags are the latest ten by **creation date**, including across
+  the v1.9.0 → v1.10.0 minor boundary (#98).
 - Benchmark hygiene: `benchmark/taskgen.py::revealed_window` now parses changed-file
   lists from NUL-delimited `git show --name-only -z` output via a reusable
   `benchmark.freeze.parse_path_list` helper, instead of whitespace `.split()`. Filenames
