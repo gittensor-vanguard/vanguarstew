@@ -81,12 +81,6 @@ All notable changes to this project are documented here. The format is based on
   is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
-- Leakage: `fetch_context_at` copied each open issue/PR's **current labels** into the as-of-T
-  snapshot — outcome/`mult:*`/`duplicate` labels applied after T (unreconstructable from the
-  list API) leaked future state. Issue/PR records are now built by whitelisting only immutable
-  creation facts (`number`, `title`, `created_at`), a `FIELD_PROVENANCE` audit documents every
-  copied field's as-of-T status (surfaced as `_field_provenance` on the snapshot), and
-  regression tests guard the label leak (#79).
 - Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
   `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
   `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score
