@@ -208,14 +208,29 @@ def _failed_ids_list(failed) -> list[str]:
     return ids
 
 
+_SYMMETRY_ROW_KEYS = ("id", "passed")
+
+
+def _is_bool(value) -> bool:
+    """True for bool values including subclasses; rejects int 0/1 and other scalars."""
+    return isinstance(value, bool)
+
+
 def _symmetry_checks_list(checks) -> list[dict]:
-    """Return symmetry-check rows when ``checks`` is a list; skip junk rows."""
+    """Return symmetry-check rows for :func:`calibration_headline`.
+
+    ``None`` means the key is absent. An empty list means zero symmetry checks. Both are silent.
+    Non-list containers are warned and treated as empty (never coerced). A usable row is a dict
+    whose ``id`` is a ``str`` and whose ``passed`` is a ``bool`` (subclasses allowed); anything
+    else is skipped with a warning.
+    """
+    if checks is None:
+        return []
     if not isinstance(checks, list):
-        if checks is not None:
-            logger.warning(
-                "judge_calibration: symmetry_checks is %s, not a list; treating as empty",
-                type(checks).__name__,
-            )
+        logger.warning(
+            "judge_calibration: symmetry_checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
         return []
     rows = []
     for idx, row in enumerate(checks):
@@ -224,6 +239,28 @@ def _symmetry_checks_list(checks) -> list[dict]:
                 "judge_calibration: symmetry_checks[%s] is %s, not an object; skipping",
                 idx,
                 type(row).__name__,
+            )
+            continue
+        missing = [key for key in _SYMMETRY_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "judge_calibration: symmetry_checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        if not isinstance(row["id"], str):
+            logger.warning(
+                "judge_calibration: symmetry_checks[%s] id is %s, not str; skipping",
+                idx,
+                type(row["id"]).__name__,
+            )
+            continue
+        if not _is_bool(row["passed"]):
+            logger.warning(
+                "judge_calibration: symmetry_checks[%s] passed is %s, not bool; skipping",
+                idx,
+                type(row["passed"]).__name__,
             )
             continue
         rows.append(row)

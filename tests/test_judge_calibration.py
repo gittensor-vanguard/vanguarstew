@@ -112,9 +112,14 @@ def test_calibration_headline_pass_and_fail():
     assert calibration_headline({}) == "calibration: no scenarios evaluated"
 
 
-# --- #625: malformed failed / symmetry_checks must not abort calibration headlines ----
+# --- #625 / #852: malformed failed / symmetry_checks must not abort headlines --------
 
-_MALFORMED_CONTAINERS = [42, 3.14, True, {"id": "x"}, "not a list"]
+_MALFORMED_CONTAINERS = [
+    42, 3.14, True, {"id": "x"}, "not a list",
+    ({"id": "sym-a", "passed": True},),
+    range(2),
+]
+_FALSY_SCALAR_CONTAINERS = [0, 0.0, False, ""]
 
 
 def test_failed_ids_list_accepts_only_real_lists():
@@ -150,26 +155,109 @@ def test_failed_ids_list_warns_when_every_entry_is_unusable(caplog):
     assert any("no usable scenario ids" in m for m in messages)
 
 
-def test_symmetry_checks_list_warns_for_non_list_container(caplog):
+def test_symmetry_checks_list_accepts_only_real_lists():
+    rows = [{"id": "sym-a", "passed": True}]
+    for bad in _MALFORMED_CONTAINERS:
+        assert _symmetry_checks_list(bad) == [], bad
+    assert _symmetry_checks_list(rows) == rows
+    assert _symmetry_checks_list(None) == []
+    assert _symmetry_checks_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CONTAINERS)
+def test_symmetry_checks_list_treats_falsy_scalars_as_non_list(bad, caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
-        assert _symmetry_checks_list(42) == []
-    assert any("symmetry_checks is int" in r.message for r in caplog.records)
+        assert _symmetry_checks_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
 
 
-def test_symmetry_checks_list_warns_for_skipped_rows_and_all_junk(caplog):
+def test_symmetry_checks_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list(None) == []
+    assert not caplog.records
+
+
+def test_symmetry_checks_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list([]) == []
+    assert not caplog.records
+
+
+def test_symmetry_checks_list_warns_for_tuple_container(caplog):
+    row = ({"id": "sym-a", "passed": True},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list(row) == []
+    assert any("symmetry_checks is tuple" in r.message for r in caplog.records)
+
+
+def test_symmetry_checks_list_warns_for_skipped_rows(caplog):
     rows = [42, {"passed": True, "id": "sym-a", "detail": "ok"}]
     with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
         kept = _symmetry_checks_list(rows)
     assert len(kept) == 1
     assert any("symmetry_checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
 
-    caplog.clear()
-    junk = [42, "bad"]
+
+def test_symmetry_checks_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
     with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
         assert _symmetry_checks_list(junk) == []
     messages = [r.message for r in caplog.records]
     assert any("symmetry_checks[0] is int" in m for m in messages)
     assert any("no usable rows" in m for m in messages)
+
+
+def test_symmetry_checks_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"id": 42, "passed": True}, {"id": "sym-a", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("id is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_symmetry_checks_list_returns_only_valid_rows():
+    valid = [
+        {"id": "sym-a", "passed": False},
+        {"id": "sym-b", "passed": True},
+    ]
+    assert _symmetry_checks_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"id": 99, "passed": False},
+        {"id": "sym-a", "passed": 1},
+        valid[1],
+    ]
+    assert _symmetry_checks_list(mixed) == valid
+
+
+def test_symmetry_checks_list_accepts_native_bool_values():
+    rows = [
+        {"id": "sym-a", "passed": True},
+        {"id": "sym-b", "passed": False},
+    ]
+    assert _symmetry_checks_list(rows) == rows
+
+
+def test_symmetry_checks_list_rejects_int_as_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list([{"id": "sym-a", "passed": 1}]) == []
+    assert any("passed is int" in r.message for r in caplog.records)
+
+
+def test_calibration_headline_uses_sanitized_symmetry_count(caplog):
+    checks = [{"id": "sym-a", "passed": True}, 42, {"id": "bad", "passed": 1}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        line = calibration_headline(
+            {"passed": True, "scenario_count": 3, "symmetry_checks": checks},
+        )
+    assert line == "calibration: PASS (3 scenarios + 1 symmetry)"
+    assert any("symmetry_checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_failed_scenarios_and_headline_survive_malformed_fields():
