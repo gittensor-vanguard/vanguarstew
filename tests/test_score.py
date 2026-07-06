@@ -300,6 +300,43 @@ def test_plan_kind_maps_to_commit_vocabulary():
     assert plan_kind("") is None
 
 
+def test_plan_and_commit_kind_vocabularies_stay_symmetric():
+    """Invariant guard: the plan and commit kind vocabularies must not drift apart.
+
+    ``kind_recall`` only credits a plan when ``plan_kind(item)`` equals the ``commit_kind`` of a
+    revealed subject, so the two maps have to normalize any shared alias identically, and every
+    kind a plan can name must correspond to a real commit kind (else it could never match). This
+    catches silent asymmetry the moment either vocabulary is edited.
+    """
+    from benchmark.score import _COMMIT_KIND, _PLAN_KIND
+
+    # Aliases present in both vocabularies normalize to the same kind.
+    for alias in set(_PLAN_KIND) & set(_COMMIT_KIND):
+        assert _PLAN_KIND[alias] == _COMMIT_KIND[alias], f"asymmetric alias: {alias!r}"
+
+    # Every kind a plan can produce is a real commit kind (or kind_recall can never match it).
+    assert set(_PLAN_KIND.values()) <= set(_COMMIT_KIND.values())
+
+
+def test_kind_vocabulary_singular_plural_and_dep_aliases():
+    """Shared singular/plural and dependency aliases resolve consistently.
+
+    Dependency and test work each have singular/plural spellings; both must land on the same
+    normalized kind so kind_recall doesn't under-credit a plan that used the other spelling.
+    """
+    # Dependency work: singular and plural both normalize to "chore".
+    assert plan_kind("dep") == plan_kind("deps") == "chore"
+    assert commit_kind("chore(deps): bump lib") == "chore"
+
+    # Test work: the commit vocabulary accepts both singular and plural spellings.
+    assert commit_kind("test: add coverage") == "test"
+    assert commit_kind("tests: add coverage") == "test"
+    assert plan_kind("test") == "test"
+
+    # "triage" is a plan-only maintainer action with no commit-kind counterpart.
+    assert plan_kind("triage") is None
+
+
 def test_kind_recall_matches_anticipated_kinds():
     revealed = [
         {"subject": "feat: streaming api", "files": ["core/api.py"]},
