@@ -340,6 +340,8 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
 
 
 def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
+    if not isinstance(context, dict):
+        return _offline_plan_stub({}, n)
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"

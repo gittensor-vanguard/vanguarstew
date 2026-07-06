@@ -118,3 +118,9 @@ def test_infer_philosophy_normalizes_malformed_field_types():
     assert out["values"] == ["conservative"]
     assert out["direction"] == "99"
     assert out["evidence"] == ["recent refactors"]
+
+def test_infer_philosophy_handles_non_dict_context():
+    from agent.llm import LLM
+    llm = LLM(api_key='offline')
+    assert infer_philosophy(None, llm)["summary"]
+    assert infer_philosophy("not a dict", llm)["summary"]

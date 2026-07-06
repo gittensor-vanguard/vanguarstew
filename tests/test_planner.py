@@ -443,3 +443,9 @@ def test_reconcile_honors_valid_prs_when_list_contains_junk_entries():
     out = reconcile_plan_with_queue(plan, ctx, 5)
     assert out[0]["restates_pr"] == 9
     assert "streaming export" in out[0]["title"].lower()
+
+def test_plan_next_actions_handles_non_dict_context():
+    from agent.llm import LLM
+    llm = LLM(api_key='offline')
+    assert isinstance(plan_next_actions(None, {}, 3, llm), list)
+    assert isinstance(plan_next_actions(42, {}, 3, llm), list)
