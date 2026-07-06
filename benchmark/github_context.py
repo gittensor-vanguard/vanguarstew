@@ -18,6 +18,13 @@ Derived as-of-T (safe):
   - Releases: filtered by ``published_at <= T`` (drafts, which carry no ``published_at``,
     are excluded).
 
+Live, copied as-is (no cheap as-of-T source):
+  - Issue/PR ``number`` and ``created_at``: immutable, so the live value already equals the
+    as-of-T value.
+  - Issue/PR ``title``: the present-day title, which can be edited after T. Consumers must not
+    treat it as historically exact; accepted as a residual limitation (title edits are rare and
+    there is no cheap as-of-T source).
+
 Omitted (no created-at or editable after T, so not reconstructable as-of-T — dropped rather
 than leaked as a present-day value):
   - Repo ``labels`` catalog: the labels endpoint carries no created-at, so its live list
@@ -73,7 +80,12 @@ def _item_open_at(item: dict, until: datetime) -> bool:
 
 
 def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int) -> dict:
-    """Minimal issue/PR fields copied into the frozen context as-of ``until``."""
+    """Minimal issue/PR fields for the frozen context.
+
+    ``number``/``created_at`` are immutable and ``labels`` are reconstructed as-of ``until``.
+    ``title`` is copied live (present-day value): it may have been edited after T — an accepted
+    residual limitation noted in the module's field-stability contract.
+    """
     as_of_t = _labels_at(
         _issue_timeline(base, item.get("number"), token, timeout), until
     )

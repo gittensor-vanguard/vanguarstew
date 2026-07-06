@@ -331,6 +331,29 @@ def test_releases_filtered_by_published_at_including_boundary_and_drafts(monkeyp
     assert [r["tag"] for r in ctx["releases"]] == ["v1.0", "v1.1"]
 
 
+def test_issue_record_copies_number_created_at_and_live_title(monkeypatch):
+    # Contract: number/created_at are immutable; title is copied live (present-day value).
+    # Pinned so a change that tries to as-of-T these fields also revisits the documented
+    # field-stability contract. Timeline is empty here to isolate title/number copying.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 42, "title": "present-day title", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "x"}]}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return []
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["number"] == 42
+    assert iss["title"] == "present-day title"
+    assert iss["created_at"] == "2023-01-01T00:00:00Z"
+    assert iss["labels_as_of_t"] is False  # no timeline -> labels omitted, not leaked live
+
+
 def test_enrich_context_does_not_propagate_repo_labels(monkeypatch):
     # Repo labels are intentionally omitted from frozen context; even if a fetch regression
     # produced a live label catalog, enrichment must not surface it.
