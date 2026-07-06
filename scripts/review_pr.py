@@ -12,14 +12,35 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import subprocess
 
 from agent.llm import LLM
 from agent.review import review_pr
 
+logger = logging.getLogger(__name__)
+
 
 def _gh(*args) -> str:
     return subprocess.run(["gh", *args], capture_output=True, text=True).stdout
+
+
+def _pr_author(data: dict, number: int) -> str:
+    """The PR author's login, or GitHub's own "ghost" placeholder when unavailable.
+
+    GitHub's API returns ``"author": null`` once the author's account has been deleted or
+    suspended -- a real, common occurrence on any repo with enough history, not a malformed
+    payload. ``ghost`` is GitHub's own convention for such PRs, so it renders consistently with
+    what a maintainer would see on github.com.
+    """
+    author = data.get("author")
+    if not isinstance(author, dict) or not author.get("login"):
+        logger.warning(
+            "review_pr: PR #%s has no author (account deleted/suspended?); using 'ghost'",
+            number,
+        )
+        return "ghost"
+    return author["login"]
 
 
 def fetch_pr(repo: str, number: int) -> dict:
@@ -29,7 +50,7 @@ def fetch_pr(repo: str, number: int) -> dict:
         "number": data["number"],
         "title": data["title"],
         "body": data.get("body"),
-        "author": data["author"]["login"],
+        "author": _pr_author(data, number),
         "additions": data["additions"],
         "deletions": data["deletions"],
         "files": [f["path"] for f in data.get("files", [])],
