@@ -229,3 +229,59 @@ def test_stale_reference_with_no_other_match_triggers_queue_fallback():
     # and the plan-level fallback still prepends a review item for #9
     fallback = [i for i in out if i.get("restates_pr") == 9 and i.get("theme") == "PR queue"]
     assert len(fallback) == 1
+
+
+# --- Regression for #271: a bare "#N" ordinal in prose must not be trusted as a PR reference.
+# `#N` is common English for a ranking ("the #1 feature", "our #7 priority"). When such an
+# ordinal collides with a real open PR's number, it must NOT hijack that PR — unlike a genuine
+# "PR #N" / "review #N" reference, a bare ordinal has to pass a content/context check first.
+
+def test_bare_ordinal_hash_does_not_hijack_unrelated_open_pr():
+    # "#7" is an ordinal ("the #7 requested feature"), not a reference to open PR #7, and the
+    # item is about "dark mode" — nothing to do with "Add streaming export".
+    plan = [{"title": "Ship the #7 requested feature: dark mode", "kind": "feature",
+             "rationale": "users have asked for dark mode for months"}]
+    out = reconcile_plan_with_queue(plan, CTX, 5)
+    ship = [i for i in out if "dark mode" in i["title"]][0]
+    assert ship["kind"] == "feature"                       # not downgraded to triage
+    assert "restates_pr" not in ship                       # not flagged against PR #7
+    assert "restates open pr" not in (ship.get("rationale") or "").lower()
+
+
+def test_matched_pr_rejects_bare_ordinal_without_pr_context_or_overlap():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    ordinal = {"title": "Deliver our #7 priority: dark mode", "kind": "feature",
+               "rationale": "top user request"}
+    assert _matched_pr(ordinal, prs) is None
+
+
+def test_bare_hash_still_matches_with_review_context():
+    # A bare "#7" IS a genuine reference when the item reads as a review/merge action.
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    assert _matched_pr({"title": "Review #7 before the release", "kind": "triage"}, prs) == prs[0]
+    assert _matched_pr({"title": "Merge #7 once CI is green"}, prs) == prs[0]
+
+
+def test_bare_hash_still_matches_when_content_overlaps():
+    # Even without PR vocabulary, a bare "#7" is trusted when the item is genuinely about the PR.
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    item = {"title": "Finish streaming export work (#7)", "kind": "feature"}
+    assert _matched_pr(item, prs) == prs[0]
+
+
+def test_qualified_pr_reference_still_authoritative_and_suppresses_fallback():
+    # "PR #7" is unambiguous and stays authoritative even without content overlap; a stale
+    # qualified reference still returns None (suppressing fallback), unchanged from before.
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    assert _matched_pr({"title": "Merge PR #7", "kind": "triage"}, prs) == prs[0]
+    assert _matched_pr({"title": "Land the fix from PR #99", "kind": "bugfix"}, prs) is None
+
+
+def test_bare_hash_needs_two_shared_tokens_not_one():
+    # A bare "#7" plus a SINGLE shared significant token ("export") is too weak to hijack the
+    # PR — the content gate requires >=2 shared tokens, the same threshold as _matched_pr's
+    # overlap path — so an unrelated perf item is not reconciled against the streaming PR.
+    prs = [{"number": 7, "title": "Add streaming export endpoint"}]
+    item = {"title": "Improve export performance for reports (#7)", "kind": "perf",
+            "rationale": "unrelated latency work"}
+    assert _matched_pr(item, prs) is None
