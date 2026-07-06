@@ -42,6 +42,7 @@ from datetime import datetime
 
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
+DEFAULT_MAX_LIST_PAGES = 10   # bound on pages walked for milestones / releases
 
 # Metadata keys copied from ``fetch_context_at`` into an enriched git-only context.
 _ENRICH_META_KEYS = ("_issues_truncated", "_knowable_until", "_source")
@@ -127,6 +128,27 @@ def _get(url: str, token, timeout: int = 20):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100):
+    """Collect items across a paginated GitHub list response.
+
+    `url` already carries its query string (including `per_page`); a `page=` parameter is
+    appended per request. Pagination stops on the first empty or short (< `per_page`) page or
+    when `max_pages` is reached. Request errors propagate, so a hard failure still fails the
+    whole enrichment closed to git-only context — the same posture as before, only now the
+    result is complete instead of silently capped at the first 100 items.
+    """
+    sep = "&" if "?" in url else "?"
+    items = []
+    for page in range(1, max_pages + 1):
+        batch = _get(f"{url}{sep}page={page}", token, timeout)
+        if not batch:
+            break
+        items.extend(batch)
+        if len(batch) < per_page:
+            break
+    return items
+
+
 def _labels_at(events, until: datetime):
     """Reconstruct an issue/PR's label set *as of `until`* from its timeline.
 
@@ -208,12 +230,18 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
 
 def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
                      per_page: int = 100, timeout: int = 20,
-                     max_issue_pages: int = DEFAULT_MAX_ISSUE_PAGES) -> dict:
+                     max_issue_pages: int = DEFAULT_MAX_ISSUE_PAGES,
+                     max_list_pages: int = DEFAULT_MAX_LIST_PAGES) -> dict:
     """GitHub-derived context knowable at `until` (a timezone-aware UTC datetime).
 
     Issues/PRs are paginated (created desc) back toward T so open-at-T reconstruction is
     complete regardless of how old T is, bounded by `max_issue_pages`; `_issues_truncated`
     flags when the cap was hit before exhausting history.
+
+    Milestones and releases are likewise paginated (bounded by `max_list_pages`) instead of
+    reading only the first page — a repo with more than `per_page` of either would otherwise
+    silently drop the rest, which can hide a milestone that was open at T or an older release
+    that sets the frozen base version.
     """
     token = token or os.environ.get("GITHUB_TOKEN") or None
     base = f"{API}/repos/{owner}/{repo}"
@@ -222,13 +250,15 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
                                                         max_issue_pages)
 
     milestones = []
-    for m in _get(f"{base}/milestones?state=all&per_page={per_page}", token, timeout):
+    for m in _get_all(f"{base}/milestones?state=all&per_page={per_page}", token, timeout,
+                      max_list_pages, per_page):
         rec = _milestone_at(m, until)
         if rec is not None:
             milestones.append(rec)
 
     releases = []
-    for r in _get(f"{base}/releases?per_page={per_page}", token, timeout):
+    for r in _get_all(f"{base}/releases?per_page={per_page}", token, timeout, max_list_pages,
+                      per_page):
         published = _parse_dt(r.get("published_at"))
         if published is not None and published <= until:
             releases.append({"tag": r.get("tag_name"), "name": r.get("name"),

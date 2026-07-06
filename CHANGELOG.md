@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Fixed
+- Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
+  and `releases` were read from only the first API page, so a repo with more than 100 of
+  either silently dropped the rest — which can hide a milestone that was open at T or an
+  older release that sets the frozen base version. Both now paginate (bounded by
+  `max_list_pages`), matching how issues/PRs already walk their history (#209).
 - Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
   `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
   reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
