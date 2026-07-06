@@ -35,11 +35,6 @@ logger = logging.getLogger(__name__)
 _CHECK_ROW_KEYS = ("name", "passed")
 
 
-def _is_bool(value) -> bool:
-    """True for bool values including subclasses; rejects int 0/1 and other scalars."""
-    return isinstance(value, bool)
-
-
 def _is_number(value) -> bool:
     """True only for a finite, plain ``int``/``float``.
 
@@ -189,12 +184,30 @@ def check_weight_integrity(result) -> dict:
     return {"passed": all(c["passed"] for c in checks), "checks": checks}
 
 
+def _is_passed(value) -> bool:
+    """Accept bool values (including subclasses) and numpy.bool_; reject int 0/1."""
+    if isinstance(value, bool):
+        return True
+    return type(value).__name__ in ("bool_", "bool8")
+
+
+def _check_row_field(key: str, value) -> bool:
+    """Return whether ``value`` is usable for a check-row ``key`` in ``_CHECK_ROW_KEYS``."""
+    if key == "name":
+        return isinstance(value, str) and bool(value.strip())
+    if key == "passed":
+        return _is_passed(value)
+    return False
+
+
 def _check_rows_list(checks) -> list[dict]:
     """Return usable check rows for the headline/failed helpers.
 
-    ``None`` is silent; a non-list container is warned and treated as empty. A usable row is a
-    dict whose ``name`` is a ``str`` and whose ``passed`` is a ``bool`` (subclasses allowed);
-    anything else is skipped with a warning (mirrors the sibling integrity modules).
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers are warned and treated as empty (never coerced). A usable row is a
+    dict with every key in ``_CHECK_ROW_KEYS``: ``name`` must be a non-empty ``str`` and
+    ``passed`` must be a ``bool`` (including numpy scalar booleans); anything else is skipped
+    with a warning.
     """
     if checks is None:
         return []
@@ -219,16 +232,26 @@ def _check_rows_list(checks) -> list[dict]:
                 idx, missing,
             )
             continue
-        if not isinstance(row["name"], str):
+        bad_key = None
+        for key in _CHECK_ROW_KEYS:
+            if not _check_row_field(key, row[key]):
+                bad_key = key
+                break
+        if bad_key is not None:
+            value = row[bad_key]
+            if bad_key == "name":
+                detail = (
+                    type(value).__name__
+                    if not isinstance(value, str)
+                    else "empty str"
+                )
+                expected = "non-empty str"
+            else:
+                detail = type(value).__name__
+                expected = "bool"
             logger.warning(
-                "weight_integrity: checks[%s] name is %s, not str; skipping",
-                idx, type(row["name"]).__name__,
-            )
-            continue
-        if not _is_bool(row["passed"]):
-            logger.warning(
-                "weight_integrity: checks[%s] passed is %s, not bool; skipping",
-                idx, type(row["passed"]).__name__,
+                "weight_integrity: checks[%s] %s is %s, not a usable %s; skipping",
+                idx, bad_key, detail, expected,
             )
             continue
         rows.append(row)
