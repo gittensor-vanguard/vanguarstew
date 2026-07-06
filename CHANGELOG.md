@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- Freeze: `export_tree()` now captures `git archive`'s stderr and always reaps the
+  subprocess (via a `finally` block), so a bad/unreachable commit (shallow clone,
+  corrupted repo-set entry, garbage-collected commit) surfaces git's real error
+  (e.g. `fatal: not a tree object: <sha>`) instead of an opaque `tarfile.ReadError:
+  empty file`, and no longer leaves the child process unwaited. A tar read error
+  that occurs despite `git archive` actually succeeding is a genuine extraction bug
+  and is no longer swallowed alongside the git-failure case (#201).
+
 ## [0.3.0] - 2026-07-03
 
 ### Added

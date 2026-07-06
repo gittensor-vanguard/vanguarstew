@@ -28,30 +28,45 @@ def origin_url(repo: str) -> str:
 
 
 def export_tree(repo: str, commit: str, dest: str) -> None:
+    """Extract the tree at `commit` from `repo` into `dest`.
+
+    Raises RuntimeError(f"git archive failed for {commit}: <git's stderr>") if `git
+    archive` itself fails (bad/unreachable commit, shallow clone, etc). A tar read
+    error that occurs despite `git archive` succeeding is a genuine extraction bug,
+    not a git failure, and is left to propagate as-is rather than folded into that
+    message.
+    """
     os.makedirs(dest, exist_ok=True)
     proc = subprocess.Popen(
         ["git", "-C", repo, "archive", "--format=tar", commit],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    read_error = None
     try:
         with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
             try:
                 tf.extractall(dest, filter="data")  # py>=3.12
             except TypeError:
                 tf.extractall(dest)
-    except tarfile.ReadError:
-        # Most likely git archive itself failed (bad/unreachable commit) and wrote
-        # nothing to stdout; the real cause surfaces below via returncode + stderr.
-        pass
+    except tarfile.ReadError as exc:
+        # If git archive itself failed, it wrote nothing (or a truncated stream) to
+        # stdout, and the real cause surfaces below via returncode + stderr. Don't
+        # decide which case this is yet -- that depends on the returncode we're
+        # about to reap.
+        read_error = exc
     finally:
         # Always reap the child and collect stderr, even if extraction raised above —
         # otherwise a failing archive leaves the subprocess unwaited.
         stderr = proc.communicate()[1]
-    if proc.returncode not in (0, None):
+    if proc.returncode != 0:
         detail = stderr.decode("utf-8", "replace").strip() if stderr else ""
         msg = f"git archive failed for {commit}"
         raise RuntimeError(f"{msg}: {detail}" if detail else msg)
+    if read_error is not None:
+        # git archive succeeded, so the read error was a real extraction failure --
+        # surface it rather than silently returning as if dest were populated.
+        raise read_error
 
 
 def file_at(repo: str, commit: str, path: str) -> str:
