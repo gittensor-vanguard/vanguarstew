@@ -45,6 +45,23 @@ def test_module_recall_matches_by_name():
     assert res["module_recall"] == round(2 / 4, 3)  # core, changelog not anticipated
 
 
+def test_module_recall_honors_plan_files_without_title_overlap():
+    revealed = [{"subject": "fix: race in loader", "files": ["core/loader.py"]}]
+    vague_title = [{"title": "harden concurrency", "kind": "bugfix"}]
+    with_files = [{"title": "harden concurrency", "kind": "bugfix", "files": ["core/loader.py"]}]
+    assert module_recall(vague_title, revealed)["module_recall"] == 0.0
+    assert module_recall(with_files, revealed)["module_recall"] == 1.0
+
+
+def test_backlog_recall_honors_plan_files_for_issue_titles():
+    open_issues = [{"number": 7, "title": "Race in core loader"}]
+    revealed = [{"subject": "fix: race in core loader", "files": ["core/loader.py"]}]
+    plan = [{"title": "address backlog item", "kind": "bugfix", "files": ["core/loader.py"]}]
+    res = backlog_recall(plan, revealed, open_issues)
+    assert res["matched_issue_numbers"] == [7]
+    assert res["backlog_recall"] == 1.0
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True
@@ -259,8 +276,23 @@ def test_plan_kind_maps_to_commit_vocabulary():
     assert plan_kind("Docs") == "docs"
     assert plan_kind("dep") == "chore"
     assert plan_kind("release") == "release"
+    # Plurals map like their singular, mirroring _COMMIT_KIND ("tests" -> "test") and the
+    # sibling "dep"/"deps" pair — so a plan item labelled "tests" isn't silently dropped.
+    assert plan_kind("test") == "test"
+    assert plan_kind("tests") == "test"
     assert plan_kind("triage") is None  # not a commit kind
     assert plan_kind("") is None
+
+
+def test_kind_recall_credits_plural_tests_kind():
+    # A plan item declaring the natural plural kind "tests" must earn credit when the
+    # maintainer actually shipped test commits (regression: "tests" mapped to None).
+    revealed = [{"subject": "tests: add coverage", "files": ["tests/t.py"]}]
+    plan = [{"title": "add unit tests", "kind": "tests"}]
+    res = kind_recall(plan, revealed)
+    assert res["actual_kinds"] == ["test"]
+    assert res["matched_kinds"] == ["test"]
+    assert res["kind_recall"] == 1.0
 
 
 def test_kind_recall_matches_anticipated_kinds():
@@ -295,3 +327,40 @@ def test_objective_score_includes_kind_recall():
     assert score["actual_kinds"] == ["release"]  # only "Release v1.2.0" carries a kind
     assert score["matched_kinds"] == ["release"]
     assert score["kind_recall"] == 1.0
+
+
+def test_release_predicted_normalizes_kind_case_and_whitespace():
+    # The kind vocabulary is case/whitespace-insensitive everywhere else (plan_kind,
+    # kind_recall); release_predicted must agree, so a "Release" / " release " item whose
+    # title carries no release wording still counts as predicting a release.
+    for kind in ("Release", "RELEASE", "  release  "):
+        assert release_predicted([{"title": "ship the next cut", "kind": kind}]) is True, kind
+    # A non-release kind with a non-release title is still not a predicted release.
+    assert release_predicted([{"title": "tidy things up", "kind": "chore"}]) is False
+
+
+def test_release_predicted_tolerates_non_string_kind():
+    # An LLM plan may carry a non-string kind; it must not crash and must not be mistaken for a
+    # release unless the title itself signals one.
+    assert release_predicted([{"title": "misc work", "kind": 123}]) is False
+    assert release_predicted([{"title": "misc work", "kind": ["release"]}]) is False
+    assert release_predicted([{"title": "Release v2.0.0", "kind": None}]) is True  # via subject
+
+
+def test_plan_kind_tolerates_non_string_and_case():
+    assert plan_kind("Release") == "release"
+    assert plan_kind("  RELEASE  ") == "release"
+    assert plan_kind(123) is None
+    assert plan_kind(None) is None
+    assert plan_kind(["release"]) is None
+
+
+def test_objective_score_release_match_honors_cased_kind():
+    # Regression: a release is revealed and the plan predicts it via a capitalized kind
+    # ("Release"). Before normalization this scored release_predicted=False, wrongly making
+    # release_match=False for a correct prediction.
+    revealed = [{"subject": "Release v2.0.0", "files": ["CHANGELOG.md"]}]
+    score = objective_score([{"title": "prepare the cut", "kind": "Release"}], revealed)
+    assert score["release_signaled"] is True
+    assert score["release_predicted"] is True
+    assert score["release_match"] is True
