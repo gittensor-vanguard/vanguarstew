@@ -6,7 +6,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
+  `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
+  reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
+  Mirrors the reachability guard `benchmark/freeze.py::build_context` already applies (#256).
+- Benchmark hygiene: `benchmark/taskgen.py::revealed_window` now parses changed-file
+  lists from NUL-delimited `git show --name-only -z` output via a reusable
+  `benchmark.freeze.parse_path_list` helper, instead of whitespace `.split()`. Filenames
+  containing spaces or shell-sensitive characters are no longer corrupted (which would
+  mis-attribute file-weighted scoring); first-parent merges still yield an empty file
+  list as before. Adds `tests/test_taskgen.py` regression coverage (#137).
+
+## [0.3.0] - 2026-07-03
+
 ### Added
+- Generalization (M3): **multi-repo replay** — `run_multi_replay` / `scripts/run_eval.py --repos`
+  runs several repos and averages each repo's own `composite_mean` into one cross-repo number
+  (per-repo results retained; too-small repos skipped), so the agent is scored on breadth rather
+  than a single tuned repo (#51).
+- Generalization (M3): **leakage-safe repo-set config + loader** (`benchmark/repo_set.py`,
+  `benchmark/repo_sets/`) — the replay repo list is a checked-in, strictly-validated JSON config
+  (recent/obscure tier, `held_out`, freeze-window hints) instead of a hardcoded array, so the
+  curated selection is reviewable and versioned (#55).
+- Composite: **file-weighted module recall** now feeds the composite score — the objective anchor
+  weights modules by how much of the revealed maintainer effort landed in each, so the blended
+  score better reflects where the work actually concentrated (#91).
 - Judge integrity: the pairwise judge now defends against LLM **position bias** with dual-order
   consistency — it asks both presentation orders and awards a win only if it survives the swap,
   otherwise a tie. A position-biased judge can no longer earn a spurious win, and per-task
@@ -61,6 +86,13 @@ All notable changes to this project are documented here. The format is based on
   version mentioned mid-subject (e.g. `chore(deps): bump lodash to v4.17.21`, `fix crash in
   v1.2.0 parser`). Release detection now requires explicit release wording or a version-tag
   subject, so dependency bumps no longer inflate the release-prediction signal (#57).
+- Task generation: `revealed_window` (`benchmark/taskgen.py`) reported **zero changed files**
+  for merge commits (a plain `git show` of a clean merge yields an empty combined diff),
+  silently depressing module-recall scoring for any repo that merges via PRs (#113). It also
+  split file lists on whitespace, corrupting attribution for paths containing spaces (#116).
+  Both are fixed by diffing merges against their first parent and splitting on lines instead.
+  Regression coverage added in `tests/test_taskgen.py` via a reusable merge-history fixture
+  (#117).
 - Leakage: frozen milestone `state` is now computed as-of-T from `closed_at` instead of copying
   the milestone's present-day state, so a milestone that existed at T but was closed *after* T
   is no longer leaked into the context as completed (#77).
