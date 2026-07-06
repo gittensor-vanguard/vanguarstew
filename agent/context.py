@@ -142,6 +142,10 @@ def context_for_agent(context: dict) -> dict:
                 clean.pop("labels", None)
             items.append(clean)
         out[key] = items
+    if out.get("_issues_truncated"):
+        # Defense in depth for older frozen artifacts that still carry a partial backlog.
+        out["open_issues"] = []
+        out["open_prs"] = []
     return out
 
 

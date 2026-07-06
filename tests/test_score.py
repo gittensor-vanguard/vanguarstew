@@ -284,7 +284,8 @@ def test_git_only_backlog_does_not_change_core_objective_score():
     with_unaddressed = objective_score(plan, REVEALED, open_issues=[
         {"number": 1, "title": "Future feature nobody touched"},
     ])
-    for score in (with_empty, with_unaddressed):
+    with_truncated = objective_score(plan, REVEALED, open_issues=None)
+    for score in (with_empty, with_unaddressed, with_truncated):
         assert score["module_recall"] == baseline["module_recall"]
         assert score["kind_recall"] == baseline["kind_recall"]
         assert score["release_signaled"] == baseline["release_signaled"]

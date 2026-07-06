@@ -335,6 +335,20 @@ def test_truncation_flag_when_page_cap_hit(monkeypatch):
     monkeypatch.setattr(gc, "_get", _pager({1: full, 2: full, 3: full}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_issue_pages=2)
     assert ctx["_issues_truncated"] is True
+    assert ctx["open_issues"] == []
+    assert ctx["open_prs"] == []
+
+
+def test_open_issues_from_context_omits_truncated_backlog():
+    partial = {
+        "_issues_truncated": True,
+        "open_issues": [{"number": 1, "title": "Memory leak under load"}],
+    }
+    complete = {
+        "open_issues": [{"number": 1, "title": "Memory leak under load"}],
+    }
+    assert gc.open_issues_from_context(partial) is None
+    assert gc.open_issues_from_context(complete) == complete["open_issues"]
 
 
 # --- contract edge cases (docstring "Field stability") -----------------------------
