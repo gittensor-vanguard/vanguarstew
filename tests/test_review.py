@@ -1,5 +1,6 @@
 """Tests for the maintainer-assist review (offline, deterministic)."""
 
+import logging
 import os
 import sys
 
@@ -60,6 +61,24 @@ def test_normalize_review_action_tolerates_non_string_input():
     assert _normalize_review_action(42) == "comment"
     assert _normalize_review_action(4.2) == "comment"
     assert _normalize_review_action(None) == "comment"
+    assert _normalize_review_action(True) == "comment"
+    assert _normalize_review_action(b"merge") == "comment"
+
+
+def test_normalize_review_action_tolerates_empty_and_whitespace_strings():
+    assert _normalize_review_action("") == "comment"
+    assert _normalize_review_action("   ") == "comment"
+    assert _normalize_review_action("\t\n") == "comment"
+
+
+def test_normalize_review_action_logs_a_warning_for_non_string_input(caplog):
+    with caplog.at_level(logging.WARNING, logger="agent.review"):
+        assert _normalize_review_action(["merge"]) == "comment"
+    assert any("non-string action" in r.message for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="agent.review"):
+        assert _normalize_review_action("approve") == "merge"
+    assert not caplog.records
 
 
 def test_normalize_value_label_repairs_prefix_and_case():
@@ -111,16 +130,24 @@ class _NonStringActionReviewLLM:
     def chat_json(self, system, user, stub=None):
         return {
             "action": ["merge", "reject"],
-            "value_label": "mult:maintenance",
+            "value_label": "mult:core-correctness",
             "scope_ok": True,
-            "tests_present": False,
-            "summary": "s",
-            "concerns": [],
-            "recommendation": "r",
+            "tests_present": True,
+            "summary": "adds a missing guard",
+            "concerns": ["needs a regression test"],
+            "recommendation": "request changes until tests land",
         }
 
 
 def test_review_pr_survives_non_string_action_field():
-    rev = review_pr({"number": 1, "title": "t", "files": []}, None,
+    rev = review_pr({"number": 1, "title": "t", "files": ["tests/test_x.py"]}, None,
                      _NonStringActionReviewLLM())
+    # the malformed field degrades safely...
     assert rev["action"] == "comment"
+    # ...and every other field is still normalized correctly, unaffected by the bad action.
+    assert rev["value_label"] == "mult:core-correctness"
+    assert rev["scope_ok"] is True
+    assert rev["tests_present"] is True
+    assert rev["summary"] == "adds a missing guard"
+    assert rev["concerns"] == ["needs a regression test"]
+    assert rev["recommendation"] == "request changes until tests land"
