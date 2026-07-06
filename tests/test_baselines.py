@@ -298,3 +298,10 @@ def test_replay_selects_baseline_and_tallies():
         assert res["tasks"] >= 1
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+def test_heuristic_functions_handle_non_dict_context():
+    """heuristic_philosophy and heuristic_plan must not crash on non-dict context."""
+    assert heuristic_philosophy(None)["summary"]
+    assert heuristic_philosophy("not a dict")["summary"]
+    assert heuristic_plan(None, 3) == []
+    assert heuristic_plan(42, 3) == []

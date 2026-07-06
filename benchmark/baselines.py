@@ -105,6 +105,8 @@ def _commit_kinds(context: dict) -> Counter:
 
 
 def heuristic_philosophy(context: dict) -> dict:
+    if not isinstance(context, dict):
+        context = {}
     kinds = _commit_kinds(context)
     dominant = kinds.most_common(1)[0][0] if kinds else "triage"
     n_issues = len(context.get("open_issues") or [])
@@ -120,6 +122,8 @@ def heuristic_philosophy(context: dict) -> dict:
 
 def heuristic_plan(context: dict, n: int = 5) -> list:
     """Extrapolate recent behavior: address open issues, then continue dominant themes."""
+    if not isinstance(context, dict):
+        context = {}
     items = []
 
     # 1. The backlog the maintainer can see right now.
