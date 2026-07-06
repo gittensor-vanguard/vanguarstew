@@ -163,14 +163,24 @@ def _context_from_git(repo_path: str) -> dict:
         if "\t" in line:
             h, subj = line.split("\t", 1)
             commits.append({"sha": h[:10], "subject": _mask_forward_refs(subj)})
-    # `--merged head` restricts to tags reachable from T -- without it, a tag that only
-    # exists on an unmerged branch (or otherwise isn't an ancestor of T) would leak into
-    # "releases" even though it was never knowable at T. Mirrors the same reachability
-    # guard `benchmark/freeze.py::build_context` applies for the harness-driven path.
-    tags = [
-        t for t in _git(repo_path, "tag", "--sort=-creatordate", "--merged", head).splitlines()
-        if t
-    ]
+    # `git tag --merged` selects tags whose target commit is reachable from T; it does NOT
+    # filter by when the tag was created. An annotated tag cut after T from a commit already
+    # present at T would leak a future release into knowable-at-T context. Filter to tags
+    # whose creator date is <= T, matching `benchmark/freeze.py::build_context` (#749).
+    frozen_ts = _git(repo_path, "show", "-s", "--format=%ct", head).strip()
+    frozen_at = int(frozen_ts) if frozen_ts.isdigit() else None
+    tags = []
+    raw_tags = _git(
+        repo_path, "tag", "--merged", head, "--sort=creatordate",
+        "--format=%(creatordate:unix)%09%(refname:strip=2)",
+    )
+    for line in raw_tags.splitlines():
+        ts, _, name = line.partition("\t")
+        if not name:
+            continue
+        if frozen_at is not None and ts.isdigit() and int(ts) > frozen_at:
+            continue
+        tags.append(name)
     readme = ""
     for name in ("README.md", "README.rst", "README.txt", "README"):
         p = os.path.join(repo_path, name)
@@ -185,7 +195,7 @@ def _context_from_git(repo_path: str) -> dict:
         "open_prs": [],
         "labels": [],
         "milestones": [],
-        "releases": [{"tag": _mask_forward_refs(t)} for t in tags[:10]],
+        "releases": [{"tag": _mask_forward_refs(t)} for t in tags[-10:]],
         "readme_excerpt": readme,
         "_source": "git",
     }
