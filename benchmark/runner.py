@@ -231,11 +231,21 @@ def weight_sweep(rows, grid=WEIGHT_SWEEP_GRID) -> list:
 
     Returns a list of ``{"w_judge", "w_objective", "composite_mean"}`` in grid order.
     """
-    scored = [
-        (_JUDGE_COMPONENT[r["winner"]], objective_component(r.get("objective") or {}))
-        for r in _sweep_rows(rows)
-        if r.get("winner") in _JUDGE_COMPONENT
-    ]
+    scored = []
+    for r in _sweep_rows(rows):
+        if not isinstance(r, dict):
+            if r is not None:
+                logger.warning(
+                    "weight_sweep: skipping a non-dict row (%s: %r)",
+                    type(r).__name__,
+                    r,
+                )
+            continue
+        winner = r.get("winner")
+        if winner in _JUDGE_COMPONENT:
+            scored.append(
+                (_JUDGE_COMPONENT[winner], objective_component(r.get("objective") or {}))
+            )
     sweep = []
     for w_judge, w_objective in grid:
         total = (w_judge + w_objective) or 1.0
