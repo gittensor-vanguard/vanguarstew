@@ -14,6 +14,7 @@ from benchmark.score import (  # noqa: E402
     _meaningful_overlap,
     _plan_list,
     _plan_tokens,
+    _revealed_list,
     _tokens,
     _top_module,
     addressed_issues,
@@ -776,6 +777,29 @@ def test_plan_list_accepts_only_real_lists():
     assert _plan_list([{"title": "work"}]) == [{"title": "work"}]
     for bad in (42, True, {"plan": []}, "not a list", None, ""):
         assert _plan_list(bad) == []
+
+
+def test_revealed_list_accepts_only_real_lists_of_dicts():
+    assert _revealed_list([{"subject": "feat: x"}]) == [{"subject": "feat: x"}]
+    for bad in (42, True, {"subject": "feat: x"}, "not a list", None, ""):
+        assert _revealed_list(bad) == []
+    assert _revealed_list([{"subject": "ok"}, "bad", 42, None]) == [{"subject": "ok"}]
+
+
+def test_objective_score_tolerates_non_list_revealed_window():
+    plan = [{"title": "work", "kind": "feat"}]
+    for bad in (42, True, {"subject": "feat: x"}):
+        score = objective_score(plan, bad)
+        assert score["module_recall"] == 0.0
+        assert score["kind_recall"] == 0.0
+        assert score["release_signaled"] is False
+
+
+def test_kind_recall_and_release_signaled_tolerate_non_list_revealed():
+    plan = [{"title": "work", "kind": "feat"}]
+    assert kind_recall(plan, 42)["kind_recall"] == 0.0
+    assert release_signaled(42) is False
+    assert changed_modules(42) == set()
 
 
 def test_objective_score_tolerates_non_list_plan_container():

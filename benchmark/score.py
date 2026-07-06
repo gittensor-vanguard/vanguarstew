@@ -40,6 +40,17 @@ def _plan_list(plan) -> list:
     return plan if isinstance(plan, list) else []
 
 
+def _revealed_list(revealed) -> list:
+    """Return dict rows from ``revealed`` when it is a list; else an empty window.
+
+    Mirrors ``_plan_list()`` for the revealed maintainer-action window: a truthy non-list
+    must not be iterated, and non-dict rows inside a list are skipped.
+    """
+    if not isinstance(revealed, list):
+        return []
+    return [row for row in revealed if isinstance(row, dict)]
+
+
 def _tokens(text) -> set:
     # Plan and commit text fields originate in LLM-emitted JSON, where a `title`/`theme`/
     # `subject` can arrive as a list, dict, number, or null. Such a value carries no lexical
@@ -101,7 +112,7 @@ def released_version(revealed) -> tuple | None:
     v1.2.0 parser`) can't produce a spurious `bump_actual`.
     """
     subjects = []
-    for r in revealed or []:
+    for r in _revealed_list(revealed):
         subj = r.get("subject", "") or ""
         if not isinstance(subj, str) or not is_release_subject(subj):
             continue
@@ -207,7 +218,7 @@ def _top_module(path: str):
 def changed_modules(revealed) -> set:
     """Top-level modules touched across the revealed window (structural ground truth)."""
     mods = set()
-    for r in revealed or []:
+    for r in _revealed_list(revealed):
         for path in r.get("files", []):
             top = _top_module(path)
             if top:
@@ -222,7 +233,7 @@ def _module_file_counts(revealed) -> dict:
     recall below scores over exactly the modules the plan is matched against.
     """
     counts: dict = {}
-    for r in revealed or []:
+    for r in _revealed_list(revealed):
         for path in r.get("files", []):
             top = _top_module(path)
             if top:
@@ -348,7 +359,7 @@ def plan_kind(kind):
 
 def kind_recall(plan, revealed) -> dict:
     """Fraction of revealed maintainer kinds the plan anticipated. Deterministic."""
-    actual = {k for k in (commit_kind(r.get("subject", "")) for r in revealed or []) if k}
+    actual = {k for k in (commit_kind(r.get("subject", "")) for r in _revealed_list(revealed)) if k}
     if not actual:
         return {"kind_recall": 0.0, "actual_kinds": [], "matched_kinds": []}
     planned = {
@@ -364,7 +375,7 @@ def kind_recall(plan, revealed) -> dict:
 
 
 def release_signaled(revealed) -> bool:
-    return any(is_release_subject(r.get("subject", "") or "") for r in revealed or [])
+    return any(is_release_subject(r.get("subject", "") or "") for r in _revealed_list(revealed))
 
 
 def release_predicted(plan) -> bool:
@@ -408,7 +419,7 @@ def _addressed_with_evidence(revealed, open_issues) -> list:
         title_toks = _tokens(issue.get("title", ""))
         if not title_toks:
             continue
-        for row in revealed or []:
+        for row in _revealed_list(revealed):
             subject = row.get("subject", "") or ""
             if _meaningful_overlap(title_toks, _tokens(subject)):
                 out.append((issue, subject))
@@ -576,7 +587,7 @@ def trajectory_overlap(plan, revealed) -> float:
         else:
             plan_toks |= _tokens(str(item))
     real_toks = set()
-    for r in revealed or []:
+    for r in _revealed_list(revealed):
         real_toks |= _tokens(r.get("subject", ""))
     if not plan_toks or not real_toks:
         return 0.0
