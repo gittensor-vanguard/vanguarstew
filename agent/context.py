@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 CONTEXT_FILE = ".vanguarstew_context.json"
 
+# README filenames probed by git-only context builders, in priority order. ``benchmark/freeze.py``
+# imports this tuple so freeze and agent fallback stay aligned (#749 tag filtering already does).
+README_PROBE_NAMES = ("README.md", "README.rst", "README.txt", "README", "docs/README.md")
+
 # Issue/PR back-reference (`#123`), GitHub deep-links, and raw commit SHAs. The scored replay
 # path masks all three via ``benchmark.leakage.strip_forward_refs`` before the agent sees the
 # text; this module's git-only fallback must mirror that policy locally. We deliberately do NOT
@@ -184,7 +188,7 @@ def _context_from_git(repo_path: str) -> dict:
             continue
         tags.append(name)
     readme = ""
-    for name in ("README.md", "README.rst", "README.txt", "README"):
+    for name in README_PROBE_NAMES:
         p = os.path.join(repo_path, name)
         if os.path.exists(p):
             with open(p, "r", encoding="utf-8", errors="ignore") as f:

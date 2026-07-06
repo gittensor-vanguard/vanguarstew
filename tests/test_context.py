@@ -15,6 +15,7 @@ if ROOT not in sys.path:
 
 import benchmark.github_context as gc  # noqa: E402
 from agent.context import (  # noqa: E402
+    README_PROBE_NAMES,
     _agent_context_list,
     _agent_issue_pr_list,
     _context_from_git,
@@ -336,6 +337,32 @@ def test_context_from_git_excludes_tags_created_after_head():
         harness = [r["tag"] for r in build_context(repo, "HEAD")["releases"]]
         assert fallback == ["v1.0.0"]
         assert harness == ["v1.0.0"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+@pytest.mark.parametrize("readme_path,content", [
+    ("README.txt", "Plain-text project overview.\n"),
+    ("docs/README.md", "Monorepo docs overview.\n"),
+])
+def test_context_from_git_readme_probe_matches_build_context(readme_path, content):
+    # Both git-only context builders must search the same README filenames so philosophy/plan
+    # prompts see the same excerpt whether context came from freeze or the agent fallback.
+    assert readme_path in README_PROBE_NAMES
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        freeze_date = "2024-01-10T12:00:00+00:00"
+        _write(repo, readme_path, content)
+        _write(repo, "f.txt")
+        _git(repo, "add", "-A", date=freeze_date)
+        _git(repo, "commit", "-q", "-m", "c1", date=freeze_date)
+
+        fallback = _context_from_git(repo)["readme_excerpt"]
+        harness = build_context(repo, "HEAD")["readme_excerpt"]
+        assert fallback == harness
+        assert content.strip() in fallback
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
