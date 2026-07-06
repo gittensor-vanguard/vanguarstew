@@ -263,6 +263,27 @@ def test_check_rows_list_rejects_int_as_passed(caplog):
     assert any("passed is int" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_rejects_empty_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.weight_integrity"):
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+    assert any("name is empty str" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_accepts_numpy_bool_when_available():
+    np = pytest.importorskip("numpy")
+    rows = [{"name": "weights_present", "passed": np.bool_(True)}]
+    assert _check_rows_list(rows) == rows
+
+
+def test_failed_checks_helper_is_robust():
+    assert failed_checks({}) == []
+    assert failed_checks("not a dict") == []
+    bad = check_weight_integrity(_slice({"judge": 0, "objective": 0}))
+    assert failed_checks(bad) == ["weights_sum_positive"]
+    good = check_weight_integrity(_slice({"judge": 0.6, "objective": 0.4}))
+    assert failed_checks(good) == []
+
+
 def test_helpers_survive_a_non_list_checks_value():
     for bad_checks in ("garbage", 42, {"name": "x"}, None):
         assert failed_checks({"checks": bad_checks}) == []
