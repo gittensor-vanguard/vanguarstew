@@ -39,7 +39,12 @@ def main() -> None:
                     help="exit 1 if any consecutive drop exceeds the threshold (CI gating)")
     args = ap.parse_args()
 
-    series = [(os.path.basename(p), load_artifact(p)) for p in args.artifacts]
+    try:
+        series = [(os.path.basename(p), load_artifact(p)) for p in args.artifacts]
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
     summary = trend(series, regression_threshold=args.threshold)
 
     print(trend_headline(summary), file=sys.stderr)

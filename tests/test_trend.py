@@ -1,7 +1,11 @@
 """Tests for the N-way score trend / regression analysis (deterministic, offline)."""
 
+import json
 import os
+import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -206,3 +210,103 @@ def test_trend_mixes_single_multi_and_generalization_artifacts():
     assert [p["composite_mean"] for p in out["points"]] == [0.50, 0.55, 0.40]
     assert out["min"] == 0.40 and out["max"] == 0.55
     assert [r["to_label"] for r in out["regressions"]] == ["gen"]      # 0.55 -> 0.40
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.trend", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_single(0.6)), encoding="utf-8")
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(good), str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the real OSError message, not a paraphrase
+    assert "No such file or directory" in result.stderr
+    assert str(missing) in result.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
+    # PermissionError is a subclass of OSError, so it is already caught by the existing
+    # except clause -- this proves that in practice, not just by inheritance.
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_single(0.6)), encoding="utf-8")
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text(json.dumps(_single(0.5)), encoding="utf-8")
+    unreadable.chmod(0o000)
+    try:
+        result = _run_cli(str(good), str(unreadable))
+    finally:
+        unreadable.chmod(0o644)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "Permission denied" in result.stderr
+    assert str(unreadable) in result.stderr
+
+
+@pytest.mark.parametrize("payload", [[1, 2, 3], "just a string", 42, 3.14, True, None])
+def test_cli_reports_a_clean_error_for_every_non_object_json_shape(tmp_path, payload):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_single(0.6)), encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+    result = _run_cli(str(good), str(bad))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert f"artifact must be a JSON object: {bad}" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path), str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the real json.JSONDecodeError text, not a generic placeholder
+    assert "Expecting property name enclosed in double quotes" in result.stderr
+
+
+def test_cli_still_runs_the_real_trend_logic_for_well_formed_artifacts(tmp_path):
+    r1_art, r2_art, r3_art = _single(0.50), _single(0.55), _single(0.60)
+    r1 = tmp_path / "r1.json"
+    r1.write_text(json.dumps(r1_art), encoding="utf-8")
+    r2 = tmp_path / "r2.json"
+    r2.write_text(json.dumps(r2_art), encoding="utf-8")
+    r3 = tmp_path / "r3.json"
+    r3.write_text(json.dumps(r3_art), encoding="utf-8")
+
+    result = _run_cli(str(r1), str(r2), str(r3))
+    assert result.returncode == 0
+
+    expected = trend([(os.path.basename(str(r1)), r1_art),
+                       (os.path.basename(str(r2)), r2_art),
+                       (os.path.basename(str(r3)), r3_art)])
+    payload = json.loads(result.stdout)
+    # the CLI's JSON output must match trend()'s real result exactly, not just a summary line --
+    # proving the artifacts actually flowed through the real trend/regression logic.
+    assert payload == expected
+    assert payload["scored"] == 3
+    assert payload["change"] == 0.10
+    assert payload["regressions"] == []
+    assert trend_headline(expected) in result.stderr
+
+
+def test_cli_fails_on_regression_with_strict_flag(tmp_path):
+    r1_art, r2_art = _single(0.60), _single(0.40)
+    r1 = tmp_path / "r1.json"
+    r1.write_text(json.dumps(r1_art), encoding="utf-8")
+    r2 = tmp_path / "r2.json"
+    r2.write_text(json.dumps(r2_art), encoding="utf-8")
+
+    result = _run_cli(str(r1), str(r2), "--fail-on-regression")
+    assert result.returncode == 1        # a real regression + --fail-on-regression exits 1
+    payload = json.loads(result.stdout)
+    assert len(payload["regressions"]) == 1
+    assert payload["regressions"][0]["drop"] == 0.20
+    assert "REGRESSION" in result.stderr
