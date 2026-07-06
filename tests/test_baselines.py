@@ -22,6 +22,7 @@ from benchmark.baselines import (  # noqa: E402
     _infer_kind,
     empty_solve,
     get_baseline,
+    heuristic_philosophy,
     heuristic_solve,
 )
 from benchmark.runner import run_replay  # noqa: E402
@@ -95,6 +96,26 @@ def test_explicit_release_wording_is_release():
     assert _infer_kind("Release v1.2.0") == "release"
     assert _infer_kind("update changelog for v2.0") == "release"
     assert _infer_kind("bump version to 1.3.0") == "release"
+
+
+def test_infer_kind_recognizes_test_ci_commits_as_test_not_triage():
+    # "test"/"coverage"/"ci" commits must not silently collapse to the unrelated
+    # issue-backlog-flavored "triage" kind.
+    assert _infer_kind("ci: pin runner os version") == "test"
+    assert _infer_kind("increase test coverage for the parser") == "test"
+
+
+def test_heuristic_philosophy_does_not_mislabel_test_ci_history_as_triage():
+    ctx = {
+        "recent_commits": [
+            {"subject": "ci: pin windows runner version"},
+            {"subject": "increase test coverage for the parser"},
+        ],
+        "open_issues": [],
+    }
+    phil = heuristic_philosophy(ctx)
+    assert "dominated by test work" in phil["summary"]
+    assert "dominated by triage work" not in phil["summary"]
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
