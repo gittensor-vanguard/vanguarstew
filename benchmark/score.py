@@ -125,7 +125,14 @@ def changed_modules(revealed) -> set:
             parts = [p for p in path.split("/") if p]
             if not parts:
                 continue
-            top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+            if len(parts) > 1:
+                top = parts[0]
+            else:
+                # Strip a single extension (README.md -> readme). A top-level dotfile
+                # (.gitignore, .flake8) has no extension to strip, so rsplit leaves an
+                # empty string here — fall back to the bare filename (sans leading
+                # dots) instead of silently dropping it from the ground truth.
+                top = parts[0].rsplit(".", 1)[0] or parts[0].lstrip(".")
             if top:
                 mods.add(top.lower())
     return mods

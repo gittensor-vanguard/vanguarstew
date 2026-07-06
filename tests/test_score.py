@@ -35,6 +35,20 @@ def test_changed_modules():
     assert changed_modules(REVEALED) == {"plugins", "readme", "core", "changelog"}
 
 
+def test_changed_modules_top_level_dotfile_not_dropped():
+    revealed = [{"subject": "tweak ignores", "files": [".gitignore"]}]
+    assert changed_modules(revealed) == {"gitignore"}
+
+
+def test_module_recall_credits_dotfile_only_change():
+    revealed = [{"subject": "tweak ignores", "files": [".gitignore"]}]
+    plan = [{"title": "update gitignore", "kind": "chore"}]
+    res = module_recall(plan, revealed)
+    assert res["actual_modules"] == ["gitignore"]
+    assert res["matched_modules"] == ["gitignore"]
+    assert res["module_recall"] == 1.0
+
+
 def test_module_recall_matches_by_name():
     plan = [
         {"title": "build plugin system", "theme": "plugins", "kind": "feature"},
