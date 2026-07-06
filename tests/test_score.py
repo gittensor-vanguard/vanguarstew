@@ -14,6 +14,7 @@ from benchmark.score import (  # noqa: E402
     _meaningful_overlap,
     _plan_list,
     _plan_tokens,
+    _revealed_list,
     _tokens,
     _top_module,
     addressed_issues,
@@ -31,6 +32,7 @@ from benchmark.score import (  # noqa: E402
     release_predicted,
     release_signaled,
     released_version,
+    trajectory_overlap,
 )
 
 REVEALED = [
@@ -776,6 +778,58 @@ def test_plan_list_accepts_only_real_lists():
     assert _plan_list([{"title": "work"}]) == [{"title": "work"}]
     for bad in (42, True, {"plan": []}, "not a list", None, ""):
         assert _plan_list(bad) == []
+
+
+# --- #421: a non-list revealed window must not abort scoring --------------------------------
+
+_MALFORMED_REVEALED = [42, 3.14, True, {"subject": "feat: x"}, "not a list", None]
+
+
+def test_revealed_list_accepts_only_real_lists():
+    revealed = [{"subject": "feat: add loader", "files": ["agent/x.py"]}]
+    assert _revealed_list(revealed) == revealed
+    for bad in _MALFORMED_REVEALED:
+        assert _revealed_list(bad) == [], bad
+
+
+def test_kind_recall_survives_non_list_revealed_container():
+    plan = [{"title": "loader work", "kind": "feat"}]
+    for bad in _MALFORMED_REVEALED:
+        res = kind_recall(plan, bad)
+        assert res["kind_recall"] == 0.0
+        assert res["actual_kinds"] == []
+
+
+def test_trajectory_overlap_survives_non_list_revealed_container():
+    plan = [{"title": "loader work", "kind": "feat"}]
+    for bad in _MALFORMED_REVEALED:
+        assert trajectory_overlap(plan, bad) == 0.0
+
+
+def test_release_signaled_skips_non_dict_revealed_rows():
+    assert release_signaled([42, {"subject": "Release v2.0", "files": []}]) is True
+    assert release_signaled([42, {"subject": "misc tweak", "files": []}]) is False
+
+
+def test_objective_score_survives_non_list_revealed_container():
+    plan = [{"title": "loader work", "kind": "feat"}]
+    for bad in _MALFORMED_REVEALED:
+        score = objective_score(plan, bad)
+        assert score["module_recall"] == 0.0
+        assert score["kind_recall"] == 0.0
+        assert score["release_signaled"] is False
+
+
+def test_objective_score_survives_mixed_revealed_rows():
+    revealed = [
+        42,
+        {"subject": "feat: add loader", "files": ["agent/loader.py"]},
+        None,
+    ]
+    plan = [{"title": "add the agent loader", "kind": "feat"}]
+    score = objective_score(plan, revealed)
+    assert score["module_recall"] == 1.0
+    assert score["kind_recall"] == 1.0
 
 
 def test_objective_score_tolerates_non_list_plan_container():
