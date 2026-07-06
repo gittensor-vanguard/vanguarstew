@@ -23,6 +23,7 @@ from agent.context import (  # noqa: E402
 from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
 from agent.planner import _render as render_planner_context  # noqa: E402
+from benchmark.freeze import build_context  # noqa: E402
 
 
 def test_context_for_agent_omits_unknown_issue_labels():
@@ -227,9 +228,14 @@ def test_prompt_renderers_do_not_serialize_unknown_labels_as_empty_history():
 
 # --- git-only fallback (agent.context._context_from_git) --------------------------
 
-def _git(repo, *args):
-    subprocess.run(["git", "-C", repo, *args], check=True,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def _git(repo, *args, date=None):
+    env = dict(os.environ)
+    if date:
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+    subprocess.run(
+        ["git", "-C", repo, *args], check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+    )
 
 
 def _init_repo(repo):
@@ -244,6 +250,28 @@ def _write(repo, relpath, text="x\n"):
     os.makedirs(os.path.dirname(full) or repo, exist_ok=True)
     with open(full, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_excludes_tags_created_after_head():
+    # A retroactive annotated tag on a commit already at T leaks a future release unless
+    # filtered by tagger/creator date — must match benchmark/freeze.build_context (#749).
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        freeze_date = "2024-01-10T12:00:00"
+        _write(repo, "f.txt")
+        _git(repo, "add", "-A", date=freeze_date)
+        _git(repo, "commit", "-q", "-m", "c1", date=freeze_date)
+        _git(repo, "tag", "-a", "v1.0.0", "-m", "rel", date=freeze_date)
+        _git(repo, "tag", "-a", "v9.9.9", "-m", "future", date="2024-09-01T12:00:00")
+
+        fallback = [r["tag"] for r in _context_from_git(repo)["releases"]]
+        harness = [r["tag"] for r in build_context(repo, "HEAD")["releases"]]
+        assert fallback == ["v1.0.0"]
+        assert harness == ["v1.0.0"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
