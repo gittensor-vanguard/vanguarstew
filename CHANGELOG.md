@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Fixed
+- Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
+  `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
+  reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
+  Mirrors the reachability guard `benchmark/freeze.py::build_context` already applies (#256).
 - Benchmark hygiene: `benchmark/taskgen.py::revealed_window` now parses changed-file
   lists from NUL-delimited `git show --name-only -z` output via a reusable
   `benchmark.freeze.parse_path_list` helper, instead of whitespace `.split()`. Filenames
@@ -82,6 +86,13 @@ All notable changes to this project are documented here. The format is based on
   version mentioned mid-subject (e.g. `chore(deps): bump lodash to v4.17.21`, `fix crash in
   v1.2.0 parser`). Release detection now requires explicit release wording or a version-tag
   subject, so dependency bumps no longer inflate the release-prediction signal (#57).
+- Task generation: `revealed_window` (`benchmark/taskgen.py`) reported **zero changed files**
+  for merge commits (a plain `git show` of a clean merge yields an empty combined diff),
+  silently depressing module-recall scoring for any repo that merges via PRs (#113). It also
+  split file lists on whitespace, corrupting attribution for paths containing spaces (#116).
+  Both are fixed by diffing merges against their first parent and splitting on lines instead.
+  Regression coverage added in `tests/test_taskgen.py` via a reusable merge-history fixture
+  (#117).
 - Leakage: frozen milestone `state` is now computed as-of-T from `closed_at` instead of copying
   the milestone's present-day state, so a milestone that existed at T but was closed *after* T
   is no longer leaked into the context as completed (#77).
