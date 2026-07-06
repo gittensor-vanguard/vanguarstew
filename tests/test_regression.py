@@ -64,6 +64,15 @@ def test_max_composite_drop_is_configurable():
     assert check_regression(*runs, max_composite_drop=0.02)["passed"] is False
 
 
+def test_regression_does_not_flag_infra_failure_as_composite_drop():
+    baseline = {"composite_mean": 0.6, "scored_repos": 2}
+    candidate = {"composite_mean": 0.0, "scored_repos": 0, "repos": 2, "skipped": 2}
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    assert result["candidate_composite"] is None
+
+
 def test_missing_composite_fails_both_scored():
     result = check_regression({"error": "no tasks"}, _run(0.6))
     assert result["passed"] is False

@@ -7,6 +7,8 @@ report.
 
 from __future__ import annotations
 
+from benchmark.trend import aggregate_composite_unscored
+
 # Tuned minus held-out above this threshold triggers an "inspect" verdict on generalization runs.
 DEFAULT_GAP_INSPECT_THRESHOLD = 0.10
 
@@ -77,9 +79,8 @@ def _composite_lines(artifact: dict) -> list[str]:
     # scored_repos is only ever set by the aggregate layer (run_multi_replay / generalization
     # partitions); when it's present and zero, composite_mean is a placeholder 0.0 (nothing was
     # actually scored), not a real score -- render n/a instead of a fabricated perfect zero,
-    # mirroring the same scored_repos guard in benchmark/trend.py's headline_score.
-    scored = artifact.get("scored_repos")
-    unscored = _is_number(scored) and not scored
+    # mirroring aggregate_composite_unscored in benchmark/trend.py.
+    unscored = aggregate_composite_unscored(artifact)
     composite = None if unscored else artifact.get("composite_mean")
     judge = None if unscored else parts.get("judge_mean")
     objective = None if unscored else parts.get("objective_mean")

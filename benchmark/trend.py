@@ -27,6 +27,24 @@ def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def aggregate_composite_unscored(artifact) -> bool:
+    """True when an artifact's aggregate ``composite_mean`` is a placeholder, not a real score.
+
+    ``run_multi_replay`` sets ``scored_repos: 0`` and ``composite_mean: 0.0`` when every repo
+    fails task generation; ``run_replay`` does the same via ``tasks: 0`` on single-repo runs.
+    Those outcomes are infra/transient, not the agent scoring zero.
+    """
+    if not isinstance(artifact, dict):
+        return False
+    scored = artifact.get("scored_repos")
+    if _is_number(scored) and not scored:
+        return True
+    tasks = artifact.get("tasks")
+    if _is_number(tasks) and not tasks and "scored_repos" not in artifact:
+        return True
+    return False
+
+
 def headline_score(artifact) -> float | None:
     """The single comparable score for an artifact, or ``None`` when unavailable.
 
@@ -44,10 +62,12 @@ def headline_score(artifact) -> float | None:
         # a transient/infra outcome, not the agent scoring zero, so treat it as unscored (None)
         # rather than letting --fail-on-regression raise a false alarm — mirroring the
         # scored_repos guard in scripts/run_eval.check_score_floor.
-        if not tuned.get("scored_repos"):
+        if aggregate_composite_unscored(tuned):
             return None
         score = tuned.get("composite_mean")
     else:
+        if aggregate_composite_unscored(artifact):
+            return None
         score = artifact.get("composite_mean")
     return round(float(score), 3) if _is_number(score) else None
 

@@ -239,6 +239,33 @@ def test_compare_eval_treats_unscored_multi_repo_placeholder_as_unavailable():
     assert diff["composite_mean"] == {"baseline": None, "candidate": 0.6, "delta": None}
 
 
+def test_compare_eval_treats_zero_task_per_repo_row_as_unavailable():
+    baseline = {
+        "composite_mean": 0.5,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo_path": "/a", "composite_mean": 0.4, "tasks": 2},
+            {"repo_path": "/b", "composite_mean": 0.0, "tasks": 0},
+        ],
+    }
+    candidate = {
+        "composite_mean": 0.6,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo_path": "/a", "composite_mean": 0.5, "tasks": 2},
+            {"repo_path": "/b", "composite_mean": 0.6, "tasks": 2},
+        ],
+    }
+    diff = compare_eval_artifacts(baseline, candidate)
+    by_repo = {row["repo"]: row for row in diff["per_repo"]}
+    assert by_repo["/a"]["composite_mean"]["delta"] == 0.1
+    assert by_repo["/b"]["composite_mean"] == {
+        "baseline": None,
+        "candidate": 0.6,
+        "delta": None,
+    }
+
+
 def test_mixed_shapes_fall_back_to_standard_without_crashing():
     # Only one side is generalization-shaped -> not treated as a generalization diff.
     diff = compare_eval_artifacts(_gen(), {"composite_mean": 0.6})

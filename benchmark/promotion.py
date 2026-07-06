@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.trend import aggregate_composite_unscored
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_COMPOSITE = 0.5
@@ -90,10 +92,15 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    completed = not result.get("error") and _is_number(composite)
+    completed = (
+        not result.get("error")
+        and _is_number(composite)
+        and not aggregate_composite_unscored(result)
+    )
     add("run_completed", completed,
         "run produced a scored composite" if completed
-        else f"no scored composite (error={result.get('error')!r}, composite={composite!r})")
+        else f"no scored composite (error={result.get('error')!r}, composite={composite!r}, "
+             f"scored_repos={result.get('scored_repos')!r}, tasks={result.get('tasks')!r})")
 
     floor_ok = _is_number(composite) and composite >= min_composite
     add("composite_floor", floor_ok,

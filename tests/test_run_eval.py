@@ -106,6 +106,15 @@ def test_check_score_floor_skips_unscored_generalization_partition():
     ) is None
 
 
+def test_check_score_floor_skips_unscored_multi_repo_placeholder():
+    result = {"composite_mean": 0.0, "scored_repos": 0, "repos": 2, "skipped": 2}
+    assert check_score_floor(result, 0.5) is None
+
+
+def test_check_score_floor_skips_single_repo_zero_tasks():
+    assert check_score_floor({"tasks": 0, "composite_mean": 0.0}, 0.5) is None
+
+
 # --- #573: non-list weight_sweep must not abort stderr reporting --------------------
 
 _MALFORMED_WEIGHT_SWEEP = [42, 3.14, True, {"w_judge": 0.6}, "not a list"]

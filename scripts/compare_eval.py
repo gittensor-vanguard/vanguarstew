@@ -9,6 +9,8 @@ import argparse
 import json
 import sys
 
+from benchmark.trend import aggregate_composite_unscored
+
 
 def _numeric(value) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -16,21 +18,23 @@ def _numeric(value) -> float | None:
     return None
 
 
-def _is_scored_unavailable(artifact: dict) -> bool:
-    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder."""
-    if not isinstance(artifact, dict):
-        return False
-    scored = artifact.get("scored_repos")
-    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
-
-
 def _effective_composite_mean(artifact: dict):
     """Partition or aggregate composite mean, or ``None`` when nothing was scored."""
     if not isinstance(artifact, dict):
         return None
-    if _is_scored_unavailable(artifact):
+    if aggregate_composite_unscored(artifact):
         return None
     return artifact.get("composite_mean")
+
+
+def _effective_repo_composite_mean(row: dict):
+    """Per-repo composite mean, or ``None`` when that repo produced no tasks."""
+    if not isinstance(row, dict):
+        return None
+    tasks = row.get("tasks")
+    if isinstance(tasks, (int, float)) and not isinstance(tasks, bool) and not tasks:
+        return None
+    return row.get("composite_mean")
 
 
 def _delta(candidate, baseline) -> float | None:
@@ -89,7 +93,14 @@ def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
             continue
         out.append({
             "repo": key,
-            "composite_mean": _metric_triplet(base_row, row, "composite_mean"),
+            "composite_mean": {
+                "baseline": _effective_repo_composite_mean(base_row),
+                "candidate": _effective_repo_composite_mean(row),
+                "delta": _delta(
+                    _effective_repo_composite_mean(row),
+                    _effective_repo_composite_mean(base_row),
+                ),
+            },
             "tasks": {
                 "baseline": base_row.get("tasks"),
                 "candidate": row.get("tasks"),

@@ -23,10 +23,15 @@ All notable changes to this project are documented here. The format is based on
   ``.vanguarstew_context.json`` is absent) now masks GitHub deep-links and raw commit SHAs
   in README/commit text, matching ``benchmark/leakage.strip_forward_refs`` — completing the
   remaining scope of #283 after #312 added ``#N`` masking only.
+- Tooling: propagate the unscored ``composite_mean`` placeholder guard through
+  ``benchmark/trend.py`` (``headline_score``), ``scripts/run_eval.py`` (``--fail-under``),
+  ``benchmark/promotion.py``, and ``scripts/compare_eval`` per-repo diffs — a multi-repo run
+  where every repo fails task generation (``scored_repos: 0``, placeholder ``0.0``) or a
+  single-repo run with ``tasks: 0`` is no longer treated as a real zero score by trend,
+  regression, promotion, or CI score floors.
 - Tooling: ``scripts/compare_eval`` no longer diffs a placeholder ``composite_mean`` of
   ``0.0`` on partitions or multi-repo runs with ``scored_repos: 0`` as if it were a real
-  score — the delta is ``None`` instead of a misleading ``+0.600``-style swing, mirroring
-  the unscored guard already used by ``benchmark/trend.py`` and ``benchmark/report.py``.
+  score — the delta is ``None`` instead of a misleading ``+0.600``-style swing.
 - Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
   and `releases` were read from only the first API page, so a repo with more than 100 of
   either silently dropped the rest — which can hide a milestone that was open at T or an

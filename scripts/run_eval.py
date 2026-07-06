@@ -17,6 +17,7 @@ from benchmark.runner import (
     run_replay,
     weight_sweep,
 )
+from benchmark.trend import aggregate_composite_unscored
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,8 @@ def check_score_floor(result: dict, fail_under: float | None) -> str | None:
             if score < fail_under:
                 return (f"score floor {fail_under}: {label} composite_mean "
                         f"{score:.3f} below threshold")
+        return None
+    if aggregate_composite_unscored(result):
         return None
     score = _numeric_score(result.get("composite_mean"))
     if score is None:

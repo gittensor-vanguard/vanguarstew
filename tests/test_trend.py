@@ -10,6 +10,7 @@ if ROOT not in sys.path:
 from benchmark.trend import (  # noqa: E402
     _trend_regressions,
     _trend_series,
+    aggregate_composite_unscored,
     headline_score,
     trend,
     trend_headline,
@@ -30,11 +31,21 @@ def _gen(tuned_score):
 
 def test_headline_score_reads_top_level_and_generalization_tuned():
     assert headline_score(_single(0.62)) == 0.62
-    assert headline_score({"per_repo": [], "composite_mean": 0.4}) == 0.4   # multi-repo
+    assert headline_score({"per_repo": [], "composite_mean": 0.4, "scored_repos": 2}) == 0.4
     assert headline_score(_gen(0.71)) == 0.71                               # tuned partition
     assert headline_score({"error": "no tasks"}) is None                    # no score
     assert headline_score("not a dict") is None                            # non-dict, no crash
     assert headline_score({"composite_mean": "bad"}) is None                # non-numeric
+
+
+def test_headline_score_treats_unscored_multi_repo_placeholder_as_unscored():
+    unscored = {"composite_mean": 0.0, "scored_repos": 0, "repos": 2, "skipped": 2}
+    assert headline_score(unscored) is None
+    assert aggregate_composite_unscored(unscored) is True
+
+
+def test_headline_score_treats_single_repo_zero_tasks_as_unscored():
+    assert headline_score({"tasks": 0, "composite_mean": 0.0}) is None
 
 
 def test_headline_score_treats_unscored_tuned_partition_as_unscored():
