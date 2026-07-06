@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -12,7 +13,7 @@ if ROOT not in sys.path:
 
 from benchmark.promotion import (  # noqa: E402
     DEFAULT_MIN_COMPOSITE,
-    _checks_list,
+    _check_rows_list,
     check_promotion,
     failed_checks,
     promotion_headline,
@@ -177,29 +178,133 @@ def test_cli_still_reports_promote_for_a_well_formed_artifact(tmp_path):
     assert json.loads(result.stdout)["passed"] is True
 
 
-# --- #578: non-list checks must not abort promotion headline formatting ---------------
+# --- #741: checks row sanitization for promotion headlines ---------------------------
 
-_MALFORMED_CHECKS = [42, 3.14, True, {"name": "run_completed"}, "not a list"]
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "run_completed"}, "not a list",
+    ({"name": "run_completed", "passed": False},),
+    range(2),
+]
 
 
-def test_promotion_checks_list_accepts_only_real_lists():
+def test_check_rows_list_accepts_only_real_lists():
     rows = [{"name": "run_completed", "passed": True}]
     for bad in _MALFORMED_CHECKS:
-        assert _checks_list(bad) == [], bad
-    assert _checks_list(rows) == rows
-    assert _checks_list(None) == []
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "run_completed", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "run_completed", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert _check_rows_list([{"name": "run_completed"}]) == []
+    assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_empty_dict(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert _check_rows_list([{}]) == []
+    assert any("missing required key(s)" in r.message for r in caplog.records)
 
 
 def test_promotion_headline_survives_non_list_checks():
     base = {"passed": False, "composite_mean": 0.5}
     for bad in _MALFORMED_CHECKS:
-        assert promotion_headline({**base, "checks": bad}) == "promotion: no checks evaluated", bad
+        assert promotion_headline({**base, "checks": bad}) == (
+            "promotion: no checks evaluated"
+        ), bad
+
+
+def test_promotion_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "run_completed"}],
+        [{}],
+    ):
+        assert promotion_headline({"checks": checks, "passed": False}) == (
+            "promotion: no checks evaluated"
+        )
+
+
+def test_promotion_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "run_completed", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        line = promotion_headline({"checks": checks, "passed": False})
+    assert line == "promotion: HOLD (1/1 checks failed: run_completed)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_promotion_headline_logs_warning_for_non_list_checks(caplog):
-    import logging
-
     with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
         line = promotion_headline({"checks": 42, "passed": False})
     assert line == "promotion: no checks evaluated"
     assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "run_completed"}],
+        [{}],
+        [42],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [
+        {"name": "run_completed", "passed": False},
+        42,
+        {"name": "composite_floor", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        assert failed_checks({"checks": checks}) == ["run_completed"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
