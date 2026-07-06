@@ -375,3 +375,17 @@ def test_qualified_pr_reference_is_still_authoritative_even_when_stale():
     stale = {"title": "PR #9: something unrelated", "kind": "triage",
              "rationale": "streaming export export export"}
     assert _matched_pr(stale, prs) is None
+
+
+def test_qualified_reference_wins_over_an_earlier_bare_ordinal():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    # A bare ordinal ("our #1 priority") in the title precedes a genuine "PR #7" reference in
+    # the rationale; the qualified reference must still win instead of the earlier bare match
+    # shadowing it.
+    item = {"title": "Address our #1 priority next", "kind": "feature",
+            "rationale": "See PR #7 for the same feature; ship it soon"}
+    assert _matched_pr(item, prs) == prs[0]
+
+    out = reconcile_plan_with_queue([item], {"open_prs": prs}, 5)
+    assert len(out) == 1                    # no duplicate "Review pull request #7" prepended
+    assert out[0]["restates_pr"] == 7

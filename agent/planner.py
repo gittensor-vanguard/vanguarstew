@@ -108,22 +108,27 @@ def _significant_tokens(text: str) -> set:
 
 
 def _pr_reference(*texts: str):
-    """Return ``(pr_number, qualified)`` for the first explicit PR reference in the texts.
+    """Return ``(pr_number, qualified)`` for the most authoritative PR reference in the texts.
 
     ``qualified`` is True for an unambiguous ``"PR #N"`` / ``"pull request N"`` phrasing, and
     False for a bare ``"#N"`` — which is frequently an ordinal ("the #1 requested feature",
     "our #7 priority") rather than a pull-request reference, so callers must content-validate a
-    bare match before trusting it. Returns ``(None, False)`` when no reference is present.
+    bare match before trusting it. A qualified match anywhere in the texts always wins, even if
+    a bare match appears earlier — otherwise an incidental ordinal ("our #1 priority") ahead of
+    a genuine "PR #7" reference in the same sentence would shadow it. Only when no qualified
+    match exists anywhere does the first bare match apply. Returns ``(None, False)`` when no
+    reference is present.
     """
+    bare = None
     for text in texts:
         if not text:
             continue
         for match in _PR_NUMBER.finditer(text):
-            if match.group(2):        # "PR #N" / "pull request N" — unambiguous
+            if match.group(2):        # "PR #N" / "pull request N" — unambiguous, always wins
                 return int(match.group(2)), True
-            if match.group(1):        # bare "#N" — could be an ordinal, not a PR reference
-                return int(match.group(1)), False
-    return None, False
+            if bare is None and match.group(1):  # bare "#N" — could be an ordinal
+                bare = int(match.group(1))
+    return (bare, False) if bare is not None else (None, False)
 
 
 def _explicit_pr_number(*texts: str) -> int | None:
