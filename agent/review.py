@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -24,21 +25,29 @@ VALUE_LABELS = ["mult:core-correctness", "mult:leakage-integrity", "mult:capabil
                 "mult:enhancement", "mult:maintenance", "mult:docs"]
 
 # Near-miss review verbs an LLM might answer with, mapped onto the canonical vocabulary.
+# Keys are in canonical separator form (see `_canon`): runs of spaces/hyphens/underscores
+# collapse to a single space, so one entry covers every separator spelling.
 _ACTION_SYNONYMS = {
-    "approve": "merge",
-    "approved": "merge",
-    "lgtm": "merge",
-    "request changes": "request-changes",
-    "request_changes": "request-changes",
-    "requested-changes": "request-changes",
-    "decline": "reject",
-    "deny": "reject",
-    "closed": "reject",
+    "approve": "merge", "approved": "merge", "accept": "merge", "accepted": "merge",
+    "lgtm": "merge", "looks good": "merge", "ship it": "merge",
+    "request change": "request-changes", "changes requested": "request-changes",
+    "needs changes": "request-changes", "needs work": "request-changes",
+    "decline": "reject", "declined": "reject", "deny": "reject", "denied": "reject",
+    "close": "reject", "closed": "reject",
+    "commented": "comment", "abstain": "comment", "no op": "comment", "hold": "comment",
 }
 
 
+def _canon(text: str) -> str:
+    """Canonical separator form: collapse any run of spaces/hyphens/underscores to a single
+    space and trim, so ``request-changes`` / ``request_changes`` / ``request  changes`` all
+    reduce to the same key."""
+    return re.sub(r"[\s_-]+", " ", text).strip()
+
+
 def _normalize_review_action(action) -> str:
-    """Map ``action`` onto ``ACTIONS``; unknown values fall back to ``comment``."""
+    """Map ``action`` onto ``ACTIONS`` (case-, whitespace- and separator-insensitive);
+    unknown values fall back to ``comment``. The return is always one of ``ACTIONS``."""
     if not isinstance(action, str):
         logger.warning(
             "review_pr: LLM returned a non-string action field (%s: %r); defaulting to 'comment'",
@@ -48,27 +57,28 @@ def _normalize_review_action(action) -> str:
     key = action.strip().lower()
     if key in ACTIONS:
         return key
-    return _ACTION_SYNONYMS.get(key, "comment")
+    canon = _canon(key)
+    hyphenated = canon.replace(" ", "-")   # "request changes" -> "request-changes" (a canonical action)
+    if hyphenated in ACTIONS:
+        return hyphenated
+    return _ACTION_SYNONYMS.get(canon, "comment")
 
 
 def _normalize_value_label(label) -> str:
-    """Map ``value_label`` onto ``VALUE_LABELS``; unknown values fall back to maintenance."""
+    """Map ``value_label`` onto ``VALUE_LABELS``, tolerating a missing ``mult:`` prefix and any
+    separator spelling of the tier (``core correctness`` / ``core_correctness`` ->
+    ``mult:core-correctness``); unknown values fall back to ``mult:maintenance``. The return is
+    always one of ``VALUE_LABELS``."""
     default = "mult:maintenance"
     if not isinstance(label, str):
         return default
-    raw = label.strip()
+    raw = label.strip().lower()
     if not raw:
         return default
-    lowered = raw.lower()
-    candidates = {lowered}
-    if not lowered.startswith("mult:"):
-        candidates.add(f"mult:{lowered}")
-    for tier in VALUE_LABELS:
-        if tier.lower() in candidates:
-            return tier
-        if lowered == tier.split(":", 1)[-1].lower():
-            return tier
-    return default
+    tier = raw[len("mult:"):] if raw.startswith("mult:") else raw
+    tier = re.sub(r"[\s_-]+", "-", tier).strip("-")   # normalize the tier's separators to hyphens
+    candidate = "mult:" + tier
+    return candidate if candidate in VALUE_LABELS else default
 
 
 def _normalize_bool(value, default: bool = False) -> bool:

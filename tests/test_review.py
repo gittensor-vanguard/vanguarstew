@@ -151,3 +151,57 @@ def test_review_pr_survives_non_string_action_field():
     assert rev["summary"] == "adds a missing guard"
     assert rev["concerns"] == ["needs a regression test"]
     assert rev["recommendation"] == "request changes until tests land"
+
+
+# --- Vocabulary hardening (completes #154): every plausible LLM phrasing maps to the
+#     canonical vocabulary — near-miss verbs, and any separator/whitespace/case spelling. ---
+
+def test_normalize_action_covers_the_full_synonym_set():
+    cases = {
+        "approve": "merge", "approved": "merge", "accept": "merge", "accepted": "merge",
+        "lgtm": "merge", "LGTM": "merge", "looks good": "merge", "ship it": "merge",
+        "decline": "reject", "declined": "reject", "deny": "reject", "denied": "reject",
+        "close": "reject", "closed": "reject",
+        "changes requested": "request-changes", "needs changes": "request-changes",
+        "needs work": "request-changes",
+        "abstain": "comment", "hold": "comment",
+        "frobnicate": "comment", "": "comment",   # unknown / empty -> safe fallback
+    }
+    for verb, expected in cases.items():
+        assert _normalize_review_action(verb) == expected, f"{verb!r} -> {_normalize_review_action(verb)!r}"
+
+
+def test_normalize_action_is_separator_and_case_insensitive():
+    # Every separator spelling of "request changes" resolves to the canonical action.
+    for spelling in ("request-changes", "request changes", "request_changes",
+                     "request  changes", "  Request-Changes  ", "request-change",
+                     "REQUEST CHANGES"):
+        assert _normalize_review_action(spelling) == "request-changes", spelling
+    # Canonical actions always pass through (any case).
+    for act in ACTIONS:
+        assert _normalize_review_action(act) == act
+        assert _normalize_review_action(act.upper()) == act
+
+
+def test_normalize_value_label_is_separator_insensitive():
+    # A space/underscore spelling of a tier must not silently fall back to maintenance.
+    for spelling in ("core-correctness", "core correctness", "core_correctness",
+                     "mult:core correctness", "  CORE  CORRECTNESS  ", "MULT:Core-Correctness"):
+        assert _normalize_value_label(spelling) == "mult:core-correctness", spelling
+    # Every tier round-trips from its canonical, bare, spaced, and underscored spellings.
+    for tier in VALUE_LABELS:
+        bare = tier.split(":", 1)[1]
+        assert _normalize_value_label(tier) == tier
+        assert _normalize_value_label(bare) == tier
+        assert _normalize_value_label(bare.replace("-", " ")) == tier
+        assert _normalize_value_label(bare.replace("-", "_")) == tier
+
+
+def test_review_normalizers_output_is_always_in_vocabulary():
+    # The contract: whatever a live model emits, action/value_label are always canonical.
+    junk = ["", "   ", "approve", "accept", "close", "yolo", ["merge"], {"x": 1}, 42, 4.2,
+            None, True, b"merge", "request  changes", "Reject", "\t\n"]
+    for x in junk:
+        assert _normalize_review_action(x) in ACTIONS, repr(x)
+    for x in junk + ["core correctness", "mult:not-real", "docs", "LEAKAGE_INTEGRITY"]:
+        assert _normalize_value_label(x) in VALUE_LABELS, repr(x)
