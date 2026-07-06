@@ -1,0 +1,693 @@
+{
+  "repo_set": "benchmark/repo_sets/curated.json",
+  "tuned": {
+    "repos": 3,
+    "scored_repos": 3,
+    "skipped": 0,
+    "composite_mean": 0.724,
+    "composite_parts": {
+      "judge_mean": 1.0,
+      "objective_mean": 0.31
+    },
+    "judge_order_stats": {
+      "agree": 9,
+      "disagree": 0,
+      "tie": 0,
+      "single": 0,
+      "offline": 0,
+      "dual_order_tasks": 9,
+      "disagreement_rate": 0.0
+    },
+    "judge_report": {
+      "wins": 9,
+      "losses": 0,
+      "ties": 0,
+      "dual_order_tasks": 9,
+      "disagreements": 0,
+      "disagreement_rate": 0.0,
+      "summary": "judge W-L-T 9-0-0; disagreement_rate=0.0% (0/9 dual-order tasks)"
+    },
+    "per_repo": [
+      {
+        "repo": "https://github.com/pypa/hatch",
+        "repo_name": "hatch",
+        "tier": "recent",
+        "held_out": false,
+        "freeze_window": {
+          "after": "2025-09-01",
+          "recent_bias": true,
+          "min_history": 40
+        },
+        "tasks": 3,
+        "baseline": "empty",
+        "tally": {
+          "challenger": 3,
+          "baseline": 0,
+          "tie": 0
+        },
+        "decisive_margin": 3,
+        "composite_mean": 0.787,
+        "composite_parts": {
+          "judge_mean": 1.0,
+          "objective_mean": 0.467
+        },
+        "weights": {
+          "judge": 0.6,
+          "objective": 0.4
+        },
+        "rows": [
+          {
+            "task": 0,
+            "freeze": "0497be09d5",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.115,
+            "objective": {
+              "module_recall": 0.333,
+              "actual_modules": [
+                "backend",
+                "docs",
+                "src"
+              ],
+              "matched_modules": [
+                "docs"
+              ],
+              "kind_recall": 1.0,
+              "actual_kinds": [
+                "docs",
+                "release"
+              ],
+              "matched_kinds": [
+                "docs",
+                "release"
+              ],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": true,
+              "release_predicted": true,
+              "release_match": true,
+              "bump_actual": "patch",
+              "bump_predicted": null,
+              "bump_match": false
+            },
+            "composite": 0.778
+          },
+          {
+            "task": 1,
+            "freeze": "37b00c3d22",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.078,
+            "objective": {
+              "module_recall": 0.333,
+              "actual_modules": [
+                "docs",
+                "src",
+                "tests"
+              ],
+              "matched_modules": [
+                "docs"
+              ],
+              "kind_recall": 0.5,
+              "actual_kinds": [
+                "docs",
+                "fix"
+              ],
+              "matched_kinds": [
+                "docs"
+              ],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.733
+          },
+          {
+            "task": 2,
+            "freeze": "cf85971057",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.1,
+            "objective": {
+              "module_recall": 0.25,
+              "actual_modules": [
+                "backend",
+                "docs",
+                "src",
+                "tests"
+              ],
+              "matched_modules": [
+                "docs"
+              ],
+              "kind_recall": 0.5,
+              "actual_kinds": [
+                "fix",
+                "release"
+              ],
+              "matched_kinds": [
+                "release"
+              ],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": true,
+              "release_predicted": true,
+              "release_match": true,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.85
+          }
+        ],
+        "judge_order_stats": {
+          "agree": 3,
+          "disagree": 0,
+          "tie": 0,
+          "single": 0,
+          "offline": 0,
+          "dual_order_tasks": 3,
+          "disagreement_rate": 0.0
+        },
+        "judge_report": {
+          "wins": 3,
+          "losses": 0,
+          "ties": 0,
+          "dual_order_tasks": 3,
+          "disagreements": 0,
+          "disagreement_rate": 0.0,
+          "summary": "judge W-L-T 3-0-0; disagreement_rate=0.0% (0/3 dual-order tasks)"
+        },
+        "offline": false,
+        "github_enriched": false,
+        "judge_dual_order": true
+      },
+      {
+        "repo": "https://github.com/pytest-dev/pluggy",
+        "repo_name": "pluggy",
+        "tier": "recent",
+        "held_out": false,
+        "freeze_window": {
+          "after": "2025-10-01",
+          "recent_bias": true,
+          "rotation_seed": 11
+        },
+        "tasks": 3,
+        "baseline": "empty",
+        "tally": {
+          "challenger": 3,
+          "baseline": 0,
+          "tie": 0
+        },
+        "decisive_margin": 3,
+        "composite_mean": 0.733,
+        "composite_parts": {
+          "judge_mean": 1.0,
+          "objective_mean": 0.333
+        },
+        "weights": {
+          "judge": 0.6,
+          "objective": 0.4
+        },
+        "rows": [
+          {
+            "task": 0,
+            "freeze": "5d7bd2cc08",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.081,
+            "objective": {
+              "module_recall": 0.0,
+              "actual_modules": [
+                ".github",
+                ".pre-commit-config"
+              ],
+              "matched_modules": [],
+              "kind_recall": 0.0,
+              "actual_kinds": [
+                "build"
+              ],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.6
+          },
+          {
+            "task": 1,
+            "freeze": "aa8d461452",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.07,
+            "objective": {
+              "module_recall": 0.5,
+              "actual_modules": [
+                ".github",
+                ".pre-commit-config",
+                "changelog",
+                "readme"
+              ],
+              "matched_modules": [
+                ".pre-commit-config",
+                "changelog"
+              ],
+              "kind_recall": 0.0,
+              "actual_kinds": [
+                "build"
+              ],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.8
+          },
+          {
+            "task": 2,
+            "freeze": "7fce99cb95",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.09,
+            "objective": {
+              "module_recall": 0.5,
+              "actual_modules": [
+                ".github",
+                ".pre-commit-config",
+                "changelog",
+                "readme"
+              ],
+              "matched_modules": [
+                ".pre-commit-config",
+                "changelog"
+              ],
+              "kind_recall": 0.0,
+              "actual_kinds": [
+                "build"
+              ],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.8
+          }
+        ],
+        "judge_order_stats": {
+          "agree": 3,
+          "disagree": 0,
+          "tie": 0,
+          "single": 0,
+          "offline": 0,
+          "dual_order_tasks": 3,
+          "disagreement_rate": 0.0
+        },
+        "judge_report": {
+          "wins": 3,
+          "losses": 0,
+          "ties": 0,
+          "dual_order_tasks": 3,
+          "disagreements": 0,
+          "disagreement_rate": 0.0,
+          "summary": "judge W-L-T 3-0-0; disagreement_rate=0.0% (0/3 dual-order tasks)"
+        },
+        "offline": false,
+        "github_enriched": false,
+        "judge_dual_order": true
+      },
+      {
+        "repo": "https://github.com/kurtmckee/feedparser",
+        "repo_name": "feedparser",
+        "tier": "obscure",
+        "held_out": false,
+        "freeze_window": {
+          "min_history": 35,
+          "rotation_seed": 5
+        },
+        "tasks": 3,
+        "baseline": "empty",
+        "tally": {
+          "challenger": 3,
+          "baseline": 0,
+          "tie": 0
+        },
+        "decisive_margin": 3,
+        "composite_mean": 0.652,
+        "composite_parts": {
+          "judge_mean": 1.0,
+          "objective_mean": 0.131
+        },
+        "weights": {
+          "judge": 0.6,
+          "objective": 0.4
+        },
+        "rows": [
+          {
+            "task": 0,
+            "freeze": "464622a7ce",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.048,
+            "objective": {
+              "module_recall": 0.0,
+              "actual_modules": [
+                "feedparser",
+                "www"
+              ],
+              "matched_modules": [],
+              "kind_recall": 0.0,
+              "actual_kinds": [],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": false,
+              "release_match": true,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.6
+          },
+          {
+            "task": 1,
+            "freeze": "d24f261dd1",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.028,
+            "objective": {
+              "module_recall": 0.25,
+              "actual_modules": [
+                "feedparser",
+                "license",
+                "news",
+                "readme"
+              ],
+              "matched_modules": [
+                "feedparser"
+              ],
+              "kind_recall": 0.0,
+              "actual_kinds": [],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.7
+          },
+          {
+            "task": 2,
+            "freeze": "f1dd1bb923",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.029,
+            "objective": {
+              "module_recall": 0.143,
+              "actual_modules": [
+                "contributors",
+                "docs",
+                "feedparser",
+                "news",
+                "setup",
+                "tests",
+                "tox"
+              ],
+              "matched_modules": [
+                "docs"
+              ],
+              "kind_recall": 0.0,
+              "actual_kinds": [],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.657
+          }
+        ],
+        "judge_order_stats": {
+          "agree": 3,
+          "disagree": 0,
+          "tie": 0,
+          "single": 0,
+          "offline": 0,
+          "dual_order_tasks": 3,
+          "disagreement_rate": 0.0
+        },
+        "judge_report": {
+          "wins": 3,
+          "losses": 0,
+          "ties": 0,
+          "dual_order_tasks": 3,
+          "disagreements": 0,
+          "disagreement_rate": 0.0,
+          "summary": "judge W-L-T 3-0-0; disagreement_rate=0.0% (0/3 dual-order tasks)"
+        },
+        "offline": false,
+        "github_enriched": false,
+        "judge_dual_order": true
+      }
+    ],
+    "repo_set": {
+      "path": "benchmark/repo_sets/curated.json",
+      "name": "curated",
+      "selection": "tuned"
+    }
+  },
+  "held_out": {
+    "repos": 2,
+    "scored_repos": 1,
+    "skipped": 1,
+    "composite_mean": 0.627,
+    "composite_parts": {
+      "judge_mean": 1.0,
+      "objective_mean": 0.067
+    },
+    "judge_order_stats": {
+      "agree": 3,
+      "disagree": 0,
+      "tie": 0,
+      "single": 0,
+      "offline": 0,
+      "dual_order_tasks": 3,
+      "disagreement_rate": 0.0
+    },
+    "judge_report": {
+      "wins": 3,
+      "losses": 0,
+      "ties": 0,
+      "dual_order_tasks": 3,
+      "disagreements": 0,
+      "disagreement_rate": 0.0,
+      "summary": "judge W-L-T 3-0-0; disagreement_rate=0.0% (0/3 dual-order tasks)"
+    },
+    "per_repo": [
+      {
+        "repo": "https://github.com/encode/httpx",
+        "repo_name": "httpx",
+        "tier": "recent",
+        "held_out": true,
+        "freeze_window": {
+          "after": "2025-11-01",
+          "before": "2026-05-01",
+          "recent_bias": true
+        },
+        "error": "no usable tasks (repo too small for horizon/min_history)",
+        "tasks": 0
+      },
+      {
+        "repo": "https://github.com/python-hyper/hpack",
+        "repo_name": "hpack",
+        "tier": "obscure",
+        "held_out": true,
+        "freeze_window": {
+          "min_history": 30,
+          "rotation_seed": 3
+        },
+        "tasks": 3,
+        "baseline": "empty",
+        "tally": {
+          "challenger": 3,
+          "baseline": 0,
+          "tie": 0
+        },
+        "decisive_margin": 3,
+        "composite_mean": 0.627,
+        "composite_parts": {
+          "judge_mean": 1.0,
+          "objective_mean": 0.067
+        },
+        "weights": {
+          "judge": 0.6,
+          "objective": 0.4
+        },
+        "rows": [
+          {
+            "task": 0,
+            "freeze": "62e1c324c8",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.07,
+            "objective": {
+              "module_recall": 0.2,
+              "actual_modules": [
+                ".travis",
+                "bench",
+                "setup",
+                "test_requirements",
+                "tox"
+              ],
+              "matched_modules": [
+                "test_requirements"
+              ],
+              "kind_recall": 0.0,
+              "actual_kinds": [],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.68
+          },
+          {
+            "task": 1,
+            "freeze": "b8c930a122",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.038,
+            "objective": {
+              "module_recall": 0.0,
+              "actual_modules": [
+                "test_requirements"
+              ],
+              "matched_modules": [],
+              "kind_recall": 0.0,
+              "actual_kinds": [],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.6
+          },
+          {
+            "task": 2,
+            "freeze": "497d531634",
+            "winner": "challenger",
+            "judge_order": "agree",
+            "overlap": 0.043,
+            "objective": {
+              "module_recall": 0.0,
+              "actual_modules": [
+                "test_requirements"
+              ],
+              "matched_modules": [],
+              "kind_recall": 0.0,
+              "actual_kinds": [],
+              "matched_kinds": [],
+              "backlog_recall": 0.0,
+              "addressed_issue_numbers": [],
+              "matched_issue_numbers": [],
+              "addressed_backlog_diagnostics": [],
+              "release_signaled": false,
+              "release_predicted": true,
+              "release_match": false,
+              "bump_actual": null,
+              "bump_predicted": null,
+              "bump_match": true
+            },
+            "composite": 0.6
+          }
+        ],
+        "judge_order_stats": {
+          "agree": 3,
+          "disagree": 0,
+          "tie": 0,
+          "single": 0,
+          "offline": 0,
+          "dual_order_tasks": 3,
+          "disagreement_rate": 0.0
+        },
+        "judge_report": {
+          "wins": 3,
+          "losses": 0,
+          "ties": 0,
+          "dual_order_tasks": 3,
+          "disagreements": 0,
+          "disagreement_rate": 0.0,
+          "summary": "judge W-L-T 3-0-0; disagreement_rate=0.0% (0/3 dual-order tasks)"
+        },
+        "offline": false,
+        "github_enriched": false,
+        "judge_dual_order": true
+      }
+    ],
+    "repo_set": {
+      "path": "benchmark/repo_sets/curated.json",
+      "name": "curated",
+      "selection": "held_out"
+    }
+  },
+  "generalization_gap": 0.097
+}
