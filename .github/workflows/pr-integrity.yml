@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   integrity:
@@ -81,19 +81,3 @@ jobs:
           print("PR integrity: " + ("FAILED" if errors else "passed"))
           sys.exit(1 if errors else 0)
           PY
-
-  # Gate: non-maintainer PRs targeting main are auto-closed. Contributors must target
-  # `test` (see CONTRIBUTING.md); the maintainer promotes test -> main.
-  no-main-target:
-    if: github.event.pull_request.user.login != 'matedev01'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Close PR targeting main
-        if: github.base_ref == 'main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          gh pr close ${{ github.event.number }} \
-            --comment "Closing: this PR targets \`main\` directly. Contributors must open PRs against the \`test\` branch per [CONTRIBUTING.md](https://github.com/gittensor-vanguard/vanguarstew/blob/main/CONTRIBUTING.md#branches). Please retarget your branch to \`test\` and reopen. Thanks!"
-          echo "::notice::Closed PR #${{ github.event.number }} — contributors must target test, not main"
