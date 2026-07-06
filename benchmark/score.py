@@ -93,6 +93,10 @@ def bump_level(old, new):
 
     Returns None when either side is missing or `new` is not a forward bump over `old`.
     """
+    if not isinstance(old, tuple) or not isinstance(new, tuple):
+        return None
+    if len(old) < 3 or len(new) < 3:
+        return None
     if not old or not new or new <= old:
         return None
     if new[0] != old[0]:
@@ -620,8 +624,10 @@ def composite_score(winner: str, objective: dict, w_judge: float = 0.6,
     """
     judged = _JUDGE_OUTCOME.get(winner, 0.5)
     anchored = objective_component(objective)
-    total = (w_judge + w_objective) or 1.0
-    return round((w_judge * judged + w_objective * anchored) / total, 3)
+    wj = w_judge if isinstance(w_judge, (int, float)) and not isinstance(w_judge, bool) else 0.6
+    wo = w_objective if isinstance(w_objective, (int, float)) and not isinstance(w_objective, bool) else 0.4
+    total = (wj + wo) or 1.0
+    return round((wj * judged + wo * anchored) / total, 3)
 
 
 def trajectory_overlap(plan, revealed) -> float:
