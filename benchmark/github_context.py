@@ -87,9 +87,11 @@ def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int
     ``title`` is copied live (present-day value): it may have been edited after T — an accepted
     residual limitation noted in the module's field-stability contract.
     """
-    as_of_t = _labels_at(
-        _issue_timeline(base, item.get("number"), token, timeout), until
-    )
+    events, truncated = _issue_timeline(base, item.get("number"), token, timeout)
+    # A truncated timeline can produce a label set that actively contradicts the true as-of-T
+    # membership, so fail closed exactly like the timeline-unavailable case: omit labels and
+    # report labels_as_of_t=False rather than trusting a partial (possibly wrong) reconstruction.
+    as_of_t = None if truncated else _labels_at(events, until)
     return {
         "number": item.get("number"),
         "title": item.get("title"),
@@ -181,11 +183,18 @@ def _labels_at(events, until: datetime):
 
 
 def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
-    """Fetch an issue/PR's timeline events (paginated). Returns ``[]`` on any error,
-    so label reconstruction degrades to the safe omit-labels fallback offline."""
+    """Fetch an issue/PR's timeline events (paginated).
+
+    Returns ``(events, truncated)``. ``truncated`` is True when the page cap is hit with a
+    full final page — more events may exist before T than were fetched, so a label
+    reconstruction from ``events`` could be *confidently wrong* (a later ``unlabeled`` beyond
+    the cap never gets applied) and the caller must not trust it. Returns ``([], False)`` on
+    any error or missing number, so reconstruction degrades to the safe omit-labels fallback.
+    """
     if number is None:
-        return []
+        return [], False
     events = []
+    truncated = False
     for page in range(1, max_pages + 1):
         try:
             batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
@@ -197,7 +206,9 @@ def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
         events.extend(batch)
         if len(batch) < 100:
             break
-    return events
+        if page == max_pages:
+            truncated = True      # full final page at the cap: more events may remain before T
+    return events, truncated
 
 
 def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages: int):

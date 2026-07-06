@@ -411,3 +411,54 @@ def test_list_pagination_respects_page_cap(monkeypatch):
     monkeypatch.setattr(gc, "_get", _list_pager({"/releases": {1: full, 2: full, 3: full}}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
     assert len(ctx["releases"]) == 200  # bounded at the cap, never an unbounded loop
+
+
+# --- #345: a truncated timeline must fail closed, not report a partial (wrong) label set ----
+
+def test_issue_timeline_signals_truncation(monkeypatch):
+    # Full pages up to the cap -> truncated (more events may remain before T).
+    def full_get(url, token, timeout=20):
+        return [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 100
+    monkeypatch.setattr(gc, "_get", full_get)
+    events, truncated = gc._issue_timeline("base", 1, None, 20, max_pages=3)
+    assert truncated is True and len(events) == 300
+
+    # A short final page means history is exhausted -> not truncated.
+    def short_get(url, token, timeout=20):
+        return [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 10
+    monkeypatch.setattr(gc, "_get", short_get)
+    events, truncated = gc._issue_timeline("base", 1, None, 20, max_pages=3)
+    assert truncated is False and len(events) == 10
+
+    # An error or missing number degrades to the safe ([], False) fallback.
+    def err_get(url, token, timeout=20):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(gc, "_get", err_get)
+    assert gc._issue_timeline("base", 1, None, 20) == ([], False)
+    assert gc._issue_timeline("base", None, None, 20) == ([], False)
+
+
+def test_open_issue_labels_omitted_when_timeline_truncated(monkeypatch):
+    # A timeline that hits the page cap (5 full pages) may be missing a later `unlabeled`
+    # event before T, so the partial reconstruction could be confidently WRONG. Fail closed
+    # (omit labels), not report a partial set as authoritative (#345).
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "shipped"}]}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            # every page is full (100) -> the loop runs to the cap -> truncated.
+            batch = [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 100
+            # a `labeled` event that would look "stuck" if the partial set were trusted
+            batch[0] = {"event": "labeled", "created_at": "2023-01-02T00:00:00Z",
+                        "label": {"name": "bug"}}
+            return batch
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == []              # fail-closed on truncation
+    assert iss["labels_as_of_t"] is False   # not a confident (possibly wrong) result
