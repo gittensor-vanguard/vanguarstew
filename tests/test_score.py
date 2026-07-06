@@ -296,6 +296,18 @@ def test_bump_actual_ignores_version_in_non_release_commit():
     assert objective_score([], dep_only, base_version="v1.2.0")["bump_actual"] is None
 
 
+def test_released_version_uses_release_token_not_earlier_incidental_semver():
+    revealed = [{"subject": "Support Python 3.11, release 1.4.0", "files": ["CHANGELOG.md"]}]
+    assert is_release_subject(revealed[0]["subject"]) is True
+    assert release_signaled(revealed) is True
+    assert objective_score(
+        [{"title": "cut release", "kind": "release"}],
+        revealed,
+        version_bump="minor",
+        base_version="v1.3.0",
+    )["bump_actual"] == "minor"
+
+
 def test_commit_kind_conventional_prefixes():
     assert commit_kind("feat: add plugin loader") == "feat"
     assert commit_kind("Fix(core): guard nil deref") == "fix"

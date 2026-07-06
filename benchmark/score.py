@@ -42,10 +42,16 @@ def parse_semver(text: str):
     return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
 
 
-def _latest_semver(texts) -> tuple | None:
-    """Highest semver found across an iterable of strings (None if none parse)."""
-    versions = [v for v in (parse_semver(t) for t in texts) if v is not None]
-    return max(versions) if versions else None
+def _release_semver(text: str):
+    """Parse the semver that belongs to a genuine release subject, not incidental text."""
+    s = text or ""
+    tag = _RELEASE_TAG_SUBJECT.match(s)
+    if tag:
+        return parse_semver(tag.group(0))
+    kw = _RELEASE_KW.search(s)
+    if not kw:
+        return None
+    return parse_semver(s[kw.end():])
 
 
 def bump_level(old, new):
@@ -78,12 +84,14 @@ def released_version(revealed) -> tuple | None:
     incidental version in a non-release commit (e.g. `bump dep to v9.9.9`, `fix crash in
     v1.2.0 parser`) can't produce a spurious `bump_actual`.
     """
-    subjects = []
+    versions = []
     for r in revealed or []:
         subj = r.get("subject", "") or ""
         if is_release_subject(subj):
-            subjects.append(subj)
-    return _latest_semver(subjects)
+            ver = _release_semver(subj)
+            if ver is not None:
+                versions.append(ver)
+    return max(versions) if versions else None
 
 
 def base_from_releases(releases) -> str | None:
