@@ -275,3 +275,38 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
     if repo_set_meta is not None:
         result["repo_set"] = repo_set_meta
     return result
+
+
+def run_generalization_report(repo_set, **kwargs) -> dict:
+    """Replay a repo set's tuned and held-out slices and report the generalization gap (M3).
+
+    `run_multi_replay` scores one partition at a time; this runs both the `tuned` and
+    `held_out` partitions and contrasts them in a single call. `generalization_gap` is the
+    tuned composite mean minus the held-out composite mean — positive means the agent does
+    worse on repos it was never tuned against. That gap is the M3 acceptance signal: held-out
+    performance should not collapse relative to tuned. It is None unless BOTH partitions
+    actually scored a repo, so it is never reported from a single side; a partition the config
+    does not define (no tuned, or no held-out, repos) is recorded with its error rather than
+    aborting the whole report.
+
+    Deterministic given a fixed `seed` (threaded through both partition runs).
+    """
+    def _partition(which):
+        try:
+            return run_multi_replay(repo_set=repo_set, repo_set_partition=which, **kwargs)
+        except RepoSetError as exc:
+            return {"error": str(exc), "scored_repos": 0, "composite_mean": 0.0}
+
+    tuned = _partition("tuned")
+    held_out = _partition("held_out")
+
+    gap = None
+    if tuned.get("scored_repos") and held_out.get("scored_repos"):
+        gap = round(tuned["composite_mean"] - held_out["composite_mean"], 3)
+
+    return {
+        "repo_set": repo_set,
+        "tuned": tuned,
+        "held_out": held_out,
+        "generalization_gap": gap,
+    }

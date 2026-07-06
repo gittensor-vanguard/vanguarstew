@@ -10,7 +10,7 @@ import json
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
-from benchmark.runner import run_multi_replay, run_replay
+from benchmark.runner import run_generalization_report, run_multi_replay, run_replay
 
 
 def write_result_artifact(path: str, result: dict) -> None:
@@ -68,9 +68,16 @@ def main() -> None:
                          "(cheaper, but no position-swap consistency check)")
     ap.add_argument("--held-out", action="store_true",
                     help="with --repo-set, replay the held-out slice instead of tuned repos")
+    ap.add_argument("--generalization", action="store_true",
+                    help="with --repo-set, replay BOTH the tuned and held-out partitions and "
+                         "report the generalization gap (tuned minus held-out composite mean)")
     args = ap.parse_args()
     if args.held_out and not args.repo_set:
         ap.error("--held-out requires --repo-set")
+    if args.generalization and not args.repo_set:
+        ap.error("--generalization requires --repo-set")
+    if args.generalization and args.held_out:
+        ap.error("--generalization already runs both partitions; do not combine it with --held-out")
 
     common = dict(
         agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
@@ -80,7 +87,9 @@ def main() -> None:
         w_judge=args.w_judge, w_objective=args.w_objective,
         dual_order_judge=not args.single_order_judge,
     )
-    if args.repo_set:
+    if args.repo_set and args.generalization:
+        result = run_generalization_report(args.repo_set, **common)
+    elif args.repo_set:
         partition = "held_out" if args.held_out and args.repo_set_partition == "tuned" else args.repo_set_partition
         result = run_multi_replay(repo_set=args.repo_set, repo_set_partition=partition, **common)
     elif args.repos:
