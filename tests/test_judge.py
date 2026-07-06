@@ -308,3 +308,23 @@ def test_offline_rank_tolerates_non_list_plan_container():
         "rationale": "because",
     })
     assert good[0] > 0
+
+
+def test_offline_rank_tolerates_non_string_top_level_rationale():
+    # The submission's own top-level rationale, not a plan item's - a distinct field/call site.
+    for bad in (["not", "a", "string"], {"why": "x"}, 7, 4.2, True, b"bytes"):
+        ranked = _offline_rank({"philosophy": {}, "plan": [], "rationale": bad})
+        assert ranked[-1] == 0   # a non-string rationale counts as absent, not present
+    present = _offline_rank({"philosophy": {}, "plan": [], "rationale": "sound reasoning"})
+    assert present[-1] == 1
+
+
+def test_judge_verbose_survives_non_string_top_level_rationale():
+    strong = {"philosophy": {"summary": "ship fixes"},
+              "plan": [{"title": "add retry to loader", "kind": "fix"}],
+              "rationale": "because it prevents data loss"}
+    malformed = {"philosophy": {}, "plan": [], "rationale": ["not", "a", "string"]}
+    llm = LLM(api_key="offline")
+    winner, order = judge_verbose({}, strong, malformed, [], llm)
+    assert winner == "A"
+    assert order == "offline"
