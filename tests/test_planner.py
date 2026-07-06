@@ -441,6 +441,25 @@ def test_bare_hash_still_matches_when_item_reads_as_review():
     prs = [{"number": 7, "title": "Add streaming export"}]
     assert _matched_pr({"title": "Review #7 before the release", "kind": "triage"}, prs) == prs[0]
     assert _matched_pr({"title": "Merge #7 once CI is green", "kind": "triage"}, prs) == prs[0]
+    # A review verb governing the ref across connective words still matches.
+    assert _matched_pr({"title": "Review and merge #7", "kind": "triage"}, prs) == prs[0]
+    assert _matched_pr({"title": "Review the #7 today", "kind": "triage"}, prs) == prs[0]
+
+
+def test_non_governing_review_word_does_not_hijack_a_bare_ordinal():
+    # Regression: a review word that merely appears in a feature description ("code review
+    # workflow") must not turn an unrelated bare ordinal ("#2 on our roadmap") into a reference
+    # to PR #2 — which would drop the open PR from the plan by marking it "addressed".
+    prs = [{"number": 2, "title": "Add OAuth login support"}]
+    item = {"title": "Improve the code review workflow, #2 on our roadmap", "kind": "feature",
+            "rationale": "developer experience"}
+    assert _matched_pr(item, prs) is None
+    out = reconcile_plan_with_queue([dict(item)], {"open_prs": prs}, 5)
+    # PR #2 is not treated as addressed, so the deterministic review-queue guard is prepended.
+    assert any(i.get("restates_pr") == 2 for i in out)
+    workflow = [i for i in out if "workflow" in i["title"]][0]
+    assert workflow["kind"] == "feature"          # the unrelated item is not downgraded
+    assert "restates_pr" not in workflow
 
 
 def test_bare_hash_still_matches_when_content_overlaps_the_pr():
