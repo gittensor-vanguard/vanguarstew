@@ -53,6 +53,47 @@ FEWSHOT = (
 )
 
 
+def _normalize_text(value, default: str = "") -> str:
+    """Coerce a philosophy text field to a string."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _normalize_string_list(value) -> list:
+    """Coerce a philosophy list field to ``list[str]``."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        item = value.strip()
+        return [item] if item else []
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            if item is None:
+                continue
+            text = str(item).strip()
+            if text:
+                out.append(text)
+        return out
+    return []
+
+
+def _normalize_philosophy(out: dict, stub: dict) -> dict:
+    """Map an LLM philosophy object onto the documented field types."""
+    if not isinstance(out, dict):
+        return dict(stub)
+    return {
+        "summary": _normalize_text(out.get("summary"), stub["summary"]),
+        "values": _normalize_string_list(out.get("values")),
+        "merge_bar": _normalize_text(out.get("merge_bar"), stub["merge_bar"]),
+        "direction": _normalize_text(out.get("direction"), stub["direction"]),
+        "evidence": _normalize_string_list(out.get("evidence")),
+    }
+
+
 def infer_philosophy(context: dict, llm) -> dict:
     user = (
         "Infer the maintainer philosophy from this repository state.\n\n"
@@ -76,9 +117,7 @@ def infer_philosophy(context: dict, llm) -> dict:
         "evidence": [],
     }
     out = llm.chat_json(SYSTEM, user, stub=stub)
-    if not isinstance(out, dict):
-        out = dict(stub)
-    return out
+    return _normalize_philosophy(out, stub)
 
 
 def _render(context: dict) -> str:

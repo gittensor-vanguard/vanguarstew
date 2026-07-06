@@ -14,7 +14,13 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
-from agent.philosophy import FEWSHOT, infer_philosophy  # noqa: E402
+from agent.philosophy import (  # noqa: E402
+    FEWSHOT,
+    _normalize_philosophy,
+    _normalize_string_list,
+    _normalize_text,
+    infer_philosophy,
+)
 
 EXPECTED_KEYS = {"summary", "values", "merge_bar", "direction", "evidence"}
 
@@ -54,3 +60,61 @@ def test_infer_philosophy_coerces_non_dict_response_to_stub():
     out = infer_philosophy({"recent_commits": [{"subject": "init"}]}, _ListLLM())
     assert isinstance(out, dict)
     assert EXPECTED_KEYS <= set(out)
+
+
+def test_normalize_text_coerces_scalars():
+    assert _normalize_text(None, "fallback") == "fallback"
+    assert _normalize_text("ship fixes", "fallback") == "ship fixes"
+    assert _normalize_text(42, "fallback") == "42"
+
+
+def test_normalize_string_list_coerces_to_string_list():
+    assert _normalize_string_list(None) == []
+    assert _normalize_string_list("conservative") == ["conservative"]
+    assert _normalize_string_list(["a", "", None, 7]) == ["a", "7"]
+    assert _normalize_string_list({"bad": True}) == []
+
+
+def test_normalize_philosophy_maps_malformed_fields():
+    stub = {
+        "summary": "offline stub philosophy",
+        "values": [],
+        "merge_bar": "unknown (offline)",
+        "direction": "unknown (offline)",
+        "evidence": [],
+    }
+    out = _normalize_philosophy({
+        "summary": None,
+        "values": "feature-first",
+        "merge_bar": 123,
+        "direction": None,
+        "evidence": None,
+    }, stub)
+    assert out["summary"] == "offline stub philosophy"
+    assert out["values"] == ["feature-first"]
+    assert out["merge_bar"] == "123"
+    assert out["direction"] == "unknown (offline)"
+    assert out["evidence"] == []
+
+
+class _MalformedPhilosophyLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return {
+            "summary": None,
+            "values": "conservative",
+            "merge_bar": "high bar",
+            "direction": 99,
+            "evidence": "recent refactors",
+        }
+
+
+def test_infer_philosophy_normalizes_malformed_field_types():
+    out = infer_philosophy({"recent_commits": [{"subject": "init"}]}, _MalformedPhilosophyLLM())
+    assert isinstance(out["summary"], str)
+    assert isinstance(out["values"], list)
+    assert isinstance(out["evidence"], list)
+    assert out["values"] == ["conservative"]
+    assert out["direction"] == "99"
+    assert out["evidence"] == ["recent refactors"]
