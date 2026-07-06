@@ -27,6 +27,36 @@ def test_extract_json():
     assert extract_json('noise {"x": [1, 2]} trailing') == {"x": [1, 2]}
 
 
+def test_extract_json_multiple_bracket_spans_prefers_longest():
+    text = 'first [1] then [2, 3] and finally [4, 5, 6]'
+    assert extract_json(text) == [4, 5, 6]
+
+
+def test_extract_json_multiple_objects_prefers_longest():
+    text = 'thought {"a": 1} revised: {"a": 1, "b": 2, "c": 3}'
+    assert extract_json(text) == {"a": 1, "b": 2, "c": 3}
+
+
+def test_extract_json_nested_object():
+    text = 'prefix {"a": {"b": [1, 2, 3]}, "c": true} suffix'
+    assert extract_json(text) == {"a": {"b": [1, 2, 3]}, "c": True}
+
+
+def test_extract_json_prefers_object_over_leading_citation():
+    text = '[1] the agent decided: {"decision": "approve", "confidence": 0.9}'
+    assert extract_json(text) == {"decision": "approve", "confidence": 0.9}
+
+
+def test_extract_json_invalid_citation_is_skipped():
+    text = 'see [Doe, 2020] for background — result: {"ok": true}'
+    assert extract_json(text) == {"ok": True}
+
+
+def test_extract_json_raises_when_no_valid_candidate():
+    with pytest.raises(ValueError):
+        extract_json('no json here at all, just [Doe, 2020] prose')
+
+
 def test_solve_offline_returns_decision():
     d = tempfile.mkdtemp()
     try:
