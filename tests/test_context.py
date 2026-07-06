@@ -129,6 +129,18 @@ def test_context_for_agent_keeps_reconstructed_labels():
     assert out["open_issues"][0]["labels_as_of_t"] is True
 
 
+def test_context_for_agent_clears_backlog_when_issues_truncated():
+    ctx = {
+        "_issues_truncated": True,
+        "open_issues": [{"number": 1, "title": "partial backlog", "labels_as_of_t": True}],
+        "open_prs": [{"number": 2, "title": "partial pr", "labels_as_of_t": True}],
+    }
+    out = context_for_agent(ctx)
+    assert out["_issues_truncated"] is True
+    assert out["open_issues"] == []
+    assert out["open_prs"] == []
+
+
 def test_prompt_renderers_do_not_serialize_unknown_labels_as_empty_history():
     ctx = {
         "frozen_at": {"commit": "abc"},

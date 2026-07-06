@@ -300,6 +300,10 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
 
     open_issues, open_prs, truncated = _collect_open_at(base, until, token, timeout,
                                                         max_issue_pages)
+    if truncated:
+        # Pagination hit the cap before history was exhausted — a partial backlog would
+        # violate the knowable-at-T contract (specs/003-leakage-integrity, #670).
+        open_issues, open_prs = [], []
 
     milestones = []
     for m in _get_all(f"{base}/milestones?state=all&per_page={per_page}", token, timeout,
@@ -375,3 +379,16 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
         merged = dict(context)
         merged["_github_error"] = str(exc)[:200]
         return merged
+
+
+def open_issues_from_context(context: dict):
+    """Return open issues for backlog scoring, or ``None`` when pagination was incomplete.
+
+    A partial issue backlog at T would produce misleading ``backlog_recall``; skip backlog
+    scoring when ``_issues_truncated`` is set (same effect as an unavailable backlog).
+    """
+    if not isinstance(context, dict):
+        return None
+    if context.get("_issues_truncated"):
+        return None
+    return context.get("open_issues")
