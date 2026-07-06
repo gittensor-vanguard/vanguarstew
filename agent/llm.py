@@ -28,7 +28,13 @@ class LLM:
         )
 
     def chat(self, system: str, user: str) -> str:
-        """Single-turn completion at temperature 0. Raises on transport error."""
+        """Single-turn completion at temperature 0.
+
+        Raises on transport error. Also raises ``ValueError`` when the endpoint returns a
+        response that is not a well-formed chat-completion envelope (e.g. an HTTP-200 error
+        body like ``{"error": ...}``, an empty ``{}``, or a bare list), so a caller that
+        supplies a stub (``chat_json``) can fall back instead of crashing the agent.
+        """
         if self.offline:
             return json.dumps({"_offline": True})
         payload = {
@@ -50,22 +56,27 @@ class LLM:
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
-        return body["choices"][0]["message"]["content"]
+        try:
+            return body["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(
+                f"unexpected chat-completion response envelope: {str(body)[:200]!r}"
+            ) from exc
 
     def chat_json(self, system: str, user: str, stub=None):
         """Completion parsed as JSON, with `stub` as the fallback.
 
         Returns `stub` verbatim in offline mode. For a live call, returns the parsed JSON —
-        but when the response can't be parsed as JSON, falls back to `stub` instead of
-        raising, so malformed model output does not crash the agent (M4: no agent crashes
-        from malformed LLM output). Callers already treat the stub shape as "the model gave
-        us nothing usable". Transport errors from `chat` still propagate.
+        but when the response can't be parsed as JSON, *or* the endpoint returns a malformed
+        (non-chat-completion) envelope, falls back to `stub` instead of raising, so malformed
+        model output does not crash the agent (M4: no agent crashes from malformed LLM
+        output). Callers already treat the stub shape as "the model gave us nothing usable".
+        Transport errors from `chat` (`URLError`/`HTTPError`/`OSError`) still propagate.
         """
         if self.offline:
             return stub if stub is not None else {}
-        raw = self.chat(system, user)
         try:
-            return extract_json(raw)
+            return extract_json(self.chat(system, user))
         except (ValueError, TypeError):
             return stub if stub is not None else {}
 
