@@ -219,3 +219,75 @@ def test_export_tree_applies_uniform_policy_to_git_archive():
     finally:
         shutil.rmtree(repo, ignore_errors=True)
         shutil.rmtree(dest, ignore_errors=True)
+
+
+def _commit(repo: str, name: str, date_iso: str, message: str) -> None:
+    """One commit dated `date_iso` (both author and committer), no tag."""
+    with open(os.path.join(repo, name), "w", encoding="utf-8") as f:
+        f.write(f"{message}\n")
+    env = os.environ.copy()
+    env.update({"GIT_AUTHOR_DATE": date_iso, "GIT_COMMITTER_DATE": date_iso})
+    _git(repo, "add", "-A", env=env)
+    _git(repo, "commit", "-q", "-m", message, env=env)
+
+
+def _annotated_tag(repo: str, tag: str, target: str, date_iso: str) -> None:
+    """An annotated tag on `target` whose tagger (creator) date is `date_iso`."""
+    env = os.environ.copy()
+    env.update({"GIT_COMMITTER_DATE": date_iso, "GIT_AUTHOR_DATE": date_iso})
+    _git(repo, "tag", "-a", tag, target, "-m", tag, env=env)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_build_context_excludes_tags_created_after_freeze_time():
+    # `git tag --merged T` returns tags whose target commit is *reachable* from T, regardless
+    # of when the tag was created. An annotated tag cut after T from a commit present at T
+    # (a retroactive / backport release tag) is reachable and would otherwise leak a future
+    # release into the knowable-at-T context (#245). build_context must exclude it by
+    # creator date while keeping tags created at or before T.
+    repo = tempfile.mkdtemp()
+    try:
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+
+        # c1 is the freeze commit T (2024-01-01); c2 comes after and is NOT reachable from c1.
+        _commit(repo, "a.txt", "2024-01-01T12:00:00+00:00", "c1")
+        c1 = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"],
+                            capture_output=True, text=True).stdout.strip()
+        _commit(repo, "b.txt", "2024-06-01T12:00:00+00:00", "c2")
+
+        # v1.0.0: a real release cut at T, on c1. Kept.
+        _annotated_tag(repo, "v1.0.0", c1, "2024-01-01T12:00:00+00:00")
+        # v2.0.0: cut later, on the later commit c2 — unreachable from c1, so --merged already
+        # drops it (guards that the date filter isn't the only thing excluding it).
+        _annotated_tag(repo, "v2.0.0", "HEAD", "2024-06-01T12:00:00+00:00")
+        # vFUTURE: created in 2026 but pointed back at c1 (reachable from T) — the leak.
+        _annotated_tag(repo, "vFUTURE", c1, "2026-06-01T12:00:00+00:00")
+
+        releases = [r["tag"] for r in build_context(repo, c1)["releases"]]
+        assert releases == ["v1.0.0"], releases
+        assert "vFUTURE" not in releases   # future tag on a present commit is filtered out
+        assert "v2.0.0" not in releases    # future tag on a future commit stays unreachable
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_build_context_keeps_lightweight_tags_at_or_before_freeze():
+    # A lightweight tag reports its target commit's date as its creatordate; for a reachable
+    # commit that date is <= T, so the date filter must never wrongly drop it (documented
+    # limitation: a lightweight tag's true creation time can't be recovered).
+    repo = tempfile.mkdtemp()
+    try:
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+
+        for seq, tag in enumerate(("v0.1.0", "v0.2.0"), start=1):
+            _commit_and_tag(repo, seq, tag)  # lightweight tags, dated 2024-01-0{seq}
+
+        releases = [r["tag"] for r in build_context(repo, "HEAD")["releases"]]
+        assert releases == ["v0.1.0", "v0.2.0"], releases
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
