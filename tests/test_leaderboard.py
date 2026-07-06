@@ -8,7 +8,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.leaderboard import _components, leaderboard_headline, rank  # noqa: E402
+from benchmark.leaderboard import (  # noqa: E402
+    _components,
+    _leaderboard_entries,
+    leaderboard_headline,
+    rank,
+)
 
 
 def _single(score, judge=None, objective=None):
@@ -76,6 +81,34 @@ def test_rank_empty_and_all_unscored():
     allbad = rank([("a", {"error": "x"}), ("b", 123)])
     assert allbad["scored"] == 0 and allbad["best"] is None
     assert set(allbad["unscored"]) == {"a", "b"}
+
+
+# --- #532: a non-list entries container must not abort rank -------------------------
+
+_MALFORMED_ENTRIES = [42, 3.14, True, {"label": "A"}, "not a list"]
+
+
+def test_leaderboard_entries_accepts_only_real_lists():
+    rows = [("A", {"composite_mean": 0.5})]
+    for bad in _MALFORMED_ENTRIES:
+        assert _leaderboard_entries(bad) == [], bad
+    assert _leaderboard_entries(rows) == rows
+    assert _leaderboard_entries(None) == []
+
+
+def test_rank_survives_non_list_entries():
+    for bad in _MALFORMED_ENTRIES:
+        out = rank(bad)
+        assert out["best"] is None and out["ranking"] == [] and out["scored"] == 0, bad
+
+
+def test_rank_logs_warning_for_non_list_entries(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.leaderboard"):
+        out = rank(42)
+    assert out["scored"] == 0
+    assert any("entries is int" in r.message for r in caplog.records)
 
 
 def test_leaderboard_headline_names_the_leader_and_counts():
