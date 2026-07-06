@@ -23,6 +23,7 @@ from agent.planner import (  # noqa: E402
     _plan_list,
     _pr_queue_note,
     _pr_title,
+    _significant_tokens,
     plan_next_actions,
     reconcile_plan_with_queue,
 )
@@ -489,3 +490,8 @@ def test_plan_next_actions_handles_non_dict_context():
     llm = LLM(api_key='offline')
     assert isinstance(plan_next_actions(None, {}, 3, llm), list)
     assert isinstance(plan_next_actions(42, {}, 3, llm), list)
+
+def test_significant_tokens_handles_non_string():
+    assert _significant_tokens(None) == set()
+    assert _significant_tokens(42) == set()
+    assert isinstance(_significant_tokens(["list"]), set)

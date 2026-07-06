@@ -18,9 +18,12 @@ Pure analysis: no I/O, never mutates its inputs, and an artifact with no usable 
 
 from __future__ import annotations
 
+import logging
 from statistics import mean, pstdev
 
 from benchmark.trend import headline_score
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CV = 0.05
 DEFAULT_MIN_RUNS = 2
@@ -28,6 +31,22 @@ DEFAULT_MIN_RUNS = 2
 
 def _round(value):
     return round(float(value), 3) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _repeatability_artifacts(artifacts) -> list:
+    """Return ``artifacts`` when it is a list; otherwise treat as no repeat runs.
+
+    A truthy non-list must not reach ``for a in artifacts`` or malformed CLI /
+    saved-artifact input aborts repeatability gating.
+    """
+    if isinstance(artifacts, list):
+        return artifacts
+    if artifacts is not None:
+        logger.warning(
+            "repeatability: artifacts is %s, not a list; treating as empty",
+            type(artifacts).__name__,
+        )
+    return []
 
 
 def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
@@ -46,7 +65,10 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
       number ``<= max_cv``;
     - ``reason``: a short explanation when ``stable`` is False.
     """
-    scores = [s for s in (headline_score(a) for a in artifacts or []) if s is not None]
+    scores = [
+        s for s in (headline_score(a) for a in _repeatability_artifacts(artifacts))
+        if s is not None
+    ]
     runs = len(scores)
     result = {
         "stable": False,

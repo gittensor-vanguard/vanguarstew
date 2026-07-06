@@ -114,6 +114,8 @@ def _pr_queue(context: dict) -> list:
 
 
 def _significant_tokens(text: str) -> set:
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
     return {
         t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
         if len(t) > 2 and t not in _STOPWORDS
