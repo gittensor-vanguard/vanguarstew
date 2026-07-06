@@ -17,7 +17,6 @@ from benchmark.runner import (
     run_replay,
     weight_sweep,
 )
-from benchmark.trend import headline_score
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +63,8 @@ def check_score_floor(result: dict, fail_under: float | None) -> str | None:
                 return (f"score floor {fail_under}: {label} composite_mean "
                         f"{score:.3f} below threshold")
         return None
-    score = headline_score(result)
+    score = _numeric_score(result.get("composite_mean"))
     if score is None:
-        scored = result.get("scored_repos")
-        if isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored:
-            return None
         return f"score floor {fail_under}: composite_mean missing or non-numeric"
     if score < fail_under:
         return f"score floor {fail_under}: composite_mean {score:.3f} below threshold"

@@ -69,17 +69,13 @@ def test_truncated_timeline_omits_labels_fail_closed(monkeypatch):
                               T, None, 20)
     assert rec["labels"] == []
     assert rec["labels_as_of_t"] is False
-    assert rec["title"] == ""
-    assert rec["title_as_of_t"] is False
 
     # Not truncated -> the as-of-T set is reconstructed and reported.
     monkeypatch.setattr(gc, "_issue_timeline", lambda *a, **k: (events, False))
-    rec2 = gc._issue_record_at("base", {"number": 1, "title": "live", "created_at": "2024-01-01T00:00:00Z"},
+    rec2 = gc._issue_record_at("base", {"number": 1, "created_at": "2024-01-01T00:00:00Z"},
                                T, None, 20)
     assert rec2["labels"] == ["bug"]
     assert rec2["labels_as_of_t"] is True
-    assert rec2["title"] == "live"
-    assert rec2["title_as_of_t"] is True
 
 
 def test_labels_at_returns_none_when_only_post_T_events():

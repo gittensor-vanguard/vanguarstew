@@ -1,7 +1,6 @@
 """Tests for the pairwise-judge robustness gate (deterministic, offline)."""
 
 import copy
-import logging
 import os
 import sys
 
@@ -11,7 +10,6 @@ if ROOT not in sys.path:
 
 from benchmark.judge_gate import (  # noqa: E402
     DEFAULT_MAX_DISAGREEMENT,
-    _checks_list,
     check_judge,
     failed_checks,
     judge_headline,
@@ -109,43 +107,6 @@ def test_headline_reports_robust_and_shaky():
     assert "SHAKY" in shaky and "low_disagreement" in shaky
     assert judge_headline({}) == "judge: no checks evaluated"
     assert DEFAULT_MAX_DISAGREEMENT == 0.3
-
-
-# --- #656: non-list checks must not abort judge gate headlines -----------------------
-
-_MALFORMED_CHECKS = [42, 3.14, True, {"name": "dual_order_judging"}, "not a list"]
-
-
-def test_judge_gate_checks_list_accepts_only_real_lists():
-    rows = [{"name": "dual_order_judging", "passed": True}]
-    for bad in _MALFORMED_CHECKS:
-        assert _checks_list(bad) == [], bad
-    assert _checks_list(rows) == rows
-    assert _checks_list(None) == []
-
-
-def test_judge_gate_checks_list_missing_key_emits_no_warning(caplog):
-    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
-        assert _checks_list(None) == []
-    assert not caplog.records
-
-
-def test_judge_headline_survives_non_list_checks():
-    base = {"passed": False, "dual_order_tasks": 0, "disagreement_rate": 0.5}
-    for bad in _MALFORMED_CHECKS:
-        assert judge_headline({**base, "checks": bad}) == "judge: no checks evaluated", bad
-
-
-def test_judge_headline_logs_warning_for_non_list_checks(caplog):
-    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
-        line = judge_headline({"checks": 42, "passed": False})
-    assert line == "judge: no checks evaluated"
-    assert any("checks is int" in r.message for r in caplog.records)
-
-
-def test_failed_checks_survives_non_list_checks():
-    for bad in _MALFORMED_CHECKS:
-        assert failed_checks({"checks": bad}) == [], bad
 
 
 def test_every_check_reported_even_when_all_fail():

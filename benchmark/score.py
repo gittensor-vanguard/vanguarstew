@@ -493,8 +493,6 @@ def _addressed_with_evidence(revealed, open_issues) -> list:
                 type(issue).__name__, issue,
             )
             continue
-        if issue.get("title_as_of_t") is False:
-            continue
         title_toks = _tokens(issue.get("title", ""))
         if not title_toks:
             continue

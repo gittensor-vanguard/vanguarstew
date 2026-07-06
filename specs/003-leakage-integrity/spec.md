@@ -59,21 +59,17 @@ must be written down so every freeze/context/leakage change is reviewed against 
   be reconstructed as-of-T rather than copied live:
   - milestone state SHALL be derived from `created_at`/`closed_at` (`"closed"` only if closed by
     T) — `_milestone_at`;
-  - Issue/PR label membership SHALL be replayed from the item's timeline `labeled`/`unlabeled`
+  - issue/PR label membership SHALL be replayed from the item's timeline `labeled`/`unlabeled`
     events, applied in chronological order for events at/or before T (`_labels_at`).
-  - issue/PR `title` SHALL be replayed from timeline `renamed` events (`_title_at`): when a
-    rename occurred after T, the title at T is the `from` value of the earliest post-T
-    rename; when all renames are at/before T, the title is derived by replaying the rename
-    chain; when no rename events exist, the live REST title is used (unchanged since creation).
   - **Partial-data handling (fail-closed):** WHEN the timeline is unavailable, empty, OR
-    **truncated** (paged past the fetch cap, so an earlier event may be missing)
+    **truncated** (paged past the fetch cap, so an earlier `labeled`/`unlabeled` may be missing)
     THE labels SHALL be **omitted** with `labels_as_of_t = False` — a partial replay that could
     contradict true as-of-T membership SHALL NEVER be trusted, and the present-day set SHALL
-    NEVER be substituted. The title SHALL likewise be omitted with `title_as_of_t = False`
-    when the timeline is **truncated** (a partial rename history could contradict the true
-    as-of-T title).
+    NEVER be substituted.
   - A non-list / malformed `events` value SHALL be treated as no events (guarded), not crash the
     freeze — per `AGENTS.md` → *Benchmark integrity*.
+  - Residual limitation (documented): issue/PR `title` is copied live (present-day) — it may have
+    been edited after T; recovering historical titles is out of scope for this contract.
 
 ### Forward-reference scrubbing
 

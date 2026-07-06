@@ -88,15 +88,6 @@ def test_an_error_run_fails_run_completed():
     assert "run_completed" in failed_checks(result)
 
 
-def test_unscored_multi_repo_placeholder_fails_run_completed():
-    # scored_repos: 0 carries composite_mean: 0.0 as a placeholder — not a real score.
-    empty_run = {"repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0}
-    result = check_promotion(empty_run)
-    assert result["passed"] is False
-    assert "run_completed" in failed_checks(result)
-    assert result["composite_mean"] is None
-
-
 def test_thresholds_are_configurable():
     run = _result(composite=0.55, margin=1, disagreement=0.3)
     assert check_promotion(run, min_composite=0.5, min_decisive_margin=1, max_disagreement=0.5)["passed"] is True

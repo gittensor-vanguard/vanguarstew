@@ -834,22 +834,6 @@ def test_backlog_recall_skips_non_dict_open_issues_entry():
     assert score["backlog_recall"] == 1.0
 
 
-def test_backlog_recall_skips_issues_with_unreconstructed_title():
-    open_issues = [
-        {"number": 1, "title": "Future leak", "title_as_of_t": False},
-        {"number": 2, "title": "Login timeout bug", "title_as_of_t": True},
-    ]
-    revealed = [
-        {"subject": "fix: login timeout", "files": ["auth/login.py"]},
-        {"subject": "fix: future leak", "files": ["x.py"]},
-    ]
-    plan = [{"title": "Fix the login timeout bug", "kind": "bugfix"}]
-    assert [i["number"] for i in addressed_issues(revealed, open_issues)] == [2]
-    res = backlog_recall(plan, revealed, open_issues)
-    assert res["matched_issue_numbers"] == [2]
-    assert res["backlog_recall"] == 1.0
-
-
 def test_backlog_recall_logs_a_warning_for_non_dict_open_issues_entry(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.score"):
         backlog_recall([], [], [{"number": 1, "title": "ok"}, 42, None])

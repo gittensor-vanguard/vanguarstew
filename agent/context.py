@@ -114,9 +114,6 @@ def context_for_agent(context: dict) -> dict:
     false we omit ``labels`` from the agent-facing prompt view, so ``[]`` is not misread as
     "this item had no labels at T" when the real meaning is "label history unavailable".
 
-    ``title`` follows the same contract via ``title_as_of_t``: when false the title is omitted
-    rather than surfacing a present-day value that may have been edited after T.
-
     A non-dict ``context`` is treated as empty (``{}``), matching the fail-closed posture
     used when frozen context is unavailable.
     """
@@ -143,8 +140,6 @@ def context_for_agent(context: dict) -> dict:
             clean = dict(item)
             if clean.get("labels_as_of_t") is False:
                 clean.pop("labels", None)
-            if clean.get("title_as_of_t") is False:
-                clean.pop("title", None)
             items.append(clean)
         out[key] = items
     return out
