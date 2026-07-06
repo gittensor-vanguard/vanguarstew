@@ -35,7 +35,14 @@ def headline_score(artifact) -> float | None:
         return None
     if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
         tuned = artifact["tuned"]
-        score = tuned.get("composite_mean") if isinstance(tuned, dict) else None
+        # A tuned partition that scored nothing (scored_repos: 0 — empty set, or every repo
+        # too small/unreachable that run) carries a placeholder composite_mean of 0.0. That is
+        # a transient/infra outcome, not the agent scoring zero, so treat it as unscored (None)
+        # rather than letting --fail-on-regression raise a false alarm — mirroring the
+        # scored_repos guard in scripts/run_eval.check_score_floor.
+        if not tuned.get("scored_repos"):
+            return None
+        score = tuned.get("composite_mean")
     else:
         score = artifact.get("composite_mean")
     return round(float(score), 3) if _is_number(score) else None
