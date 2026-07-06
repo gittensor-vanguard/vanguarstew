@@ -31,6 +31,18 @@ def result_summary_lines(result: dict) -> list[str]:
     return []
 
 
+def check_score_floor(result: dict, fail_under: float | None) -> str | None:
+    """Return an error message when ``composite_mean`` is below ``fail_under``, else None."""
+    if fail_under is None:
+        return None
+    score = result.get("composite_mean")
+    if not isinstance(score, (int, float)) or isinstance(score, bool):
+        return f"score floor {fail_under}: composite_mean missing or non-numeric"
+    if score < fail_under:
+        return f"score floor {fail_under}: composite_mean {score:.3f} below threshold"
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="vanguarstew time-travel replay eval")
     src = ap.add_mutually_exclusive_group(required=True)
@@ -52,6 +64,8 @@ def main() -> None:
     ap.add_argument("--api-key", default=None)
     ap.add_argument("--work-dir", default=None, help="keep frozen checkouts here (else temp)")
     ap.add_argument("--out", default=None, help="write the full JSON result artifact to this path")
+    ap.add_argument("--fail-under", type=float, default=None,
+                    help="exit with status 1 when composite_mean is below this floor")
     ap.add_argument("--enrich", action="store_true",
                     help="enrich frozen context with GitHub issues/PRs/releases knowable at T")
     ap.add_argument("--github-token", default=None, help="GitHub token (else $GITHUB_TOKEN)")
@@ -101,6 +115,10 @@ def main() -> None:
     for line in result_summary_lines(result):
         print(line, file=sys.stderr)
     print(json.dumps(result, indent=2))
+    floor_err = check_score_floor(result, args.fail_under)
+    if floor_err:
+        print(floor_err, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

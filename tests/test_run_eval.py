@@ -8,7 +8,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from scripts.run_eval import result_summary_lines, write_result_artifact  # noqa: E402
+from scripts.run_eval import (  # noqa: E402
+    check_score_floor,
+    result_summary_lines,
+    write_result_artifact,
+)
 
 
 def test_write_result_artifact_preserves_judge_order_stats(tmp_path):
@@ -46,3 +50,28 @@ def test_result_summary_lines_emit_judge_headline_when_present():
 
 def test_result_summary_lines_omit_missing_judge_report():
     assert result_summary_lines({"tasks": 0, "error": "no usable tasks"}) == []
+
+
+def test_check_score_floor_passes_when_above():
+    assert check_score_floor({"composite_mean": 0.6}, 0.5) is None
+
+
+def test_check_score_floor_passes_at_exact_threshold():
+    assert check_score_floor({"composite_mean": 0.5}, 0.5) is None
+
+
+def test_check_score_floor_fails_when_below():
+    msg = check_score_floor({"composite_mean": 0.4}, 0.5)
+    assert msg is not None
+    assert "below threshold" in msg
+    assert "0.400" in msg
+
+
+def test_check_score_floor_fails_when_missing():
+    msg = check_score_floor({}, 0.5)
+    assert msg is not None
+    assert "missing" in msg
+
+
+def test_check_score_floor_skipped_when_disabled():
+    assert check_score_floor({"composite_mean": 0.1}, None) is None
