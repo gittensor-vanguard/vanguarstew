@@ -31,6 +31,14 @@ def result_summary_lines(result: dict) -> list[str]:
     return []
 
 
+def below_floor(result: dict, floor: float) -> bool:
+    """True when the result's top-level ``composite_mean`` is missing/non-numeric or strictly
+    below ``floor``. Single-repo, multi-repo, and generalization results all expose a top-level
+    ``composite_mean``, so this gates every run shape uniformly."""
+    mean = result.get("composite_mean")
+    return not isinstance(mean, (int, float)) or bool(mean < floor)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="vanguarstew time-travel replay eval")
     src = ap.add_mutually_exclusive_group(required=True)
@@ -71,6 +79,9 @@ def main() -> None:
     ap.add_argument("--generalization", action="store_true",
                     help="with --repo-set, replay BOTH the tuned and held-out partitions and "
                          "report the generalization gap (tuned minus held-out composite mean)")
+    ap.add_argument("--fail-under", type=float, default=None, metavar="FLOAT",
+                    help="exit non-zero if the run's composite_mean is missing or below this "
+                         "floor (for CI / pre-merge score gating)")
     args = ap.parse_args()
     if args.held_out and not args.repo_set:
         ap.error("--held-out requires --repo-set")
@@ -101,6 +112,14 @@ def main() -> None:
     for line in result_summary_lines(result):
         print(line, file=sys.stderr)
     print(json.dumps(result, indent=2))
+
+    if args.fail_under is not None and below_floor(result, args.fail_under):
+        print(
+            f"composite_mean {result.get('composite_mean')!r} is below "
+            f"--fail-under {args.fail_under}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

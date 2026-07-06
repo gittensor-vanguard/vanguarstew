@@ -8,7 +8,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from scripts.run_eval import result_summary_lines, write_result_artifact  # noqa: E402
+from scripts.run_eval import below_floor, result_summary_lines, write_result_artifact  # noqa: E402
 
 
 def test_write_result_artifact_preserves_judge_order_stats(tmp_path):
@@ -46,3 +46,30 @@ def test_result_summary_lines_emit_judge_headline_when_present():
 
 def test_result_summary_lines_omit_missing_judge_report():
     assert result_summary_lines({"tasks": 0, "error": "no usable tasks"}) == []
+
+
+# --- --fail-under score-floor gate (#315) ------------------------------------------
+
+def test_below_floor_true_when_strictly_below():
+    assert below_floor({"composite_mean": 0.4}, 0.5) is True
+
+
+def test_below_floor_false_at_or_above_floor():
+    assert below_floor({"composite_mean": 0.5}, 0.5) is False   # exactly at the floor passes
+    assert below_floor({"composite_mean": 0.9}, 0.5) is False
+
+
+def test_below_floor_true_when_missing_or_non_numeric():
+    # A run with no/blank composite_mean (e.g. no usable tasks) must fail the gate, not pass it.
+    assert below_floor({}, 0.5) is True
+    assert below_floor({"composite_mean": None}, 0.5) is True
+    assert below_floor({"composite_mean": "n/a"}, 0.5) is True
+    assert below_floor({"error": "no usable tasks", "tasks": 0}, 0.5) is True
+
+
+def test_below_floor_gates_multi_repo_shaped_result():
+    # Multi-repo / generalization results also expose a top-level composite_mean, so one helper
+    # gates every run shape uniformly.
+    multi = {"repos": 2, "scored_repos": 2, "composite_mean": 0.62, "per_repo": []}
+    assert below_floor(multi, 0.6) is False
+    assert below_floor(multi, 0.7) is True
