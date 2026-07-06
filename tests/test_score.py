@@ -1,5 +1,6 @@
 """Tests for the objective scoring anchor (deterministic, structural)."""
 
+import logging
 import os
 import sys
 
@@ -731,6 +732,32 @@ def test_objective_score_survives_a_fully_malformed_plan_and_revealed_window():
     # No text signal survives, so structural recall is zero rather than raising.
     assert score["module_recall"] == 0.0
     assert score["kind_recall"] == 0.0
+
+
+def test_backlog_recall_skips_non_dict_open_issues_entry():
+    # A malformed entry in open_issues (e.g. a bare string instead of an issue dict) must be
+    # skipped, not raise — and the well-formed issue alongside it must still be counted, proving
+    # the guard actually filters rather than dropping the whole list.
+    open_issues = [{"number": 1, "title": "Login timeout bug"}, "not-a-dict-issue"]
+    revealed = [{"subject": "fix: login timeout", "files": ["auth/login.py"]}]
+    plan = [{"title": "Fix the login timeout bug", "kind": "bugfix", "theme": "auth"}]
+
+    assert [i["number"] for i in addressed_issues(revealed, open_issues)] == [1]
+
+    res = backlog_recall(plan, revealed, open_issues)
+    assert res["matched_issue_numbers"] == [1]
+    assert res["addressed_issue_numbers"] == [1]
+    assert res["backlog_recall"] == 1.0
+
+    score = objective_score(plan, revealed, open_issues=open_issues)
+    assert score["matched_issue_numbers"] == [1]
+    assert score["backlog_recall"] == 1.0
+
+
+def test_backlog_recall_logs_a_warning_for_non_dict_open_issues_entry(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.score"):
+        backlog_recall([], [], [{"number": 1, "title": "ok"}, 42, None])
+    assert any("non-dict open_issues" in r.message for r in caplog.records)
 
 
 def test_objective_score_unchanged_for_well_formed_plan_after_guards():

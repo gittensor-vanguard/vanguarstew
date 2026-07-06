@@ -12,7 +12,10 @@ Neither is the final ranking (that's the pairwise judge); the objective score an
 
 from __future__ import annotations
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 _TOK = re.compile(r"[a-z0-9]+")
 # Genuine release signal is either explicit release/version-cut wording, or a subject that
@@ -386,9 +389,18 @@ def _meaningful_overlap(a: set, b: set) -> bool:
 
 def _addressed_with_evidence(revealed, open_issues) -> list:
     """Open issues at T whose themes show up in the revealed commit subjects, paired with
-    the commit subject that triggered the match (the diagnostic evidence for that match)."""
+    the commit subject that triggered the match (the diagnostic evidence for that match).
+
+    A non-dict entry in `open_issues` (a malformed backlog source) is skipped rather than
+    raising, so one bad entry doesn't abort scoring for the whole replay."""
     out = []
     for issue in open_issues or []:
+        if not isinstance(issue, dict):
+            logger.warning(
+                "backlog_recall: skipping a non-dict open_issues entry (%s: %r)",
+                type(issue).__name__, issue,
+            )
+            continue
         title_toks = _tokens(issue.get("title", ""))
         if not title_toks:
             continue
