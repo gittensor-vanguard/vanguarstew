@@ -64,6 +64,13 @@ def test_parse_winner_tolerant():
     assert _parse_winner("") == "tie"
 
 
+def test_parse_winner_tolerates_non_string_input():
+    # The tolerant parser already coerces falsy input via `text or ""`; a truthy non-string
+    # response (weird proxy/relay reply) must also degrade to "tie", not raise TypeError.
+    for bad in (42, 3.14, True, ["A"], {"winner": "A"}, None):
+        assert _parse_winner(bad) == "tie", bad
+
+
 def _sub(plan_items=0, philosophy=True, rationale=True):
     return {
         "philosophy": {"summary": "conservative, refactor-first"} if philosophy else {},
