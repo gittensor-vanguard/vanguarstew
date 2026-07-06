@@ -10,6 +10,7 @@ if ROOT not in sys.path:
 
 from benchmark.repeatability import (  # noqa: E402
     DEFAULT_MAX_CV,
+    _repeatability_artifacts,
     assess_repeatability,
     repeatability_headline,
 )
@@ -133,3 +134,32 @@ def test_assess_does_not_mutate_inputs():
     snapshot = copy.deepcopy(artifacts)
     assess_repeatability(artifacts)
     assert artifacts == snapshot
+
+
+# --- non-list artifacts must not abort assess_repeatability -------------------------
+
+_MALFORMED_ARTIFACTS = [42, 3.14, True, {"composite_mean": 0.5}, "not a list"]
+
+
+def test_repeatability_artifacts_accepts_only_real_lists():
+    rows = [_run(0.6)]
+    for bad in _MALFORMED_ARTIFACTS:
+        assert _repeatability_artifacts(bad) == [], bad
+    assert _repeatability_artifacts(rows) == rows
+    assert _repeatability_artifacts(None) == []
+
+
+def test_assess_repeatability_survives_non_list_artifacts():
+    for bad in _MALFORMED_ARTIFACTS:
+        result = assess_repeatability(bad, min_runs=2)
+        assert result["runs"] == 0 and result["stable"] is False, bad
+        assert "insufficient runs" in result["reason"], bad
+
+
+def test_assess_repeatability_logs_warning_for_non_list_artifacts(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.repeatability"):
+        result = assess_repeatability(42, min_runs=2)
+    assert result["runs"] == 0
+    assert any("artifacts is int" in r.message for r in caplog.records)
