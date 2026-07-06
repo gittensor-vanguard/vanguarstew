@@ -48,6 +48,24 @@ def test_context_for_agent_omits_unknown_issue_labels():
     assert out["open_prs"][0]["labels_as_of_t"] is False
 
 
+def test_context_for_agent_omits_labels_when_flag_missing():
+    # Older artifacts and hand-edited JSON may carry labels without labels_as_of_t — treat as
+    # unknown history, not knowable-at-T labels (#773).
+    ctx = {
+        "open_issues": [{"number": 1, "title": "bug", "labels": ["bug", "priority"]}],
+        "open_prs": [{"number": 2, "title": "fix", "labels": ["enhancement"]}],
+    }
+    out = context_for_agent(ctx)
+    assert "labels" not in out["open_issues"][0]
+    assert "labels_as_of_t" not in out["open_issues"][0]
+    assert "labels" not in out["open_prs"][0]
+    assert "labels_as_of_t" not in out["open_prs"][0]
+
+    payload = json.loads(render_decider_context(ctx))
+    assert "labels" not in payload["open_issues"][0]
+    assert "labels" not in payload["open_prs"][0]
+
+
 # --- #493: malformed context / issue-PR lists must not abort agent view ---------------
 
 _MALFORMED_CONTEXTS = [42, 3.14, True, "not a dict"]
