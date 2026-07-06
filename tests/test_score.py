@@ -8,6 +8,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.score import (  # noqa: E402
+    _meaningful_overlap,
     addressed_issues,
     backlog_recall,
     base_from_releases,
@@ -467,3 +468,33 @@ def test_objective_score_release_match_honors_cased_kind():
     assert score["release_signaled"] is True
     assert score["release_predicted"] is True
     assert score["release_match"] is True
+
+
+# --- #308: _meaningful_overlap threshold must be reachable for single-word issue titles ------
+
+def test_meaningful_overlap_single_word_title_reachable():
+    # A single-word title can share at most one token, so the old hard floor of 2 made even an
+    # exact match unreachable — it must now count, while a genuine non-match still does not.
+    assert _meaningful_overlap({"flaky"}, {"fix", "flaky", "test"}) is True
+    assert _meaningful_overlap({"typo"}, {"fix", "flaky", "test"}) is False
+    assert _meaningful_overlap({"a"}, {"a", "b", "c", "d", "e", "f"}) is True  # 1 of a big set
+
+
+def test_meaningful_overlap_multi_word_threshold_unchanged():
+    # The fix only lowers the bar where the old one was mathematically impossible; multi-token
+    # titles still require >=2 shared tokens (or half the smaller set).
+    assert _meaningful_overlap({"memory", "leak"}, {"memory", "fix"}) is False   # 1 shared
+    assert _meaningful_overlap({"memory", "leak"}, {"memory", "leak"}) is True   # 2 shared
+    assert _meaningful_overlap({"a", "b", "c", "d"}, {"a", "z"}) is False        # 1 of 2/4
+
+
+def test_single_word_issue_title_counts_toward_backlog():
+    # End-to-end: a terse single-word issue the plan/commit clearly names must surface in
+    # addressed_issues and backlog_recall instead of being silently dropped.
+    open_issues = [{"number": 1, "title": "Flaky"}]
+    revealed = [{"subject": "Fix flaky test in CI", "files": []}]
+    assert [i["number"] for i in addressed_issues(revealed, open_issues)] == [1]
+    plan = [{"title": "Stabilize the flaky suite", "kind": "test"}]
+    res = backlog_recall(plan, revealed, open_issues)
+    assert res["matched_issue_numbers"] == [1]
+    assert res["backlog_recall"] == 1.0

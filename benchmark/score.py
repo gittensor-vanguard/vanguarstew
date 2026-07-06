@@ -275,8 +275,12 @@ def _meaningful_overlap(a: set, b: set) -> bool:
     """True when two token sets share enough substance to count as a theme match."""
     if not a or not b:
         return False
-    shared = a & b
-    return len(shared) >= max(2, min(len(a), len(b)) // 2)
+    smaller = min(len(a), len(b))
+    # Scale the bar with the smaller set, but never above what that set can actually supply:
+    # a single-word title can share at most one token, so a hard floor of 2 made even an exact
+    # match unreachable — silently dropping every single-word issue from backlog recall.
+    threshold = min(max(2, smaller // 2), smaller)
+    return len(a & b) >= threshold
 
 
 def _addressed_with_evidence(revealed, open_issues) -> list:
