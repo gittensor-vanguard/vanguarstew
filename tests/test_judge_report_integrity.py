@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -285,6 +287,84 @@ def test_check_rows_list_skips_empty_dict(caplog):
     assert any("missing required key(s)" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "report_present", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "report_present", "passed": False},
+        {"name": "stats_present", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": "", "passed": False},
+        {"name": 99, "passed": False},
+        {"name": "report_present", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_accepts_native_bool_values():
+    rows = [
+        {"name": "report_present", "passed": True},
+        {"name": "stats_present", "passed": False},
+    ]
+    assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_empty_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+    assert any("name is empty str" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_accepts_numpy_bool_when_available():
+    np = pytest.importorskip("numpy")
+    for factory in (np.bool_, np.bool8):
+        rows = [{"name": "report_present", "passed": factory(True)}]
+        assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_int_as_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list([{"name": "report_present", "passed": 1}]) == []
+    assert any("passed is int" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_rejects_non_bool_passed_values(caplog):
+    class AlmostBool:
+        def __bool__(self):
+            return True
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list([{"name": "report_present", "passed": AlmostBool()}]) == []
+        assert _check_rows_list([{"name": "report_present", "passed": "true"}]) == []
+    messages = [r.message for r in caplog.records]
+    assert any("passed is AlmostBool" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+
+
+def test_failed_checks_helper_is_robust():
+    assert failed_checks({}) == []
+    assert failed_checks("not a dict") == []
+    art = _artifact()
+    art["judge_report"]["wins"] = 99
+    assert failed_checks(check_judge_report_integrity(art)) == ["wins_match_tally"]
+    assert failed_checks(check_judge_report_integrity(_artifact())) == []
+
+
 def test_integrity_headline_survives_non_list_checks():
     base = {"passed": False}
     for bad in _MALFORMED_CHECKS:
@@ -299,6 +379,9 @@ def test_integrity_headline_survives_rows_missing_required_keys():
         [{"passed": False}],
         [{"name": "report_present"}],
         [{}],
+        [{"name": 42, "passed": True}],
+        [{"name": "", "passed": False}],
+        [{"name": "report_present", "passed": 1}],
     ):
         assert integrity_headline({"checks": checks, "passed": False}) == (
             "judge report integrity: no checks evaluated"
@@ -322,6 +405,23 @@ def test_integrity_headline_logs_warning_for_non_list_checks(caplog):
     assert any("checks is int" in r.message for r in caplog.records)
 
 
+def test_integrity_headline_ignores_unsanitized_rows_in_denominator(caplog):
+    checks = [
+        {"name": "report_present", "passed": False},
+        {"name": "", "passed": False},
+        {"name": "stats_present", "passed": 1},
+        42,
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        line = integrity_headline({"checks": checks, "passed": False})
+    assert line == (
+        "judge report integrity: INCONSISTENT (1/1 checks failed: report_present)"
+    )
+    assert any("name is empty str" in r.message for r in caplog.records)
+    assert any("passed is int" in r.message for r in caplog.records)
+    assert any("checks[3] is int" in r.message for r in caplog.records)
+
+
 def test_failed_checks_survives_non_list_checks():
     for bad in _MALFORMED_CHECKS:
         assert failed_checks({"checks": bad}) == [], bad
@@ -333,14 +433,19 @@ def test_failed_checks_never_raises_on_malformed_rows():
         [{"name": "report_present"}],
         [{}],
         [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "", "passed": False}],
+        [{"name": "report_present", "passed": "no"}],
     ):
         assert failed_checks({"checks": checks}) == []
 
 
-def test_failed_checks_skips_non_dict_rows():
+def test_failed_checks_integration_with_check_rows_list(caplog):
     checks = [
         {"name": "report_present", "passed": False},
         42,
         {"name": "stats_present", "passed": True},
     ]
-    assert failed_checks({"checks": checks}) == ["report_present"]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert failed_checks({"checks": checks}) == ["report_present"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
