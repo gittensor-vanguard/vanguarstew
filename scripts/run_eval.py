@@ -36,12 +36,41 @@ def result_summary_lines(result: dict) -> list[str]:
     return []
 
 
+def _numeric(value) -> float | None:
+    """The value if it is a real (non-bool) number, else None."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _floor_score(result: dict) -> float | None:
+    """The composite_mean to gate ``--fail-under`` on.
+
+    A normal replay carries a top-level ``composite_mean``. A generalization report
+    (``--generalization``) does not — its means live nested under ``tuned`` and
+    ``held_out``. Gate on the lower of the two partition means so the floor must hold for
+    BOTH the tuned and held-out slices (a floor is a minimum bar; a regression in either
+    partition should trip it).
+    """
+    top = _numeric(result.get("composite_mean"))
+    if top is not None:
+        return top
+    partition_means = [
+        _numeric(result[key].get("composite_mean"))
+        for key in ("tuned", "held_out")
+        if isinstance(result.get(key), dict)
+    ]
+    if partition_means and all(m is not None for m in partition_means):
+        return min(partition_means)
+    return None
+
+
 def check_score_floor(result: dict, fail_under: float | None) -> str | None:
-    """Return an error message when ``composite_mean`` is below ``fail_under``, else None."""
+    """Return an error message when the composite_mean is below ``fail_under``, else None."""
     if fail_under is None:
         return None
-    score = result.get("composite_mean")
-    if not isinstance(score, (int, float)) or isinstance(score, bool):
+    score = _floor_score(result)
+    if score is None:
         return f"score floor {fail_under}: composite_mean missing or non-numeric"
     if score < fail_under:
         return f"score floor {fail_under}: composite_mean {score:.3f} below threshold"

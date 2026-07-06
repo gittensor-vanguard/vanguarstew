@@ -75,3 +75,28 @@ def test_check_score_floor_fails_when_missing():
 
 def test_check_score_floor_skipped_when_disabled():
     assert check_score_floor({"composite_mean": 0.1}, None) is None
+
+
+def _generalization_result(tuned_mean, held_out_mean):
+    # Shape returned by run_generalization_report(): no top-level composite_mean.
+    return {
+        "repo_set": "foo.json",
+        "tuned": {"composite_mean": tuned_mean, "scored_repos": 2},
+        "held_out": {"composite_mean": held_out_mean, "scored_repos": 1},
+        "generalization_gap": round(tuned_mean - held_out_mean, 3),
+    }
+
+
+def test_check_score_floor_passes_on_generalization_report_above():
+    # No top-level composite_mean, but both partitions clear the floor -> pass.
+    assert check_score_floor(_generalization_result(0.6, 0.6), 0.0) is None
+    assert check_score_floor(_generalization_result(0.7, 0.55), 0.5) is None
+
+
+def test_check_score_floor_fails_on_generalization_report_when_a_partition_is_below():
+    # held_out (0.4) is below the floor even though tuned (0.7) clears it -> the lower
+    # partition gates, so the floor trips.
+    msg = check_score_floor(_generalization_result(0.7, 0.4), 0.5)
+    assert msg is not None
+    assert "below threshold" in msg
+    assert "0.400" in msg
