@@ -147,6 +147,22 @@ def _validate_freeze_window(fw, where):
                      f"{where}: freeze_window.{key} must be an integer")
             if key == "min_history":
                 _require(value >= 1, f"{where}: freeze_window.min_history must be >= 1")
+    # Cross-field: a window whose `after` is later than its `before` can never contain a
+    # commit, so taskgen silently yields zero tasks and the repo is quietly dropped from the
+    # (leakage-safe, curated) benchmark with no error — a config typo that erodes the set
+    # instead of failing loudly. Reject reversed bounds at load time.
+    after, before = fw.get("after"), fw.get("before")
+    if isinstance(after, str) and isinstance(before, str):
+        try:
+            lo, hi = date.fromisoformat(after[:10]), date.fromisoformat(before[:10])
+        except ValueError:
+            lo = hi = None  # already reported field-by-field above
+        if lo is not None and hi is not None:
+            _require(
+                lo <= hi,
+                f"{where}: freeze_window.after ({after!r}) must be on or before "
+                f"freeze_window.before ({before!r})",
+            )
     return dict(fw)
 
 

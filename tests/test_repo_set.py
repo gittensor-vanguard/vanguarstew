@@ -136,6 +136,15 @@ def test_freeze_window_accepts_valid_iso_date_bounds():
     assert validate_repo_set(_mutate(freeze_window={"after": "2023-06-15T00:00:00Z"}))
 
 
+def test_freeze_window_rejects_reversed_date_bounds():
+    # after later than before => an empty window => the repo silently produces zero tasks and
+    # is dropped from the curated set. Reject the reversed bounds at load time instead.
+    with pytest.raises(RepoSetError, match="must be on or before"):
+        validate_repo_set(_mutate(freeze_window={"after": "2024-01-01", "before": "2023-01-01"}))
+    # Equal bounds are a valid (single-day) window and must still load.
+    assert validate_repo_set(_mutate(freeze_window={"after": "2023-05-01", "before": "2023-05-01"}))
+
+
 def test_unknown_entry_key_rejected():
     with pytest.raises(RepoSetError, match="unknown keys"):
         validate_repo_set(_mutate(extra="x"))
