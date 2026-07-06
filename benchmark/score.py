@@ -49,6 +49,15 @@ def _revealed_list(revealed) -> list:
     return revealed if isinstance(revealed, list) else []
 
 
+def _releases_list(releases) -> list:
+    """Return ``releases`` when it is a list; otherwise treat as no frozen releases.
+
+    A truthy non-list (``42``, ``True``, a bare dict) and ``None`` must not reach
+    ``for rel in releases`` or malformed frozen context aborts replay scoring (#459).
+    """
+    return releases if isinstance(releases, list) else []
+
+
 def _tokens(text) -> set:
     # Plan and commit text fields originate in LLM-emitted JSON, where a `title`/`theme`/
     # `subject` can arrive as a list, dict, number, or null. Such a value carries no lexical
@@ -153,11 +162,10 @@ def base_from_releases(releases) -> str | None:
     tag string of the highest semver, so it can be fed back as `base_version`.
     """
     best_tag, best_ver = None, None
-    for rel in releases or []:
-        if isinstance(rel, dict):
-            candidates = (rel.get("tag"), rel.get("name"))
-        else:
-            candidates = (rel,)
+    for rel in _releases_list(releases):
+        if not isinstance(rel, dict):
+            continue
+        candidates = (rel.get("tag"), rel.get("name"))
         for raw in candidates:
             if not raw:
                 continue
