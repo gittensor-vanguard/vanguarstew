@@ -18,7 +18,10 @@ owner/repo URLs (which carry no specific forward reference) are left untouched.
 
 from __future__ import annotations
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 # Characters that surround a URL in prose or markdown and are never part of it.
 # Stopping at them keeps the surrounding syntax — parentheses, square/angle
@@ -108,7 +111,18 @@ def _scrub_titles(items, key):
 
 
 def scrub_context(context: dict) -> dict:
-    """Return a copy of the context with forward-looking references neutralized."""
+    """Return a copy of the context with forward-looking references neutralized.
+
+    A non-dict ``context`` is treated as empty scrub output (only
+    ``_forward_signal_scrubbed``), matching the fail-closed posture used when frozen
+    context is unavailable (#498).
+    """
+    if not isinstance(context, dict):
+        logger.warning(
+            "leakage: scrub_context context is %s, not a dict; treating as empty",
+            type(context).__name__ if context is not None else "None",
+        )
+        return {"_forward_signal_scrubbed": True}
     ctx = dict(context)
     ctx["readme_excerpt"] = strip_forward_refs(ctx.get("readme_excerpt", ""))
     ctx["recent_commits"] = _scrub_titles(ctx.get("recent_commits"), "subject")

@@ -51,6 +51,26 @@ def test_strip_forward_refs_masks_mixed_case_sha_like_tokens_only():
     assert "1234567" in out
 
 
+# --- #498: a non-dict context must not abort scrub_context -----------------------------
+
+_MALFORMED_CONTEXTS = [42, 3.14, True, "not a dict", ["open_issues"], None]
+
+
+def test_scrub_context_survives_non_dict_context():
+    for bad in _MALFORMED_CONTEXTS:
+        out = scrub_context(bad)
+        assert out == {"_forward_signal_scrubbed": True}, bad
+
+
+def test_scrub_context_logs_warning_for_non_dict_context(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.leakage"):
+        out = scrub_context(42)
+    assert out == {"_forward_signal_scrubbed": True}
+    assert any("context is int" in r.message for r in caplog.records)
+
+
 def test_scrub_context_scrubs_nested_fields_only():
     ctx = {
         "readme_excerpt": "roadmap toward plugins; tracked in #101 after commit aBc1234; "
