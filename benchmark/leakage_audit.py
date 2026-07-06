@@ -9,7 +9,11 @@ context shapes.
 
 from __future__ import annotations
 
+import logging
+
 from benchmark.leakage import _scrub_list, strip_forward_refs
+
+logger = logging.getLogger(__name__)
 
 
 def _finding(location: str, value: str) -> dict:
@@ -29,6 +33,18 @@ def _audit_titled_list(prefix: str, items, key: str, findings: list) -> None:
         if not isinstance(item, dict) or key not in item:
             continue
         _audit_text(f"{prefix}[{index}].{key}", item.get(key), findings)
+
+
+def _findings_list(findings) -> list:
+    """Return ``findings`` when it is a list; otherwise treat as no audit findings."""
+    if isinstance(findings, list):
+        return findings
+    if findings is not None:
+        logger.warning(
+            "leakage_audit: findings is %s, not a list; treating as empty",
+            type(findings).__name__,
+        )
+    return []
 
 
 def audit_context(context) -> list:
@@ -59,6 +75,7 @@ def is_clean(context) -> bool:
 
 def audit_headline(findings: list) -> str:
     """One-line human summary of an :func:`audit_context` result."""
+    findings = _findings_list(findings)
     if not findings:
         return "audit_context: clean (no forward-reference leaks)"
     return f"audit_context: {len(findings)} leak(s) found"

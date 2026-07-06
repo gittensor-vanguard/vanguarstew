@@ -1,6 +1,7 @@
 """Tests for frozen-context leakage auditing."""
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -10,7 +11,12 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.leakage import scrub_context  # noqa: E402
-from benchmark.leakage_audit import audit_context, audit_headline, is_clean  # noqa: E402
+from benchmark.leakage_audit import (  # noqa: E402
+    _findings_list,
+    audit_context,
+    audit_headline,
+    is_clean,
+)
 
 _LEAKY_CTX = {
     "readme_excerpt": "roadmap; tracked in #101",
@@ -83,6 +89,44 @@ def test_audit_context_skips_non_dict_rows_and_empty_text():
 def test_audit_headline_summarizes_findings():
     assert "clean" in audit_headline([])
     assert "2 leak" in audit_headline([{}, {}])
+
+
+# --- #696: non-list findings must not abort audit headlines ---------------------------
+
+_MALFORMED_FINDINGS = [42, 3.14, True, {"location": "readme_excerpt"}, "not a list"]
+
+
+def test_findings_list_accepts_only_real_lists():
+    rows = [{"location": "readme_excerpt", "value": "x", "masked": "y"}]
+    for bad in _MALFORMED_FINDINGS:
+        assert _findings_list(bad) == [], bad
+    assert _findings_list(rows) == rows
+    assert _findings_list(None) == []
+    assert _findings_list([]) == []
+
+
+def test_findings_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.leakage_audit"):
+        assert _findings_list(None) == []
+    assert not caplog.records
+
+
+def test_findings_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.leakage_audit"):
+        assert _findings_list([]) == []
+    assert not caplog.records
+
+
+def test_audit_headline_survives_non_list_findings():
+    for bad in _MALFORMED_FINDINGS:
+        assert audit_headline(bad) == "audit_context: clean (no forward-reference leaks)", bad
+
+
+def test_audit_headline_logs_warning_for_non_list_findings(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.leakage_audit"):
+        line = audit_headline(42)
+    assert line == "audit_context: clean (no forward-reference leaks)"
+    assert any("findings is int" in r.message for r in caplog.records)
 
 
 def test_audit_cli_reports_and_strict_exit(tmp_path):

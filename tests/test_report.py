@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -10,7 +11,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.report import _fmt_rate, _fmt_score, render_report  # noqa: E402
+from benchmark.report import (  # noqa: E402
+    _composite_parts_dict,
+    _fmt_rate,
+    _fmt_score,
+    _is_multi_repo,
+    _per_repo_rows,
+    render_report,
+)
 from scripts.report import load_artifact  # noqa: E402
 
 
@@ -155,12 +163,119 @@ def test_render_tolerates_missing_optional_fields():
     assert "Judge W-L-T: n/a" in md
 
 
-def test_render_tolerates_malformed_per_repo_rows():
+def test_render_tolerates_malformed_per_repo_rows(caplog):
     art = _multi_repo()
     art["per_repo"] = [{"repo_path": "/ok", "composite_mean": 0.4, "tasks": 1}, "bad"]
-    md = render_report(art)
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        md = render_report(art)
     assert "| /ok | 0.400 | 1 |" in md
-    assert "| n/a | n/a | n/a |" in md
+    assert "| n/a | n/a | n/a |" not in md
+    assert any("per_repo[1] is str" in r.message for r in caplog.records)
+
+
+# --- #667: per_repo hardening (resubmit of #668) -------------------------------------
+
+_MALFORMED_PER_REPO = [42, 3.14, True, {"repo_path": "/x"}, "not a list"]
+
+
+def test_per_repo_rows_accepts_only_real_lists():
+    rows = [{"repo_path": "/a", "composite_mean": 0.5, "tasks": 1}]
+    for bad in _MALFORMED_PER_REPO:
+        assert _per_repo_rows(bad) == [], bad
+    assert _per_repo_rows(rows) == rows
+    assert _per_repo_rows(None) == []
+    assert _per_repo_rows([]) == []
+
+
+def test_per_repo_rows_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        assert _per_repo_rows(None) == []
+    assert not caplog.records
+
+
+def test_per_repo_rows_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        assert _per_repo_rows([]) == []
+    assert not caplog.records
+
+
+def test_per_repo_rows_warns_for_skipped_rows(caplog):
+    mixed = [42, {"repo_path": "/a", "composite_mean": 0.5, "tasks": 1}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        assert len(_per_repo_rows(mixed)) == 1
+    assert any("per_repo[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_per_repo_rows_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        assert _per_repo_rows(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("per_repo[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_is_multi_repo_requires_aggregate_fields():
+    assert _is_multi_repo(_multi_repo()) is True
+    assert _is_multi_repo(_single_repo()) is False
+    assert _is_multi_repo({"composite_mean": 0.5, "repos": 2}) is False
+    assert _is_multi_repo({"composite_mean": "bad", "repos": 2, "scored_repos": 1}) is True
+    assert _is_multi_repo({"composite_mean": 0.5, "tasks": 3, "repos": 2, "scored_repos": 2}) is False
+
+
+def test_render_multi_repo_with_non_list_per_repo_uses_multi_template():
+    for bad in _MALFORMED_PER_REPO:
+        art = {**_multi_repo(), "per_repo": bad}
+        md = render_report(art)
+        assert "# Benchmark report (multi-repo)" in md, bad
+        assert "Repos: 2/2 scored" in md, bad
+        assert "### Per-repo" not in md, bad
+
+
+def test_render_multi_repo_with_empty_per_repo_omits_table(caplog):
+    art = {**_multi_repo(), "per_repo": []}
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        md = render_report(art)
+    assert "# Benchmark report (multi-repo)" in md
+    assert "### Per-repo" not in md
+    assert not caplog.records
+
+
+def test_render_multi_repo_with_all_junk_per_repo_omits_table(caplog):
+    art = {**_multi_repo(), "per_repo": [42, "bad", None]}
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        md = render_report(art)
+    assert "# Benchmark report (multi-repo)" in md
+    assert "### Per-repo" not in md
+    assert any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_render_generalization_warns_for_non_list_partition_per_repo(caplog):
+    art = _generalization()
+    art["tuned"]["per_repo"] = 42
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        md = render_report(art)
+    assert "### Tuned" in md
+    assert "| held-b | 0.650 | 2 |" in md
+    assert any("per_repo is int" in r.message for r in caplog.records)
+
+
+def test_composite_parts_dict_warns_for_non_object(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        parts = _composite_parts_dict({"composite_parts": 42})
+    assert parts == {}
+    assert any("composite_parts is int" in r.message for r in caplog.records)
+
+
+def test_render_tolerates_malformed_composite_parts(caplog):
+    art = _single_repo()
+    art["composite_parts"] = 42
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        md = render_report(art)
+    assert "Judge mean: n/a" in md
+    assert "Objective mean: n/a" in md
+    assert any("composite_parts is int" in r.message for r in caplog.records)
 
 
 def test_render_does_not_mutate_artifact():
@@ -214,24 +329,34 @@ def test_render_single_repo_survives_issue_repro():
 
 
 def test_render_multi_repo_survives_non_finite_counts():
-    # the exact repro from #616: previously OverflowError from int(float("inf"))
+    # non-finite aggregate counts are not a trusted multi-repo shape (#667); render as
+    # single-repo without crashing (#616).
     md = render_report(
         {"composite_mean": 0.5, "per_repo": [],
          "scored_repos": float("inf"), "repos": float("inf")}
     )
-    assert "# Benchmark report (multi-repo)" in md
+    assert "# Benchmark report (single-repo)" in md
     assert "Composite mean: 0.500" in md
     assert "Repos:" not in md
 
 
 def test_render_multi_repo_skips_non_finite_scored_and_skipped_details():
     art = _multi_repo()
+    art["skipped"] = float("inf")
+    md = render_report(art)
+    # repos and scored_repos are finite; only the malformed skipped count is omitted
+    repo_lines = [line for line in md.splitlines() if line.startswith("- Repos:")]
+    assert repo_lines == ["- Repos: 2/2 scored"]
+
+
+def test_render_multi_repo_rejects_non_finite_scored_repos_shape():
+    art = _multi_repo()
     art["scored_repos"] = float("nan")
     art["skipped"] = float("inf")
     md = render_report(art)
-    # repos itself is finite, so the line renders -- without the malformed details
-    repo_lines = [line for line in md.splitlines() if line.startswith("- Repos:")]
-    assert repo_lines == ["- Repos: 2"]
+    # non-finite scored_repos is not a trusted multi-repo aggregate (#667)
+    assert "# Benchmark report (single-repo)" in md
+    assert "Repos:" not in md
 
 
 def test_per_repo_table_renders_na_for_non_finite_cells():

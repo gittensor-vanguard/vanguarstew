@@ -7,7 +7,10 @@ report.
 
 from __future__ import annotations
 
+import logging
 import math
+
+logger = logging.getLogger(__name__)
 
 # Tuned minus held-out above this threshold triggers an "inspect" verdict on generalization runs.
 DEFAULT_GAP_INSPECT_THRESHOLD = 0.10
@@ -64,8 +67,65 @@ def _is_generalization(artifact: dict) -> bool:
     return _looks_like_partition(tuned) and _looks_like_partition(held_out)
 
 
+def _composite_parts_dict(artifact: dict) -> dict:
+    parts = artifact.get("composite_parts")
+    if isinstance(parts, dict):
+        return parts
+    if parts is not None:
+        logger.warning(
+            "report: composite_parts is %s, not an object; treating as empty",
+            type(parts).__name__,
+        )
+    return {}
+
+
+def _per_repo_rows(per_repo, field: str = "per_repo") -> list[dict]:
+    """Return dict rows from a multi-repo ``per_repo`` list for table rendering.
+
+    ``None`` means the key is absent. An empty list means the artifact explicitly recorded
+    zero repos. Both yield no rows without a container warning.
+    """
+    if per_repo is None:
+        return []
+    if not isinstance(per_repo, list):
+        logger.warning(
+            "report: %s is %s, not a list; treating as empty",
+            field,
+            type(per_repo).__name__,
+        )
+        return []
+    rows = []
+    for idx, entry in enumerate(per_repo):
+        if not isinstance(entry, dict):
+            logger.warning(
+                "report: %s[%s] is %s, not an object; skipping",
+                field,
+                idx,
+                type(entry).__name__,
+            )
+            continue
+        rows.append(entry)
+    if per_repo and not rows:
+        logger.warning(
+            "report: %s had %d entr%s but no usable rows",
+            field,
+            len(per_repo),
+            "y" if len(per_repo) == 1 else "ies",
+        )
+    return rows
+
+
 def _is_multi_repo(artifact: dict) -> bool:
-    return isinstance(artifact.get("per_repo"), list) and "composite_mean" in artifact
+    """True for ``run_multi_replay`` aggregate artifacts, not stray single-repo fields."""
+    if _is_number(artifact.get("tasks")):
+        return False
+    repos = artifact.get("repos")
+    scored_repos = artifact.get("scored_repos")
+    if not _is_number(repos) or int(repos) < 1:
+        return False
+    if not _is_number(scored_repos):
+        return False
+    return "composite_mean" in artifact
 
 
 def _judge_lines(artifact: dict) -> list[str]:
@@ -84,8 +144,7 @@ def _judge_lines(artifact: dict) -> list[str]:
 
 
 def _composite_lines(artifact: dict) -> list[str]:
-    parts = artifact.get("composite_parts")
-    parts = parts if isinstance(parts, dict) else {}
+    parts = _composite_parts_dict(artifact)
     # scored_repos is only ever set by the aggregate layer (run_multi_replay / generalization
     # partitions); when it's present and zero, composite_mean is a placeholder 0.0 (nothing was
     # actually scored), not a real score -- render n/a instead of a fabricated perfect zero,
@@ -108,15 +167,12 @@ def _composite_lines(artifact: dict) -> list[str]:
 
 
 def _per_repo_table(rows: list) -> list[str]:
-    if not isinstance(rows, list) or not rows:
+    if not rows:
         return []
     header = "| Repo | Composite | Tasks |"
     sep = "| --- | ---: | ---: |"
     body = []
     for row in rows:
-        if not isinstance(row, dict):
-            body.append("| n/a | n/a | n/a |")
-            continue
         tasks = row.get("tasks")
         tasks_txt = str(int(tasks)) if _is_number(tasks) else "n/a"
         body.append(
@@ -146,7 +202,7 @@ def _render_partition(title: str, part: dict) -> list[str]:
     if _is_number(scored):
         skip_txt = f", {int(skipped)} skipped" if _is_number(skipped) and skipped else ""
         lines.append(f"- Scored repos: {int(scored)}{skip_txt}")
-    lines.extend(_per_repo_table(part.get("per_repo") or []))
+    lines.extend(_per_repo_table(_per_repo_rows(part.get("per_repo"))))
     return lines
 
 
@@ -177,7 +233,7 @@ def _render_multi_repo(artifact: dict) -> str:
         if _is_number(skipped) and skipped:
             detail += f", {int(skipped)} skipped"
         lines.append(f"- Repos: {detail}")
-    lines.extend(_per_repo_table(artifact.get("per_repo") or []))
+    lines.extend(_per_repo_table(_per_repo_rows(artifact.get("per_repo"))))
     return "\n".join(lines) + "\n"
 
 
