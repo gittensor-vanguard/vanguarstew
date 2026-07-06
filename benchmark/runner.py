@@ -75,6 +75,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
 
     rng = random.Random(seed)
     tally = {"challenger": 0, "baseline": 0, "tie": 0}
+    agreements: dict[str, int] = {}
     rows = []
     base = work_dir or tempfile.mkdtemp(prefix="vanguarstew_work_")
     try:
@@ -94,10 +95,12 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 api_base=api_base or "", api_key=api_key or "offline", n=horizon,
             )
             baseline_out = opponent(dest, request, context=ctx, n=horizon)
-            winner = pairwise_judge(ctx, _submission(challenger), _submission(baseline_out),
-                                    task["revealed"], llm, rng, dual_order=dual_order_judge)
+            winner, agreement = pairwise_judge(
+                ctx, _submission(challenger), _submission(baseline_out),
+                task["revealed"], llm, rng, dual_order=dual_order_judge)
             who = {"A": "challenger", "B": "baseline", "tie": "tie"}[winner]
             tally[who] += 1
+            agreements[agreement] = agreements.get(agreement, 0) + 1
             obj = objective_score(
                 challenger.get("plan"), task["revealed"],
                 version_bump=challenger.get("version_bump"),
@@ -108,6 +111,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 "task": k,
                 "freeze": task["freeze_commit"][:10],
                 "winner": who,
+                "agreement": agreement,
                 "overlap": trajectory_overlap(challenger.get("plan"), task["revealed"]),
                 "objective": obj,
                 "composite": composite_score(winner, obj, w_judge, w_objective),
@@ -128,6 +132,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         "tasks": len(tasks),
         "baseline": baseline,
         "tally": tally,
+        "agreements": agreements,
         "decisive_margin": tally["challenger"] - tally["baseline"],
         "composite_mean": round(sum(composites) / len(composites), 3) if composites else 0.0,
         "composite_parts": {

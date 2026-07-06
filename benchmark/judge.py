@@ -129,8 +129,16 @@ def _judge_order(context: dict, first, second, revealed, llm) -> str:
 
 
 def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng=None,
-                   dual_order: bool = True) -> str:
-    """Return 'A' (submission_a wins), 'B' (submission_b wins), or 'tie'.
+                   dual_order: bool = True) -> tuple[str, str]:
+    """Return ``(winner, agreement)`` where *winner* is ``'A'``, ``'B'``, or ``'tie'``.
+
+    *agreement* classifies how the two presentation orders related:
+
+    - ``"offline"`` — deterministic offline ranking (no LLM calls made).
+    - ``"single"`` — ``dual_order=False``, only one order was asked.
+    - ``"agreed"`` — both orders picked the same non-tie winner.
+    - ``"disagreed"`` — orders diverged (position bias → forced tie).
+    - ``"tie"`` — both orders genuinely said tie.
 
     With ``dual_order`` (default), the judge is asked both presentation orders and a win is
     awarded only if it survives the swap — a position-biased judge that just picks whichever
@@ -141,7 +149,8 @@ def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng
 
     if llm.offline:
         ra, rb = _offline_rank(submission_a), _offline_rank(submission_b)
-        return "A" if ra > rb else ("B" if rb > ra else "tie")
+        winner = "A" if ra > rb else ("B" if rb > ra else "tie")
+        return winner, "offline"
 
     if dual_order:
         # A shown first: 'first'->A, 'second'->B. B shown first: 'first'->B, 'second'->A.
@@ -150,13 +159,17 @@ def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng
         v_ba = _judge_order(context, submission_b, submission_a, revealed, llm)
         w_ba = {"first": "B", "second": "A"}.get(v_ba, "tie")
         # Only a verdict consistent across both orders stands; otherwise it's a tie.
-        return w_ab if w_ab == w_ba and w_ab in ("A", "B") else "tie"
+        if w_ab == w_ba and w_ab in ("A", "B"):
+            return w_ab, "agreed"
+        if w_ab == "tie" and w_ba == "tie":
+            return "tie", "tie"
+        return "tie", "disagreed"
 
     swap = rng.random() < 0.5  # if True, submission_b is shown FIRST
     first, second = (submission_b, submission_a) if swap else (submission_a, submission_b)
     v = _judge_order(context, first, second, revealed, llm)
     if v == "tie":
-        return "tie"
+        return "tie", "single"
     winner_is_first = v == "first"
     first_is_a = not swap
-    return "A" if winner_is_first == first_is_a else "B"
+    return ("A" if winner_is_first == first_is_a else "B"), "single"

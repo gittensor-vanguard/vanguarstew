@@ -63,23 +63,23 @@ def _sub(plan_items=0, philosophy=True, rationale=True):
 def test_offline_prefers_richer_submission():
     llm = LLM(api_key="offline")
     strong, weak = _sub(3, True, True), _sub(0, False, False)
-    assert pairwise_judge({}, strong, weak, [], llm, random.Random(0)) == "A"
+    assert pairwise_judge({}, strong, weak, [], llm, random.Random(0)) == ("A", "offline")
     # position must not change the outcome
-    assert pairwise_judge({}, weak, strong, [], llm, random.Random(0)) == "B"
+    assert pairwise_judge({}, weak, strong, [], llm, random.Random(0)) == ("B", "offline")
 
 
 def test_offline_tie_on_equal_submissions():
     llm = LLM(api_key="offline")
     a, b = _sub(2, True, True), _sub(2, True, True)
-    assert pairwise_judge({}, a, b, [], llm) == "tie"
+    assert pairwise_judge({}, a, b, [], llm) == ("tie", "offline")
 
 
 def test_decision_process_breaks_tie_when_plans_equal():
     # same plan length, but only one carries philosophy + reasoning -> it wins on process
     llm = LLM(api_key="offline")
     with_process, without = _sub(1, True, True), _sub(1, False, False)
-    assert pairwise_judge({}, with_process, without, [], llm) == "A"
-    assert pairwise_judge({}, without, with_process, [], llm) == "B"
+    assert pairwise_judge({}, with_process, without, [], llm) == ("A", "offline")
+    assert pairwise_judge({}, without, with_process, [], llm) == ("B", "offline")
 
 
 def test_plan_substance_rewards_concrete_fields_and_ignores_filler():
@@ -114,8 +114,8 @@ def test_plan_substance_normalizes_scalar_items_through_filler_check():
         "plan": [{"title": "fix the release-detection bug", "kind": "bugfix"}],
         "rationale": "cleared the blocker",
     }
-    assert pairwise_judge({}, substance, fluff, [], llm) == "A"
-    assert pairwise_judge({}, fluff, substance, [], llm) == "B"
+    assert pairwise_judge({}, substance, fluff, [], llm) == ("A", "offline")
+    assert pairwise_judge({}, fluff, substance, [], llm) == ("B", "offline")
 
 
 def test_generic_filler_titles_do_not_outrank_concrete_plan():
@@ -137,8 +137,8 @@ def test_generic_filler_titles_do_not_outrank_concrete_plan():
         ],
         "rationale": "cleared the correctness bug before shipping",
     }
-    assert pairwise_judge({}, concrete, filler, [], llm) == "A"
-    assert pairwise_judge({}, filler, concrete, [], llm) == "B"
+    assert pairwise_judge({}, concrete, filler, [], llm) == ("A", "offline")
+    assert pairwise_judge({}, filler, concrete, [], llm) == ("B", "offline")
 
 
 def test_verbose_fluff_plan_does_not_beat_concise_substance():
@@ -159,30 +159,48 @@ def test_verbose_fluff_plan_does_not_beat_concise_substance():
         ],
         "rationale": "cleared the release blocker before new work",
     }
-    assert pairwise_judge({}, substance, fluff, [], llm) == "A"
-    assert pairwise_judge({}, fluff, substance, [], llm) == "B"
+    assert pairwise_judge({}, substance, fluff, [], llm) == ("A", "offline")
+    assert pairwise_judge({}, fluff, substance, [], llm) == ("B", "offline")
 
 
 def test_dual_order_keeps_consistent_winner():
     # A judge that genuinely prefers the stronger submission agrees across both orders.
     llm = _FakeLLM("content")
-    assert pairwise_judge({}, _GOOD, _BAD, [], llm) == "A"
+    assert pairwise_judge({}, _GOOD, _BAD, [], llm) == ("A", "agreed")
     assert llm.calls == 2  # both presentation orders were asked
     # winner tracks the content regardless of which argument position it's in
-    assert pairwise_judge({}, _BAD, _GOOD, [], _FakeLLM("content")) == "B"
+    assert pairwise_judge({}, _BAD, _GOOD, [], _FakeLLM("content")) == ("B", "agreed")
 
 
 def test_dual_order_ties_a_position_biased_judge():
     # "always pick the first-shown" and "always pick the second-shown" are pure position
     # bias — dual-order must refuse to award either a spurious win.
-    assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_first")) == "tie"
-    assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_second")) == "tie"
+    assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_first")) == ("tie", "disagreed")
+    assert pairwise_judge({}, _GOOD, _BAD, [], _FakeLLM("position_second")) == ("tie", "disagreed")
 
 
 def test_single_order_mode_makes_one_call_and_can_be_swayed():
     # With dual_order disabled, only one call is made and a position-biased judge decides it.
     llm = _FakeLLM("position_first")
     # rng.random() >= 0.5 -> no swap, submission_a shown first -> biased judge picks A.
-    result = pairwise_judge({}, _GOOD, _BAD, [], llm, random.Random(1), dual_order=False)
+    result, agreement = pairwise_judge(
+        {}, _GOOD, _BAD, [], llm, random.Random(1), dual_order=False)
     assert llm.calls == 1
     assert result in ("A", "B")  # a (biased) decision, not forced to tie
+    assert agreement == "single"
+
+
+def test_dual_order_agreement_tracks_genuine_ties():
+    """When both orders genuinely say tie, agreement is 'tie', not 'disagreed'."""
+    llm = _FakeLLM("tie")
+    winner, agreement = pairwise_judge({}, _GOOD, _BAD, [], llm)
+    assert winner == "tie"
+    assert agreement == "tie"
+    assert llm.calls == 2
+
+
+def test_offline_judge_reports_offline_agreement():
+    """Offline mode returns 'offline' as the agreement tag."""
+    llm = LLM(api_key="offline")
+    _, agreement = pairwise_judge({}, _GOOD, _BAD, [], llm)
+    assert agreement == "offline"
