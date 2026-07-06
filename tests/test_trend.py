@@ -31,6 +31,23 @@ def test_headline_score_reads_top_level_and_generalization_tuned():
     assert headline_score({"composite_mean": "bad"}) is None                # non-numeric
 
 
+def test_headline_score_treats_unscored_tuned_partition_as_unscored():
+    # A tuned partition that scored nothing (scored_repos: 0) reports a placeholder
+    # composite_mean of 0.0 — a transient/infra outcome, not a real zero. It must read as None,
+    # so --fail-on-regression doesn't raise a false alarm on an infra hiccup.
+    unscored = {
+        "tuned": {"error": "no tuned repos to replay", "scored_repos": 0, "composite_mean": 0.0},
+        "held_out": {"composite_mean": 0.56, "scored_repos": 2},
+        "generalization_gap": None,
+    }
+    assert headline_score(unscored) is None
+    # The infra hiccup is skipped, so a healthy run before and after is NOT a 0.62 -> 0.0 -> 0.63
+    # crash-and-recover; the two real scores compare directly with no spurious regression.
+    out = trend([("run1", _gen(0.62)), ("run2", unscored), ("run3", _gen(0.63))])
+    assert [p["composite_mean"] for p in out["points"]] == [0.62, None, 0.63]
+    assert out["regressions"] == []
+
+
 def test_trend_computes_points_deltas_and_overall_change():
     series = [("r1", _single(0.50)), ("r2", _single(0.55)), ("r3", _single(0.53))]
     out = trend(series)
