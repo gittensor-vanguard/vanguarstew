@@ -1,6 +1,7 @@
 """Tests for the composite-score integrity gate (deterministic, offline)."""
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from benchmark.score_integrity import (  # noqa: E402
     DEFAULT_W_JUDGE,
     DEFAULT_W_OBJECTIVE,
     _expected_composite,
+    _per_repo_list,
     check_score_integrity,
     failed_checks,
     integrity_headline,
@@ -159,6 +161,51 @@ def test_multi_repo_weights_from_per_repo():
         ],
     }
     assert check_score_integrity(art)["passed"] is True
+
+
+# --- #635: truthy non-list per_repo must not abort score integrity ---------------------
+
+_MALFORMED_PER_REPO = [42, 3.14, True, {"name": "a"}, "not a list"]
+
+
+def test_per_repo_list_accepts_only_real_lists():
+    rows = [{"weights": {"judge": 0.6, "objective": 0.4}}]
+    for bad in _MALFORMED_PER_REPO:
+        assert _per_repo_list(bad) == [], bad
+    assert _per_repo_list(rows) == rows
+    assert _per_repo_list(None) == []
+
+
+def test_per_repo_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _per_repo_list(None) == []
+    assert not caplog.records
+
+
+def test_per_repo_list_warns_for_skipped_rows_and_all_junk(caplog):
+    mixed = [42, {"weights": {"judge": 0.6, "objective": 0.4}}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert len(_per_repo_list(mixed)) == 1
+    assert any("per_repo[0] is int" in r.message for r in caplog.records)
+
+    caplog.clear()
+    junk = [42, "bad"]
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _per_repo_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("per_repo[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_score_integrity_survives_non_list_per_repo(caplog):
+    art = {
+        "composite_mean": 0.62,
+        "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5},
+        "per_repo": 42,
+    }
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert check_score_integrity(art)["passed"] is True
+    assert any("per_repo is int" in r.message for r in caplog.records)
 
 
 def test_integrity_headline_reports_consistent_and_inconsistent():

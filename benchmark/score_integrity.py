@@ -54,6 +54,37 @@ def _checks_list(checks) -> list:
     return []
 
 
+def _per_repo_list(items, field: str = "per_repo") -> list:
+    """Return dict rows from a multi-repo ``per_repo`` list; skip junk entries."""
+    if not isinstance(items, list):
+        if items is not None:
+            logger.warning(
+                "score_integrity: %s is %s, not a list; treating as empty",
+                field,
+                type(items).__name__,
+            )
+        return []
+    rows = []
+    for idx, entry in enumerate(items):
+        if not isinstance(entry, dict):
+            logger.warning(
+                "score_integrity: %s[%s] is %s, not an object; skipping",
+                field,
+                idx,
+                type(entry).__name__,
+            )
+            continue
+        rows.append(entry)
+    if items and not rows:
+        logger.warning(
+            "score_integrity: %s had %d entr%s but no usable rows",
+            field,
+            len(items),
+            "y" if len(items) == 1 else "ies",
+        )
+    return rows
+
+
 def _round3(value):
     return round(float(value), 3) if _is_number(value) else None
 
@@ -65,9 +96,7 @@ def _weights(slice_: dict) -> tuple[float, float]:
         wj, wo = weights.get("judge"), weights.get("objective")
         if _is_number(wj) and _is_number(wo):
             return float(wj), float(wo)
-    for entry in slice_.get("per_repo") or []:
-        if not isinstance(entry, dict):
-            continue
+    for entry in _per_repo_list(slice_.get("per_repo")):
         nested = entry.get("weights")
         if isinstance(nested, dict):
             wj, wo = nested.get("judge"), nested.get("objective")
