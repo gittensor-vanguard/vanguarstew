@@ -14,6 +14,7 @@ from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
     VALUE_LABELS,
+    _clip_text,
     _normalize_bool,
     _normalize_concerns,
     _normalize_review_action,
@@ -46,6 +47,25 @@ def test_review_tolerates_missing_fields():
     llm = LLM(api_key="offline")
     rev = review_pr({}, None, llm)
     assert rev["action"] in ACTIONS
+
+
+def test_clip_text_guards_non_strings():
+    assert _clip_text("hello world", 5) == "hello"
+    assert _clip_text("short", 100) == "short"
+    for bad in (123, 3.5, {"a": 1}, ["x"], None, True):
+        assert _clip_text(bad, 10) == ""
+
+
+def test_review_pr_survives_a_non_string_body_or_diff():
+    # Regression: body/diff come from the unvalidated frozen context; a non-string value
+    # (number, dict, list) used to crash prompt assembly with "'int' object is not subscriptable"
+    # (int/float) or a KeyError on the slice (dict).
+    llm = LLM(api_key="offline")
+    for bad in (123, 3.5, {"text": "hi"}, ["a line"], None):
+        pr = {"number": 1, "title": "t", "author": "a", "files": ["tests/test_x.py"],
+              "body": bad, "diff": bad}
+        rev = review_pr(pr, None, llm)          # must not raise
+        assert rev["action"] in ACTIONS
 
 
 def test_normalize_review_action_maps_synonyms():

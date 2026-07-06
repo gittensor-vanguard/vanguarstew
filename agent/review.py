@@ -129,6 +129,17 @@ def _normalize_review(out: dict, stub: dict) -> dict:
     }
 
 
+def _clip_text(value, limit: int) -> str:
+    """A string field clipped to ``limit`` chars; a non-string value clips to "".
+
+    PR fields (``body``, ``diff``) come from the unvalidated frozen context; a non-string
+    value must not crash prompt assembly. ``value[:limit]`` would raise on a number
+    (``'int' object is not subscriptable``) or a dict (``KeyError`` on the slice), so guard
+    the type the same way ``files`` is guarded above.
+    """
+    return value[:limit] if isinstance(value, str) else ""
+
+
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
     if not isinstance(pr, dict):
@@ -151,9 +162,9 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy else "")
         + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"
         + f"by @{pr.get('author')}  (+{pr.get('additions', 0)}/-{pr.get('deletions', 0)})\n\n"
-        + f"description:\n{(pr.get('body') or '')[:1500]}\n\n"
+        + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
         + f"changed files: {', '.join(files[:30])}\n\n"
-        + f"diff (truncated):\n{(pr.get('diff') or '')[:6000]}\n\n"
+        + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n\n"
         + "Return JSON with keys:\n"
         + f'  "action": one of {ACTIONS},\n'
         + f'  "value_label": the single best-fit tier from {VALUE_LABELS},\n'
