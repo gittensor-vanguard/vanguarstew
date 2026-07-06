@@ -64,8 +64,49 @@ def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
     return out
 
 
+def _is_generalization(artifact: dict) -> bool:
+    """True only for a ``run_generalization_report`` artifact.
+
+    That report nests per-partition scores under ``tuned`` and ``held_out`` mappings and
+    carries no top-level ``composite_mean``. Requiring BOTH keys to be dicts keeps the
+    detector strict: a standard single/multi-repo artifact never carries two dict-valued
+    ``tuned``/``held_out`` fields, so it is never misread as generalization-shaped.
+    """
+    return isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict)
+
+
+def _generalization_diff(baseline: dict, candidate: dict) -> dict:
+    """Diff the composite means of each partition plus the generalization gap.
+
+    Every value is read through ``_metric_triplet``/``_delta``, which coerce a missing,
+    ``None``, or non-numeric field to a ``None`` delta rather than crashing — so a partition
+    that only recorded an ``error`` (``scored_repos == 0``) diffs to ``None`` cleanly.
+    """
+    out = {}
+    for partition in ("tuned", "held_out"):
+        base_part = baseline.get(partition)
+        cand_part = candidate.get(partition)
+        base_part = base_part if isinstance(base_part, dict) else {}
+        cand_part = cand_part if isinstance(cand_part, dict) else {}
+        out[partition] = {"composite_mean": _metric_triplet(base_part, cand_part, "composite_mean")}
+    out["generalization_gap"] = _metric_triplet(baseline, candidate, "generalization_gap")
+    return out
+
+
 def compare_eval_artifacts(baseline: dict, candidate: dict) -> dict:
-    """Return a stable JSON summary of how ``candidate`` differs from ``baseline``."""
+    """Return a stable JSON summary of how ``candidate`` differs from ``baseline``.
+
+    Standard single/multi-repo artifacts diff their top-level ``composite_mean`` (and any
+    optional ``composite_parts``/``judge_report``/``per_repo`` sections). When BOTH artifacts
+    are ``run_generalization_report`` shaped — no top-level ``composite_mean``, scores nested
+    under ``tuned``/``held_out`` — the top-level ``composite_mean`` triplet is replaced by a
+    dedicated ``generalization`` block holding each partition's ``composite_mean`` delta and
+    the ``generalization_gap`` delta. The two shapes never share output keys, so an existing
+    consumer of standard artifacts is unaffected.
+    """
+    if _is_generalization(baseline) and _is_generalization(candidate):
+        return {"generalization": _generalization_diff(baseline, candidate)}
+
     parts = {}
     base_parts = baseline.get("composite_parts") or {}
     cand_parts = candidate.get("composite_parts") or {}
@@ -94,8 +135,20 @@ def compare_eval_artifacts(baseline: dict, candidate: dict) -> dict:
     return result
 
 
+def _fmt_delta(triplet: dict) -> str:
+    delta = (triplet or {}).get("delta")
+    return "n/a" if delta is None else f"{delta:+.3f}"
+
+
 def comparison_headline(diff: dict) -> str:
     """One-line human summary for stderr."""
+    gen = diff.get("generalization")
+    if gen:
+        return (
+            f"compare_eval: tuned {_fmt_delta(gen.get('tuned', {}).get('composite_mean'))} "
+            f"held_out {_fmt_delta(gen.get('held_out', {}).get('composite_mean'))} "
+            f"gap {_fmt_delta(gen.get('generalization_gap'))}"
+        )
     mean = diff.get("composite_mean") or {}
     delta = mean.get("delta")
     if delta is None:
