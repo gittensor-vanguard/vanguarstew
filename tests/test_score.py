@@ -14,6 +14,7 @@ from benchmark.score import (  # noqa: E402
     _meaningful_overlap,
     _plan_list,
     _plan_tokens,
+    _releases_list,
     _revealed_list,
     _tokens,
     _top_module,
@@ -508,6 +509,34 @@ def test_base_from_releases_falls_back_to_release_name():
     # Prefer a parseable tag; only consult name when tag is absent or not semver-shaped.
     assert base_from_releases([{"tag": "v1.5.0", "name": "v9.9.9"}]) == "v1.5.0"
     assert base_from_releases([{"tag": "latest", "name": "v1.5.0"}]) == "v1.5.0"
+
+
+# --- #459: a non-list releases field must not abort replay scoring -------------------------
+
+_MALFORMED_RELEASES = [42, 3.14, True, {"tag": "v1.0.0"}, "not a list", None]
+
+
+def test_releases_list_accepts_only_real_lists():
+    releases = [{"tag": "v1.2.0"}]
+    assert _releases_list(releases) == releases
+    assert _releases_list(None) == []
+    for bad in _MALFORMED_RELEASES:
+        assert _releases_list(bad) == [], bad
+
+
+def test_base_from_releases_survives_non_list_container():
+    for bad in _MALFORMED_RELEASES:
+        assert base_from_releases(bad) is None, bad
+
+
+def test_base_from_releases_skips_non_dict_rows():
+    releases = [42, {"tag": "v2.0.0"}, None, {"name": "v1.5.0"}]
+    assert base_from_releases(releases) == "v2.0.0"
+
+
+def test_base_from_releases_well_formed_regression():
+    releases = [{"tag": "v1.0.0"}, {"tag": "v1.10.0"}, {"tag": "v1.2.0"}]
+    assert base_from_releases(releases) == "v1.10.0"
 
 
 def test_bump_actual_ignores_version_in_non_release_commit():
