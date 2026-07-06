@@ -1,0 +1,14 @@
+{
+  "id": "commit-kind-feat",
+  "description": "Conventional commit prefix normalized",
+  "function": "commit_kind",
+  "inputs": {
+    "subject": "feat: add endpoint"
+  },
+  "expected": {
+    "commit_kind": "feat"
+  },
+  "tags": [
+    "kind"
+  ]
+}

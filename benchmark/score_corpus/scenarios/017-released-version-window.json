@@ -1,0 +1,25 @@
+{
+  "id": "released-version-window",
+  "description": "Highest release version extracted from window",
+  "function": "released_version",
+  "inputs": {
+    "revealed": [
+      {
+        "subject": "Release v1.4.0"
+      },
+      {
+        "subject": "Release v1.3.0"
+      }
+    ]
+  },
+  "expected": {
+    "released_version": [
+      1,
+      4,
+      0
+    ]
+  },
+  "tags": [
+    "bump"
+  ]
+}

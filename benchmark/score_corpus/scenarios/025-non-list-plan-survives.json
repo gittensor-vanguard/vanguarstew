@@ -1,0 +1,24 @@
+{
+  "id": "non-list-plan-survives",
+  "description": "Truthy non-list plan treated as empty",
+  "function": "module_recall",
+  "inputs": {
+    "plan": 42,
+    "revealed": [
+      {
+        "subject": "refactor: simplify planner",
+        "files": [
+          "agent/planner.py",
+          "agent/decider.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "module_recall": 0.0,
+    "matched_modules": []
+  },
+  "tags": [
+    "robustness"
+  ]
+}

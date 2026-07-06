@@ -1,0 +1,28 @@
+{
+  "id": "kind-no-module-farming",
+  "description": "Kind tag alone must not farm module recall for docs/",
+  "function": "module_recall",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Improve chapter layout",
+        "kind": "docs"
+      }
+    ],
+    "revealed": [
+      {
+        "files": [
+          "docs/guide.md"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "module_recall": 0.0,
+    "matched_modules": []
+  },
+  "tags": [
+    "module_recall",
+    "anti-farming"
+  ]
+}

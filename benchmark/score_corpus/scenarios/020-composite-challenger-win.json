@@ -1,0 +1,34 @@
+{
+  "id": "composite-challenger-win",
+  "description": "Full judge win plus perfect objective yields 1.0 composite",
+  "function": "composite_score",
+  "inputs": {
+    "winner": "A",
+    "plan": [
+      {
+        "title": "Refactor agent internals",
+        "kind": "refactor",
+        "files": [
+          "agent/planner.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "refactor: simplify planner",
+        "files": [
+          "agent/planner.py",
+          "agent/decider.py"
+        ]
+      }
+    ],
+    "w_judge": 0.6,
+    "w_objective": 0.4
+  },
+  "expected": {
+    "composite_score": 1.0
+  },
+  "tags": [
+    "composite"
+  ]
+}

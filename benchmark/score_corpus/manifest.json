@@ -1,0 +1,147 @@
+{
+  "name": "offline-objective-scoring-golden-corpus",
+  "version": 1,
+  "description": "Golden scenarios for offline objective-scoring calibration.",
+  "scenarios": [
+    {
+      "id": "module-recall-full",
+      "file": "001-module-recall-full.json"
+    },
+    {
+      "id": "module-recall-partial",
+      "file": "002-module-recall-partial.json"
+    },
+    {
+      "id": "module-recall-zero",
+      "file": "003-module-recall-zero.json"
+    },
+    {
+      "id": "weighted-module-recall",
+      "file": "004-weighted-module-recall.json"
+    },
+    {
+      "id": "kind-recall-match",
+      "file": "005-kind-recall-match.json"
+    },
+    {
+      "id": "kind-no-module-farming",
+      "file": "006-kind-no-module-farming.json"
+    },
+    {
+      "id": "files-field-names-module",
+      "file": "007-files-field-names-module.json"
+    },
+    {
+      "id": "release-signaled-yes",
+      "file": "008-release-signaled-yes.json"
+    },
+    {
+      "id": "release-signaled-no",
+      "file": "009-release-signaled-no.json"
+    },
+    {
+      "id": "release-predicted-kind",
+      "file": "010-release-predicted-kind.json"
+    },
+    {
+      "id": "release-predicted-title",
+      "file": "011-release-predicted-title.json"
+    },
+    {
+      "id": "is-release-genuine",
+      "file": "012-is-release-genuine.json"
+    },
+    {
+      "id": "is-release-incidental",
+      "file": "013-is-release-incidental.json"
+    },
+    {
+      "id": "is-release-cc-prefix",
+      "file": "014-is-release-cc-prefix.json"
+    },
+    {
+      "id": "bump-level-minor",
+      "file": "015-bump-level-minor.json"
+    },
+    {
+      "id": "bump-level-none",
+      "file": "016-bump-level-none.json"
+    },
+    {
+      "id": "released-version-window",
+      "file": "017-released-version-window.json"
+    },
+    {
+      "id": "objective-release-match",
+      "file": "018-objective-release-match.json"
+    },
+    {
+      "id": "objective-no-release-axis",
+      "file": "019-objective-no-release-axis.json"
+    },
+    {
+      "id": "composite-challenger-win",
+      "file": "020-composite-challenger-win.json"
+    },
+    {
+      "id": "composite-baseline-win",
+      "file": "021-composite-baseline-win.json"
+    },
+    {
+      "id": "composite-tie",
+      "file": "022-composite-tie.json"
+    },
+    {
+      "id": "backlog-recall-match",
+      "file": "023-backlog-recall-match.json"
+    },
+    {
+      "id": "backlog-excluded-from-component",
+      "file": "024-backlog-excluded-from-component.json"
+    },
+    {
+      "id": "non-list-plan-survives",
+      "file": "025-non-list-plan-survives.json"
+    },
+    {
+      "id": "non-list-revealed-survives",
+      "file": "026-non-list-revealed-survives.json"
+    },
+    {
+      "id": "changed-modules-nested",
+      "file": "027-changed-modules-nested.json"
+    },
+    {
+      "id": "base-from-releases",
+      "file": "028-base-from-releases.json"
+    },
+    {
+      "id": "parse-semver-two-part",
+      "file": "029-parse-semver-two-part.json"
+    },
+    {
+      "id": "trajectory-overlap",
+      "file": "030-trajectory-overlap.json"
+    },
+    {
+      "id": "commit-kind-feat",
+      "file": "031-commit-kind-feat.json"
+    },
+    {
+      "id": "objective-kind-recall-axis",
+      "file": "032-objective-kind-recall-axis.json"
+    },
+    {
+      "id": "objective-kind-and-module",
+      "file": "033-objective-kind-and-module.json"
+    },
+    {
+      "id": "composite-custom-weights",
+      "file": "034-composite-custom-weights.json"
+    },
+    {
+      "id": "release-bump-mismatch",
+      "file": "035-release-bump-mismatch.json"
+    }
+  ]
+}

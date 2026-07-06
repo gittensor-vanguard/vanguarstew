@@ -1,0 +1,34 @@
+{
+  "id": "composite-custom-weights",
+  "description": "Custom judge/objective weights normalize correctly",
+  "function": "composite_score",
+  "inputs": {
+    "winner": "A",
+    "plan": [
+      {
+        "title": "Refactor agent internals",
+        "kind": "refactor",
+        "files": [
+          "agent/planner.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "refactor: simplify planner",
+        "files": [
+          "agent/planner.py",
+          "agent/decider.py"
+        ]
+      }
+    ],
+    "w_judge": 0.5,
+    "w_objective": 0.5
+  },
+  "expected": {
+    "composite_score": 1.0
+  },
+  "tags": [
+    "composite"
+  ]
+}

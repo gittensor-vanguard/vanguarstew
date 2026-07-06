@@ -1,0 +1,31 @@
+{
+  "id": "files-field-names-module",
+  "description": "Structured files path anticipates top-level module",
+  "function": "module_recall",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Improve loader",
+        "files": [
+          "benchmark/runner.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "files": [
+          "benchmark/runner.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "module_recall": 1.0,
+    "matched_modules": [
+      "benchmark"
+    ]
+  },
+  "tags": [
+    "module_recall"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "parse-semver-two-part",
+  "description": "Two-part semver parses with zero patch",
+  "function": "parse_semver",
+  "inputs": {
+    "text": "v2.0"
+  },
+  "expected": {
+    "parse_semver": [
+      2,
+      0,
+      0
+    ]
+  },
+  "tags": [
+    "semver"
+  ]
+}

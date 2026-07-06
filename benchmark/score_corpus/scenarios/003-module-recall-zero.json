@@ -1,0 +1,28 @@
+{
+  "id": "module-recall-zero",
+  "description": "Unrelated plan scores zero module recall",
+  "function": "module_recall",
+  "inputs": {
+    "plan": [
+      {
+        "title": "misc cleanup"
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "refactor: simplify planner",
+        "files": [
+          "agent/planner.py",
+          "agent/decider.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "module_recall": 0.0,
+    "matched_modules": []
+  },
+  "tags": [
+    "module_recall"
+  ]
+}

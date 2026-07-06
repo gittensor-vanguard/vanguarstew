@@ -1,0 +1,19 @@
+{
+  "id": "release-predicted-kind",
+  "description": "Release kind on plan item predicts release",
+  "function": "release_predicted",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Cut release",
+        "kind": "release"
+      }
+    ]
+  },
+  "expected": {
+    "release_predicted": true
+  },
+  "tags": [
+    "release"
+  ]
+}

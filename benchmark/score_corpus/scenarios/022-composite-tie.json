@@ -1,0 +1,32 @@
+{
+  "id": "composite-tie",
+  "description": "Tie judge outcome blends with objective anchor",
+  "function": "composite_score",
+  "inputs": {
+    "winner": "tie",
+    "plan": [
+      {
+        "title": "Refactor agent internals",
+        "kind": "refactor",
+        "files": [
+          "agent/planner.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "refactor: simplify planner",
+        "files": [
+          "agent/planner.py",
+          "agent/decider.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "composite_score": 0.7
+  },
+  "tags": [
+    "composite"
+  ]
+}

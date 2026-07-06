@@ -1,0 +1,30 @@
+{
+  "id": "backlog-excluded-from-component",
+  "description": "Backlog recall does not inflate objective_component when modules empty",
+  "function": "objective_component",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Fix memory leak under load"
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "fix: memory leak under load"
+      }
+    ],
+    "open_issues": [
+      {
+        "number": 42,
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "expected": {
+    "objective_component": 0.0
+  },
+  "tags": [
+    "backlog",
+    "objective"
+  ]
+}

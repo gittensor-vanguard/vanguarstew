@@ -1,0 +1,28 @@
+{
+  "id": "changed-modules-nested",
+  "description": "Top-level modules extracted from nested and root paths",
+  "function": "changed_modules",
+  "inputs": {
+    "revealed": [
+      {
+        "files": [
+          "agent/planner.py"
+        ]
+      },
+      {
+        "files": [
+          "README.md"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "modules": [
+      "agent",
+      "readme"
+    ]
+  },
+  "tags": [
+    "modules"
+  ]
+}

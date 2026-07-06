@@ -1,0 +1,32 @@
+{
+  "id": "backlog-recall-match",
+  "description": "Plan anticipates addressed backlog issue",
+  "function": "objective_score",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Fix memory leak under load"
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "fix: memory leak under load"
+      }
+    ],
+    "open_issues": [
+      {
+        "number": 42,
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "expected": {
+    "backlog_recall": 1.0,
+    "matched_issue_numbers": [
+      42
+    ]
+  },
+  "tags": [
+    "backlog"
+  ]
+}

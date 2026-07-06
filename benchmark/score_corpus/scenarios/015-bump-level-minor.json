@@ -1,0 +1,23 @@
+{
+  "id": "bump-level-minor",
+  "description": "Semver minor bump classified",
+  "function": "bump_level",
+  "inputs": {
+    "old": [
+      1,
+      2,
+      0
+    ],
+    "new": [
+      1,
+      3,
+      0
+    ]
+  },
+  "expected": {
+    "bump_level": "minor"
+  },
+  "tags": [
+    "bump"
+  ]
+}

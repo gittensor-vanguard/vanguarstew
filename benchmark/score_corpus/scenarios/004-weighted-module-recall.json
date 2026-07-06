@@ -1,0 +1,40 @@
+{
+  "id": "weighted-module-recall",
+  "description": "Weighted recall reflects file-count concentration",
+  "function": "module_recall",
+  "inputs": {
+    "plan": [
+      {
+        "title": "agent refactor",
+        "files": [
+          "agent/a.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "files": [
+          "agent/a.py"
+        ]
+      },
+      {
+        "files": [
+          "agent/b.py"
+        ]
+      },
+      {
+        "files": [
+          "docs/x.md"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "module_recall": 0.5,
+    "weighted_module_recall": 0.667
+  },
+  "tags": [
+    "module_recall",
+    "weighted"
+  ]
+}

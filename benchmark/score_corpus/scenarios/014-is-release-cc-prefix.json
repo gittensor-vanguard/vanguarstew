@@ -1,0 +1,14 @@
+{
+  "id": "is-release-cc-prefix",
+  "description": "fix: prefix blocks incidental release word",
+  "function": "is_release_subject",
+  "inputs": {
+    "text": "fix: release notes typo"
+  },
+  "expected": {
+    "is_release_subject": false
+  },
+  "tags": [
+    "release"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "release-signaled-no",
+  "description": "Incidental version in fix subject is not a release",
+  "function": "release_signaled",
+  "inputs": {
+    "revealed": [
+      {
+        "subject": "fix crash in v1.2.0 parser"
+      }
+    ]
+  },
+  "expected": {
+    "release_signaled": false
+  },
+  "tags": [
+    "release"
+  ]
+}

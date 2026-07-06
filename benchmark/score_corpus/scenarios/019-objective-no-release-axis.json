@@ -1,0 +1,31 @@
+{
+  "id": "objective-no-release-axis",
+  "description": "No-release window scores only module recall axis",
+  "function": "objective_component",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Refactor agent internals",
+        "kind": "refactor",
+        "files": [
+          "agent/planner.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "refactor: simplify planner",
+        "files": [
+          "agent/planner.py",
+          "agent/decider.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "objective_component": 1.0
+  },
+  "tags": [
+    "objective"
+  ]
+}

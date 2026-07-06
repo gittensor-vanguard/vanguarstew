@@ -1,0 +1,14 @@
+{
+  "id": "is-release-incidental",
+  "description": "Dependency bump with version is not a release",
+  "function": "is_release_subject",
+  "inputs": {
+    "text": "bump lodash to v4.17.21"
+  },
+  "expected": {
+    "is_release_subject": false
+  },
+  "tags": [
+    "release"
+  ]
+}

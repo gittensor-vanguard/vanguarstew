@@ -1,0 +1,30 @@
+{
+  "id": "objective-kind-and-module",
+  "description": "Module and kind axes both contribute when present",
+  "function": "objective_component",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Fix agent parser",
+        "kind": "bugfix",
+        "files": [
+          "agent/parser.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "fix: parser",
+        "files": [
+          "agent/parser.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "objective_component": 1.0
+  },
+  "tags": [
+    "objective"
+  ]
+}

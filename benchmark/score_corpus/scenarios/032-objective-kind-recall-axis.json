@@ -1,0 +1,25 @@
+{
+  "id": "objective-kind-recall-axis",
+  "description": "Kind recall axis contributes when revealed carries recognizable kinds",
+  "function": "objective_component",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Fix bug",
+        "kind": "bugfix"
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "fix: crash"
+      }
+    ]
+  },
+  "expected": {
+    "objective_component": 0.5
+  },
+  "tags": [
+    "objective",
+    "kind_recall"
+  ]
+}

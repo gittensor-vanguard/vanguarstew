@@ -1,0 +1,14 @@
+{
+  "id": "is-release-genuine",
+  "description": "Explicit release subject detected",
+  "function": "is_release_subject",
+  "inputs": {
+    "text": "Release v1.2.0"
+  },
+  "expected": {
+    "is_release_subject": true
+  },
+  "tags": [
+    "release"
+  ]
+}

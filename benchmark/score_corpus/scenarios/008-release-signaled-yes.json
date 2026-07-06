@@ -1,0 +1,21 @@
+{
+  "id": "release-signaled-yes",
+  "description": "Genuine release subject signals release",
+  "function": "release_signaled",
+  "inputs": {
+    "revealed": [
+      {
+        "subject": "Release v1.3.0",
+        "files": [
+          "pyproject.toml"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "release_signaled": true
+  },
+  "tags": [
+    "release"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "id": "kind-recall-match",
+  "description": "Plan kinds match revealed commit kinds",
+  "function": "kind_recall",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Fix parser",
+        "kind": "bugfix"
+      },
+      {
+        "title": "Add API",
+        "kind": "feature"
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "fix: crash"
+      },
+      {
+        "subject": "feat: streaming"
+      }
+    ]
+  },
+  "expected": {
+    "kind_recall": 1.0,
+    "matched_kinds": [
+      "feat",
+      "fix"
+    ]
+  },
+  "tags": [
+    "kind_recall"
+  ]
+}

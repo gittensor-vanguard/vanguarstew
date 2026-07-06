@@ -1,0 +1,23 @@
+{
+  "id": "bump-level-none",
+  "description": "Downgrade is not a forward bump",
+  "function": "bump_level",
+  "inputs": {
+    "old": [
+      2,
+      0,
+      0
+    ],
+    "new": [
+      1,
+      9,
+      0
+    ]
+  },
+  "expected": {
+    "bump_level": null
+  },
+  "tags": [
+    "bump"
+  ]
+}

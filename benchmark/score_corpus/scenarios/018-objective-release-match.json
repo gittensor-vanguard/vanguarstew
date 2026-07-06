@@ -1,0 +1,33 @@
+{
+  "id": "objective-release-match",
+  "description": "Release and bump match when predicted correctly",
+  "function": "objective_score",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Prepare release",
+        "kind": "release"
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "Release v1.3.0",
+        "files": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "base_version": "1.2.0",
+    "version_bump": "minor"
+  },
+  "expected": {
+    "release_signaled": true,
+    "release_predicted": true,
+    "release_match": true,
+    "bump_actual": "minor",
+    "bump_match": true
+  },
+  "tags": [
+    "objective"
+  ]
+}

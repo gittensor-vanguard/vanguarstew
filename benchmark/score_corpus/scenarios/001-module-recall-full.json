@@ -1,0 +1,37 @@
+{
+  "id": "module-recall-full",
+  "description": "Plan naming agent module matches all revealed agent changes",
+  "function": "module_recall",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Refactor agent internals",
+        "kind": "refactor",
+        "files": [
+          "agent/planner.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "refactor: simplify planner",
+        "files": [
+          "agent/planner.py",
+          "agent/decider.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "module_recall": 1.0,
+    "matched_modules": [
+      "agent"
+    ],
+    "actual_modules": [
+      "agent"
+    ]
+  },
+  "tags": [
+    "module_recall"
+  ]
+}

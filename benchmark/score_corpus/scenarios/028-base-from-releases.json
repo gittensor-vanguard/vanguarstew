@@ -1,0 +1,21 @@
+{
+  "id": "base-from-releases",
+  "description": "Highest frozen release tag picked as base",
+  "function": "base_from_releases",
+  "inputs": {
+    "releases": [
+      {
+        "tag": "v1.2.0"
+      },
+      {
+        "tag": "v1.3.0"
+      }
+    ]
+  },
+  "expected": {
+    "base_from_releases": "v1.3.0"
+  },
+  "tags": [
+    "release"
+  ]
+}

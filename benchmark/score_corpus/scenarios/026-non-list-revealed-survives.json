@@ -1,0 +1,26 @@
+{
+  "id": "non-list-revealed-survives",
+  "description": "Truthy non-list revealed treated as empty",
+  "function": "module_recall",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Refactor agent internals",
+        "kind": "refactor",
+        "files": [
+          "agent/planner.py"
+        ]
+      }
+    ],
+    "revealed": {
+      "bad": true
+    }
+  },
+  "expected": {
+    "module_recall": 0.0,
+    "actual_modules": []
+  },
+  "tags": [
+    "robustness"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "release-bump-mismatch",
+  "description": "Wrong bump prediction fails bump_match",
+  "function": "objective_score",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Release",
+        "kind": "release"
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "Release v1.3.0",
+        "files": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "base_version": "1.2.0",
+    "version_bump": "major"
+  },
+  "expected": {
+    "bump_actual": "minor",
+    "bump_match": false
+  },
+  "tags": [
+    "bump"
+  ]
+}

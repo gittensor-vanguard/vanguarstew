@@ -1,0 +1,28 @@
+{
+  "id": "composite-baseline-win",
+  "description": "Baseline win with zero objective yields 0.0 composite",
+  "function": "composite_score",
+  "inputs": {
+    "winner": "B",
+    "plan": [
+      {
+        "title": "misc"
+      }
+    ],
+    "revealed": [
+      {
+        "subject": "refactor: simplify planner",
+        "files": [
+          "agent/planner.py",
+          "agent/decider.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "composite_score": 0.0
+  },
+  "tags": [
+    "composite"
+  ]
+}

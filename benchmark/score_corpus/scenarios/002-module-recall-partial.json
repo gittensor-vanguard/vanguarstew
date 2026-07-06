@@ -1,0 +1,36 @@
+{
+  "id": "module-recall-partial",
+  "description": "Partial module recall when only one of two modules anticipated",
+  "function": "module_recall",
+  "inputs": {
+    "plan": [
+      {
+        "title": "Work on agent planner",
+        "files": [
+          "agent/planner.py"
+        ]
+      }
+    ],
+    "revealed": [
+      {
+        "files": [
+          "agent/planner.py"
+        ]
+      },
+      {
+        "files": [
+          "benchmark/runner.py"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "module_recall": 0.5,
+    "matched_modules": [
+      "agent"
+    ]
+  },
+  "tags": [
+    "module_recall"
+  ]
+}
