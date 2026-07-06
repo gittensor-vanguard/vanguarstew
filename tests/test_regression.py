@@ -1,7 +1,9 @@
 """Tests for the candidate-vs-baseline regression gate (deterministic, offline)."""
 
 import copy
+import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -144,3 +146,50 @@ def test_regression_headline_logs_warning_for_non_list_checks(caplog):
         line = regression_headline({"checks": 42, "passed": False})
     assert line == "regression: no checks evaluated"
     assert any("checks is int" in r.message for r in caplog.records)
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.regression", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(good), str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(good), str(bad))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path), str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_still_reports_ok_for_well_formed_artifacts(tmp_path):
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(_run(0.6)), encoding="utf-8")
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps(_run(0.62)), encoding="utf-8")
+    result = _run_cli(str(baseline), str(candidate))
+    assert result.returncode == 0
+    assert "regression: OK" in result.stderr
+    assert json.loads(result.stdout)["passed"] is True
