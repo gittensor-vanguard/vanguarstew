@@ -25,15 +25,19 @@ import re
 # brackets, quotes — intact instead of swallowing it into the mask.
 _URL_STOP = "<>()[]{}\"'`"
 
-# A GitHub deep-link whose target references the repo's future state. The owner/
-# repo and trailing id/path segments are bounded by ``_URL_STOP`` so the matcher
-# never runs past a closing delimiter, and the recognized link *types* live in a
-# single readable alternation that is straightforward to extend (additional link
-# classes are tracked separately in #108).
+# A GitHub deep-link whose target references the repo's future state: a later issue/PR/commit,
+# a *future release tag* (``releases/tag/vX`` hands over the next version outright and defeats
+# the release/bump scoring in score.py), or a tree/blob/compare at a future ref, plus milestone
+# and discussion pages that point at where the repo is heading. The owner/repo and trailing
+# id/path segments are bounded by ``_URL_STOP`` so the matcher never runs past a closing
+# delimiter, and the recognized link *types* live in a single readable alternation. The bare
+# repo/owner URL (no item path, e.g. github.com/owner/repo) is deliberately left intact so
+# legitimate references survive.
 _GH_LINK = re.compile(
     r"https?://github\.com"
     r"/[^\s" + re.escape(_URL_STOP) + r"]+/"                  # owner/repo/
-    r"(?:issues|pull|commit|compare)/"              # a deep-link type
+    r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|"
+    r"milestone|milestones|discussions)/"           # a forward-referencing link type
     r"[^\s" + re.escape(_URL_STOP) + r"]+",                    # referenced id / path
     re.I,
 )
