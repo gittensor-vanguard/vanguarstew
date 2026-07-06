@@ -37,10 +37,18 @@ def result_summary_lines(result: dict) -> list[str]:
 
 
 def check_score_floor(result: dict, fail_under: float | None) -> str | None:
-    """Return an error message when ``composite_mean`` is below ``fail_under``, else None."""
+    """Return an error message when the run's composite score is below ``fail_under``, else None.
+
+    A `--generalization` report has no top-level `composite_mean` (only nested `tuned`/
+    `held_out` partitions), so the floor falls back to the held-out composite mean: that's
+    the M3 acceptance signal (see `run_generalization_report`) — held-out performance must
+    not collapse, which the tuned mean alone would not catch.
+    """
     if fail_under is None:
         return None
     score = result.get("composite_mean")
+    if score is None and isinstance(result.get("held_out"), dict):
+        score = result["held_out"].get("composite_mean")
     if not isinstance(score, (int, float)) or isinstance(score, bool):
         return f"score floor {fail_under}: composite_mean missing or non-numeric"
     if score < fail_under:
