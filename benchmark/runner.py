@@ -54,6 +54,8 @@ baseline_solve = empty_solve
 
 def _submission(out: dict) -> dict:
     """The judged view of an agent's output: philosophy + plan + reasoning."""
+    if not isinstance(out, dict):
+        return {"philosophy": None, "plan": None, "rationale": None}
     return {
         "philosophy": out.get("philosophy"),
         "plan": out.get("plan"),

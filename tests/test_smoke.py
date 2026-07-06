@@ -138,3 +138,8 @@ def test_replay_end_to_end_offline():
         assert "tally" in res and "decisive_margin" in res
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+def test_submission_handles_non_dict():
+    from benchmark.runner import _submission
+    assert _submission(None) == {"philosophy": None, "plan": None, "rationale": None}
+    assert _submission("str") == {"philosophy": None, "plan": None, "rationale": None}
