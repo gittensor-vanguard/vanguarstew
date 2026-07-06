@@ -22,6 +22,37 @@ from agent.llm import extract_json  # noqa: E402
 from benchmark.runner import load_solve, run_replay  # noqa: E402
 
 
+def _linear_repo(dirpath: str, n: int = 14) -> None:
+    """Seed a temp repo with ``n`` first-parent commits (enough for min_history=10, horizon=3)."""
+    subprocess.run(["git", "init", "-q", dirpath], check=True)
+    for key, val in (
+        ("user.email", "t@t"),
+        ("user.name", "t"),
+        ("commit.gpgsign", "false"),
+    ):
+        subprocess.run(["git", "-C", dirpath, "config", key, val], check=True)
+    # Point hooks at an empty dir so CI/global template hooks cannot block commits.
+    hooks = os.path.join(dirpath, ".git", "hooks_disabled")
+    os.makedirs(hooks, exist_ok=True)
+    subprocess.run(["git", "-C", dirpath, "config", "core.hooksPath", hooks], check=True)
+    subprocess.run(["git", "-C", dirpath, "checkout", "-q", "-b", "main"], check=False)
+    for i in range(n):
+        with open(os.path.join(dirpath, f"feat{i:03d}.py"), "w", encoding="utf-8") as f:
+            f.write(f"x = {i}\n")
+        env = os.environ.copy()
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = (
+            f"2024-01-{(i % 28) + 1:02d}T12:00:00+00:00"
+        )
+        subprocess.run(["git", "-C", dirpath, "add", "-A"], check=True, env=env)
+        proc = subprocess.run(
+            ["git", "-C", dirpath, "commit", "-q", "--no-gpg-sign", "-m", f"feat {i:03d}"],
+            env=env, capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            msg = proc.stderr.strip() or proc.stdout.strip() or "git commit failed"
+            raise RuntimeError(f"git commit feat {i:03d} in {dirpath}: {msg}")
+
+
 def test_extract_json():
     assert extract_json('```json\n{"a": 1}\n```') == {"a": 1}
     assert extract_json('noise {"x": [1, 2]} trailing') == {"x": [1, 2]}
@@ -125,14 +156,7 @@ def test_offline_plan_prioritizes_open_pr_queue():
 def test_replay_end_to_end_offline():
     d = tempfile.mkdtemp()
     try:
-        subprocess.run(["git", "init", "-q", d], check=True)
-        subprocess.run(["git", "-C", d, "config", "user.email", "t@t"], check=True)
-        subprocess.run(["git", "-C", d, "config", "user.name", "t"], check=True)
-        for i in range(20):
-            with open(os.path.join(d, f"f{i}.py"), "w", encoding="utf-8") as f:
-                f.write(f"x = {i}\n")
-            subprocess.run(["git", "-C", d, "add", "-A"], check=True)
-            subprocess.run(["git", "-C", d, "commit", "-q", "-m", f"commit {i}"], check=True)
+        _linear_repo(d)
         res = run_replay(d, agent_file=os.path.join(ROOT, "agent.py"), n_tasks=2, horizon=3)
         assert res.get("tasks", 0) >= 1
         assert "tally" in res and "decisive_margin" in res
@@ -151,14 +175,7 @@ def test_run_replay_survives_non_dict_agent_output():
     # keep the batch alive rather than aborting with AttributeError.
     d = tempfile.mkdtemp()
     try:
-        subprocess.run(["git", "init", "-q", d], check=True)
-        subprocess.run(["git", "-C", d, "config", "user.email", "t@t"], check=True)
-        subprocess.run(["git", "-C", d, "config", "user.name", "t"], check=True)
-        for i in range(20):
-            with open(os.path.join(d, f"f{i}.py"), "w", encoding="utf-8") as f:
-                f.write(f"x = {i}\n")
-            subprocess.run(["git", "-C", d, "add", "-A"], check=True)
-            subprocess.run(["git", "-C", d, "commit", "-q", "-m", f"commit {i}"], check=True)
+        _linear_repo(d)
         agent = os.path.join(d, "bad_agent.py")
         with open(agent, "w", encoding="utf-8") as f:
             f.write("def solve(*args, **kwargs):\n    return ['not', 'a', 'dict']\n")
