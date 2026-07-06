@@ -174,7 +174,8 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
     }
 
 
-def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dict:
+def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partition=None,
+                     **kwargs) -> dict:
     """Replay several repos and aggregate their composites (proposal §4 / M3 generalization).
 
     Runs `run_replay` once per repo — preserving every per-repo result — and averages each
@@ -197,14 +198,21 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
     checkout_root = None
     if repo_set is not None:
         rs = load_repo_set(repo_set)
-        entries = rs.held_out() if held_out else rs.tuned()
+        if repo_set_partition:
+            entries = rs.partition(repo_set_partition)
+            selection = repo_set_partition
+        elif held_out:
+            entries = rs.held_out()
+            selection = "held_out"
+        else:
+            entries = rs.tuned()
+            selection = "tuned"
         if not entries:
-            label = "held-out" if held_out else "tuned"
-            raise RepoSetError(f"repo set {repo_set!r} has no {label} repos to replay")
+            raise RepoSetError(f"repo set {repo_set!r} has no {selection} repos to replay")
         repo_set_meta = {
             "path": repo_set,
             "name": rs.name,
-            "selection": "held_out" if held_out else "tuned",
+            "selection": selection,
         }
         checkout_root = tempfile.mkdtemp(prefix="vanguarstew_repo_set_")
         for entry in entries:

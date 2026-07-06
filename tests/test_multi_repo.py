@@ -144,9 +144,16 @@ def test_repo_set_replay_uses_validated_config_and_tuned_slice():
         assert res["per_repo"][0]["freeze_window"] == {"min_history": 3, "rotation_seed": 5}
 
         held_res = run_multi_replay(
-            repo_set=cfg, held_out=True, agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
+            repo_set=cfg, repo_set_partition="held_out",
+            agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
         assert held_res["repo_set"]["selection"] == "held_out"
         assert [r["repo_name"] for r in held_res["per_repo"]] == ["held-b"]
+
+        all_res = run_multi_replay(
+            repo_set=cfg, repo_set_partition="all",
+            agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
+        assert all_res["repo_set"]["selection"] == "all"
+        assert all_res["repos"] == 2
     finally:
         shutil.rmtree(tuned, ignore_errors=True)
         shutil.rmtree(held, ignore_errors=True)

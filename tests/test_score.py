@@ -35,6 +35,20 @@ def test_changed_modules():
     assert changed_modules(REVEALED) == {"plugins", "readme", "core", "changelog"}
 
 
+def test_changed_modules_top_level_dotfile_not_dropped():
+    revealed = [{"subject": "tweak ignores", "files": [".gitignore"]}]
+    assert changed_modules(revealed) == {"gitignore"}
+
+
+def test_module_recall_credits_dotfile_only_change():
+    revealed = [{"subject": "tweak ignores", "files": [".gitignore"]}]
+    plan = [{"title": "update gitignore", "kind": "chore"}]
+    res = module_recall(plan, revealed)
+    assert res["actual_modules"] == ["gitignore"]
+    assert res["matched_modules"] == ["gitignore"]
+    assert res["module_recall"] == 1.0
+
+
 def test_module_recall_matches_by_name():
     plan = [
         {"title": "build plugin system", "theme": "plugins", "kind": "feature"},
@@ -119,6 +133,30 @@ def test_git_only_backlog_does_not_change_core_objective_score():
         assert score["release_match"] == baseline["release_match"]
         assert score["backlog_recall"] == 0.0
         assert score["matched_issue_numbers"] == []
+        assert score["addressed_backlog_diagnostics"] == []
+
+
+def test_addressed_backlog_diagnostics_show_number_title_and_matched_subject():
+    """#135: human-readable evidence for maintainer-facing inspection, additive only."""
+    open_issues = [
+        {"number": 12, "title": "Memory leak under load"},
+        {"number": 15, "title": "Support YAML config"},
+    ]
+    revealed = [
+        {"subject": "fix: memory leak under heavy load", "files": []},
+        {"subject": "docs: tweak readme", "files": []},
+    ]
+    res = backlog_recall([], revealed, open_issues)
+    assert res["addressed_backlog_diagnostics"] == [
+        {
+            "number": 12,
+            "title": "Memory leak under load",
+            "matched_subject": "fix: memory leak under heavy load",
+        }
+    ]
+    # diagnostics don't change scoring: same recall/matched numbers with or without them
+    assert res["backlog_recall"] == 0.0  # empty plan anticipates nothing
+    assert res["addressed_issue_numbers"] == [12]
 
 
 def test_is_release_subject_accepts_genuine_releases():

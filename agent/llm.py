@@ -62,21 +62,84 @@ class LLM:
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
+def _iter_top_level_spans(text: str):
+    """Yield (opening_bracket, span_text) for each balanced `{...}`/`[...]`
+    span at the top level of `text` (i.e. not nested inside a span already
+    yielded). Bracket characters inside JSON string literals are ignored so
+    a value like `{"note": "see [1]"}` isn't split apart."""
+    i, n = 0, len(text)
+    while i < n:
+        opener = text[i]
+        if opener not in "{[":
+            i += 1
+            continue
+        depth = 0
+        in_string = False
+        escape = False
+        end = None
+        j = i
+        while j < n:
+            c = text[j]
+            if in_string:
+                if escape:
+                    escape = False
+                elif c == "\\":
+                    escape = True
+                elif c == '"':
+                    in_string = False
+            else:
+                if c == '"':
+                    in_string = True
+                elif c in "{[":
+                    depth += 1
+                elif c in "}]":
+                    depth -= 1
+                    if depth == 0:
+                        end = j
+                        break
+            j += 1
+        if end is None:
+            i += 1  # unbalanced opener; nothing usable from here
+            continue
+        yield opener, text[i : end + 1]
+        i = end + 1
+
+
 def extract_json(text: str):
-    """Best-effort JSON extraction from an LLM response (handles code fences)."""
+    """Best-effort JSON extraction from an LLM response.
+
+    Tries, in order: a fenced code block, the raw response verbatim, then
+    balanced top-level `{...}`/`[...]` spans scanned across the text. Among
+    those spans, object spans are preferred over array spans and, within a
+    type, the longest span wins — this keeps a stray bracket-shaped aside
+    (e.g. a `[1]` citation ahead of the real payload) from being mistaken
+    for the answer while still supporting genuine array responses.
+    """
     if text is None:
         raise ValueError("empty LLM response")
-    candidates = [text]
-    m = _FENCE.search(text)
-    if m:
-        candidates.insert(0, m.group(1))
-    # also try the first {...} or [...] span
-    brace = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
-    if brace:
-        candidates.append(brace.group(1))
-    for c in candidates:
+
+    fence_match = _FENCE.search(text)
+    if fence_match:
         try:
-            return json.loads(c)
+            return json.loads(fence_match.group(1))
+        except (ValueError, TypeError):
+            pass
+
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        pass
+
+    spans = []
+    for opener, span in _iter_top_level_spans(text):
+        try:
+            value = json.loads(span)
         except (ValueError, TypeError):
             continue
+        spans.append((opener, span, value))
+
+    if spans:
+        spans.sort(key=lambda s: (s[0] != "{", -len(s[1])))
+        return spans[0][2]
+
     raise ValueError(f"could not parse JSON from response: {text[:200]!r}")
