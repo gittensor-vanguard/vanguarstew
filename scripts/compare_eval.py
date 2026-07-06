@@ -39,7 +39,9 @@ def _repo_key(entry: dict) -> str:
         value = entry.get(key)
         if value:
             return str(value)
-    return entry.get("freeze_commit", "")[:10] or repr(sorted(entry.keys()))
+    # `freeze_commit` may be present but explicitly null (a zero-task repo carries no commit),
+    # so `.get(..., "")` still returns None; coerce to "" before slicing rather than crashing.
+    return (entry.get("freeze_commit") or "")[:10] or repr(sorted(entry.keys()))
 
 
 def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:

@@ -9,6 +9,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from scripts.compare_eval import (  # noqa: E402
+    _repo_key,
     compare_eval_artifacts,
     comparison_headline,
     load_artifact,
@@ -71,6 +72,23 @@ def test_compare_eval_artifacts_reports_per_repo_deltas():
     by_repo = {row["repo"]: row for row in diff["per_repo"]}
     assert by_repo["/a"]["composite_mean"]["delta"] == 0.1
     assert by_repo["/b"]["composite_mean"]["delta"] == 0.0
+
+
+def test_repo_key_tolerates_explicitly_null_freeze_commit():
+    # A zero-task repo carries no commit, so `freeze_commit` can be present but null; keying
+    # must fall back to the entry signature rather than crashing on `None[:10]` (#359).
+    entry = {"freeze_commit": None, "composite_mean": 0.0, "tasks": 0}
+    assert _repo_key(entry) == repr(sorted(entry.keys()))
+    # A real freeze_commit is still used (truncated to 10 chars); named repos are unaffected.
+    assert _repo_key({"freeze_commit": "abcdef1234567890"}) == "abcdef1234"
+    assert _repo_key({"repo_path": "/a", "freeze_commit": None}) == "/a"
+
+
+def test_compare_eval_artifacts_handles_null_freeze_commit_per_repo():
+    # End to end: a zero-task repo (null freeze_commit) on both sides must diff without raising.
+    art = {"composite_mean": 0.0, "per_repo": [{"freeze_commit": None, "tasks": 0}]}
+    diff = compare_eval_artifacts(art, art)
+    assert len(diff["per_repo"]) == 1
 
 
 def test_comparison_headline_describes_direction():
