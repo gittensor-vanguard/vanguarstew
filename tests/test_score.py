@@ -23,6 +23,7 @@ from benchmark.score import (  # noqa: E402
     plan_kind,
     release_predicted,
     release_signaled,
+    released_version,
 )
 
 REVEALED = [
@@ -498,3 +499,25 @@ def test_single_word_issue_title_counts_toward_backlog():
     res = backlog_recall(plan, revealed, open_issues)
     assert res["matched_issue_numbers"] == [1]
     assert res["backlog_recall"] == 1.0
+
+
+# --- #324: is_release_subject must accept two-component version tags -----------------------
+
+def test_is_release_subject_accepts_two_component_version_tags():
+    # A two-component tag subject (missing patch, or CalVer) is a genuine release — matching
+    # parse_semver's tolerance for a missing patch (#324).
+    assert is_release_subject("v2.0") is True
+    assert is_release_subject("2.0") is True
+    assert is_release_subject("Release v2.0") is True
+    assert is_release_subject("2024.11") is True          # CalVer
+    assert is_release_subject("v2.0.1") is True            # three-component still works
+    # Still anchored at the start: a version elsewhere in the subject is not a release.
+    assert is_release_subject("fix crash in v1.2 parser") is False
+    assert is_release_subject("add v2 support") is False   # "v2" is not a dotted version
+
+
+def test_two_component_release_flows_through_downstream():
+    revealed = [{"subject": "v2.0", "files": ["CHANGELOG.md"]}]
+    assert release_signaled(revealed) is True
+    assert released_version(revealed) == (2, 0, 0)
+    assert commit_kind("v2.0") == "release"

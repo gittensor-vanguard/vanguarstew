@@ -18,8 +18,10 @@ _TOK = re.compile(r"[a-z0-9]+")
 # Genuine release signal is either explicit release/version-cut wording, or a subject that
 # *is* a version tag (it leads with the version, optionally prefixed by "release"). A semver
 # that merely appears mid-subject — a dependency bump, a doc reference — is NOT a release.
+# The patch component is optional (matching `_SEMVER`/`parse_semver`), so a two-component tag
+# subject like `v2.0` or CalVer `2024.11` still counts as a release.
 _RELEASE_KW = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
-_RELEASE_TAG_SUBJECT = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+\.\d+\b", re.I)
+_RELEASE_TAG_SUBJECT = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
 # A semver core (major.minor[.patch]) with an optional leading v/V and an optional
 # pre-release/build suffix we deliberately ignore (e.g. "v1.2.0-rc1", "1.2.0+build").
 _SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
