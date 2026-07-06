@@ -278,21 +278,6 @@ def module_recall(plan, revealed) -> dict:
     return result
 
 
-def is_release_subject(text: str) -> bool:
-    """True only for a genuine release/version-cut subject.
-
-    Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
-    that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
-    in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
-
-    A non-string value (an LLM may emit a list/dict/number for a plan title) is never a
-    release, so it returns False instead of raising inside `re`.
-    """
-    if not isinstance(text, str):
-        return False
-    return bool(_RELEASE_KW.search(text) or _RELEASE_TAG_SUBJECT.match(text))
-
-
 _CC_PREFIX = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
 
 # Conventional-commit type (and common synonyms) -> normalized maintainer kind.
@@ -310,6 +295,31 @@ _COMMIT_KIND = {
     "revert": "revert",
     "release": "release",
 }
+
+
+def is_release_subject(text: str) -> bool:
+    """True only for a genuine release/version-cut subject.
+
+    Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
+    that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
+    in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
+
+    When a Conventional-Commit prefix is present and maps to a non-release kind (`ci:`,
+    `docs:`, `fix:`, …), the prefix is authoritative — an incidental ``release``/``changelog``
+    mention in the body must not count as a version cut (#431).
+
+    A non-string value (an LLM may emit a list/dict/number for a plan title) is never a
+    release, so it returns False instead of raising inside `re`.
+    """
+    if not isinstance(text, str):
+        return False
+    m = _CC_PREFIX.match(text)
+    if m:
+        kind = _COMMIT_KIND.get(m.group(1).lower())
+        if kind and kind != "release":
+            return False
+    return bool(_RELEASE_KW.search(text) or _RELEASE_TAG_SUBJECT.match(text))
+
 
 # Plan item `kind` vocabulary (see agent/planner.py) -> the same normalized kinds.
 _PLAN_KIND = {

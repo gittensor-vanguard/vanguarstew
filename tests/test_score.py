@@ -365,6 +365,51 @@ def test_release_signaled_ignores_dependency_bumps():
     assert release_signaled(dep_bumps + [{"subject": "Release v2.0.0", "files": ["CHANGELOG.md"]}])
 
 
+def test_is_release_subject_rejects_incidental_release_keyword_after_cc_prefix():
+    # A Conventional-Commit prefix is authoritative: incidental release/changelog wording in
+    # a ci/docs/test/refactor/fix commit is not a version cut (#431).
+    for subj in (
+        "ci: fix the release workflow yaml",
+        "docs: update the changelog for contributors",
+        "test: cover the release-notes generator",
+        "refactor: extract the release helper",
+        "fix: typo in CHANGELOG heading",
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+    # Prefix-less and release-typed subjects still count.
+    for subj in ("Release v1.2.0", "release: cut 2.0.0", "bump version to 3.1.0", "v2.0"):
+        assert is_release_subject(subj), subj
+
+
+def test_release_signaled_ignores_incidental_release_keyword_in_cc_commits():
+    non_releases = [
+        {"subject": "ci: fix the release workflow yaml", "files": ["ci/release.yml"]},
+        {"subject": "docs: update the changelog for contributors", "files": ["CHANGELOG.md"]},
+    ]
+    for c in non_releases:
+        assert release_signaled([c]) is False, c["subject"]
+    assert release_signaled([{"subject": "Release v1.2.0", "files": ["CHANGELOG.md"]}]) is True
+
+
+def test_objective_component_not_penalized_by_incidental_release_word():
+    revealed = [{
+        "subject": "ci: fix the release workflow yaml",
+        "files": ["ci/release.yml", "ci/build.yml"],
+    }]
+    plan = [{
+        "title": "harden the CI workflow",
+        "kind": "ci",
+        "files": ["ci/release.yml", "ci/build.yml"],
+    }]
+    from benchmark.score import objective_component
+
+    obj = objective_score(plan, revealed)
+    assert obj["release_signaled"] is False
+    assert obj["module_recall"] == 1.0
+    assert objective_component(obj) == 1.0
+
+
 def test_release_predicted_ignores_inline_version_but_honors_kind():
     assert release_predicted([{"title": "bump pytest to 8.0.0", "kind": "dep"}]) is False
     assert release_predicted([{"title": "prepare v1.2.0", "kind": "release"}]) is True   # kind
