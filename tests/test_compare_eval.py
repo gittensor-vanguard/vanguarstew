@@ -9,6 +9,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from scripts.compare_eval import (  # noqa: E402
+    _repo_key,
     compare_eval_artifacts,
     comparison_headline,
     load_artifact,
@@ -82,3 +83,23 @@ def test_load_artifact_reads_json_file(tmp_path):
     path = tmp_path / "result.json"
     path.write_text(json.dumps({"composite_mean": 0.42}), encoding="utf-8")
     assert load_artifact(str(path))["composite_mean"] == 0.42
+
+
+def test_repo_key_handles_explicit_null_freeze_commit():
+    assert _repo_key({"freeze_commit": None}) == repr(sorted(["freeze_commit"]))
+
+
+def test_compare_eval_artifacts_matches_rows_with_null_freeze_commit():
+    baseline = {
+        "composite_mean": 0.5,
+        "per_repo": [{"freeze_commit": None, "composite_mean": 0.4, "tasks": 1}],
+    }
+    candidate = {
+        "composite_mean": 0.6,
+        "per_repo": [{"freeze_commit": None, "composite_mean": 0.5, "tasks": 1}],
+    }
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert len(diff["per_repo"]) == 1
+    row = diff["per_repo"][0]
+    assert row["repo"] == repr(sorted(["composite_mean", "freeze_commit", "tasks"]))
+    assert row["composite_mean"]["delta"] == 0.1

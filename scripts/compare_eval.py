@@ -39,7 +39,10 @@ def _repo_key(entry: dict) -> str:
         value = entry.get(key)
         if value:
             return str(value)
-    return entry.get("freeze_commit", "")[:10] or repr(sorted(entry.keys()))
+    freeze = entry.get("freeze_commit")
+    if isinstance(freeze, str) and freeze:
+        return freeze[:10]
+    return repr(sorted(entry.keys()))
 
 
 def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
