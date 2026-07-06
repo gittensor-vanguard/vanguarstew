@@ -386,8 +386,24 @@ def kind_recall(plan, revealed) -> dict:
 
 
 def release_signaled(revealed) -> bool:
+    """True when any revealed commit is a genuine release (version cut).
+
+    Delegates to ``commit_kind``, so the scored release axis fires on exactly the subjects
+    ``commit_kind`` normalizes to ``"release"`` — keeping it in step with ``kind_recall``.
+    That set is:
+
+    - a Conventional-Commit ``release:`` prefix (e.g. ``release: cut 2.0.0``); and
+    - any prefix-less subject accepted by ``is_release_subject`` — one that leads with a
+      version tag (``v2.0``, ``2.0``, ``Release v1.2.0``, CalVer ``2024.11``) or carries
+      explicit release wording (``bump version to 3.1.0``, ``changelog for the next cut``).
+
+    It deliberately excludes an ordinary ``ci:`` / ``docs:`` / ``test:`` / ``refactor:`` commit
+    whose prefix names a non-release kind but whose text merely mentions "release"/"changelog"
+    with no version cut — previously such a commit spuriously fired the release axis and
+    dragged down an otherwise-correct plan's ``objective_component``.
+    """
     return any(
-        is_release_subject(r.get("subject", "") or "")
+        commit_kind(r.get("subject", "") or "") == "release"
         for r in _revealed_list(revealed)
         if isinstance(r, dict)
     )
