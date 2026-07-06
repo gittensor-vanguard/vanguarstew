@@ -14,8 +14,6 @@ Derived as-of-T (safe):
   - Issue/PR membership: ``created_at`` / ``closed_at`` gate open-at-T selection.
   - Issue/PR labels: reconstructed from timeline ``labeled``/``unlabeled`` events when
     available; omitted (not copied live) when the timeline is unavailable.
-  - Issue/PR ``title``: reconstructed from timeline ``renamed`` events when the timeline is
-    complete; omitted (not copied live) when the timeline is unavailable or truncated.
   - Milestone ``state``: derived from ``closed_at`` relative to T, not the live API field.
   - Releases: filtered by ``published_at <= T`` (drafts, which carry no ``published_at``,
     are excluded).
@@ -23,6 +21,9 @@ Derived as-of-T (safe):
 Live, copied as-is (no cheap as-of-T source):
   - Issue/PR ``number`` and ``created_at``: immutable, so the live value already equals the
     as-of-T value.
+  - Issue/PR ``title``: the present-day title, which can be edited after T. Consumers must not
+    treat it as historically exact; accepted as a residual limitation (title edits are rare and
+    there is no cheap as-of-T source).
 
 Omitted (no created-at or editable after T, so not reconstructable as-of-T — dropped rather
 than leaked as a present-day value):
@@ -91,21 +92,18 @@ def _item_open_at(item: dict, until: datetime) -> bool:
 def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int) -> dict:
     """Minimal issue/PR fields for the frozen context.
 
-    ``number``/``created_at`` are immutable. ``labels`` and ``title`` are reconstructed
-    as-of ``until`` from the item timeline when it is complete; when the timeline is
-    unavailable or truncated they are omitted with ``labels_as_of_t`` / ``title_as_of_t``
-    set to ``False`` rather than copying live values.
+    ``number``/``created_at`` are immutable and ``labels`` are reconstructed as-of ``until``.
+    ``title`` is copied live (present-day value): it may have been edited after T — an accepted
+    residual limitation noted in the module's field-stability contract.
     """
     events, truncated = _issue_timeline(base, item.get("number"), token, timeout)
     # A truncated timeline can produce a label set that actively contradicts the true as-of-T
     # membership, so fail closed exactly like the timeline-unavailable case: omit labels and
     # report labels_as_of_t=False rather than trusting a partial (possibly wrong) reconstruction.
     as_of_t = None if truncated else _labels_at(events, until)
-    title = None if truncated else _title_at(events, until, item.get("title"))
     return {
         "number": item.get("number"),
-        "title": title if title is not None else "",
-        "title_as_of_t": title is not None,
+        "title": item.get("title"),
         "labels": as_of_t if as_of_t is not None else [],
         "labels_as_of_t": as_of_t is not None,
         "created_at": item.get("created_at"),
@@ -223,53 +221,6 @@ def _labels_at(events, until: datetime):
         else:
             labels.discard(name)
     return sorted(labels)
-
-
-def _title_at(events, until: datetime, live_title):
-    """Reconstruct an issue/PR title *as of `until`* from timeline ``renamed`` events.
-
-    Replays rename events in chronological order up to T. When a rename happened after T,
-    returns the ``from`` title of the earliest post-T rename (the title immediately before
-    that edit). When the timeline carries no rename events, the live REST title is returned
-    unchanged — it equals the creation title because GitHub records every title change as a
-    ``renamed`` event.
-
-    Returns ``None`` when the title cannot be reconstructed confidently (malformed rename
-    payloads with no usable fallback).
-    """
-    renames = []
-    for idx, ev in enumerate(_timeline_events(events)):
-        if not isinstance(ev, dict) or ev.get("event") != "renamed":
-            continue
-        ts = _parse_dt(ev.get("created_at"))
-        if ts is None:
-            continue
-        rename = ev.get("rename")
-        if not isinstance(rename, dict):
-            logger.warning(
-                "github_context: skipping non-dict rename payload at timeline index %d (%s: %r)",
-                idx,
-                type(rename).__name__ if rename is not None else "None",
-                rename,
-            )
-            continue
-        from_t = rename.get("from")
-        to_t = rename.get("to")
-        if not isinstance(from_t, str) or not isinstance(to_t, str):
-            continue
-        renames.append((ts, from_t, to_t))
-    if not renames:
-        return live_title if isinstance(live_title, str) else None
-    renames.sort(key=lambda x: x[0])
-    for ts, from_t, _to_t in renames:
-        if ts > until:
-            return from_t
-    title = renames[0][1]
-    for ts, _from_t, to_t in renames:
-        if ts > until:
-            break
-        title = to_t
-    return title
 
 
 def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):

@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import logging
 
-from benchmark.trend import headline_score
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_COMPOSITE = 0.5
@@ -84,7 +82,7 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     check passes; all checks are always reported.
     """
     result = _dict(result)
-    composite = headline_score(result)
+    composite = result.get("composite_mean")
     margin = _decisive_margin(result)
     disagreement = _dict(result.get("judge_report")).get("disagreement_rate")
     checks = []
@@ -92,15 +90,15 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    completed = not result.get("error") and composite is not None
+    completed = not result.get("error") and _is_number(composite)
     add("run_completed", completed,
         "run produced a scored composite" if completed
         else f"no scored composite (error={result.get('error')!r}, composite={composite!r})")
 
-    floor_ok = composite is not None and composite >= min_composite
+    floor_ok = _is_number(composite) and composite >= min_composite
     add("composite_floor", floor_ok,
-        f"composite_mean {composite} >= {min_composite}" if composite is not None
-        else f"composite_mean unavailable ({composite!r})")
+        f"composite_mean {composite} >= {min_composite}" if _is_number(composite)
+        else f"composite_mean not numeric ({composite!r})")
 
     beats = _is_number(margin) and margin >= min_decisive_margin
     add("beats_baseline", beats,
@@ -118,7 +116,7 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     return {
         "passed": all(c["passed"] for c in checks),
         "checks": checks,
-        "composite_mean": composite,
+        "composite_mean": composite if _is_number(composite) else None,
         "decisive_margin": margin,
         "disagreement_rate": disagreement,
         "min_composite": min_composite,

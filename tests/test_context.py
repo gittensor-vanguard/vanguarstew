@@ -129,19 +129,6 @@ def test_context_for_agent_keeps_reconstructed_labels():
     assert out["open_issues"][0]["labels_as_of_t"] is True
 
 
-def test_context_for_agent_omits_unknown_issue_titles():
-    ctx = {
-        "open_issues": [{
-            "number": 1,
-            "title": "future leak",
-            "title_as_of_t": False,
-        }],
-    }
-    out = context_for_agent(ctx)
-    assert "title" not in out["open_issues"][0]
-    assert out["open_issues"][0]["title_as_of_t"] is False
-
-
 def test_prompt_renderers_do_not_serialize_unknown_labels_as_empty_history():
     ctx = {
         "frozen_at": {"commit": "abc"},

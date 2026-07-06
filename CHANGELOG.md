@@ -19,12 +19,6 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
-- Leakage (`benchmark/github_context.py`): issue/PR **titles** are now reconstructed
-  as-of-T from timeline ``renamed`` events (the title before the earliest post-T rename,
-  or the replayed rename chain when all edits are at/before T). When the timeline is
-  truncated, the title is omitted with ``title_as_of_t: false`` rather than copying the
-  present-day REST value — mirroring the existing fail-closed posture for labels.
-  ``context_for_agent`` and ``backlog_recall`` honor ``title_as_of_t`` the same way.
 - Leakage: ``agent/context.py::_mask_forward_refs`` (the git-only fallback used when
   ``.vanguarstew_context.json`` is absent) now masks GitHub deep-links and raw commit SHAs
   in README/commit text, matching ``benchmark/leakage.strip_forward_refs`` — completing the

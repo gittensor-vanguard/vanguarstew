@@ -151,10 +151,8 @@ Because the reference is public GitHub history, the benchmark actively resists l
     agent-facing prompt view follows that contract by omitting `labels` on such items.
   - *Intentionally omitted* (not reconstructable from a cheap as-of-T source): the repo-wide
     label catalog and milestone `due_on` are dropped from the enriched context rather than
-    copied live. Issue/PR titles and labels are reconstructed from timeline events when the
-    timeline is complete; when it is truncated, both are omitted (fail-closed) rather than
-    leaking present-day values. Timeline-based reconstruction can be extended to more fields
-    later.
+    copied live. Issue/PR titles are still the live values, so consumers must not treat them
+    as historically exact; timeline-based reconstruction can be extended to more fields later.
 - **Forward-reference scrubbing** (`benchmark/leakage.py`) — even within knowable-at-T text,
   issue/PR back-references (`#N`), GitHub issue/PR/commit links, and raw SHAs are masked, so a
   commit subject or README can't cross-reference the future.
