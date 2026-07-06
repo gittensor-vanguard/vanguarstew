@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 _CHECK_ROW_KEYS = ("name", "passed")
 
 
+def _is_bool(value) -> bool:
+    """True for bool values including subclasses; rejects int 0/1 and other scalars."""
+    return isinstance(value, bool)
+
+
 def _is_number(value) -> bool:
     """True only for a finite, plain ``int``/``float``.
 
@@ -187,8 +192,9 @@ def check_weight_integrity(result) -> dict:
 def _check_rows_list(checks) -> list[dict]:
     """Return usable check rows for the headline/failed helpers.
 
-    ``None`` is silent; a non-list container is warned and treated as empty; dict rows missing
-    ``name`` or ``passed`` are skipped with a warning (mirrors the sibling integrity modules).
+    ``None`` is silent; a non-list container is warned and treated as empty. A usable row is a
+    dict whose ``name`` is a ``str`` and whose ``passed`` is a ``bool`` (subclasses allowed);
+    anything else is skipped with a warning (mirrors the sibling integrity modules).
     """
     if checks is None:
         return []
@@ -213,6 +219,18 @@ def _check_rows_list(checks) -> list[dict]:
                 idx, missing,
             )
             continue
+        if not isinstance(row["name"], str):
+            logger.warning(
+                "weight_integrity: checks[%s] name is %s, not str; skipping",
+                idx, type(row["name"]).__name__,
+            )
+            continue
+        if not _is_bool(row["passed"]):
+            logger.warning(
+                "weight_integrity: checks[%s] passed is %s, not bool; skipping",
+                idx, type(row["passed"]).__name__,
+            )
+            continue
         rows.append(row)
     if checks and not rows:
         logger.warning(
@@ -223,15 +241,23 @@ def _check_rows_list(checks) -> list[dict]:
 
 
 def failed_checks(result: dict) -> list[str]:
-    """The names of the checks that failed in a :func:`check_weight_integrity` result."""
+    """The names of the checks that failed in a :func:`check_weight_integrity` result.
+
+    Malformed ``checks`` containers and unusable rows are skipped after logging a warning;
+    they never raise.
+    """
     return [
         c["name"] for c in _check_rows_list(_dict(result).get("checks"))
-        if not c.get("passed")
+        if not c["passed"]
     ]
 
 
 def integrity_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_weight_integrity` result."""
+    """A one-line human summary of a :func:`check_weight_integrity` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"weight integrity: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
     checks = _check_rows_list(result.get("checks"))
     if not checks:

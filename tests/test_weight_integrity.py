@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -205,11 +207,90 @@ def test_headline_valid_invalid_and_no_checks():
 
 def test_check_rows_list_handles_malformed_containers(caplog):
     assert _check_rows_list(None) == []
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING, logger="benchmark.weight_integrity"):
         assert _check_rows_list("notalist") == []
         assert _check_rows_list([{"name": "x"}]) == []  # missing "passed"
         assert _check_rows_list([1, 2]) == []            # non-dict rows
     assert _check_rows_list([{"name": "x", "passed": True}]) == [{"name": "x", "passed": True}]
+
+
+# --- #857: checks row sanitization for weight integrity headlines ---------------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "weights_present"}, "not a list",
+    ({"name": "weights_present", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "weights_present", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.weight_integrity"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "weights_present", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.weight_integrity"):
+        assert _check_rows_list(junk) == []
+    assert any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "weights_present", "passed": False},
+        {"name": "weights_sum_positive", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [valid[0], 42, {}, {"name": "weights_present", "passed": 1}, valid[1]]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_rejects_int_as_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.weight_integrity"):
+        assert _check_rows_list([{"name": "weights_present", "passed": 1}]) == []
+    assert any("passed is int" in r.message for r in caplog.records)
+
+
+def test_helpers_survive_a_non_list_checks_value():
+    for bad_checks in ("garbage", 42, {"name": "x"}, None):
+        assert failed_checks({"checks": bad_checks}) == []
+        assert integrity_headline({"checks": bad_checks}) == "weight integrity: no checks evaluated"
+
+
+def test_integrity_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "weights_present", "passed": False}, "oops"]
+    with caplog.at_level(logging.WARNING, logger="benchmark.weight_integrity"):
+        line = integrity_headline({"checks": checks, "passed": False})
+    assert line == "weight integrity: INVALID (1/1 checks failed: weights_present)"
+    assert any("checks[1] is str" in r.message for r in caplog.records)
+
+
+def test_failed_checks_integration_with_check_rows_list(caplog):
+    checks = [
+        {"name": "weights_present", "passed": False},
+        "oops",
+        {"name": "weights_sum_positive", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.weight_integrity"):
+        assert failed_checks({"checks": checks}) == ["weights_present"]
+    assert any("checks[1] is str" in r.message for r in caplog.records)
+
+
+def test_failed_checks_ignores_int_passed_truthiness():
+    # passed=1 would be truthy via .get("passed"); sanitized rows reject it.
+    assert failed_checks({"checks": [{"name": "weights_present", "passed": 1}]}) == []
 
 
 def test_per_repo_list_none_is_silent():
