@@ -46,15 +46,37 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _checks_list(checks) -> list:
-    if isinstance(checks, list):
-        return checks
-    if checks is not None:
+def _check_rows_list(checks) -> list[dict]:
+    """Return gap-integrity check rows for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Tuples and other non-list iterables are warned and treated as empty (never coerced).
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
         logger.warning(
             "gap_integrity: checks is %s, not a list; treating as empty",
             type(checks).__name__,
         )
-    return []
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "gap_integrity: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "gap_integrity: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _round3(value) -> float | None:
@@ -150,17 +172,25 @@ def check_gap_integrity(report, tolerance: float = DEFAULT_TOLERANCE) -> dict:
 
 
 def failed_checks(result: dict) -> list[str]:
-    """The names of the checks that failed in a :func:`check_gap_integrity` result."""
+    """The names of the checks that failed in a :func:`check_gap_integrity` result.
+
+    Malformed ``checks`` containers (non-lists, including tuples) and non-object rows are
+    skipped after logging a warning; they never raise.
+    """
     return [
-        c["name"] for c in _checks_list(_dict(result).get("checks"))
-        if isinstance(c, dict) and not c.get("passed")
+        c["name"] for c in _check_rows_list(_dict(result).get("checks"))
+        if not c.get("passed")
     ]
 
 
 def integrity_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_gap_integrity` result."""
+    """A one-line human summary of a :func:`check_gap_integrity` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"gap integrity: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = _checks_list(result.get("checks"))
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "gap integrity: no checks evaluated"
     if result.get("passed"):

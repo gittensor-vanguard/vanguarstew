@@ -21,7 +21,7 @@ from agent.context import CONTEXT_FILE
 from agent.llm import LLM
 from benchmark.baselines import DEFAULT_BASELINE, empty_solve, get_baseline
 from benchmark.freeze import write_frozen
-from benchmark.github_context import enrich_context
+from benchmark.github_context import enrich_context, open_issues_from_context
 from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
 from benchmark.repo_set import RepoSetError, is_placeholder_source, load_repo_set
@@ -133,7 +133,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 challenger.get("plan"), task["revealed"],
                 version_bump=challenger.get("version_bump"),
                 base_version=base_from_releases(ctx.get("releases")),
-                open_issues=ctx.get("open_issues"),
+                open_issues=open_issues_from_context(ctx),
             )
             rows.append({
                 "task": k,
@@ -231,11 +231,21 @@ def weight_sweep(rows, grid=WEIGHT_SWEEP_GRID) -> list:
 
     Returns a list of ``{"w_judge", "w_objective", "composite_mean"}`` in grid order.
     """
-    scored = [
-        (_JUDGE_COMPONENT[r["winner"]], objective_component(r.get("objective") or {}))
-        for r in _sweep_rows(rows)
-        if r.get("winner") in _JUDGE_COMPONENT
-    ]
+    scored = []
+    for r in _sweep_rows(rows):
+        if not isinstance(r, dict):
+            if r is not None:
+                logger.warning(
+                    "weight_sweep: skipping a non-dict row (%s: %r)",
+                    type(r).__name__,
+                    r,
+                )
+            continue
+        winner = r.get("winner")
+        if winner in _JUDGE_COMPONENT:
+            scored.append(
+                (_JUDGE_COMPONENT[winner], objective_component(r.get("objective") or {}))
+            )
     sweep = []
     for w_judge, w_objective in grid:
         total = (w_judge + w_objective) or 1.0
