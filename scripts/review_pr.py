@@ -14,6 +14,7 @@ import argparse
 import json
 import logging
 import subprocess
+import sys
 
 from agent.llm import LLM
 from agent.review import review_pr
@@ -136,7 +137,12 @@ def main() -> None:
     ap.add_argument("--api-key", default=None)
     args = ap.parse_args()
 
-    pr = fetch_pr(args.repo, args.pr)
+    try:
+        pr = fetch_pr(args.repo, args.pr)
+    except (RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
     llm = LLM(model=args.model, api_base=args.api_base, api_key=args.api_key)
     rev = review_pr(pr, None, llm)
 
