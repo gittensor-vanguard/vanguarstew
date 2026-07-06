@@ -49,6 +49,15 @@ def _revealed_list(revealed) -> list:
     return revealed if isinstance(revealed, list) else []
 
 
+def _open_issues_list(open_issues) -> list:
+    """Return ``open_issues`` when it is a list; otherwise treat as no backlog.
+
+    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for issue in open_issues``
+    or a malformed context aborts scoring for the whole replay (#438).
+    """
+    return open_issues if isinstance(open_issues, list) else []
+
+
 def _tokens(text) -> set:
     # Plan and commit text fields originate in LLM-emitted JSON, where a `title`/`theme`/
     # `subject` can arrive as a list, dict, number, or null. Such a value carries no lexical
@@ -424,7 +433,7 @@ def _addressed_with_evidence(revealed, open_issues) -> list:
     A non-dict entry in `open_issues` (a malformed backlog source) is skipped rather than
     raising, so one bad entry doesn't abort scoring for the whole replay."""
     out = []
-    for issue in open_issues or []:
+    for issue in _open_issues_list(open_issues):
         if not isinstance(issue, dict):
             logger.warning(
                 "backlog_recall: skipping a non-dict open_issues entry (%s: %r)",

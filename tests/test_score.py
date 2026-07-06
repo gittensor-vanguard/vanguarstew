@@ -12,6 +12,7 @@ from benchmark.score import (  # noqa: E402
     _COMMIT_KIND,
     _PLAN_KIND,
     _meaningful_overlap,
+    _open_issues_list,
     _plan_list,
     _plan_tokens,
     _revealed_list,
@@ -868,6 +869,38 @@ def test_objective_score_tolerates_non_list_plan_container():
         assert score["module_recall"] == 0.0
         assert score["kind_recall"] == 0.0
         assert score["release_predicted"] is False
+
+
+# --- #438: non-list open_issues must not abort scoring --------------------------------------
+
+_MALFORMED_OPEN_ISSUES = [42, 3.14, True, {"number": 1, "title": "bug"}, "not a list", None]
+
+
+def test_open_issues_list_accepts_only_real_lists():
+    issues = [{"number": 1, "title": "Login timeout bug"}]
+    assert _open_issues_list(issues) == issues
+    assert _open_issues_list(None) == []
+    for bad in _MALFORMED_OPEN_ISSUES:
+        assert _open_issues_list(bad) == [], bad
+
+
+def test_objective_score_tolerates_non_list_open_issues():
+    plan = [{"title": "Fix login", "kind": "bugfix"}]
+    revealed = [{"subject": "fix: login", "files": ["auth/login.py"]}]
+    for bad in _MALFORMED_OPEN_ISSUES:
+        score = objective_score(plan, revealed, open_issues=bad)
+        assert score["backlog_recall"] == 0.0
+        assert score["addressed_issue_numbers"] == []
+        assert score["matched_issue_numbers"] == []
+
+
+def test_backlog_recall_honors_valid_open_issues_list():
+    plan = [{"title": "Fix login timeout", "kind": "bugfix"}]
+    revealed = [{"subject": "fix: login timeout", "files": ["auth/login.py"]}]
+    open_issues = [{"number": 1, "title": "Login timeout bug"}]
+    res = backlog_recall(plan, revealed, open_issues)
+    assert res["backlog_recall"] == 1.0
+    assert res["matched_issue_numbers"] == [1]
 
 
 # --- #399: non-string file-path entries must not abort module recall scoring ---------------
