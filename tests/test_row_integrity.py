@@ -362,3 +362,29 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
     )
     assert proc.returncode == 0
     assert "CONSISTENT" in proc.stderr
+
+
+# --- non-finite (NaN/Infinity) numeric fields must fail checks, not raise (#927) ----------
+
+
+def test_non_finite_tasks_fail_the_shape_check_instead_of_raising():
+    # the exact repro from #927: previously ValueError from int(float("nan"))
+    result = check_row_integrity(
+        {"per_repo": [{"tasks": float("nan"), "rows": [],
+                       "weights": {"judge": 0.6, "objective": 0.4}}]}
+    )
+    assert result["passed"] is False
+    assert "artifact_shape" in [c["name"] for c in result["checks"] if not c["passed"]]
+
+
+def test_non_finite_numeric_fields_never_raise_for_any_variant():
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        art = _artifact()
+        art["tasks"] = bad
+        result = check_row_integrity(art)          # must not raise
+        assert isinstance(result["passed"], bool), bad
+
+        art = _artifact()
+        art["weights"]["judge"] = bad
+        result = check_row_integrity(art)          # must not raise
+        assert isinstance(result["passed"], bool), bad
