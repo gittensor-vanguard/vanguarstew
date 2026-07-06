@@ -211,6 +211,34 @@ def test_generalization_diff_tolerates_missing_and_none_partition_scores():
     assert gen["generalization_gap"]["delta"] is None
 
 
+def test_generalization_diff_treats_placeholder_zero_on_unscored_partition_as_unavailable():
+    # scored_repos: 0 carries composite_mean: 0.0 as a placeholder — not a real score.
+    baseline = {"repo_set": "foo.json",
+                "tuned": {"composite_mean": 0.0, "scored_repos": 0},
+                "held_out": {"composite_mean": 0.5, "scored_repos": 1},
+                "generalization_gap": None}
+    candidate = {"repo_set": "foo.json",
+                 "tuned": {"composite_mean": 0.6, "scored_repos": 1},
+                 "held_out": {"composite_mean": 0.5, "scored_repos": 1},
+                 "generalization_gap": 0.1}
+    diff = compare_eval_artifacts(baseline, candidate)
+    gen = diff["generalization"]
+    assert gen["tuned"]["composite_mean"] == {
+        "baseline": None,
+        "candidate": 0.6,
+        "delta": None,
+    }
+    assert "tuned +0.600" not in comparison_headline(diff)
+    assert "tuned n/a" in comparison_headline(diff)
+
+
+def test_compare_eval_treats_unscored_multi_repo_placeholder_as_unavailable():
+    baseline = {"composite_mean": 0.0, "scored_repos": 0, "repos": 2, "skipped": 2}
+    candidate = {"composite_mean": 0.6, "scored_repos": 2, "repos": 2, "skipped": 0}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_mean"] == {"baseline": None, "candidate": 0.6, "delta": None}
+
+
 def test_mixed_shapes_fall_back_to_standard_without_crashing():
     # Only one side is generalization-shaped -> not treated as a generalization diff.
     diff = compare_eval_artifacts(_gen(), {"composite_mean": 0.6})

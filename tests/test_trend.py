@@ -7,7 +7,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.trend import _trend_series, headline_score, trend, trend_headline  # noqa: E402
+from benchmark.trend import (  # noqa: E402
+    _trend_regressions,
+    _trend_series,
+    headline_score,
+    trend,
+    trend_headline,
+)
 
 
 def _single(score):
@@ -128,6 +134,36 @@ def test_trend_headline_summarizes_direction_and_regressions():
     down = trend([("a", _single(0.60)), ("b", _single(0.50))])
     assert "down -0.100" in trend_headline(down) and "1 regression" in trend_headline(down)
     assert trend_headline({}) == "trend: no scored artifacts"
+
+
+# --- #569: non-list regressions must not abort trend_headline ----------------------
+
+_MALFORMED_REGRESSION_LISTS = [42, 3.14, True, {"from_label": "a"}, "not a list"]
+
+
+def test_trend_regressions_accepts_only_real_lists():
+    rows = [{"from_label": "a", "to_label": "b", "drop": 0.1}]
+    for bad in _MALFORMED_REGRESSION_LISTS:
+        assert _trend_regressions(bad) == [], bad
+    assert _trend_regressions(rows) == rows
+    assert _trend_regressions(None) == []
+
+
+def test_trend_headline_survives_non_list_regressions():
+    base = {"scored": 2, "first": 0.5, "last": 0.6, "change": 0.1}
+    for bad in _MALFORMED_REGRESSION_LISTS:
+        line = trend_headline({**base, "regressions": bad})
+        assert "0 regression" in line, bad
+
+
+def test_trend_headline_logs_warning_for_non_list_regressions(caplog):
+    import logging
+
+    summary = {"scored": 2, "first": 0.5, "last": 0.6, "change": 0.1, "regressions": 42}
+    with caplog.at_level(logging.WARNING, logger="benchmark.trend"):
+        line = trend_headline(summary)
+    assert "0 regression" in line
+    assert any("regressions is int" in r.message for r in caplog.records)
 
 
 def test_trend_does_not_mutate_inputs():

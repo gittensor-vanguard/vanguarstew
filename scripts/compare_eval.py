@@ -16,6 +16,23 @@ def _numeric(value) -> float | None:
     return None
 
 
+def _is_scored_unavailable(artifact: dict) -> bool:
+    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder."""
+    if not isinstance(artifact, dict):
+        return False
+    scored = artifact.get("scored_repos")
+    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
+
+
+def _effective_composite_mean(artifact: dict):
+    """Partition or aggregate composite mean, or ``None`` when nothing was scored."""
+    if not isinstance(artifact, dict):
+        return None
+    if _is_scored_unavailable(artifact):
+        return None
+    return artifact.get("composite_mean")
+
+
 def _delta(candidate, baseline) -> float | None:
     c = _numeric(candidate)
     b = _numeric(baseline)
@@ -25,8 +42,12 @@ def _delta(candidate, baseline) -> float | None:
 
 
 def _metric_triplet(baseline: dict, candidate: dict, key: str) -> dict:
-    base = baseline.get(key)
-    cand = candidate.get(key)
+    if key == "composite_mean":
+        base = _effective_composite_mean(baseline)
+        cand = _effective_composite_mean(candidate)
+    else:
+        base = baseline.get(key) if isinstance(baseline, dict) else None
+        cand = candidate.get(key) if isinstance(candidate, dict) else None
     return {
         "baseline": base,
         "candidate": cand,
@@ -110,7 +131,9 @@ def _generalization_diff(baseline: dict, candidate: dict) -> dict:
 
     Every value is read through ``_metric_triplet``/``_delta``, which coerce a missing,
     ``None``, or non-numeric field to a ``None`` delta rather than crashing — so a partition
-    that only recorded an ``error`` (``scored_repos == 0``) diffs to ``None`` cleanly.
+    that only recorded an ``error`` (``scored_repos == 0``) diffs to ``None`` cleanly, and a
+    placeholder ``composite_mean`` of ``0.0`` on an unscored partition is treated as
+    unavailable (mirroring ``benchmark/trend.py`` and ``benchmark/report.py``).
     """
     out = {}
     for partition in ("tuned", "held_out"):

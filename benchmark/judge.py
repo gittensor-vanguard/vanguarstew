@@ -136,6 +136,8 @@ def _judge_order(context: dict, first, second, revealed, llm) -> str:
 
     Returns 'first', 'second', or 'tie' — which of the two shown positions the judge picked.
     """
+    if not isinstance(context, dict):
+        context = {}
     user = (
         f"Repository frozen at: {json.dumps(context.get('frozen_at'))}\n\n"
         f"SUBMISSION ONE:\n{_render(first)}\n\n"

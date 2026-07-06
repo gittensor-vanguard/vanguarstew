@@ -1,7 +1,9 @@
 """Tests for the challenger-promotion gate (deterministic, offline)."""
 
 import copy
+import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -10,6 +12,7 @@ if ROOT not in sys.path:
 
 from benchmark.promotion import (  # noqa: E402
     DEFAULT_MIN_COMPOSITE,
+    _checks_list,
     check_promotion,
     failed_checks,
     promotion_headline,
@@ -131,3 +134,72 @@ def test_check_promotion_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_promotion(run)
     assert run == snapshot
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.promotion", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_still_reports_promote_for_a_well_formed_artifact(tmp_path):
+    path = tmp_path / "good.json"
+    path.write_text(json.dumps(_result(composite=0.7, margin=2, disagreement=0.1)), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 0
+    assert "PROMOTE" in result.stderr
+    assert json.loads(result.stdout)["passed"] is True
+
+
+# --- #578: non-list checks must not abort promotion headline formatting ---------------
+
+_MALFORMED_CHECKS = [42, 3.14, True, {"name": "run_completed"}, "not a list"]
+
+
+def test_promotion_checks_list_accepts_only_real_lists():
+    rows = [{"name": "run_completed", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _checks_list(bad) == [], bad
+    assert _checks_list(rows) == rows
+    assert _checks_list(None) == []
+
+
+def test_promotion_headline_survives_non_list_checks():
+    base = {"passed": False, "composite_mean": 0.5}
+    for bad in _MALFORMED_CHECKS:
+        assert promotion_headline({**base, "checks": bad}) == "promotion: no checks evaluated", bad
+
+
+def test_promotion_headline_logs_warning_for_non_list_checks(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        line = promotion_headline({"checks": 42, "passed": False})
+    assert line == "promotion: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)

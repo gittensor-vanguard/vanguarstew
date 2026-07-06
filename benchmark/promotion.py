@@ -27,6 +27,10 @@ the relevant checks rather than raising.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_MIN_COMPOSITE = 0.5
 DEFAULT_MIN_DECISIVE_MARGIN = 1
 DEFAULT_MAX_DISAGREEMENT = 0.5
@@ -38,6 +42,18 @@ def _is_number(value) -> bool:
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+def _checks_list(checks) -> list:
+    """Return ``checks`` when it is a list; otherwise treat as no gate checks."""
+    if isinstance(checks, list):
+        return checks
+    if checks is not None:
+        logger.warning(
+            "promotion: checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
+    return []
 
 
 def _decisive_margin(result: dict):
@@ -111,13 +127,16 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
 
 def failed_checks(result: dict) -> list:
     """The names of the checks that failed in a :func:`check_promotion` result."""
-    return [c["name"] for c in _dict(result).get("checks", []) if not c.get("passed")]
+    return [
+        c["name"] for c in _checks_list(_dict(result).get("checks"))
+        if isinstance(c, dict) and not c.get("passed")
+    ]
 
 
 def promotion_headline(result: dict) -> str:
     """A one-line human summary of a :func:`check_promotion` result."""
     result = _dict(result)
-    checks = result.get("checks") or []
+    checks = _checks_list(result.get("checks"))
     if not checks:
         return "promotion: no checks evaluated"
     if result.get("passed"):

@@ -41,8 +41,13 @@ def main() -> None:
                     help="exit 1 when the runs are not stable (CI reproducibility gate)")
     args = ap.parse_args()
 
-    result = assess_repeatability([load_artifact(p) for p in args.artifacts],
-                                  max_cv=args.max_cv, min_runs=args.min_runs)
+    try:
+        artifacts = [load_artifact(p) for p in args.artifacts]
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+    result = assess_repeatability(artifacts, max_cv=args.max_cv, min_runs=args.min_runs)
     print(repeatability_headline(result), file=sys.stderr)
     if result["reason"]:
         print(f"  {result['reason']}", file=sys.stderr)

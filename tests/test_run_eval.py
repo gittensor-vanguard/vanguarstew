@@ -9,6 +9,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from scripts.run_eval import (  # noqa: E402
+    _weight_sweep_rows,
     check_score_floor,
     result_summary_lines,
     write_result_artifact,
@@ -103,3 +104,24 @@ def test_check_score_floor_skips_unscored_generalization_partition():
     assert check_score_floor(
         _generalization_result(tuned=0.95, tuned_scored=2, held_scored=0), 0.9,
     ) is None
+
+
+# --- #573: non-list weight_sweep must not abort stderr reporting --------------------
+
+_MALFORMED_WEIGHT_SWEEP = [42, 3.14, True, {"w_judge": 0.6}, "not a list"]
+
+
+def test_weight_sweep_rows_accepts_only_real_lists():
+    rows = [{"w_judge": 0.6, "w_objective": 0.4, "composite_mean": 0.5}]
+    for bad in _MALFORMED_WEIGHT_SWEEP:
+        assert _weight_sweep_rows({"weight_sweep": bad}) == [], bad
+    assert _weight_sweep_rows({"weight_sweep": rows}) == rows
+    assert _weight_sweep_rows({}) == []
+
+
+def test_weight_sweep_rows_logs_warning_for_non_list_field(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="scripts.run_eval"):
+        assert _weight_sweep_rows({"weight_sweep": 42}) == []
+    assert any("weight_sweep is int" in r.message for r in caplog.records)
