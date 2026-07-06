@@ -4,6 +4,8 @@ import os
 import sys
 from datetime import datetime, timezone
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -240,6 +242,137 @@ def test_enrich_context_preserves_truncation_metadata(monkeypatch):
     assert out["_issues_truncated"] is True
     assert out["_knowable_until"] == T.isoformat()
     assert out["_source"] == "github-api"
+
+
+def _enrich_with_fake_fetch(monkeypatch, gh_payload, base):
+    """Run enrich_context with a stubbed fetch and origin URL."""
+    monkeypatch.setattr(gc, "fetch_context_at", lambda *a, **k: dict(gh_payload))
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    if "frozen_at" not in base:
+        base = {**base, "frozen_at": {"date": "2023-06-01T00:00:00Z"}}
+    return gc.enrich_context(base, "/some/repo")
+
+
+@pytest.mark.parametrize(
+    "gh_lists,base_stale,expected_lists",
+    [
+        pytest.param(
+            {
+                "open_issues": [],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale issue"}],
+                "open_prs": [{"number": 2, "title": "stale pr"}],
+                "milestones": [{"title": "stale milestone"}],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            {
+                "open_issues": [],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [],
+            },
+            id="all-empty-clears-all-stale",
+        ),
+        pytest.param(
+            {
+                "open_issues": [],
+                "open_prs": [{"number": 10, "title": "fresh pr"}],
+                "milestones": [{"title": "m1", "state": "open"}],
+                "releases": [{"tag": "v1.0.0"}],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale partial backlog"}],
+                "open_prs": [{"number": 2, "title": "stale partial pr"}],
+                "milestones": [{"title": "stale milestone"}],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            {
+                "open_issues": [],
+                "open_prs": [{"number": 10, "title": "fresh pr"}],
+                "milestones": [{"title": "m1", "state": "open"}],
+                "releases": [{"tag": "v1.0.0"}],
+            },
+            id="empty-issues-nonempty-other-lists",
+        ),
+        pytest.param(
+            {
+                "open_issues": [{"number": 3, "title": "fresh issue"}],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [{"tag": "v2.0.0"}],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale issue"}],
+                "open_prs": [{"number": 2, "title": "stale pr"}],
+                "milestones": [{"title": "stale milestone"}],
+                "releases": [{"tag": "v0.1.0"}],
+            },
+            {
+                "open_issues": [{"number": 3, "title": "fresh issue"}],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [{"tag": "v2.0.0"}],
+            },
+            id="empty-prs-nonempty-other-lists",
+        ),
+        pytest.param(
+            {
+                "open_issues": [{"number": 4, "title": "only issue at T"}],
+                "open_prs": [{"number": 5, "title": "only pr at T"}],
+                "milestones": [],
+                "releases": [{"tag": "v1.1.0"}],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale issue"}],
+                "open_prs": [{"number": 2, "title": "stale pr"}],
+                "milestones": [{"title": "stale milestone"}],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            {
+                "open_issues": [{"number": 4, "title": "only issue at T"}],
+                "open_prs": [{"number": 5, "title": "only pr at T"}],
+                "milestones": [],
+                "releases": [{"tag": "v1.1.0"}],
+            },
+            id="empty-milestones-only-clears-stale-milestones",
+        ),
+        pytest.param(
+            {
+                "open_issues": [],
+                "open_prs": [],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale issue"}],
+                "open_prs": [{"number": 2, "title": "stale pr"}],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            {
+                "open_issues": [],
+                "open_prs": [],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            id="absent-gh-key-preserves-stale-base-field",
+        ),
+    ],
+)
+def test_enrich_context_mixed_empty_nonempty_overwrites_stale_base(
+    monkeypatch, gh_lists, base_stale, expected_lists,
+):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    gh_payload = {
+        "repo": "foo/bar",
+        "_source": "github-api",
+        "_knowable_until": T.isoformat(),
+        "_issues_truncated": True,
+        **gh_lists,
+    }
+    out = _enrich_with_fake_fetch(monkeypatch, gh_payload, dict(base_stale))
+    for key, expected in expected_lists.items():
+        assert out[key] == expected, key
 
 
 def test_enrich_context_degrades_on_failure(monkeypatch):

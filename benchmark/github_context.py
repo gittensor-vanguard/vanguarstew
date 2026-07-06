@@ -368,7 +368,7 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
         # No ``labels`` here: the repo label catalog is intentionally omitted from the frozen
         # context (see module docstring), so ``fetch_context_at`` never produces that key.
         for key in ("repo", "open_issues", "open_prs", "milestones", "releases"):
-            if gh.get(key):
+            if key in gh:
                 merged[key] = gh[key]
         for key in _ENRICH_META_KEYS:
             if key in gh:
