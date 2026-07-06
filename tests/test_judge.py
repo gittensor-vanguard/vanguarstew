@@ -342,3 +342,10 @@ def test_render_handles_non_dict_submission():
     """_render must not crash on non-dict submissions."""
     assert "error" in _render(None)
     assert "error" in _render("not a dict")
+
+def test_judge_order_handles_non_dict_context():
+    from agent.llm import LLM
+    from benchmark.judge import _judge_order
+    llm = LLM(api_key='offline')
+    assert _judge_order(None, {}, {}, [], llm) in ('first', 'second', 'tie')
+    assert _judge_order(42, {}, {}, [], llm) in ('first', 'second', 'tie')
