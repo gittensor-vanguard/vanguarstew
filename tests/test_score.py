@@ -45,6 +45,23 @@ def test_module_recall_matches_by_name():
     assert res["module_recall"] == round(2 / 4, 3)  # core, changelog not anticipated
 
 
+def test_module_recall_honors_plan_files_without_title_overlap():
+    revealed = [{"subject": "fix: race in loader", "files": ["core/loader.py"]}]
+    vague_title = [{"title": "harden concurrency", "kind": "bugfix"}]
+    with_files = [{"title": "harden concurrency", "kind": "bugfix", "files": ["core/loader.py"]}]
+    assert module_recall(vague_title, revealed)["module_recall"] == 0.0
+    assert module_recall(with_files, revealed)["module_recall"] == 1.0
+
+
+def test_backlog_recall_honors_plan_files_for_issue_titles():
+    open_issues = [{"number": 7, "title": "Race in core loader"}]
+    revealed = [{"subject": "fix: race in core loader", "files": ["core/loader.py"]}]
+    plan = [{"title": "address backlog item", "kind": "bugfix", "files": ["core/loader.py"]}]
+    res = backlog_recall(plan, revealed, open_issues)
+    assert res["matched_issue_numbers"] == [7]
+    assert res["backlog_recall"] == 1.0
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True
