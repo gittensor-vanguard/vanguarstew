@@ -8,6 +8,8 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.score import (  # noqa: E402
+    _COMMIT_KIND,
+    _PLAN_KIND,
     _meaningful_overlap,
     _plan_list,
     _tokens,
@@ -473,6 +475,31 @@ def test_plan_kind_maps_to_commit_vocabulary():
     assert plan_kind("tests") == "test"
     assert plan_kind("triage") is None  # not a commit kind
     assert plan_kind("") is None
+
+
+def test_plan_and_commit_kind_vocabularies_stay_symmetric():
+    """Invariant guard (#145): shared plan/commit aliases must normalize to the same kind.
+
+    ``triage`` is intentionally plan-only — it describes maintainer workflow, not a commit
+    type, so it has no entry in ``_COMMIT_KIND`` and must not earn kind-recall credit.
+    """
+    for plan_label, normalized in _PLAN_KIND.items():
+        assert plan_kind(plan_label) == normalized
+        commit_aliases = [alias for alias, target in _COMMIT_KIND.items() if target == normalized]
+        assert commit_aliases, f"no commit alias for normalized {normalized!r}"
+        for alias in commit_aliases:
+            subject = f"{alias}: example change" if alias != "release" else "Release v1.0.0"
+            assert commit_kind(subject) == normalized, (plan_label, alias, subject)
+
+    assert "triage" not in _PLAN_KIND
+    assert plan_kind("triage") is None
+
+    # Singular/plural and dep/deps pairs called out in #145.
+    assert plan_kind("test") == plan_kind("tests") == "test"
+    assert commit_kind("test: add coverage") == "test"
+    assert commit_kind("tests: add coverage") == "test"
+    assert plan_kind("dep") == plan_kind("deps") == "chore"
+    assert commit_kind("chore(deps): bump lib") == "chore"
 
 
 def test_kind_recall_credits_plural_tests_kind():
