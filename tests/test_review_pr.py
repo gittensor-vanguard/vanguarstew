@@ -16,7 +16,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.review import review_pr  # noqa: E402
-from scripts.review_pr import _gh, _pr_author, fetch_pr, main  # noqa: E402
+from scripts.review_pr import _gh, _pr_author, _pr_files_list, fetch_pr, main  # noqa: E402
 
 
 def _fake_run(returncode=0, stdout="", stderr=""):
@@ -102,6 +102,86 @@ def test_fetch_pr_survives_a_null_author():
     assert pr["author"] == "ghost"
     assert pr["number"] == 42
     assert pr["files"] == ["core/scheduler.py"]
+
+
+# --- #605: gh files must not abort fetch_pr; junk rows must be visible in logs --------
+
+_MALFORMED_GH_FILES = [42, 3.14, True, "agent/foo.py", None]
+
+
+def test_pr_files_list_accepts_only_real_lists():
+    rows = [{"path": "agent/export.py"}, {"path": "tests/test_x.py"}]
+    for bad in _MALFORMED_GH_FILES:
+        assert _pr_files_list(bad, 1) == [], bad
+    assert _pr_files_list(rows, 1) == ["agent/export.py", "tests/test_x.py"]
+    assert _pr_files_list(None, 1) == []
+
+
+def test_pr_files_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="scripts.review_pr"):
+        assert _pr_files_list(None, 7) == []
+    assert not caplog.records
+
+
+def test_pr_files_list_warns_for_non_list_files(caplog):
+    with caplog.at_level(logging.WARNING, logger="scripts.review_pr"):
+        assert _pr_files_list(42, 9) == []
+    assert any("files is int" in r.message for r in caplog.records)
+
+
+def test_pr_files_list_warns_for_each_skipped_entry(caplog):
+    rows = [42, {"path": ""}, {"nope": "x"}, {"path": "tests/a.py"}]
+    with caplog.at_level(logging.WARNING, logger="scripts.review_pr"):
+        assert _pr_files_list(rows, 7) == ["tests/a.py"]
+    messages = [r.message for r in caplog.records]
+    assert any("files[0] is int" in m for m in messages)
+    assert any("files[1] has no usable path" in m for m in messages)
+    assert any("files[2] has no usable path" in m for m in messages)
+    assert not any("no usable paths" in m for m in messages)
+
+
+def test_pr_files_list_warns_when_every_entry_is_unusable(caplog):
+    rows = [42, {"path": None}, "not a dict"]
+    with caplog.at_level(logging.WARNING, logger="scripts.review_pr"):
+        assert _pr_files_list(rows, 3) == []
+    messages = [r.message for r in caplog.records]
+    assert any("files[0] is int" in m for m in messages)
+    assert any("files[1] has no usable path" in m for m in messages)
+    assert any("files[2] is str" in m for m in messages)
+    assert any("had 3 entries but no usable paths" in m for m in messages)
+
+
+def test_fetch_pr_survives_non_list_files_from_gh(caplog):
+    payload = {
+        "number": 9,
+        "title": "Fix parser",
+        "body": "",
+        "author": {"login": "alice"},
+        "additions": 1,
+        "deletions": 0,
+        "files": 42,
+    }
+    with caplog.at_level(logging.WARNING, logger="scripts.review_pr"):
+        with patch("scripts.review_pr._gh", side_effect=_gh_json(payload)):
+            pr = fetch_pr("some/repo", 9)
+    assert pr["files"] == []
+    assert any("files is int" in r.message for r in caplog.records)
+
+
+def test_fetch_pr_treats_missing_files_key_as_empty_without_warning(caplog):
+    payload = {
+        "number": 11,
+        "title": "Docs only",
+        "body": "",
+        "author": {"login": "alice"},
+        "additions": 0,
+        "deletions": 0,
+    }
+    with caplog.at_level(logging.WARNING, logger="scripts.review_pr"):
+        with patch("scripts.review_pr._gh", side_effect=_gh_json(payload)):
+            pr = fetch_pr("some/repo", 11)
+    assert pr["files"] == []
+    assert not caplog.records
 
 
 def test_review_pr_prompt_includes_ghost_author():

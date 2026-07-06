@@ -80,11 +80,11 @@ def _tokens(text) -> set:
     return set(_TOK.findall(text.lower()))
 
 
-def _plan_file_paths(files) -> list:
+def _plan_file_paths(files, field: str = "plan.files") -> list:
     """Normalize a plan item's ``files`` field to stripped path strings.
 
     A scalar string (a common LLM shape) must not be iterated character-by-character; a
-    non-list/non-string value is treated as absent.
+    non-list/non-string value is treated as absent (with a warning, mirroring ``_files_list``).
     """
     if files is None:
         return []
@@ -100,6 +100,11 @@ def _plan_file_paths(files) -> list:
             if p:
                 out.append(p)
         return out
+    logger.warning(
+        "score: %s is %s, not a list; treating as empty",
+        field,
+        type(files).__name__,
+    )
     return []
 
 

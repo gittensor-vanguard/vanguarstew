@@ -14,6 +14,7 @@ import json
 import sys
 
 from benchmark.judge_calibration import (
+    _symmetry_checks_list,
     calibration_headline,
     check_calibration,
     failed_scenarios,
@@ -48,7 +49,7 @@ def main() -> None:
     for row in result["results"]:
         mark = "PASS" if row["passed"] else "FAIL"
         print(f"  [{mark}] {row['id']}: {row['detail']}", file=sys.stderr)
-    for row in result.get("symmetry_checks") or []:
+    for row in _symmetry_checks_list(result.get("symmetry_checks")):
         mark = "PASS" if row["passed"] else "FAIL"
         print(f"  [{mark}] {row['id']} (symmetry): {row['detail']}", file=sys.stderr)
 

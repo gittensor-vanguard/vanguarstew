@@ -17,6 +17,7 @@ from agent.planner import (  # noqa: E402
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
+    _normalize_files,
     _normalize_plan,
     _normalize_files,
     _normalize_plan_item,
@@ -521,6 +522,30 @@ def test_plan_next_actions_handles_non_dict_context():
     llm = LLM(api_key='offline')
     assert isinstance(plan_next_actions(None, {}, 3, llm), list)
     assert isinstance(plan_next_actions(42, {}, 3, llm), list)
+
+
+def test_plan_next_actions_warns_for_dict_wrapped_non_list_plan(caplog):
+    import logging
+
+    from agent.llm import LLM
+
+    class BadPlanLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return {"plan": 42}
+
+    class BadActionsLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return {"actions": 42}
+
+    with caplog.at_level(logging.WARNING, logger="agent.planner"):
+        assert plan_next_actions({"open_prs": []}, {}, 3, BadPlanLLM(api_key="offline")) == []
+    assert any("plan is int" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="agent.planner"):
+        assert plan_next_actions({"open_prs": []}, {}, 3, BadActionsLLM(api_key="offline")) == []
+    assert any("actions is int" in r.message for r in caplog.records)
+
 
 def test_significant_tokens_handles_non_string():
     assert _significant_tokens(None) == set()

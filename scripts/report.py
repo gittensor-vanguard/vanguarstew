@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 from benchmark.report import DEFAULT_GAP_INSPECT_THRESHOLD, render_report
 
@@ -28,7 +29,14 @@ def main() -> None:
                     help="generalization gap above this value yields an inspect verdict "
                          f"(default {DEFAULT_GAP_INSPECT_THRESHOLD})")
     args = ap.parse_args()
-    md = render_report(load_artifact(args.artifact), gap_inspect_threshold=args.gap_threshold)
+
+    try:
+        artifact = load_artifact(args.artifact)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+    md = render_report(artifact, gap_inspect_threshold=args.gap_threshold)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(md)

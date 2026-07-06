@@ -13,11 +13,14 @@ fail validation rather than crashing the runner.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from agent.llm import LLM
 from benchmark.judge import judge_verbose, pairwise_judge
 from benchmark.judge_corpus import CORPUS_DIR, MANIFEST_PATH
+
+logger = logging.getLogger(__name__)
 
 _REQUIRED_SCENARIO_KEYS = frozenset({
     "id", "description", "context", "revealed", "submission_a", "submission_b", "expected_winner",
@@ -178,11 +181,66 @@ def check_calibration(corpus: list[dict] | None = None, llm: LLM | None = None) 
     }
 
 
+def _failed_ids_list(failed) -> list[str]:
+    """Return scenario ids from a calibration ``failed`` list; skip junk rows."""
+    if not isinstance(failed, list):
+        if failed is not None:
+            logger.warning(
+                "judge_calibration: failed is %s, not a list; treating as empty",
+                type(failed).__name__,
+            )
+        return []
+    ids = []
+    for idx, item in enumerate(failed):
+        if not isinstance(item, str) or not item.strip():
+            logger.warning(
+                "judge_calibration: failed[%s] is not a usable scenario id; skipping",
+                idx,
+            )
+            continue
+        ids.append(item.strip())
+    if failed and not ids:
+        logger.warning(
+            "judge_calibration: failed list had %d entr%s but no usable scenario ids",
+            len(failed),
+            "y" if len(failed) == 1 else "ies",
+        )
+    return ids
+
+
+def _symmetry_checks_list(checks) -> list[dict]:
+    """Return symmetry-check rows when ``checks`` is a list; skip junk rows."""
+    if not isinstance(checks, list):
+        if checks is not None:
+            logger.warning(
+                "judge_calibration: symmetry_checks is %s, not a list; treating as empty",
+                type(checks).__name__,
+            )
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "judge_calibration: symmetry_checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "judge_calibration: symmetry_checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
+
+
 def failed_scenarios(result: dict) -> list[str]:
     """Scenario ids that failed winner or symmetry checks."""
     if not isinstance(result, dict):
         return []
-    return list(result.get("failed") or [])
+    return _failed_ids_list(result.get("failed"))
 
 
 def calibration_headline(result: dict) -> str:
@@ -193,7 +251,7 @@ def calibration_headline(result: dict) -> str:
     if count == 0:
         return "calibration: no scenarios evaluated"
     if result.get("passed"):
-        sym = result.get("symmetry_checks") or []
+        sym = _symmetry_checks_list(result.get("symmetry_checks"))
         extra = f" + {len(sym)} symmetry" if sym else ""
         return f"calibration: PASS ({count} scenarios{extra})"
     failed = failed_scenarios(result)
