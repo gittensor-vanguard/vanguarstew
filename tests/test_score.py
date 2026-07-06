@@ -8,6 +8,8 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.score import (  # noqa: E402
+    _COMMIT_KIND,
+    _PLAN_KIND,
     _meaningful_overlap,
     _plan_list,
     _tokens,
@@ -473,6 +475,39 @@ def test_plan_kind_maps_to_commit_vocabulary():
     assert plan_kind("tests") == "test"
     assert plan_kind("triage") is None  # not a commit kind
     assert plan_kind("") is None
+
+
+def _kind_aliases(mapping: dict, target: str) -> set[str]:
+    return {alias for alias, normalized in mapping.items() if normalized == target}
+
+
+def test_plan_and_commit_kind_vocabularies_stay_symmetric():
+    """Invariant guard (#145): _PLAN_KIND and _COMMIT_KIND must not drift silently.
+
+    Every normalized maintainer kind must be reachable from both vocabularies, and every
+    alias in either table must normalize to the same target as its counterparts on the
+    other side. ``triage`` is a valid planner-only action (see ``agent/planner.py``) that
+    deliberately maps to no commit kind, so ``plan_kind("triage")`` is ``None``.
+    """
+    plan_targets = set(_PLAN_KIND.values())
+    commit_targets = set(_COMMIT_KIND.values())
+    assert plan_targets == commit_targets
+
+    for target in plan_targets:
+        plan_aliases = _kind_aliases(_PLAN_KIND, target)
+        commit_aliases = _kind_aliases(_COMMIT_KIND, target)
+        assert plan_aliases, f"no plan alias for normalized {target!r}"
+        assert commit_aliases, f"no commit alias for normalized {target!r}"
+
+        for alias in plan_aliases:
+            assert plan_kind(alias) == target, alias
+            assert plan_kind(alias.upper()) == target, alias
+
+        for alias in commit_aliases:
+            subject = "Release v1.0.0" if alias == "release" else f"{alias}: example change"
+            assert commit_kind(subject) == target, alias
+
+    assert plan_kind("triage") is None
 
 
 def test_kind_recall_credits_plural_tests_kind():
