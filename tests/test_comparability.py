@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import sys
 
@@ -12,6 +13,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.comparability import (  # noqa: E402
+    _check_rows_list,
     artifact_kind,
     check_comparability,
     comparability_headline,
@@ -146,6 +148,185 @@ def test_comparability_headline_pass_and_fail():
 def test_failed_checks_tolerates_malformed_result():
     assert failed_checks({}) == []
     assert failed_checks({"checks": "oops"}) == []
+
+
+# --- #797: checks row sanitization for comparability headlines ----------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "same_repo_set"}, "not a list",
+    ({"name": "same_repo_set", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "same_repo_set", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "same_repo_set", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "same_repo_set", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "same_repo_set", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "same_repo_set", "passed": False},
+        {"name": "enough_artifacts", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": 99, "passed": False},
+        {"name": "same_repo_set", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_accepts_native_bool_values():
+    rows = [
+        {"name": "same_repo_set", "passed": True},
+        {"name": "enough_artifacts", "passed": False},
+    ]
+    assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_int_as_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list([{"name": "same_repo_set", "passed": 1}]) == []
+    assert any("passed is int" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_empty_dict(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert _check_rows_list([{}]) == []
+    assert any("missing required key(s)" in r.message for r in caplog.records)
+
+
+def test_comparability_headline_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert comparability_headline({"checks": bad, "passed": False}) == (
+            "comparability: no checks evaluated"
+        ), bad
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_comparability_headline_survives_falsy_scalar_checks(bad):
+    assert comparability_headline({"checks": bad, "passed": False}) == (
+        "comparability: no checks evaluated"
+    )
+
+
+def test_comparability_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "same_repo_set"}],
+        [{}],
+        [{"name": 42, "passed": True}],
+        [{"name": "same_repo_set", "passed": 1}],
+    ):
+        assert comparability_headline({"checks": checks, "passed": False}) == (
+            "comparability: no checks evaluated"
+        )
+
+
+def test_comparability_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "same_repo_set", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        line = comparability_headline({"checks": checks, "passed": False})
+    assert line == "comparability: NOT COMPARABLE (unknown, 1/1 checks failed: same_repo_set)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "same_repo_set"}],
+        [{}],
+        [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "same_repo_set", "passed": "no"}],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_integration_with_check_rows_list(caplog):
+    checks = [
+        {"name": "same_repo_set", "passed": False},
+        42,
+        {"name": "enough_artifacts", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.comparability"):
+        assert failed_checks({"checks": checks}) == ["same_repo_set"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 @pytest.fixture
