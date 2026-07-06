@@ -113,6 +113,17 @@ def test_freeze_window_validation():
         validate_repo_set(_mutate(freeze_window={"rotation_seed": True}))
 
 
+@pytest.mark.parametrize("bad_fw, match", [
+    ({"min_history": 0}, "min_history must be >= 1"),
+    ({"min_history": -3}, "min_history must be >= 1"),
+    ({"after": ""}, "after must be non-empty"),
+    ({"before": "   "}, "before must be non-empty"),
+])
+def test_freeze_window_value_validation(bad_fw, match):
+    with pytest.raises(RepoSetError, match=match):
+        validate_repo_set(_mutate(freeze_window=bad_fw))
+
+
 def test_unknown_entry_key_rejected():
     with pytest.raises(RepoSetError, match="unknown keys"):
         validate_repo_set(_mutate(extra="x"))

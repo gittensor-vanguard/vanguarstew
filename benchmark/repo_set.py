@@ -124,11 +124,14 @@ def _validate_freeze_window(fw, where):
         expected = _FREEZE_KEYS[key]
         if expected == "str":
             _require(isinstance(value, str), f"{where}: freeze_window.{key} must be a string")
+            _require(value.strip(), f"{where}: freeze_window.{key} must be non-empty")
         elif expected == "bool":
             _require(isinstance(value, bool), f"{where}: freeze_window.{key} must be a boolean")
         elif expected == "int":
             _require(isinstance(value, int) and not isinstance(value, bool),
                      f"{where}: freeze_window.{key} must be an integer")
+            if key == "min_history":
+                _require(value >= 1, f"{where}: freeze_window.min_history must be >= 1")
     return dict(fw)
 
 
