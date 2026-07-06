@@ -11,6 +11,7 @@ if ROOT not in sys.path:
 from benchmark.coverage import (  # noqa: E402
     DEFAULT_MIN_REPOS,
     DEFAULT_MIN_TASKS,
+    _checks_list,
     _collect_per_repo_entries,
     _per_repo_list,
     check_coverage,
@@ -171,3 +172,36 @@ def test_collect_per_repo_entries_helpers():
     assert _collect_per_repo_entries({"tasks": 1}) == ([], "none")
     assert _per_repo_list([1, 2]) == [1, 2]
     assert _per_repo_list("bad") == []
+
+
+# --- #583: non-list checks must not abort coverage headline formatting ---------------
+
+_MALFORMED_CHECKS = [42, 3.14, True, {"name": "is_multi_repo"}, "not a list"]
+
+
+def test_coverage_checks_list_accepts_only_real_lists():
+    rows = [{"name": "is_multi_repo", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _checks_list(bad) == [], bad
+    assert _checks_list(rows) == rows
+    assert _checks_list(None) == []
+
+
+def test_coverage_headline_survives_non_list_checks():
+    base = {"passed": False, "repos_scored": 0, "total_tasks": 0}
+    for bad in _MALFORMED_CHECKS:
+        assert coverage_headline({**base, "checks": bad}) == "coverage: no checks evaluated", bad
+
+
+def test_coverage_headline_logs_warning_for_non_list_checks(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        line = coverage_headline({"checks": 42, "passed": False})
+    assert line == "coverage: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad

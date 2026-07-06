@@ -55,6 +55,18 @@ def _per_repo_list(items) -> list:
     return []
 
 
+def _checks_list(checks) -> list:
+    """Return ``checks`` when it is a list; otherwise treat as no gate checks."""
+    if isinstance(checks, list):
+        return checks
+    if checks is not None:
+        logger.warning(
+            "coverage: checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
+    return []
+
+
 def _collect_per_repo_entries(result: dict) -> tuple[list, str]:
     """Gather per-repo entries from a multi-repo or generalization artifact.
 
@@ -160,13 +172,17 @@ def check_coverage(result, min_repos: int = DEFAULT_MIN_REPOS,
 
 def failed_checks(result: dict) -> list:
     """The names of the checks that failed in a :func:`check_coverage` result."""
-    return [c["name"] for c in _dict(result).get("checks", []) if not c.get("passed")]
+    return [
+        c["name"]
+        for c in _checks_list(_dict(result).get("checks"))
+        if isinstance(c, dict) and not c.get("passed")
+    ]
 
 
 def coverage_headline(result: dict) -> str:
     """A one-line human summary of a :func:`check_coverage` result."""
     result = _dict(result)
-    checks = result.get("checks") or []
+    checks = _checks_list(result.get("checks"))
     if not checks:
         return "coverage: no checks evaluated"
     if result.get("passed"):
