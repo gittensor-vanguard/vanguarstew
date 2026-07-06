@@ -14,6 +14,10 @@ math) so a partial series still produces a trend instead of raising.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # A drop larger than this between consecutive points is reported as a regression. Small enough
 # to catch a real slide, large enough to ignore run-to-run scoring noise.
 DEFAULT_REGRESSION_THRESHOLD = 0.02
@@ -52,6 +56,22 @@ def _round(value):
     return round(float(value), 3) if _is_number(value) else None
 
 
+def _trend_series(series) -> list:
+    """Return ``series`` when it is a list; otherwise treat as no trend points.
+
+    A truthy non-list must not reach ``for label, artifact in series`` or malformed CLI /
+    saved-artifact input aborts trend analysis (#528).
+    """
+    if isinstance(series, list):
+        return series
+    if series is not None:
+        logger.warning(
+            "trend: series is %s, not a list; treating as empty",
+            type(series).__name__,
+        )
+    return []
+
+
 def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) -> dict:
     """Summarize how the headline score moves across an ordered ``series`` of artifacts.
 
@@ -70,7 +90,7 @@ def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) ->
     points = []
     scored = []           # (label, score) for points with a numeric score, in order
     prev_score = None
-    for label, artifact in series or []:
+    for label, artifact in _trend_series(series):
         score = headline_score(artifact)
         delta = _round(score - prev_score) if (score is not None and prev_score is not None) else None
         points.append({"label": label, "composite_mean": score, "delta": delta})

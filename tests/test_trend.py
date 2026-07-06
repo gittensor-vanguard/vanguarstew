@@ -7,7 +7,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.trend import headline_score, trend, trend_headline  # noqa: E402
+from benchmark.trend import _trend_series, headline_score, trend, trend_headline  # noqa: E402
 
 
 def _single(score):
@@ -92,6 +92,34 @@ def test_trend_empty_and_all_unscored_series():
     assert empty["scored"] == 0 and empty["first"] is None and empty["regressions"] == []
     allbad = trend([("a", {"error": "x"}), ("b", "not-a-dict")])
     assert allbad["scored"] == 0 and allbad["change"] is None
+
+
+# --- #528: a non-list series must not abort trend ------------------------------------
+
+_MALFORMED_SERIES = [42, 3.14, True, {"label": "run1"}, "not a list"]
+
+
+def test_trend_series_accepts_only_real_lists():
+    rows = [("run1", {"composite_mean": 0.5})]
+    for bad in _MALFORMED_SERIES:
+        assert _trend_series(bad) == [], bad
+    assert _trend_series(rows) == rows
+    assert _trend_series(None) == []
+
+
+def test_trend_survives_non_list_series():
+    for bad in _MALFORMED_SERIES:
+        out = trend(bad)
+        assert out["scored"] == 0 and out["total"] == 0 and out["regressions"] == [], bad
+
+
+def test_trend_logs_warning_for_non_list_series(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.trend"):
+        out = trend(42)
+    assert out["scored"] == 0
+    assert any("series is int" in r.message for r in caplog.records)
 
 
 def test_trend_headline_summarizes_direction_and_regressions():
