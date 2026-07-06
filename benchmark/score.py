@@ -404,6 +404,9 @@ def addressed_issues(revealed, open_issues) -> list:
 def backlog_recall(plan, revealed, open_issues=None) -> dict:
     """Fraction of addressed backlog issues the plan anticipated, plus match diagnostics.
 
+    Diagnostic-only: reported by :func:`objective_score` for inspection but deliberately
+    excluded from :func:`objective_component` and :func:`composite_score` (#148).
+
     `addressed_backlog_diagnostics` is human-readable evidence (issue number, issue title, the
     commit subject that caused it to count as addressed) for maintainer-facing inspection; it
     is purely additive and does not affect `backlog_recall`, `addressed_issue_numbers`, or
@@ -434,6 +437,25 @@ def backlog_recall(plan, revealed, open_issues=None) -> dict:
         "matched_issue_numbers": matched,
         "addressed_backlog_diagnostics": diagnostics,
     }
+
+
+# Reported by objective_score for inspection; never read by objective_component (#148).
+_BACKLOG_DIAGNOSTIC_KEYS = frozenset({
+    "backlog_recall",
+    "addressed_issue_numbers",
+    "matched_issue_numbers",
+    "addressed_backlog_diagnostics",
+})
+
+# Only these keys may influence objective_component / composite_score ranking.
+_COMPONENT_SCORE_KEYS = (
+    "weighted_module_recall",
+    "module_recall",
+    "release_signaled",
+    "release_predicted",
+    "bump_actual",
+    "bump_match",
+)
 
 
 def objective_score(plan, revealed, version_bump=None, base_version=None,
@@ -478,6 +500,15 @@ def objective_score(plan, revealed, version_bump=None, base_version=None,
 _JUDGE_OUTCOME = {"A": 1.0, "tie": 0.5, "B": 0.0}  # challenger perspective vs. the baseline
 
 
+def _objective_for_component(objective: dict) -> dict:
+    """Return only the objective_score fields that may influence ranking (#148).
+
+    Backlog anticipation metrics and their diagnostics are inspectable but must never leak into
+    the scalar anchor even if a future edit widens the averaging logic.
+    """
+    return {k: objective[k] for k in _COMPONENT_SCORE_KEYS if k in objective}
+
+
 def objective_component(objective: dict) -> float:
     """Collapse the objective anchor into a single value in [0, 1].
 
@@ -486,15 +517,19 @@ def objective_component(objective: dict) -> float:
     falls back to plain ``module_recall`` otherwise. Release-prediction and (when present)
     bump-level correctness count only when there was actually a release to get right, so a
     window with no release isn't scored on a trivial "predicted nothing" match.
+
+    ``backlog_recall`` and its companion diagnostics are reported by :func:`objective_score`
+    but are deliberately excluded here — backlog anticipation remains diagnostic-only (#148).
     """
-    recall = objective.get("weighted_module_recall")
+    obj = _objective_for_component(objective)
+    recall = obj.get("weighted_module_recall")
     if recall is None:
-        recall = objective.get("module_recall", 0.0)
+        recall = obj.get("module_recall", 0.0)
     parts = [float(recall)]
-    if objective.get("release_signaled"):
-        parts.append(1.0 if objective.get("release_predicted") else 0.0)
-    if objective.get("bump_actual") is not None:
-        parts.append(1.0 if objective.get("bump_match") else 0.0)
+    if obj.get("release_signaled"):
+        parts.append(1.0 if obj.get("release_predicted") else 0.0)
+    if obj.get("bump_actual") is not None:
+        parts.append(1.0 if obj.get("bump_match") else 0.0)
     return round(sum(parts) / len(parts), 3)
 
 
