@@ -1,9 +1,13 @@
 """Tests for the sample-adequacy gate (deterministic, offline)."""
 
 import copy
+import json
 import logging
 import os
+import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -16,6 +20,7 @@ from benchmark.sample_adequacy import (  # noqa: E402
     failed_checks,
     sample_adequacy_headline,
 )
+from scripts.sample_adequacy import load_artifact  # noqa: E402
 
 
 def _run(tasks, challenger=None, baseline=None, tie=None):
@@ -345,3 +350,127 @@ def test_check_sample_adequacy_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_sample_adequacy(run)
     assert run == snapshot
+
+
+# --- load_artifact: distinguish not-found / unreadable / bad-JSON / non-object -------------
+
+def test_load_artifact_exits_2_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(missing))
+    assert exc.value.code == 2
+
+
+def test_load_artifact_exits_2_for_a_directory_path(tmp_path):
+    # A directory reaches open() and must be distinguished from "not found" (the path DOES
+    # exist) and from bad JSON (it's not even readable as text).
+    a_dir = tmp_path / "looks-like-a-config"
+    a_dir.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(a_dir))
+    assert exc.value.code == 2
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_load_artifact_exits_2_for_an_unreadable_file(tmp_path):
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text(json.dumps({"tasks": 3}), encoding="utf-8")
+    unreadable.chmod(0o000)
+    try:
+        with pytest.raises(SystemExit) as exc:
+            load_artifact(str(unreadable))
+    finally:
+        unreadable.chmod(0o644)
+    assert exc.value.code == 2
+
+
+def test_load_artifact_exits_2_for_invalid_json(tmp_path):
+    bad = tmp_path / "invalid.json"
+    bad.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(bad))
+    assert exc.value.code == 2
+
+
+def test_load_artifact_exits_2_for_a_non_object_artifact(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(bad))
+    assert exc.value.code == 2
+
+
+def test_load_artifact_reads_a_well_formed_file(tmp_path):
+    good = tmp_path / "good.json"
+    payload = _run(5, 3, 1, 1)
+    good.write_text(json.dumps(payload), encoding="utf-8")
+    assert load_artifact(str(good)) == payload
+
+
+# --- subprocess-level: drive the actual CLI entry point, each error case with its own real
+# observed message text --------------------------------------------------------------------
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.sample_adequacy", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(missing))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert f"artifact not found: {missing}" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
+    a_dir = tmp_path / "looks-like-a-config"
+    a_dir.mkdir()
+    result = _run_cli(str(a_dir))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "cannot read artifact" in result.stderr
+    assert "Is a directory" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    bad = tmp_path / "invalid.json"
+    bad.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(bad))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "Expecting property name enclosed in double quotes" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(bad))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert f"artifact must be a JSON object: {bad}" in result.stderr
+
+
+def test_cli_still_runs_the_real_gate_for_a_well_formed_artifact(tmp_path):
+    run = _run(8, 5, 3, 0)
+    path = tmp_path / "good.json"
+    path.write_text(json.dumps(run), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 0
+    expected = check_sample_adequacy(run)
+    payload = json.loads(result.stdout)
+    assert payload == expected
+    assert payload["passed"] is True
+    assert sample_adequacy_headline(expected) in result.stderr
+
+
+def test_cli_reports_inadequate_and_exits_nonzero_with_strict(tmp_path):
+    run = _run(1, 1, 0, 0)
+    path = tmp_path / "inadequate.json"
+    path.write_text(json.dumps(run), encoding="utf-8")
+    result = _run_cli(str(path), "--min-tasks", "3", "--strict")
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["passed"] is False
