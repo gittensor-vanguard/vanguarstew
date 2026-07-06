@@ -45,10 +45,26 @@ def _repo_key(entry: dict) -> str:
     return repr(sorted(entry.keys()))
 
 
+def _per_repo_list(artifact: dict) -> list:
+    """Return ``per_repo`` when it is a list; otherwise treat as no per-repo rows.
+
+    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for row in per_repo``
+    or a malformed saved artifact aborts ``compare_eval`` (#464).
+    """
+    rows = (artifact or {}).get("per_repo")
+    return rows if isinstance(rows, list) else []
+
+
 def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
-    base_by_key = {_repo_key(row): row for row in baseline.get("per_repo") or []}
+    base_by_key = {
+        _repo_key(row): row
+        for row in _per_repo_list(baseline)
+        if isinstance(row, dict)
+    }
     out = []
-    for row in candidate.get("per_repo") or []:
+    for row in _per_repo_list(candidate):
+        if not isinstance(row, dict):
+            continue
         key = _repo_key(row)
         base_row = base_by_key.get(key)
         if base_row is None:

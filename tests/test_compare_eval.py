@@ -10,6 +10,7 @@ if ROOT not in sys.path:
 
 from scripts.compare_eval import (  # noqa: E402
     _is_generalization,
+    _per_repo_list,
     _repo_key,
     compare_eval_artifacts,
     comparison_headline,
@@ -104,6 +105,42 @@ def test_compare_eval_artifacts_matches_rows_with_null_freeze_commit():
     row = diff["per_repo"][0]
     assert row["repo"] == repr(sorted(["composite_mean", "freeze_commit", "tasks"]))
     assert row["composite_mean"]["delta"] == 0.1
+
+
+# --- #464: a non-list per_repo table must not abort compare_eval ---------------------------
+
+_MALFORMED_PER_REPO = [42, 3.14, True, {"repo_path": "/a"}, "not a list", None]
+
+
+def test_per_repo_list_accepts_only_real_lists():
+    rows = [{"repo_path": "/a", "composite_mean": 0.4}]
+    assert _per_repo_list({"per_repo": rows}) == rows
+    assert _per_repo_list({"per_repo": None}) == []
+    assert _per_repo_list({}) == []
+    for bad in _MALFORMED_PER_REPO:
+        assert _per_repo_list({"per_repo": bad}) == [], bad
+
+
+def test_compare_eval_artifacts_survives_non_list_per_repo():
+    baseline = {"composite_mean": 0.5, "per_repo": 42}
+    candidate = {"composite_mean": 0.6, "per_repo": True}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_mean"]["delta"] == 0.1
+    assert "per_repo" not in diff
+
+
+def test_compare_eval_artifacts_skips_non_dict_per_repo_rows():
+    baseline = {
+        "composite_mean": 0.5,
+        "per_repo": [{"repo_path": "/a", "composite_mean": 0.4, "tasks": 2}],
+    }
+    candidate = {
+        "composite_mean": 0.55,
+        "per_repo": [42, {"repo_path": "/a", "composite_mean": 0.5, "tasks": 2}],
+    }
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert len(diff["per_repo"]) == 1
+    assert diff["per_repo"][0]["composite_mean"]["delta"] == 0.1
 
 
 # --- #382: diff generalization-shaped artifacts (tuned/held_out partitions + gap) ---------
