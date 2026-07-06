@@ -93,8 +93,12 @@ def _check_rows_list(checks) -> list[dict]:
 def _decisive_margin(result: dict):
     """The challenger's decisive margin (wins - losses), preferring the explicit field.
 
-    ``run_replay`` reports ``decisive_margin`` directly; ``run_multi_replay`` does not, so fall
-    back to deriving it from the aggregate ``tally``. Returns None when neither is available.
+    ``run_replay`` reports ``decisive_margin`` and a top-level ``tally`` directly. A
+    ``run_multi_replay`` / generalization artifact reports neither — its aggregate win/loss
+    counts live only under ``judge_report`` (``wins``/``losses``, built from the same tally).
+    Try the explicit field, then a top-level ``tally``, then ``judge_report`` so a multi-repo
+    run isn't held on ``beats_baseline`` for lack of a top-level margin. Returns None only when
+    no source carries the counts.
     """
     margin = result.get("decisive_margin")
     if _is_number(margin):
@@ -103,6 +107,10 @@ def _decisive_margin(result: dict):
     wins, losses = tally.get("challenger"), tally.get("baseline")
     if _is_number(wins) and _is_number(losses):
         return wins - losses
+    report = _dict(result.get("judge_report"))
+    rwins, rlosses = report.get("wins"), report.get("losses")
+    if _is_number(rwins) and _is_number(rlosses):
+        return rwins - rlosses
     return None
 
 

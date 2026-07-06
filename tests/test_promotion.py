@@ -64,6 +64,20 @@ def test_decisive_margin_is_derived_from_tally_when_absent():
     assert result["passed"] is True
 
 
+def test_decisive_margin_derived_from_judge_report_for_multi_repo():
+    # A real run_multi_replay / generalization artifact has NO top-level `tally` or
+    # `decisive_margin`; the aggregate win/loss counts live only under `judge_report`.
+    # beats_baseline must derive the margin from there instead of holding the run.
+    multi = {
+        "composite_mean": 0.72,
+        "judge_report": {"wins": 9, "losses": 2, "ties": 1, "disagreement_rate": 0.083},
+    }
+    result = check_promotion(multi, min_composite=0.5, min_decisive_margin=1)
+    assert result["decisive_margin"] == 7          # None before the judge_report fallback
+    assert "beats_baseline" not in failed_checks(result)
+    assert result["passed"] is True
+
+
 def test_missing_margin_and_tally_fails_beats_baseline():
     result = check_promotion({"composite_mean": 0.7, "judge_report": {"disagreement_rate": 0.1}})
     assert "beats_baseline" in failed_checks(result)
