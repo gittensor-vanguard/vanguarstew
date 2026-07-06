@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Fixed
+- Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
+  `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
+  reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
+  Mirrors the reachability guard `benchmark/freeze.py::build_context` already applies (#256).
 - Benchmark hygiene: `benchmark/taskgen.py::revealed_window` now parses changed-file
   lists from NUL-delimited `git show --name-only -z` output via a reusable
   `benchmark.freeze.parse_path_list` helper, instead of whitespace `.split()`. Filenames
