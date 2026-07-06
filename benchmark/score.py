@@ -361,21 +361,30 @@ _COMMIT_KIND = {
     "release": "release",
 }
 
+# The only normalized non-release kinds under which release tooling legitimately cuts a
+# version (standard-version / release-please emit `chore(release): X.Y.Z`, `build(release):
+# X.Y.Z`, `chore: release vX.Y.Z`). Any other prefix with a version body is not a release cut.
+_RELEASE_TOOLING_KINDS = frozenset({"chore", "build"})
+
 
 def is_release_subject(text: str) -> bool:
     """True only for a genuine release/version-cut subject.
 
-    Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
-    that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
-    in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
+    A release subject is exactly one of:
+    - explicit release wording (``release``, ``changelog``, ``bump version``); or
+    - a subject that leads with a version tag (``v1.2.0``, ``Release 1.2.0``); or
+    - a version-cut body under a **release-tooling** Conventional-Commit type — only
+      ``chore``/``build`` — which is how standard-version / release-please author the cut:
+      ``chore(release): 1.4.0``, ``chore(main): release 1.2.3``, ``build(release): 2.0.0``,
+      or a bare ``chore: 2.0.0``.
 
-    When a Conventional-Commit prefix maps to a non-release kind (`ci:`, `docs:`, `fix:`, ...),
-    the prefix is authoritative and an incidental ``release``/``changelog`` mention in the body
-    does not count as a version cut (#431). The exception is the version-cut commit that release
-    tooling emits under a chore/build type (``chore(release): 1.4.0``, ``chore(main): release
-    1.2.3``, ``build(release): 2.0.0``): it is recognized when the text after the prefix is
-    itself a release-tag subject (an optional leading ``release`` then a version), so the genuine
-    cut is scored while ``ci(release): update pipeline`` and ``docs: changelog`` edits are not.
+    Everything else is NOT a release, even when a version appears in the text:
+    - an incidental version mid-subject (``bump lodash to v4.17.21``, ``fix crash in v1.2.0
+      parser``); and
+    - a version body under any **non-tooling** CC prefix — ``fix: 2.0.0``, ``ci: 3.0.0``,
+      ``docs: 1.4.0``, and especially ``revert: release 1.2.0`` (the *opposite* of a cut).
+      Outside chore/build the prefix is authoritative, and neither an incidental
+      ``release``/``changelog`` word (#431) nor a version body makes it a cut.
 
     A non-string value (an LLM may emit a list/dict/number for a plan title) is never a
     release, so it returns False instead of raising inside `re`.
@@ -386,10 +395,14 @@ def is_release_subject(text: str) -> bool:
     if m:
         kind = _COMMIT_KIND.get(m.group(1).lower())
         if kind and kind != "release":
-            # Release tooling cuts a version under a chore/build type, so count the commit only
-            # when the body after the prefix is itself a release-tag subject (a leading optional
-            # `release` then a version). An incidental release/changelog word in a ci/docs/fix
-            # commit has no such version-cut body and stays a non-release (#431).
+            # Only release *tooling* (chore/build) cuts a version under a non-release type. A
+            # version body under any other prefix is not a cut: `fix: 2.0.0`, `ci: 3.0.0`,
+            # `docs: 1.4.0`, and especially `revert: release 1.2.0` (the opposite of a cut).
+            if kind not in _RELEASE_TOOLING_KINDS:
+                return False
+            # For a chore/build type, count it only when the body after the prefix is itself a
+            # release-tag subject (a leading optional `release` then a version); an incidental
+            # release/changelog word with no version-cut body stays a non-release (#431).
             body = text[m.end():].lstrip(" :\t")
             return bool(_RELEASE_TAG_SUBJECT.match(body))
     return bool(_RELEASE_KW.search(text) or _RELEASE_TAG_SUBJECT.match(text))

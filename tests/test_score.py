@@ -429,6 +429,52 @@ def test_is_release_subject_accepts_chore_build_release_cuts():
         assert commit_kind(subj) == "release", subj
 
 
+def test_bare_version_body_under_chore_build_is_a_release_cut():
+    # A bare version body (no explicit `release` word) under a chore/build tooling type is a
+    # genuine cut — some tooling emits `chore: 2.0.0` / `build: 3.0.0` directly.
+    for subj in ("chore: 2.0.0", "build: 3.0.0", "chore!: 1.0.0", "build(deps)!: 4.5.6"):
+        assert is_release_subject(subj), subj
+        assert commit_kind(subj) == "release", subj
+
+
+def test_version_body_under_non_tooling_prefix_is_not_a_release():
+    # The chore/build carve-out (#431) must NOT extend to other Conventional-Commit types: a
+    # version body under fix/ci/docs/style/perf — and especially `revert:`, the opposite of a
+    # cut — is not a release. Only release tooling (chore/build) cuts a version this way.
+    for subj in (
+        "revert: release 1.2.0",
+        "fix: 2.0.0",
+        "ci: 3.0.0",
+        "docs: 1.4.0",
+        "style: 2.2.2",
+        "perf: 1.5.0",
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+    # A revert keeps its own CC kind rather than being mislabeled a release.
+    assert commit_kind("revert: release 1.2.0") == "revert"
+    assert commit_kind("fix: 2.0.0") == "fix"
+
+
+def test_revert_release_commit_does_not_credit_the_release_axis():
+    # Downstream: a window whose only release-ish commit REVERTS a release must not score the
+    # release axis. Before the fix, is_release_subject("revert: release X") was True, corrupting
+    # release_signaled / released_version / bump_actual and kind_recall's 'release'.
+    revealed = [{"subject": "revert: release 2.0.0", "files": ["CHANGELOG.md"]}]
+    assert release_signaled(revealed) is False
+    assert released_version(revealed) is None
+    plan = [{"title": "cut the 2.0.0 release", "kind": "release"}]
+    score = objective_score(plan, revealed, base_version="1.9.0")
+    assert score["release_signaled"] is False
+    assert score["bump_actual"] is None
+    assert "release" not in score["actual_kinds"]
+    # Contrast: a genuine chore(release) cut in the same slot DOES credit the release axis.
+    cut = [{"subject": "chore(release): 2.0.0", "files": ["CHANGELOG.md"]}]
+    assert release_signaled(cut) is True
+    assert released_version(cut) == (2, 0, 0)
+    assert "release" in objective_score(plan, cut, base_version="1.9.0")["actual_kinds"]
+
+
 def test_release_scoped_non_cuts_stay_non_release():
     # The chore/build carve-out is body-gated: a release-scoped or release-mentioning commit
     # whose body is prose (not a version-cut announcement) is release infrastructure, not a
