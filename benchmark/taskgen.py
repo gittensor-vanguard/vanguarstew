@@ -23,7 +23,18 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
     window = []
     for sha in commits[idx + 1: idx + 1 + n]:
         subject = _git(repo, "log", "-1", "--pretty=format:%s", sha).strip()
-        files = _git(repo, "show", "--name-only", "--pretty=format:", sha, check=False).split()
+        # `-m --first-parent`: for merge commits the combined diff is empty (files
+        # already match a parent), so `--name-only` prints nothing and the revealed
+        # window's structural ground truth collapses to zero.  `-m` decomposes the
+        # merge into per-parent diffs and `--first-parent` keeps only the first one —
+        # the set of files the PR brought in — making merge and non-merge commits
+        # consistent.  Non-merge commits are unaffected by `-m`.
+        # `splitlines()` + blank-line filter: `str.split()` splits on *any* whitespace,
+        # so a changed path containing a space was fragmented into multiple bogus
+        # entries, corrupting `changed_modules` → `module_recall` (#113/#116).
+        out = _git(repo, "show", "-m", "--first-parent", "--name-only",
+                    "--pretty=format:", sha, check=False)
+        files = [f for f in out.splitlines() if f]
         window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
     return window
 
