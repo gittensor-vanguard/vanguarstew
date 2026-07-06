@@ -16,6 +16,7 @@ from agent.decider import (  # noqa: E402
     _normalize_patch,
     _normalize_rationale,
     _normalize_reviewer,
+    _normalize_version_bump,
     decide,
 )
 from agent.llm import LLM  # noqa: E402
@@ -110,3 +111,46 @@ def test_decide_normalizes_malformed_structured_fields():
     assert out["reviewer"] == "123"
     assert out["rationale"] == ""
     assert out["patch"] is None
+
+
+def test_normalize_version_bump_accepts_canonical_levels():
+    for level in ("major", "minor", "patch"):
+        assert _normalize_version_bump(level) == level
+    assert _normalize_version_bump("  MINOR ") == "minor"
+    assert _normalize_version_bump("PATCH") == "patch"
+
+
+def test_normalize_version_bump_maps_nullish_and_unknown_to_none():
+    assert _normalize_version_bump(None) is None
+    assert _normalize_version_bump("") is None
+    assert _normalize_version_bump("none") is None
+    assert _normalize_version_bump("null") is None
+    assert _normalize_version_bump("n/a") is None
+    assert _normalize_version_bump("micro") is None
+    for bad in (123, True, ["minor"], {"level": "patch"}):
+        assert _normalize_version_bump(bad) is None
+
+
+class _VersionBumpLLM:
+    offline = False
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def chat_json(self, system, user, stub=None):
+        return dict(self.payload)
+
+
+def test_decide_normalizes_version_bump_from_llm_output():
+    ctx = {"recent_commits": [{"subject": "init"}]}
+    out = decide(ctx, {}, "should we cut a release?", _VersionBumpLLM({"version_bump": "MINOR"}))
+    assert out["version_bump"] == "minor"
+
+    cleared = decide(ctx, {}, "no release", _VersionBumpLLM({"version_bump": "none"}))
+    assert cleared["version_bump"] is None
+
+    junk = decide(ctx, {}, "decide", _VersionBumpLLM({"version_bump": "yolo"}))
+    assert junk["version_bump"] is None
+
+    non_string = decide(ctx, {}, "decide", _VersionBumpLLM({"version_bump": 2}))
+    assert non_string["version_bump"] is None

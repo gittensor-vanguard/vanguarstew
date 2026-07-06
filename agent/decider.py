@@ -38,6 +38,9 @@ _ACTION_SYNONYMS = {
     "labelled": "label",
 }
 
+_BUMP_LEVELS = frozenset({"major", "minor", "patch"})
+_NULL_BUMPS = frozenset({"null", "none", "n/a"})
+
 
 def _normalize_action(action) -> str:
     """Map `action` onto `VALID_ACTIONS`, via a known synonym or a plain match.
@@ -102,6 +105,22 @@ def _normalize_patch(value) -> str | None:
     return None
 
 
+def _normalize_version_bump(bump) -> str | None:
+    """Map ``version_bump`` onto major/minor/patch, else ``None``.
+
+    Matches the scoring contract in ``benchmark.score._norm_bump`` so release prediction
+    is not silently dropped because of case or synonym noise in the model output.
+    """
+    if bump is None:
+        return None
+    if not isinstance(bump, str):
+        return None
+    level = bump.strip().lower()
+    if not level or level in _NULL_BUMPS:
+        return None
+    return level if level in _BUMP_LEVELS else None
+
+
 def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:3000]}\n\n"
@@ -131,6 +150,7 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out["reviewer"] = _normalize_reviewer(out.get("reviewer"))
     out["rationale"] = _normalize_rationale(out.get("rationale"))
     out["patch"] = _normalize_patch(out.get("patch"))
+    out["version_bump"] = _normalize_version_bump(out.get("version_bump"))
     return out
 
 
