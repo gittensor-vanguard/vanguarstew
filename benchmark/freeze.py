@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tarfile
 
@@ -42,17 +43,77 @@ def origin_url(repo: str) -> str:
     return _git(repo, "remote", "get-url", "origin", check=False).strip()
 
 
+def _safe_target(dest: str, name: str) -> str:
+    """Resolve a tar member ``name`` to an absolute path under ``dest``.
+
+    Leading slashes are stripped so absolute member names are neutralized into the
+    destination rather than written to the filesystem root. ``..`` traversal
+    components are rejected outright. A final containment check guards against any
+    residual escape.
+    """
+    clean = name.replace("\\", "/").lstrip("/")
+    parts = [p for p in clean.split("/") if p and p != "."]
+    if not parts or ".." in parts:
+        raise tarfile.TarError(f"unsafe path in archive: {name!r}")
+    target = os.path.abspath(os.path.join(dest, *parts))
+    root = os.path.abspath(dest)
+    if target != root and not target.startswith(root + os.sep):
+        raise tarfile.TarError(f"path escapes destination: {name!r}")
+    return target
+
+
+def _safe_extractall(tf: tarfile.TarFile, dest: str) -> None:
+    """Extract a git-archive tarball with a single, runtime-independent policy.
+
+    This is applied identically on every supported Python version so a frozen tree
+    never depends on whether ``tarfile.extractall(filter='data')`` happens to be
+    available. The policy:
+
+    - extracts only regular files and directories;
+    - skips symlinks, hard links, and special files (devices/FIFOs) so an untrusted
+      repository archive cannot plant links or escape the sandbox;
+    - rejects ``..`` traversal and neutralizes absolute member paths (see
+      :func:`_safe_target`);
+    - writes deterministic permissions (dirs ``0o755``; files ``0o644``, plus the
+      owner-execute bit git records) so the tree is byte- and mode-identical across
+      runtimes and umasks.
+    """
+    os.makedirs(dest, exist_ok=True)
+    # Iterate the archive in a single forward pass so this works on non-seekable
+    # streams (``git archive | tarfile.open(mode="r|")``): each member's payload is
+    # read via ``extractfile`` before advancing to the next member.
+    for member in tf:
+        if member.isdir():
+            target = _safe_target(dest, member.name)
+            os.makedirs(target, exist_ok=True)
+            os.chmod(target, 0o755)
+            continue
+        if not member.isreg():
+            # Symlinks, hard links, char/block devices, and FIFOs are never extracted.
+            continue
+        target = _safe_target(dest, member.name)
+        parent = os.path.dirname(target)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        src = tf.extractfile(member)
+        if src is None:
+            continue
+        with src, open(target, "wb") as out:
+            shutil.copyfileobj(src, out)
+        os.chmod(target, 0o755 if (member.mode & 0o100) else 0o644)
+
+
 def export_tree(repo: str, commit: str, dest: str) -> None:
     os.makedirs(dest, exist_ok=True)
     proc = subprocess.Popen(
         ["git", "-C", repo, "archive", "--format=tar", commit],
         stdout=subprocess.PIPE,
     )
+    # One explicit extraction policy on all supported Python versions (3.10-3.12);
+    # never delegate to the stdlib `filter='data'` path, whose availability and exact
+    # behavior differ by runtime and would make frozen trees non-reproducible.
     with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
-        try:
-            tf.extractall(dest, filter="data")  # py>=3.12
-        except TypeError:
-            tf.extractall(dest)
+        _safe_extractall(tf, dest)
     proc.wait()
     if proc.returncode not in (0, None):
         raise RuntimeError(f"git archive failed for {commit}")
