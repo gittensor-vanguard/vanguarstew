@@ -63,7 +63,9 @@ def _open_prs_list(context: dict) -> list:
     A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for p in open_prs``
     or malformed frozen context aborts queue reconciliation.
     """
-    raw = (context or {}).get("open_prs")
+    if not isinstance(context, dict):
+        return []
+    raw = context.get("open_prs")
     return raw if isinstance(raw, list) else []
 
 
