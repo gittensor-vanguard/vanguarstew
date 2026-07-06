@@ -71,6 +71,25 @@ def _pr_title(pr: dict) -> str:
     return title.strip() if isinstance(title, str) else ""
 
 
+def _pr_number(pr: dict):
+    """Return an open PR's ``number`` when it is a usable scalar int, else None.
+
+    The frozen queue is LLM/GitHub-derived JSON, so ``number`` can arrive as a non-scalar
+    (a list or dict). Such a value is *unhashable*, and both queue-reconciliation keyings —
+    the ``by_number`` lookup in ``_matched_pr`` and the ``seen_prs`` set via
+    ``_pr_dedup_key`` — would raise ``TypeError: unhashable type`` and abort the whole plan
+    step. Treat a non-int ``number`` as numberless (dedup falls back to title), mirroring the
+    existing numberless handling rather than crashing. ``bool`` is rejected too: it is never a
+    real PR number and would alias 0/1.
+    """
+    if not isinstance(pr, dict):
+        return None
+    number = pr.get("number")
+    if isinstance(number, bool) or not isinstance(number, int):
+        return None
+    return number
+
+
 def _pr_dedup_key(pr: dict):
     """Return a stable dedup key for an open PR in queue reconciliation.
 
@@ -79,7 +98,7 @@ def _pr_dedup_key(pr: dict):
     """
     if not isinstance(pr, dict):
         return None
-    number = pr.get("number")
+    number = _pr_number(pr)
     if number is not None:
         return ("number", number)
     title = _pr_title(pr)
@@ -227,7 +246,7 @@ def _matched_pr(item: dict, prs: list):
     queue is treated as stale: the item is **not** matched against a different open PR
     via fallback, since the author already committed to a specific number.
     """
-    by_number = {p.get("number"): p for p in prs if p.get("number") is not None}
+    by_number = {_pr_number(p): p for p in prs if _pr_number(p) is not None}
 
     ref, qualified = _pr_reference(item.get("title", ""), item.get("rationale", ""))
     if ref is not None:
@@ -385,7 +404,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     for item in plan:
         pr = _matched_pr(item, prs)
         if pr is not None:
-            number = pr.get("number")
+            number = _pr_number(pr)
             dedup_key = _pr_dedup_key(pr)
             if dedup_key is not None and dedup_key in seen_prs:
                 continue
@@ -393,23 +412,28 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
                 seen_prs.add(dedup_key)
             addressed = True
             if not _is_review_item(item):
+                if number is not None:
+                    rationale = (f"restates open PR #{number} already in flight; review it "
+                                 "instead of duplicating the work")
+                else:
+                    rationale = ("restates an open PR already in flight; review it instead "
+                                 "of duplicating the work")
                 item = {
                     **item,
                     "kind": "triage",
                     "restates_pr": number,
-                    "rationale": (
-                        f"restates open PR #{number} already in flight; review it instead of "
-                        "duplicating the work"
-                    ),
+                    "rationale": rationale,
                 }
         out.append(item)
 
     if not addressed:
         top = prs[0]
+        top_number = _pr_number(top)
         out.insert(0, {
-            "title": f"Review pull request #{top.get('number', '?')}: {_pr_title(top)}",
+            "title": f"Review pull request #{top_number if top_number is not None else '?'}: "
+                     f"{_pr_title(top)}",
             "kind": "triage",
-            "restates_pr": top.get("number"),
+            "restates_pr": top_number,
             "rationale": (
                 "the open PR queue was omitted from the plan; a strong maintainer clears or "
                 "schedules review before unrelated work"

@@ -22,6 +22,8 @@ from agent.planner import (  # noqa: E402
     _normalize_plan_item,
     _open_prs_list,
     _plan_list,
+    _pr_dedup_key,
+    _pr_number,
     _pr_queue_note,
     _pr_title,
     _significant_tokens,
@@ -120,6 +122,31 @@ def test_redundant_items_targeting_same_pr_are_collapsed():
     out = reconcile_plan_with_queue(plan, CTX, 5)
     assert sum(1 for i in out if i.get("restates_pr") == 7) == 1  # collapsed to one
     assert any(i.get("kind") == "docs" for i in out)              # unrelated item survives
+
+
+def test_pr_number_normalizes_non_scalar_and_bool():
+    assert _pr_number({"number": 7}) == 7
+    assert _pr_number({"number": [7]}) is None      # unhashable list -> numberless
+    assert _pr_number({"number": {"n": 7}}) is None  # unhashable dict -> numberless
+    assert _pr_number({"number": True}) is None      # bool is never a real PR number
+    assert _pr_number({"number": None}) is None
+    assert _pr_number({}) is None
+    # dedup key must stay hashable: it falls back to title when the number is unusable.
+    key = _pr_dedup_key({"number": [7], "title": "Add streaming export"})
+    assert key == ("title", "Add streaming export")
+    hash(key)  # must not raise
+
+
+def test_reconcile_tolerates_non_hashable_pr_number():
+    # A frozen queue can carry a non-scalar `number` (LLM/JSON noise). It is unhashable, so
+    # both the by_number lookup in _matched_pr and the seen-PRs dedup must treat it as
+    # numberless instead of raising TypeError and aborting the whole plan step.
+    for bad in ([7], {"n": 7}):
+        ctx = {"open_prs": [{"number": bad, "title": "Add streaming export"}]}
+        plan = [{"title": "Add streaming export endpoint", "kind": "feature"}]
+        out = reconcile_plan_with_queue(plan, ctx, 5)  # no raise
+        assert out[0]["kind"] == "triage"   # still matched (by title) and reconciled
+        assert out[0]["restates_pr"] is None  # non-scalar number normalized away, not a list
 
 
 def test_plan_next_actions_offline_reconciles_queue():
