@@ -1,9 +1,13 @@
 """Tests for the pairwise-judge robustness gate (deterministic, offline)."""
 
 import copy
+import json
 import logging
 import os
+import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -270,3 +274,146 @@ def test_check_judge_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_judge(run)
     assert run == snapshot
+
+
+# --- CLI entry point: clean errors instead of tracebacks (#922) ---------------------------
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.judge_gate", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def _write(path, payload):
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return str(path)
+
+
+def _run_main_in_process(monkeypatch, argv):
+    import scripts.judge_gate as judge_gate_cli
+
+    monkeypatch.setattr(sys, "argv", ["scripts.judge_gate", *argv])
+    with pytest.raises(SystemExit) as excinfo:
+        judge_gate_cli.main()
+    return excinfo.value.code
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the FileNotFoundError message itself, naming the offending path
+    assert "No such file or directory" in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    bad = _write(tmp_path / "bad.json", [1, 2, 3])
+    result = _run_cli(bad)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # load_artifact's ValueError message, naming the offending path
+    assert "must be a JSON object" in result.stderr
+    assert bad in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(invalid))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the JSONDecodeError message with its parse position
+    assert "Expecting property name enclosed in double quotes" in result.stderr
+    assert "line 1" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
+    # IsADirectoryError is an OSError; end-to-end proof the guard covers the family even
+    # when the suite runs as root (a chmod-000 fixture would be readable to root).
+    unreadable = tmp_path / "a-directory"
+    unreadable.mkdir()
+    result = _run_cli(str(unreadable))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "Is a directory" in result.stderr
+    assert str(unreadable) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_permission_denied_file(tmp_path, monkeypatch, capsys):
+    # In-process, so it holds under any uid (root reads chmod-000 files, so a filesystem
+    # fixture cannot force EACCES deterministically): PermissionError must surface as the
+    # one-line OSError message and a clean exit 1, never a traceback.
+    import scripts.judge_gate as judge_gate_cli
+
+    denied = str(tmp_path / "denied.json")
+
+    def _deny(path):
+        raise PermissionError(13, "Permission denied", denied)
+
+    monkeypatch.setattr(judge_gate_cli, "load_artifact", _deny)
+    code = _run_main_in_process(monkeypatch, [denied])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "Permission denied" in err
+    assert denied in err
+
+
+def test_cli_reports_a_clean_error_when_the_gate_check_itself_fails(tmp_path, monkeypatch, capsys):
+    # The guard is not just around loading: if the gate evaluation blows up on artifact
+    # content, the CLI must still exit 1 with a one-line error instead of a traceback.
+    import scripts.judge_gate as judge_gate_cli
+
+    good = _write(tmp_path / "good.json", _result())
+
+    def _boom(artifact, max_disagreement, min_dual_order_tasks):
+        raise TypeError("unhashable artifact content")
+
+    monkeypatch.setattr(judge_gate_cli, "check_judge", _boom)
+    code = _run_main_in_process(monkeypatch, [good])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "cannot evaluate artifact" in err
+    assert "unhashable artifact content" in err
+
+
+def test_cli_still_gates_a_well_formed_artifact(tmp_path):
+    robust = _write(tmp_path / "robust.json", _result(dual_order=True, dual_tasks=5, disagreement=0.1))
+    result = _run_cli(robust)
+    assert result.returncode == 0
+    assert "Traceback" not in result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["passed"] is True
+    assert "[PASS]" in result.stderr
+
+
+def test_cli_strict_exit_comes_from_the_gating_branch(tmp_path):
+    # The error guards must not swallow or fake the --strict gating path. Prove the exit 1
+    # originates from the gating branch: the full evaluation completed (headline + FAIL rows
+    # on stderr, parseable summary on stdout with passed=false), and no loader/evaluation
+    # error message appears.
+    shaky = _write(tmp_path / "shaky.json",
+                   {"judge_dual_order": False,
+                    "judge_report": {"disagreement_rate": 0.6, "dual_order_tasks": 1}})
+    result = _run_cli(shaky, "--strict")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "[FAIL]" in result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["passed"] is False
+    assert "cannot evaluate artifact" not in result.stderr
+    assert "No such file or directory" not in result.stderr
+
+
+def test_cli_without_strict_exits_zero_on_a_shaky_run(tmp_path):
+    # Same shaky artifact, no --strict: the run reports and exits 0, confirming exit 1
+    # above is the flag's doing rather than any error path.
+    shaky = _write(tmp_path / "shaky.json",
+                   {"judge_dual_order": False,
+                    "judge_report": {"disagreement_rate": 0.6, "dual_order_tasks": 1}})
+    result = _run_cli(shaky)
+    assert result.returncode == 0
+    assert "[FAIL]" in result.stderr
