@@ -7,7 +7,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.runner import WEIGHT_SWEEP_GRID, weight_sweep  # noqa: E402
+from benchmark.runner import WEIGHT_SWEEP_GRID, _sweep_rows, weight_sweep  # noqa: E402
 from benchmark.score import composite_score  # noqa: E402
 
 # A tiny per-task shape mirroring run_replay's `rows`: a judge `winner` plus an `objective`
@@ -70,3 +70,31 @@ def test_weight_sweep_empty_rows_is_zero_not_a_crash():
         assert row["composite_mean"] == 0.0
     # Rows with an unrecognized winner contribute nothing rather than raising.
     assert weight_sweep([{"winner": "???", "objective": {}}])[0]["composite_mean"] == 0.0
+
+
+# --- #561: a non-list rows container must not abort weight_sweep --------------------
+
+_MALFORMED_ROWS = [42, 3.14, True, {"winner": "challenger"}, "not a list"]
+
+
+def test_sweep_rows_accepts_only_real_lists():
+    for bad in _MALFORMED_ROWS:
+        assert _sweep_rows(bad) == [], bad
+    assert _sweep_rows(ROWS) == ROWS
+    assert _sweep_rows(None) == []
+
+
+def test_weight_sweep_survives_non_list_rows():
+    for bad in _MALFORMED_ROWS:
+        sweep = weight_sweep(bad)
+        assert len(sweep) == len(WEIGHT_SWEEP_GRID), bad
+        assert all(row["composite_mean"] == 0.0 for row in sweep), bad
+
+
+def test_weight_sweep_logs_warning_for_non_list_rows(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        sweep = weight_sweep(42)
+    assert all(row["composite_mean"] == 0.0 for row in sweep)
+    assert any("rows is int" in r.message for r in caplog.records)
