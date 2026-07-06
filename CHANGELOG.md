@@ -19,6 +19,10 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Tooling: ``scripts/compare_eval`` no longer diffs a placeholder ``composite_mean`` of
+  ``0.0`` on partitions or multi-repo runs with ``scored_repos: 0`` as if it were a real
+  score — the delta is ``None`` instead of a misleading ``+0.600``-style swing, mirroring
+  the unscored guard already used by ``benchmark/trend.py`` and ``benchmark/report.py``.
 - Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
   and `releases` were read from only the first API page, so a repo with more than 100 of
   either silently dropped the rest — which can hide a milestone that was open at T or an
