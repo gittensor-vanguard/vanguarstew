@@ -54,6 +54,21 @@ def test_identical_runs_have_zero_cv_and_are_stable():
     assert result["stable"] is True
 
 
+def test_non_finite_scores_are_skipped_not_aggregated():
+    # #951: a NaN composite_mean used to flow into the scores list (headline_score passed it
+    # through) and abort stdev() mid-gate. It must count as unscored: the finite repeats alone
+    # decide stability, and stddev/cv stay finite numbers.
+    result = assess_repeatability(
+        [_run(float("nan")), _run(0.60), _run(0.61), _run(0.59)], max_cv=0.05, min_runs=3)
+    assert result["runs"] == 3
+    assert result["scores"] == [0.60, 0.61, 0.59]
+    assert result["stable"] is True
+    # All-degenerate repeats read as zero usable runs — an insufficient-runs verdict, not a crash.
+    result = assess_repeatability([_run(float("nan")), _run(float("inf"))])
+    assert result["runs"] == 0
+    assert result["stable"] is False and "insufficient runs" in result["reason"]
+
+
 def test_zero_mean_with_spread_is_unstable_not_a_crash():
     # A zero mean with nonzero spread cannot be normalized into a CV (division by zero); it must
     # be reported as unstable, not crash. Reachable via a (defensively handled) negative score.

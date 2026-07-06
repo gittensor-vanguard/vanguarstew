@@ -77,6 +77,66 @@ def test_headline_score_treats_unscored_multi_repo_as_unscored():
     assert out["regressions"] == []
 
 
+# --- #951: non-finite composite_mean must read as unscored, not as a real score ---------
+
+
+def test_headline_score_treats_non_finite_score_as_unscored():
+    # NaN/Infinity survive a JSON save/load round trip, so a degenerate artifact is a real
+    # input: it must read as unscored (None), never as a NaN "score" that poisons trend math.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert headline_score(_single(bad)) is None
+        assert headline_score(_gen(bad)) is None                # tuned partition, same rule
+    # The exact vector from the issue: a JSON artifact carrying a literal NaN.
+    assert headline_score(json.loads('{"composite_mean": NaN}')) is None
+    # An int beyond float range overflows the finiteness probe; it must be rejected, not raise.
+    assert headline_score({"composite_mean": 10**400}) is None
+    # Booleans are still not scores, and a real score still reads through unchanged.
+    assert headline_score({"composite_mean": True}) is None
+    assert headline_score(_single(0.62)) == 0.62
+    # A non-finite scored_repos gate must not mask a real score (it is not the 0-placeholder).
+    assert headline_score({"scored_repos": float("nan"), "composite_mean": 0.62}) == 0.62
+
+
+def test_headline_score_logs_warning_for_non_finite_score(caplog):
+    # Discarding a present-but-degenerate score is not the same as a missing one — the discard
+    # must be visible in the logs, not silent.
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.trend"):
+        assert headline_score(_single(float("nan"))) is None
+    assert any("non-finite" in r.message for r in caplog.records)
+    # A merely-missing score stays quiet: absence is a documented, tolerated case.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="benchmark.trend"):
+        assert headline_score({"error": "no tasks"}) is None
+    assert not caplog.records
+
+
+def test_trend_skips_non_finite_points_in_delta_and_regression_math():
+    # A NaN point contributes None exactly like a missing score: deltas bridge around it, it is
+    # not counted as scored, and first/last/change stay finite (2 NaN 0.5 -> scored=1 before fix).
+    series = [("a", _single(0.60)), ("b", _single(float("nan"))), ("c", _single(0.50))]
+    out = trend(series)
+    assert out["points"][1]["composite_mean"] is None
+    assert out["points"][1]["delta"] is None
+    assert out["points"][2]["delta"] == -0.10
+    assert out["scored"] == 2 and out["total"] == 3
+    assert out["first"] == 0.60 and out["last"] == 0.50 and out["change"] == -0.10
+    # An Infinity point likewise: no inf deltas, no runaway regression drop.
+    out = trend([("a", _single(0.60)), ("b", _single(float("inf")))])
+    assert out["scored"] == 1 and out["last"] == 0.60
+    assert out["regressions"] == []
+
+
+def test_trend_headline_renders_na_for_non_finite_change():
+    # A summary dict can arrive from a JSON file (NaN included); the headline must render n/a,
+    # not "+nan", and pick the flat arrow rather than comparing against NaN.
+    summary = {"scored": 2, "first": 0.5, "last": 0.6, "change": float("nan"), "regressions": []}
+    line = trend_headline(summary)
+    assert "n/a" in line and "nan" not in line
+    assert "flat" in line
+
+
 def test_trend_computes_points_deltas_and_overall_change():
     series = [("r1", _single(0.50)), ("r2", _single(0.55)), ("r3", _single(0.53))]
     out = trend(series)

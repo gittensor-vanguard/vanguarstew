@@ -15,6 +15,7 @@ math) so a partial series still produces a trend instead of raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,16 @@ DEFAULT_REGRESSION_THRESHOLD = 0.02
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # NaN/Infinity survive a JSON round trip (json.dump writes them, json.load reads them back),
+    # so a degenerate composite_mean is a real input, not a hypothetical — and every consumer of
+    # a score (trend deltas, repeatability's stdev, headline formatting) breaks on it. Same guard
+    # as benchmark/report.py since #683; ints beyond float range overflow isfinite.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def headline_score(artifact) -> float | None:
@@ -47,6 +57,11 @@ def headline_score(artifact) -> float | None:
     if _is_number(scored) and not scored:
         return None
     score = source.get("composite_mean")
+    if isinstance(score, (int, float)) and not isinstance(score, bool) and not _is_number(score):
+        # Present but non-finite (or beyond float range): degenerate data, not a missing score —
+        # flag the discard instead of silently reading the artifact as unscored.
+        logger.warning("trend: composite_mean is non-finite (%r); treating as unscored", score)
+        return None
     return round(float(score), 3) if _is_number(score) else None
 
 
