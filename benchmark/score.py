@@ -83,9 +83,36 @@ def released_version(revealed) -> tuple | None:
     subjects = []
     for r in revealed or []:
         subj = r.get("subject", "") or ""
-        if is_release_subject(subj):
-            subjects.append(subj)
-    return _latest_semver(subjects)
+        if not isinstance(subj, str) or not is_release_subject(subj):
+            continue
+        ver = _semver_from_release_subject(subj)
+        if ver is not None:
+            subjects.append(ver)
+    return max(subjects) if subjects else None
+
+
+def _semver_from_release_subject(subject) -> tuple | None:
+    """Extract the released semver from a genuine release subject.
+
+    ``parse_semver`` alone returns the *first* version-looking token, which mis-reads subjects
+    like ``Support Python 3.11, release 1.4.0`` as ``(3, 11, 0)`` instead of ``(1, 4, 0)``.
+    Prefer the version on a leading tag subject, then the first semver after release wording,
+    then the last semver in the subject as a conservative fallback.
+    """
+    if not isinstance(subject, str):
+        return None
+    s = subject.strip()
+    if not s:
+        return None
+    if _RELEASE_TAG_SUBJECT.match(s):
+        return parse_semver(s)
+    kw = _RELEASE_KW.search(s)
+    if kw:
+        ver = parse_semver(s[kw.end():])
+        if ver is not None:
+            return ver
+    versions = [v for v in (parse_semver(m.group(0)) for m in _SEMVER.finditer(s)) if v]
+    return versions[-1] if versions else None
 
 
 def base_from_releases(releases) -> str | None:

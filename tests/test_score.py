@@ -257,6 +257,15 @@ def test_released_version_recognizes_two_component_tag():
     assert released_version(revealed) == (2, 0, 0)
 
 
+def test_released_version_prefers_release_semver_over_earlier_incidental():
+    # Regression: parse_semver on the whole subject used to return the first version token
+    # (3.11.0 from "Python 3.11") instead of the released version (1.4.0).
+    subj = "Support Python 3.11, release 1.4.0"
+    assert is_release_subject(subj)
+    assert released_version([{"subject": subj}]) == (1, 4, 0)
+    assert bump_level((1, 3, 0), released_version([{"subject": subj}])) == "minor"
+
+
 def test_release_signaled_ignores_dependency_bumps():
     dep_bumps = [
         {"subject": "chore(deps): bump lodash to v4.17.21", "files": ["package.json"]},
