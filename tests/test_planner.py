@@ -110,6 +110,36 @@ def test_explicit_pr_number_in_title_or_rationale():
     assert _matched_pr(item, prs) == prs[0]
 
 
+def test_bare_ordinal_hash_number_is_not_an_explicit_pr_reference():
+    """A bare `#N` in prose is an ordinal/ranking, not a PR reference (#274).
+
+    "our #1 priority" happening to collide with an open PR's number must not be
+    trusted the way "PR #1" or "pull request 1" are.
+    """
+    assert _explicit_pr_number("our #1 priority this quarter") is None
+    assert _explicit_pr_number("the #1 requested feature") is None
+    prs = [{"number": 1, "title": "Add config validation"}]
+    item = {"title": "Ship the #1 requested feature: dark mode", "kind": "feature",
+            "rationale": "Users have been asking for this for months"}
+    assert _matched_pr(item, prs) is None
+
+
+def test_bare_ordinal_does_not_corrupt_unrelated_plan_item():
+    """Regression for #274: a plan item is not silently rewritten to `triage` with a
+    fabricated "restates open PR" rationale just because its title contains a `#N`
+    ordinal that happens to match an open PR's number.
+    """
+    ctx = {"open_prs": [{"number": 1, "title": "Add config validation"}]}
+    plan = [{"title": "Ship the #1 requested feature: dark mode", "kind": "feature",
+             "rationale": "Users have been asking for this for months"}]
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    dark_mode = [i for i in out if "dark mode" in i.get("title", "")]
+    assert len(dark_mode) == 1
+    assert dark_mode[0]["kind"] == "feature"
+    assert "restates_pr" not in dark_mode[0]
+    assert dark_mode[0]["rationale"] == "Users have been asking for this for months"
+
+
 def test_one_token_pr_title_does_not_match_on_weak_overlap():
     prs = [{"number": 3, "title": "loader"}]
     # Incidental mention of the same word must not count as restating the PR.

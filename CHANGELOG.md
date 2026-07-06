@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Fixed
+- `agent/planner.py::_matched_pr` treated any bare `#N` in a plan item's title/rationale as
+  an authoritative open-PR reference, bypassing the title/token-overlap sanity checks the
+  rest of the function applies. A bare `#N` is common English for an ordinal/ranking ("our
+  #1 priority"), not necessarily a PR reference — when it collided with a real open PR's
+  number, an unrelated plan item was silently rewritten to `kind: triage` with a fabricated
+  "restates open PR" rationale. `_PR_NUMBER` now requires the "pr"/"pull request" word
+  itself, matching every existing explicit-reference test case (#274).
 - Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
   `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
   reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.

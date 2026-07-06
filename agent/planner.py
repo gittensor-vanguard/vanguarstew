@@ -28,9 +28,12 @@ _REVIEW_MARKER_RE = re.compile(
     r"\b(?:review|merge|approve|request\s+changes|pull\s+request|pr\s*#)",
     re.I,
 )
-# Explicit PR references: "#7", "PR #7", "pull request 7"
+# Explicit PR references: "PR #7", "pr7", "pull request 7". Requires the "pr"/"pull request"
+# word itself, not just a bare "#7" -- a bare "#N" is common English for an ordinal/ranking
+# ("our #1 priority") with no relation to a PR number, and trusting it unconditionally let an
+# unrelated plan item collide with an open PR's number and get silently rewritten (#274).
 _PR_NUMBER = re.compile(
-    r"(?:#\s*(\d+)\b|(?:pull\s+request|pr)\s+#?\s*(\d+)\b)",
+    r"\b(?:pull\s+request|pr)\b\s*#?\s*(\d+)\b",
     re.I,
 )
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
@@ -101,7 +104,7 @@ def _explicit_pr_number(*texts: str) -> int | None:
         if not text:
             continue
         for match in _PR_NUMBER.finditer(text):
-            raw = match.group(1) or match.group(2)
+            raw = match.group(1)
             if raw:
                 return int(raw)
     return None
