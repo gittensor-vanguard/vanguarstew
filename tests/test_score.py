@@ -337,6 +337,26 @@ def test_is_release_subject_rejects_incidental_versions():
     assert not is_release_subject("add retry logic")
 
 
+def test_version_body_under_non_tooling_prefix_is_not_a_release():
+    # The chore/build carve-out (#431) must NOT extend to other Conventional-Commit types: a
+    # version body under fix/ci/docs/style/perf — and especially `revert:`, the opposite of a
+    # cut — is not a release. Only release tooling (chore/build) cuts a version this way.
+    for subj in (
+        "revert: release 1.2.0",
+        "fix: 2.0.0",
+        "ci: 3.0.0",
+        "docs: 1.4.0",
+        "style: 2.2.2",
+        "perf: 1.5.0",
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+    # The intended chore/build tooling cuts still score as releases.
+    for subj in ("chore(release): 1.4.0", "build(release): 2.0.0", "chore: release v3.1.0"):
+        assert is_release_subject(subj), subj
+        assert commit_kind(subj) == "release", subj
+
+
 def test_is_release_subject_accepts_two_component_tags():
     # parse_semver already tolerates a missing patch component ("1.4" -> (1, 4, 0));
     # is_release_subject must recognize the same bare two-component tags as releases.

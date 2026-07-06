@@ -361,6 +361,11 @@ _COMMIT_KIND = {
     "release": "release",
 }
 
+# The only normalized non-release kinds under which release tooling legitimately cuts a
+# version (standard-version / release-please emit `chore(release): X.Y.Z`, `build(release):
+# X.Y.Z`). Any other prefix with a version body is not a release cut.
+_RELEASE_TOOLING_KINDS = frozenset({"chore", "build"})
+
 
 def is_release_subject(text: str) -> bool:
     """True only for a genuine release/version-cut subject.
@@ -386,10 +391,15 @@ def is_release_subject(text: str) -> bool:
     if m:
         kind = _COMMIT_KIND.get(m.group(1).lower())
         if kind and kind != "release":
-            # Release tooling cuts a version under a chore/build type, so count the commit only
-            # when the body after the prefix is itself a release-tag subject (a leading optional
-            # `release` then a version). An incidental release/changelog word in a ci/docs/fix
-            # commit has no such version-cut body and stays a non-release (#431).
+            # Only release *tooling* (chore/build) cuts a version under a non-release type
+            # (`chore(release): 1.4.0`, `build(release): 2.0.0`). A version body under any other
+            # prefix is not a cut: `fix: 2.0.0`, `ci: 3.0.0`, `docs: 1.4.0`, and especially
+            # `revert: release 1.2.0` (the opposite of a cut) must not score the release axis.
+            if kind not in _RELEASE_TOOLING_KINDS:
+                return False
+            # For a chore/build type, count it only when the body after the prefix is itself a
+            # release-tag subject (a leading optional `release` then a version); an incidental
+            # release/changelog word with no version-cut body stays a non-release (#431).
             body = text[m.end():].lstrip(" :\t")
             return bool(_RELEASE_TAG_SUBJECT.match(body))
     return bool(_RELEASE_KW.search(text) or _RELEASE_TAG_SUBJECT.match(text))
