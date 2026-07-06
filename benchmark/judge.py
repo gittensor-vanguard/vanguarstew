@@ -83,6 +83,15 @@ def _text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _has_structured_files(files) -> bool:
+    """True when ``files`` names at least one path (list or scalar string)."""
+    if isinstance(files, str):
+        return bool(files.strip())
+    if isinstance(files, list):
+        return any(isinstance(f, str) and f.strip() for f in files)
+    return False
+
+
 def _item_substance(item) -> int:
     """Substance weight of a single plan item.
 
@@ -106,7 +115,7 @@ def _item_substance(item) -> int:
     if isinstance(item, dict):
         if _text(item.get("kind")):
             weight += 1
-        if item.get("files"):
+        if _has_structured_files(item.get("files")):
             weight += 1
         if _text(item.get("rationale")):
             weight += 1

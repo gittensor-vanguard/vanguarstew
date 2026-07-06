@@ -13,6 +13,7 @@ from benchmark.score import (  # noqa: E402
     _PLAN_KIND,
     _files_list,
     _meaningful_overlap,
+    _plan_file_paths,
     _plan_list,
     _plan_tokens,
     _releases_list,
@@ -980,6 +981,24 @@ def test_plan_tokens_skips_non_string_files_entries():
     assert "agent" in toks
     assert "plan" in toks
     assert "123" not in toks
+
+
+def test_plan_file_paths_wraps_scalar_string():
+    assert _plan_file_paths("core/loader.py") == ["core/loader.py"]
+    assert _plan_file_paths({"bad": True}) == []
+
+
+def test_plan_tokens_honors_scalar_files_without_char_split():
+    toks = _plan_tokens([{"title": "loader", "files": "core/loader.py"}])
+    assert "core" in toks
+    assert "loader" in toks
+    assert "c" not in toks  # would appear if the string were iterated char-by-char
+
+
+def test_module_recall_honors_scalar_plan_files():
+    revealed = [{"subject": "fix loader", "files": ["core/loader.py"]}]
+    plan = [{"title": "unrelated", "kind": "bugfix", "files": "core/loader.py"}]
+    assert module_recall(plan, revealed)["module_recall"] == 1.0
 
 
 def test_module_recall_survives_non_string_paths_in_plan_and_revealed():

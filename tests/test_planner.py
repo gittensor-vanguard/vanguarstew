@@ -18,6 +18,7 @@ from agent.planner import (  # noqa: E402
     _is_review_item,
     _matched_pr,
     _normalize_plan,
+    _normalize_files,
     _normalize_plan_item,
     _open_prs_list,
     _plan_list,
@@ -301,6 +302,36 @@ def test_normalize_plan_item_coerces_non_string_fields():
     }
     assert _normalize_plan_item({"title": "  ", "kind": "docs"}) is None
     assert _normalize_plan_item({"title": "work", "kind": "mystery"})["kind"] == "triage"
+
+
+def test_normalize_files_coerces_scalar_and_list_shapes():
+    assert _normalize_files(None) == []
+    assert _normalize_files("core/loader.py") == ["core/loader.py"]
+    assert _normalize_files("  core/loader.py  ") == ["core/loader.py"]
+    assert _normalize_files("") == []
+    assert _normalize_files(["core/a.py", "", None, 7]) == ["core/a.py", "7"]
+    assert _normalize_files({"bad": True}) == []
+
+
+def test_normalize_plan_item_wraps_scalar_files():
+    item = _normalize_plan_item({
+        "title": "harden loader",
+        "kind": "bugfix",
+        "files": "core/loader.py",
+    })
+    assert item["files"] == ["core/loader.py"]
+
+
+def test_normalize_plan_item_drops_empty_or_invalid_files():
+    assert "files" not in _normalize_plan_item({"title": "work", "kind": "docs", "files": ""})
+    assert "files" not in _normalize_plan_item({"title": "work", "kind": "docs", "files": 42})
+
+
+def test_normalize_files_logs_warning_for_non_list_scalar_object(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING):
+        assert _normalize_files({"path": "x.py"}) == []
+    assert any("non-list files" in r.message for r in caplog.records)
 
 
 def test_reconcile_plan_with_queue_tolerates_numeric_titles():

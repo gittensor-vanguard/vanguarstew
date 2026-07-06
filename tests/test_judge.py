@@ -130,6 +130,14 @@ def test_plan_substance_normalizes_scalar_items_through_filler_check():
     assert pairwise_judge({}, fluff, substance, [], llm) == "B"
 
 
+def test_plan_substance_counts_scalar_files_once():
+    assert _plan_substance([{"title": "fix loader", "kind": "bugfix", "files": "core/loader.py"}]) == 3
+
+
+def test_plan_substance_ignores_truthy_non_path_files():
+    assert _plan_substance([{"title": "fix loader", "kind": "bugfix", "files": 42}]) == 2
+
+
 def test_generic_filler_titles_do_not_outrank_concrete_plan():
     # Beyond blank items (#54), a plan padded with generic *non-blank* filler titles
     # must not beat a shorter plan of concrete, structured actions (#70). The old

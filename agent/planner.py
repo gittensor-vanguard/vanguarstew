@@ -252,6 +252,29 @@ def _normalize_text_field(value) -> str:
     return str(value).strip()
 
 
+def _normalize_files(value) -> list:
+    """Coerce ``files`` to the documented ``list[str]`` contract."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        path = value.strip()
+        return [path] if path else []
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            if item is None:
+                continue
+            path = item.strip() if isinstance(item, str) else str(item).strip()
+            if path:
+                out.append(path)
+        return out
+    logger.warning(
+        "plan: LLM returned a non-list files field (%s: %r); dropping",
+        type(value).__name__, value,
+    )
+    return []
+
+
 def _normalize_plan_item(item) -> dict | None:
     """Coerce one LLM plan item onto the documented shape, or drop it."""
     if not isinstance(item, dict):
@@ -276,9 +299,11 @@ def _normalize_plan_item(item) -> dict | None:
         normalized["rationale"] = rationale
     if theme:
         normalized["theme"] = theme
-    for key in ("restates_pr", "files"):
-        if key in item:
-            normalized[key] = item[key]
+    files = _normalize_files(item.get("files"))
+    if files:
+        normalized["files"] = files
+    if "restates_pr" in item:
+        normalized["restates_pr"] = item["restates_pr"]
     return normalized
 
 
