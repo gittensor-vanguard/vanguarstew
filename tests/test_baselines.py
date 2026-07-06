@@ -19,6 +19,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.baselines import (  # noqa: E402
     BASELINES,
+    _infer_kind,
     empty_solve,
     get_baseline,
     heuristic_solve,
@@ -73,6 +74,27 @@ def test_heuristic_baseline_derives_a_real_plan():
 def test_heuristic_is_stronger_than_empty_offline():
     # Given the same context, the heuristic proposes more than the empty floor.
     assert len(heuristic_solve(context=CTX, n=5)["plan"]) > len(empty_solve(context=CTX)["plan"])
+
+
+def test_release_subject_at_start_is_release():
+    """A version-leading subject is classified as a release by both baseline and scoring."""
+    assert _infer_kind("v1.2.0") == "release"
+    assert _infer_kind("Release v2.0.0") == "release"
+    assert _infer_kind("v1.0.0-beta.1") == "release"
+
+
+def test_dependency_bump_is_not_a_release():
+    """An in-sentence version mention (dependency bump) must not classify as a release."""
+    assert _infer_kind("bump lodash to v4.17.21") != "release"
+    assert _infer_kind("Bump dependency to v10.0") != "release"
+    assert _infer_kind("fix crash in v1.2.0 parser") != "release"
+
+
+def test_explicit_release_wording_is_release():
+    """Explicit release wording in the subject body counts as a release."""
+    assert _infer_kind("Release v1.2.0") == "release"
+    assert _infer_kind("update changelog for v2.0") == "release"
+    assert _infer_kind("bump version to 1.3.0") == "release"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
