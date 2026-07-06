@@ -79,6 +79,45 @@ def test_comparison_headline_describes_direction():
     assert "up +0.150" in comparison_headline(diff)
 
 
+# --- generalization (--generalization) artifacts: scores nest under tuned/held_out (#382) ---
+
+def _gen(tuned, held_out, gap):
+    return {
+        "tuned": {"composite_mean": tuned, "scored_repos": 1},
+        "held_out": {"composite_mean": held_out, "scored_repos": 1},
+        "generalization_gap": gap,
+    }
+
+
+def test_compare_eval_diffs_generalization_partitions_and_gap():
+    # Both partitions improved and the gap narrowed; a plain top-level composite_mean diff
+    # would report "unavailable", so compare_eval must recurse into tuned/held_out.
+    diff = compare_eval_artifacts(_gen(0.50, 0.40, 0.10), _gen(0.60, 0.55, 0.05))
+    gen = diff["generalization"]
+    assert gen["tuned"]["composite_mean"]["delta"] == 0.1
+    assert gen["held_out"]["composite_mean"]["delta"] == 0.15
+    assert gen["generalization_gap"] == {"baseline": 0.10, "candidate": 0.05, "delta": -0.05}
+    # No spurious top-level composite_mean is invented for a generalization artifact.
+    assert "composite_mean" not in diff
+
+
+def test_generalization_headline_summarizes_both_partitions():
+    diff = compare_eval_artifacts(_gen(0.50, 0.40, 0.10), _gen(0.60, 0.55, 0.05))
+    line = comparison_headline(diff)
+    assert "generalization" in line
+    assert "tuned" in line and "+0.100" in line
+    assert "held_out" in line and "+0.150" in line
+    assert "gap" in line and "-0.050" in line
+
+
+def test_generalization_detected_when_only_one_side_has_partitions():
+    # A generalization candidate compared against a missing/plain baseline still routes to the
+    # generalization diff (deltas simply unavailable) rather than the flat composite path.
+    diff = compare_eval_artifacts({}, _gen(0.6, 0.5, 0.1))
+    assert "generalization" in diff
+    assert "unavailable" in comparison_headline(diff)
+
+
 def test_load_artifact_reads_json_file(tmp_path):
     path = tmp_path / "result.json"
     path.write_text(json.dumps({"composite_mean": 0.42}), encoding="utf-8")
