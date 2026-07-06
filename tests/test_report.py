@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -10,7 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.report import render_report  # noqa: E402
+from benchmark.report import _per_repo_rows, render_report  # noqa: E402
 from scripts.report import load_artifact  # noqa: E402
 
 
@@ -153,6 +154,51 @@ def test_render_tolerates_missing_optional_fields():
     assert "Composite mean: 0.500" in md
     assert "Judge mean: n/a" in md
     assert "Judge W-L-T: n/a" in md
+
+
+# --- #667: non-list per_repo must not pick the wrong report template -----------------
+
+_MALFORMED_PER_REPO = [42, 3.14, True, {"repo_path": "/x"}, "not a list"]
+
+
+def test_per_repo_rows_accepts_only_real_lists():
+    rows = [{"repo_path": "/a", "composite_mean": 0.5, "tasks": 1}]
+    for bad in _MALFORMED_PER_REPO:
+        assert _per_repo_rows(bad) == [], bad
+    assert _per_repo_rows(rows) == rows
+    assert _per_repo_rows(None) == []
+
+
+def test_per_repo_rows_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        assert _per_repo_rows(None) == []
+    assert not caplog.records
+
+
+def test_per_repo_rows_logs_warning_for_non_list_container(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        assert _per_repo_rows(42) == []
+    assert any("per_repo is int" in r.message for r in caplog.records)
+
+
+def test_render_multi_repo_with_non_list_per_repo_uses_multi_template():
+    art = _multi_repo()
+    for bad in _MALFORMED_PER_REPO:
+        art = {**_multi_repo(), "per_repo": bad}
+        md = render_report(art)
+        assert "# Benchmark report (multi-repo)" in md, bad
+        assert "Repos: 2/2 scored" in md, bad
+        assert "### Per-repo" not in md, bad
+
+
+def test_render_generalization_warns_for_non_list_partition_per_repo(caplog):
+    art = _generalization()
+    art["tuned"]["per_repo"] = 42
+    with caplog.at_level(logging.WARNING, logger="benchmark.report"):
+        md = render_report(art)
+    assert "### Tuned" in md
+    assert "| held-b | 0.650 | 2 |" in md
+    assert any("per_repo is int" in r.message for r in caplog.records)
 
 
 def test_render_tolerates_malformed_per_repo_rows():

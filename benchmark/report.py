@@ -7,6 +7,10 @@ report.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # Tuned minus held-out above this threshold triggers an "inspect" verdict on generalization runs.
 DEFAULT_GAP_INSPECT_THRESHOLD = 0.10
 
@@ -52,8 +56,21 @@ def _is_generalization(artifact: dict) -> bool:
     return _looks_like_partition(tuned) and _looks_like_partition(held_out)
 
 
+def _per_repo_rows(per_repo) -> list:
+    """Return ``per_repo`` when it is a list; otherwise treat as no per-repo detail."""
+    if isinstance(per_repo, list):
+        return per_repo
+    if per_repo is not None:
+        logger.warning(
+            "report: per_repo is %s, not a list; treating as empty",
+            type(per_repo).__name__,
+        )
+    return []
+
+
 def _is_multi_repo(artifact: dict) -> bool:
-    return isinstance(artifact.get("per_repo"), list) and "composite_mean" in artifact
+    # Multi-repo replays always carry an aggregate repo count; per_repo may be malformed.
+    return "composite_mean" in artifact and _is_number(artifact.get("repos"))
 
 
 def _judge_lines(artifact: dict) -> list[str]:
@@ -96,7 +113,7 @@ def _composite_lines(artifact: dict) -> list[str]:
 
 
 def _per_repo_table(rows: list) -> list[str]:
-    if not isinstance(rows, list) or not rows:
+    if not rows:
         return []
     header = "| Repo | Composite | Tasks |"
     sep = "| --- | ---: | ---: |"
@@ -134,7 +151,7 @@ def _render_partition(title: str, part: dict) -> list[str]:
     if _is_number(scored):
         skip_txt = f", {int(skipped)} skipped" if _is_number(skipped) and skipped else ""
         lines.append(f"- Scored repos: {int(scored)}{skip_txt}")
-    lines.extend(_per_repo_table(part.get("per_repo") or []))
+    lines.extend(_per_repo_table(_per_repo_rows(part.get("per_repo"))))
     return lines
 
 
@@ -165,7 +182,7 @@ def _render_multi_repo(artifact: dict) -> str:
         if _is_number(skipped) and skipped:
             detail += f", {int(skipped)} skipped"
         lines.append(f"- Repos: {detail}")
-    lines.extend(_per_repo_table(artifact.get("per_repo") or []))
+    lines.extend(_per_repo_table(_per_repo_rows(artifact.get("per_repo"))))
     return "\n".join(lines) + "\n"
 
 
