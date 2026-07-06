@@ -159,3 +159,30 @@ def test_freeze_window_dict_warns_for_non_dict_value(caplog):
         }
     assert merged == {}
     assert any("freeze_window is int" in r.message for r in caplog.records)
+
+
+# --- #671: non-dict rows inside the list must not abort weight_sweep --------------------
+
+def test_weight_sweep_skips_non_dict_rows_and_scores_valid_neighbors():
+    rows = [
+        42,
+        {"winner": "challenger", "objective": {"module_recall": 1.0}},
+        "not-a-dict",
+        None,
+    ]
+    sweep = weight_sweep(rows, grid=[(0.6, 0.4)])
+    assert sweep[0]["composite_mean"] == 1.0
+
+
+def test_weight_sweep_all_non_dict_rows_yields_zero_grid():
+    for row in weight_sweep([42, "bad", None], grid=[(0.5, 0.5)]):
+        assert row["composite_mean"] == 0.0
+
+
+def test_weight_sweep_logs_warning_for_non_dict_row(caplog):
+    import logging
+
+    rows = [42, {"winner": "challenger", "objective": {"module_recall": 0.5}}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        weight_sweep(rows)
+    assert any("weight_sweep row is int" in r.message for r in caplog.records)
