@@ -174,6 +174,39 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
     }
 
 
+# A small default grid of (w_judge, w_objective) blends for `weight_sweep`. Spans a
+# judge-heavy to objective-heavy range around the production default (0.6 / 0.4).
+WEIGHT_SWEEP_GRID = ((0.2, 0.8), (0.4, 0.6), (0.5, 0.5), (0.6, 0.4), (0.8, 0.2))
+
+
+def weight_sweep(rows, grid=WEIGHT_SWEEP_GRID) -> list:
+    """Recompute `composite_mean` across a grid of judge/objective blend weights (#53).
+
+    Takes the already-scored per-task ``rows`` from :func:`run_replay` (each carrying a
+    ``winner`` and an ``objective``) and re-blends them at each ``(w_judge, w_objective)`` pair,
+    so the blend can be tuned without re-running the expensive replay. Only the weights vary;
+    each task's judge outcome and objective anchor are fixed.
+
+    The per-task blend mirrors :func:`benchmark.score.composite_score` exactly (weights are
+    normalized, each task's composite is rounded to 3 places, then averaged), so sweeping at a
+    run's own weights reproduces that run's reported ``composite_mean``.
+
+    Returns a list of ``{"w_judge", "w_objective", "composite_mean"}`` in grid order.
+    """
+    scored = [
+        (_JUDGE_COMPONENT[r["winner"]], objective_component(r.get("objective") or {}))
+        for r in rows or []
+        if r.get("winner") in _JUDGE_COMPONENT
+    ]
+    sweep = []
+    for w_judge, w_objective in grid:
+        total = (w_judge + w_objective) or 1.0
+        per_task = [round((w_judge * j + w_objective * o) / total, 3) for j, o in scored]
+        mean = round(sum(per_task) / len(per_task), 3) if per_task else 0.0
+        sweep.append({"w_judge": w_judge, "w_objective": w_objective, "composite_mean": mean})
+    return sweep
+
+
 def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partition=None,
                      **kwargs) -> dict:
     """Replay several repos and aggregate their composites (proposal §4 / M3 generalization).

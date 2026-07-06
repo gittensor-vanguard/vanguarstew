@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import date
 
 TIERS = ("recent", "obscure")
 
@@ -124,11 +125,44 @@ def _validate_freeze_window(fw, where):
         expected = _FREEZE_KEYS[key]
         if expected == "str":
             _require(isinstance(value, str), f"{where}: freeze_window.{key} must be a string")
+            _require(value.strip(), f"{where}: freeze_window.{key} must be non-empty")
+            # `after`/`before` bound freeze-point selection and are parsed with
+            # `date.fromisoformat(value[:10])` in taskgen. A non-empty-but-unparseable value
+            # (a typo like "2023-13-01", a non-ISO format) passes the string check but then
+            # crashes task generation with an opaque ValueError mid-run, so validate that it
+            # parses as an ISO date here — fail-fast at config load, like every other field.
+            if key in ("after", "before"):
+                try:
+                    date.fromisoformat(value[:10])
+                except ValueError:
+                    _require(
+                        False,
+                        f"{where}: freeze_window.{key} must be an ISO date (YYYY-MM-DD), "
+                        f"got {value!r}",
+                    )
         elif expected == "bool":
             _require(isinstance(value, bool), f"{where}: freeze_window.{key} must be a boolean")
         elif expected == "int":
             _require(isinstance(value, int) and not isinstance(value, bool),
                      f"{where}: freeze_window.{key} must be an integer")
+            if key == "min_history":
+                _require(value >= 1, f"{where}: freeze_window.min_history must be >= 1")
+    # Cross-field: a window whose `after` is later than its `before` can never contain a
+    # commit, so taskgen silently yields zero tasks and the repo is quietly dropped from the
+    # (leakage-safe, curated) benchmark with no error — a config typo that erodes the set
+    # instead of failing loudly. Reject reversed bounds at load time.
+    after, before = fw.get("after"), fw.get("before")
+    if isinstance(after, str) and isinstance(before, str):
+        try:
+            lo, hi = date.fromisoformat(after[:10]), date.fromisoformat(before[:10])
+        except ValueError:
+            lo = hi = None  # already reported field-by-field above
+        if lo is not None and hi is not None:
+            _require(
+                lo <= hi,
+                f"{where}: freeze_window.after ({after!r}) must be on or before "
+                f"freeze_window.before ({before!r})",
+            )
     return dict(fw)
 
 

@@ -10,7 +10,12 @@ import json
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
-from benchmark.runner import run_generalization_report, run_multi_replay, run_replay
+from benchmark.runner import (
+    run_generalization_report,
+    run_multi_replay,
+    run_replay,
+    weight_sweep,
+)
 
 
 def write_result_artifact(path: str, result: dict) -> None:
@@ -29,6 +34,38 @@ def result_summary_lines(result: dict) -> list[str]:
     if isinstance(report, dict) and report.get("summary"):
         return [report["summary"]]
     return []
+
+
+def _numeric_score(value) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def check_score_floor(result: dict, fail_under: float | None) -> str | None:
+    """Return an error message when ``composite_mean`` is below ``fail_under``, else None."""
+    if fail_under is None:
+        return None
+    # Generalization reports nest composite_mean under tuned/held_out — no top-level field.
+    if "tuned" in result and "held_out" in result:
+        for label in ("tuned", "held_out"):
+            part = result.get(label) or {}
+            if not part.get("scored_repos"):
+                continue
+            score = _numeric_score(part.get("composite_mean"))
+            if score is None:
+                return (f"score floor {fail_under}: {label} composite_mean "
+                        "missing or non-numeric")
+            if score < fail_under:
+                return (f"score floor {fail_under}: {label} composite_mean "
+                        f"{score:.3f} below threshold")
+        return None
+    score = _numeric_score(result.get("composite_mean"))
+    if score is None:
+        return f"score floor {fail_under}: composite_mean missing or non-numeric"
+    if score < fail_under:
+        return f"score floor {fail_under}: composite_mean {score:.3f} below threshold"
+    return None
 
 
 def main() -> None:
@@ -52,6 +89,8 @@ def main() -> None:
     ap.add_argument("--api-key", default=None)
     ap.add_argument("--work-dir", default=None, help="keep frozen checkouts here (else temp)")
     ap.add_argument("--out", default=None, help="write the full JSON result artifact to this path")
+    ap.add_argument("--fail-under", type=float, default=None,
+                    help="exit with status 1 when composite_mean is below this floor")
     ap.add_argument("--enrich", action="store_true",
                     help="enrich frozen context with GitHub issues/PRs/releases knowable at T")
     ap.add_argument("--github-token", default=None, help="GitHub token (else $GITHUB_TOKEN)")
@@ -71,6 +110,10 @@ def main() -> None:
     ap.add_argument("--generalization", action="store_true",
                     help="with --repo-set, replay BOTH the tuned and held-out partitions and "
                          "report the generalization gap (tuned minus held-out composite mean)")
+    ap.add_argument("--sweep-weights", action="store_true",
+                    help="after a single-repo replay, re-blend the same tasks over a small "
+                         "judge/objective weight grid and print (weights -> composite_mean); "
+                         "helps tune --w-judge/--w-objective without re-running the replay")
     args = ap.parse_args()
     if args.held_out and not args.repo_set:
         ap.error("--held-out requires --repo-set")
@@ -96,11 +139,25 @@ def main() -> None:
         result = run_multi_replay(args.repos, **common)
     else:
         result = run_replay(repo_path=args.repo, **common)
+    if args.sweep_weights:
+        rows = result.get("rows")
+        if rows:
+            result["weight_sweep"] = weight_sweep(rows)
+        else:
+            print("--sweep-weights needs a single-repo run (--repo); no per-task rows to sweep",
+                  file=sys.stderr)
     if args.out:
         write_result_artifact(args.out, result)
     for line in result_summary_lines(result):
         print(line, file=sys.stderr)
+    for row in result.get("weight_sweep") or []:
+        print(f"  weights judge={row['w_judge']} objective={row['w_objective']} "
+              f"-> composite_mean={row['composite_mean']}", file=sys.stderr)
     print(json.dumps(result, indent=2))
+    floor_err = check_score_floor(result, args.fail_under)
+    if floor_err:
+        print(floor_err, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

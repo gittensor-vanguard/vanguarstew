@@ -17,6 +17,21 @@ def test_parse_owner_repo():
     assert gc.parse_owner_repo("https://github.com/foo/bar.git") == ("foo", "bar")
 
 
+def test_parse_owner_repo_tolerates_non_string_remote_url():
+    assert gc.parse_owner_repo(123) == (None, None)
+    assert gc.parse_owner_repo(["https://github.com/foo/bar"]) == (None, None)
+    assert gc.parse_owner_repo(None) == (None, None)
+
+
+def test_parse_dt_tolerates_unusable_timestamps():
+    assert gc._parse_dt(123) is None
+    assert gc._parse_dt(None) is None
+    assert gc._parse_dt("") is None
+    assert gc._parse_dt("not-a-date") is None
+    parsed = gc._parse_dt("2023-01-01T00:00:00Z")
+    assert parsed is not None and parsed.year == 2023
+
+
 def test_open_at_T_filtering(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     issues = [
@@ -238,6 +253,24 @@ def test_enrich_context_degrades_on_failure(monkeypatch):
     assert "_github_error" in out and out["open_issues"] == []
 
 
+def test_frozen_at_date_tolerates_unusable_context():
+    assert gc._frozen_at_date({}) is None
+    assert gc._frozen_at_date({"frozen_at": 123}) is None
+    assert gc._frozen_at_date({"frozen_at": "2023-06-01T00:00:00Z"}) is None
+    assert gc._frozen_at_date({"frozen_at": {"date": "not-a-date"}}) is None
+    assert gc._frozen_at_date({"frozen_at": {"date": None}}) is None
+    parsed = gc._frozen_at_date({"frozen_at": {"date": "2023-06-01T00:00:00Z"}})
+    assert parsed is not None and parsed.year == 2023
+
+
+def test_enrich_context_tolerates_non_dict_frozen_at(monkeypatch):
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    base = {"frozen_at": 123, "open_issues": []}
+    out = gc.enrich_context(base, "/some/repo")
+    assert out == base
+    assert "_github_enriched" not in out
+
+
 import re  # noqa: E402
 
 
@@ -411,3 +444,176 @@ def test_list_pagination_respects_page_cap(monkeypatch):
     monkeypatch.setattr(gc, "_get", _list_pager({"/releases": {1: full, 2: full, 3: full}}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
     assert len(ctx["releases"]) == 200  # bounded at the cap, never an unbounded loop
+
+
+# --- #345: a truncated timeline must fail closed, not report a partial (wrong) label set ----
+
+def test_issue_timeline_signals_truncation(monkeypatch):
+    # Full pages up to the cap -> truncated (more events may remain before T).
+    def full_get(url, token, timeout=20):
+        return [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 100
+    monkeypatch.setattr(gc, "_get", full_get)
+    events, truncated = gc._issue_timeline("base", 1, None, 20, max_pages=3)
+    assert truncated is True and len(events) == 300
+
+    # A short final page means history is exhausted -> not truncated.
+    def short_get(url, token, timeout=20):
+        return [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 10
+    monkeypatch.setattr(gc, "_get", short_get)
+    events, truncated = gc._issue_timeline("base", 1, None, 20, max_pages=3)
+    assert truncated is False and len(events) == 10
+
+    # An error or missing number degrades to the safe ([], False) fallback.
+    def err_get(url, token, timeout=20):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(gc, "_get", err_get)
+    assert gc._issue_timeline("base", 1, None, 20) == ([], False)
+    assert gc._issue_timeline("base", None, None, 20) == ([], False)
+
+
+def test_open_issue_labels_omitted_when_timeline_truncated(monkeypatch):
+    # A timeline that hits the page cap (5 full pages) may be missing a later `unlabeled`
+    # event before T, so the partial reconstruction could be confidently WRONG. Fail closed
+    # (omit labels), not report a partial set as authoritative (#345).
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "shipped"}]}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            # every page is full (100) -> the loop runs to the cap -> truncated.
+            batch = [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 100
+            # a `labeled` event that would look "stuck" if the partial set were trusted
+            batch[0] = {"event": "labeled", "created_at": "2023-01-02T00:00:00Z",
+                        "label": {"name": "bug"}}
+            return batch
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == []              # fail-closed on truncation
+    assert iss["labels_as_of_t"] is False   # not a confident (possibly wrong) result
+
+
+# --- #405: non-dict timeline label payloads must not abort label reconstruction ----------
+
+_MALFORMED_LABEL_PAYLOADS = [42, 3.14, True, ["bug"], "bug", None]
+
+
+def test_labels_at_skips_non_dict_label_payloads():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    for bad in _MALFORMED_LABEL_PAYLOADS:
+        events = [{"event": "labeled", "created_at": "2023-01-02T00:00:00Z", "label": bad}]
+        assert gc._labels_at(events, T) is None, bad
+    assert gc._labels_at(
+        [{"event": "labeled", "created_at": "2023-01-02T00:00:00Z",
+          "label": {"name": "bug"}}],
+        T,
+    ) == ["bug"]
+
+
+def test_labels_at_skips_events_without_event_key():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [{"created_at": "2023-01-02T00:00:00Z", "label": {"name": "bug"}}]
+    assert gc._labels_at(events, T) is None
+
+
+def test_labels_at_reconstructs_when_malformed_event_precedes_valid_one():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        {"event": "labeled", "created_at": "2023-01-02T00:00:00Z", "label": 42},
+        {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}},
+    ]
+    assert gc._labels_at(events, T) == ["bug"]
+
+
+def test_labels_at_reconstructs_when_malformed_event_follows_valid_one():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        {"event": "labeled", "created_at": "2023-01-02T00:00:00Z", "label": {"name": "bug"}},
+        {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": 42},
+    ]
+    assert gc._labels_at(events, T) == ["bug"]
+
+
+def test_labels_at_skips_non_dict_timeline_events():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        "not-an-event",
+        {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}},
+    ]
+    assert gc._labels_at(events, T) == ["bug"]
+
+
+# --- #488: a non-list timeline must not abort label reconstruction -------------------------
+
+_MALFORMED_EVENT_LISTS = [42, 3.14, True, {"event": "labeled"}, "not a list"]
+
+
+def test_timeline_events_accepts_only_real_lists():
+    events = [{"event": "labeled"}]
+    assert gc._timeline_events(events) == events
+    assert gc._timeline_events(None) == []
+    for bad in _MALFORMED_EVENT_LISTS:
+        assert gc._timeline_events(bad) == [], bad
+
+
+def test_labels_at_survives_non_list_events_container():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    for bad in _MALFORMED_EVENT_LISTS:
+        assert gc._labels_at(bad, T) is None, bad
+
+
+def test_labels_at_skips_falsy_non_dict_event_rows():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    for junk in (0, None, False, ""):
+        events = [
+            junk,
+            {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}},
+        ]
+        assert gc._labels_at(events, T) == ["bug"], junk
+
+
+def test_labels_at_logs_warning_for_non_list_events(caplog):
+    import logging
+
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    with caplog.at_level(logging.WARNING, logger="benchmark.github_context"):
+        assert gc._labels_at(42, T) is None
+    assert any("timeline events is int" in r.message for r in caplog.records)
+
+
+def test_labels_at_logs_warning_for_non_dict_event_with_index(caplog):
+    import logging
+
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    with caplog.at_level(logging.WARNING, logger="benchmark.github_context"):
+        assert gc._labels_at(
+            [0, {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}}],
+            T,
+        ) == ["bug"]
+    assert any("index 0" in r.message and "int" in r.message for r in caplog.records)
+
+
+def test_fetch_context_at_survives_malformed_timeline_label_event(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "shipped"}]}]
+    timeline = [
+        {"event": "labeled", "created_at": "2023-01-02T00:00:00Z", "label": 42},
+        {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}},
+    ]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return timeline
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == ["bug"]
+    assert iss["labels_as_of_t"] is True

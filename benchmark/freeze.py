@@ -7,6 +7,7 @@ reads that — it never sees anything after T.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -105,18 +106,23 @@ def _safe_extractall(tf: tarfile.TarFile, dest: str) -> None:
 
 def export_tree(repo: str, commit: str, dest: str) -> None:
     os.makedirs(dest, exist_ok=True)
-    proc = subprocess.Popen(
+    proc = subprocess.run(
         ["git", "-C", repo, "archive", "--format=tar", commit],
-        stdout=subprocess.PIPE,
+        capture_output=True,
     )
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()
+        msg = f"git archive failed for {commit}"
+        if err:
+            msg = f"{msg}: {err}"
+        raise RuntimeError(msg)
+    if not proc.stdout:
+        raise RuntimeError(f"git archive failed for {commit}: empty archive")
     # One explicit extraction policy on all supported Python versions (3.10-3.12);
     # never delegate to the stdlib `filter='data'` path, whose availability and exact
     # behavior differ by runtime and would make frozen trees non-reproducible.
-    with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
+    with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tf:
         _safe_extractall(tf, dest)
-    proc.wait()
-    if proc.returncode not in (0, None):
-        raise RuntimeError(f"git archive failed for {commit}")
 
 
 def file_at(repo: str, commit: str, path: str) -> str:
@@ -134,13 +140,30 @@ def build_context(repo: str, commit: str, lookback: int = 50) -> dict:
         parts = line.split("\t", 2)
         if len(parts) == 3:
             commits.append({"sha": parts[0][:10], "date": parts[1], "subject": parts[2]})
-    # `git tag --merged` defaults to refname order, which is wrong for versions like
-    # v1.10.0 vs v1.9.0. Sort by creation date so `tags[-10:]` is truly the recent window.
-    tags = [
-        t
-        for t in _git(repo, "tag", "--sort=creatordate", "--merged", commit, check=False).splitlines()
-        if t
-    ]
+    # `git tag --merged` selects tags whose target commit is *reachable* from `commit`; it
+    # does NOT filter by when the tag was created. So an (annotated) tag cut after T from a
+    # commit already present at T — a retroactive/backport/hotfix release tag — would leak a
+    # future release into the knowable-at-T context. Filter to tags whose creator date is
+    # `<= T` (the freeze commit's committer time), matching the GitHub-API path, which already
+    # filters releases by `published_at <= T`. `--sort=creatordate` keeps the ordering so
+    # `tags[-10:]` remains the recent window (#90).
+    #
+    # creatordate is the tagger date for annotated tags (their true creation) and the target
+    # commit's date for lightweight tags. A lightweight tag's real creation time isn't
+    # recorded, so it can't be recovered — a documented limitation; but its creatordate is its
+    # commit's date, which is `<= T` for any reachable commit, so it is never wrongly dropped.
+    frozen_ts = _git(repo, "show", "-s", "--format=%ct", commit, check=False).strip()
+    frozen_at = int(frozen_ts) if frozen_ts.isdigit() else None
+    tags = []
+    raw_tags = _git(repo, "tag", "--merged", commit, "--sort=creatordate",
+                    "--format=%(creatordate:unix)%09%(refname:strip=2)", check=False)
+    for line in raw_tags.splitlines():
+        ts, _, name = line.partition("\t")
+        if not name:
+            continue
+        if frozen_at is not None and ts.isdigit() and int(ts) > frozen_at:
+            continue  # tag created after T — a leak; drop it
+        tags.append(name)
     readme = ""
     for name in ("README.md", "README.rst", "README", "docs/README.md"):
         content = file_at(repo, commit, name)

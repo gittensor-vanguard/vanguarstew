@@ -1,0 +1,26 @@
+name: PR target check
+
+# Auto-close contributor PRs targeting `main`. Uses pull_request_target so fork
+# PRs get a GITHUB_TOKEN with write access (pull_request on forks gets read-only
+# regardless of the permissions block — GitHub silently downgrades it).
+on:
+  pull_request_target:
+    types: [opened, reopened]
+    branches: [main]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close-main-target:
+    if: github.event.pull_request.user.login != 'matedev01'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close PR targeting main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh pr close ${{ github.event.number }} \
+            --comment "Closing: this PR targets \`main\` directly. Contributors must open PRs against the \`test\` branch per [CONTRIBUTING.md](https://github.com/gittensor-vanguard/vanguarstew/blob/main/CONTRIBUTING.md#branches). Please retarget your branch to \`test\` and reopen. Thanks!"
+          echo "::notice::Closed PR #${{ github.event.number }} — contributors must target test, not main"

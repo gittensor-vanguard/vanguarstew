@@ -57,6 +57,40 @@ def test_extract_json_raises_when_no_valid_candidate():
         extract_json('no json here at all, just [Doe, 2020] prose')
 
 
+def test_extract_json_prefers_later_fenced_object_over_earlier_schema_example():
+    text = '''Sure, I will respond in this format:
+```json
+{"action": "merge", "labels": [], "reviewer": null, "version_bump": null, "patch": null, "rationale": "example"}
+```
+
+Given the repo state, my actual decision:
+```json
+{"action": "reject", "labels": ["needs-tests"], "reviewer": "alice", "version_bump": null, "patch": null, "rationale": "missing tests, high risk change"}
+```
+'''
+    assert extract_json(text) == {
+        "action": "reject",
+        "labels": ["needs-tests"],
+        "reviewer": "alice",
+        "version_bump": None,
+        "patch": None,
+        "rationale": "missing tests, high risk change",
+    }
+
+
+def test_extract_json_equal_rank_prefers_last_fence():
+    """When two fences have equal rank (same shape + length), the later one wins."""
+    text = 'Example:\n```json\n{"action":"praise","score":1}\n```\n\nReal:\n```json\n{"action":"reject","score":6}\n```'
+    result = extract_json(text)
+    assert result == {"action": "reject", "score": 6}, (
+        f"equal-rank tiebreaker must prefer the last fence, got {result}"
+    )
+
+
+def test_extract_json_single_fenced_block_unchanged():
+    assert extract_json('```json\n{"a": 1}\n```') == {"a": 1}
+
+
 def test_solve_offline_returns_decision():
     d = tempfile.mkdtemp()
     try:

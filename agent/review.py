@@ -8,6 +8,9 @@ rubric (see REVIEW.md) and the `mult:*` value ladder, so it slots straight into 
 from __future__ import annotations
 
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 SYSTEM = (
     "You are an experienced repository maintainer reviewing a pull request. Assess it on the "
@@ -24,19 +27,32 @@ VALUE_LABELS = ["mult:core-correctness", "mult:leakage-integrity", "mult:capabil
 _ACTION_SYNONYMS = {
     "approve": "merge",
     "approved": "merge",
+    "accept": "merge",
+    "accepted": "merge",
     "lgtm": "merge",
     "request changes": "request-changes",
     "request_changes": "request-changes",
     "requested-changes": "request-changes",
+    "changes requested": "request-changes",
+    "changes_requested": "request-changes",
     "decline": "reject",
     "deny": "reject",
     "closed": "reject",
+    "close": "reject",
+    "abstain": "comment",
+    "hold": "comment",
 }
 
 
 def _normalize_review_action(action) -> str:
     """Map ``action`` onto ``ACTIONS``; unknown values fall back to ``comment``."""
-    key = (action or "").strip().lower()
+    if not isinstance(action, str):
+        logger.warning(
+            "review_pr: LLM returned a non-string action field (%s: %r); defaulting to 'comment'",
+            type(action).__name__, action,
+        )
+        return "comment"
+    key = action.strip().lower()
     if key in ACTIONS:
         return key
     return _ACTION_SYNONYMS.get(key, "comment")
@@ -51,13 +67,13 @@ def _normalize_value_label(label) -> str:
     if not raw:
         return default
     lowered = raw.lower()
-    candidates = {lowered}
+    slug = lowered.removeprefix("mult:").replace("_", "-").replace(" ", "-")
+    candidates = {lowered, slug, f"mult:{slug}"}
     if not lowered.startswith("mult:"):
         candidates.add(f"mult:{lowered}")
     for tier in VALUE_LABELS:
-        if tier.lower() in candidates:
-            return tier
-        if lowered == tier.split(":", 1)[-1].lower():
+        tier_slug = tier.split(":", 1)[-1].lower()
+        if tier.lower() in candidates or tier_slug in candidates:
             return tier
     return default
 
@@ -115,7 +131,12 @@ def _normalize_review(out: dict, stub: dict) -> dict:
 
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
-    files = pr.get("files") or []
+    raw_files = pr.get("files")
+    files = []
+    if isinstance(raw_files, list):
+        for path in raw_files:
+            if isinstance(path, str) and path.strip():
+                files.append(path.strip())
     user = (
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy else "")
         + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"

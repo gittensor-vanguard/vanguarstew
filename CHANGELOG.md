@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Repo-set tooling: **freeze-window value validation** (`min_history >= 1`, non-empty
+  `after`/`before`) and `scripts/validate_repo_set.py` CLI to check a repo-set JSON before
+  replay (#325).
 - Generalization (M3): **tuned vs held-out generalization report** — `run_generalization_report`
   / `scripts/run_eval.py --repo-set <cfg> --generalization` replays both the tuned and held-out
   partitions of a repo set in one call and reports a `generalization_gap` (tuned minus held-out

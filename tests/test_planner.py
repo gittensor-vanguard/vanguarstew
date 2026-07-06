@@ -17,6 +17,10 @@ from agent.planner import (  # noqa: E402
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
+    _normalize_plan_item,
+    _open_prs_list,
+    _pr_queue_note,
+    _pr_title,
     plan_next_actions,
     reconcile_plan_with_queue,
 )
@@ -73,6 +77,24 @@ def test_review_markers_match_on_word_boundaries_not_substrings():
     assert _is_review_item({"title": "Review and merge PR: Add streaming export"}) is True
     assert _is_review_item({"title": "Merged the release branch"}) is True
     assert _is_review_item({"kind": "triage", "title": "anything"}) is True
+
+
+def test_bare_pr_number_not_a_review_item():
+    """Mentioning 'PR #N' without a review verb is a reference, not a review marker."""
+    assert _is_review_item({"title": "Land PR #1 and fix the memory leak"}) is False
+    assert _is_review_item({"title": "Implement PR #5 feature"}) is False
+    assert _is_review_item({"title": "Ship PR #9 before release"}) is False
+    # With a review verb it is still a review marker.
+    assert _is_review_item({"title": "Review PR #7 before release"}) is True
+
+
+def test_pr_mention_is_still_flagged_as_restating():
+    """An item that names a PR is flagged as restating it, not left as new work."""
+    prs = [{"number": 1, "title": "Add streaming export"}]
+    plan = [{"title": "Land PR #1 and fix the export feature", "kind": "feature"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": prs}, 5)
+    assert out[0]["kind"] == "triage"
+    assert out[0]["restates_pr"] == 1
 
 
 def test_incidental_review_substring_does_not_escape_downweighting():
@@ -260,3 +282,164 @@ def test_nested_titles_explicit_number_outranks_longest_phrase():
     ]
     item = {"title": "Merge PR #1: Add streaming export docs", "kind": "triage"}
     assert _matched_pr(item, prs)["number"] == 1
+
+
+def test_normalize_plan_item_coerces_non_string_fields():
+    item = _normalize_plan_item({
+        "title": 123,
+        "kind": "FEATURE",
+        "rationale": None,
+        "theme": 7,
+    })
+    assert item == {
+        "title": "123",
+        "kind": "feature",
+        "theme": "7",
+    }
+    assert _normalize_plan_item({"title": "  ", "kind": "docs"}) is None
+    assert _normalize_plan_item({"title": "work", "kind": "mystery"})["kind"] == "triage"
+
+
+def test_reconcile_plan_with_queue_tolerates_numeric_titles():
+    plan = [{"title": 123, "kind": "feature", "rationale": "fix it"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": []}, 5)
+    assert out == [{"title": "123", "kind": "feature", "rationale": "fix it"}]
+
+
+def test_pr_title_tolerates_non_string_fields():
+    assert _pr_title({"title": "Add config"}) == "Add config"
+    assert _pr_title({"title": ["Add", "config"]}) == ""
+    assert _pr_title({"title": 42}) == ""
+    assert _pr_title({"title": None}) == ""
+
+
+def test_reconcile_plan_with_queue_skips_non_string_open_pr_title():
+    plan = [{"title": "ship dark mode", "kind": "feature", "rationale": "users asked"}]
+    ctx = {
+        "open_prs": [
+            {"number": 1, "title": ["Add config"]},
+            {"number": 2, "title": "Support YAML config"},
+        ],
+    }
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    assert out[0]["title"].startswith("Review pull request #2:")
+    assert all("restates_pr" not in item or item.get("restates_pr") != 1 for item in out)
+
+
+def test_matched_pr_ignores_open_pr_with_non_string_title():
+    prs = [
+        {"number": 1, "title": ["broken"]},
+        {"number": 2, "title": "Add streaming export docs"},
+    ]
+    item = {"title": "Land the streaming export docs work", "kind": "feature"}
+    assert _matched_pr(item, prs)["number"] == 2
+
+
+class _MalformedPlanLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return [
+            {"title": 42, "kind": "BUGFIX", "rationale": None, "theme": "stability"},
+            {"title": "", "kind": "docs"},
+        ]
+
+
+def test_plan_next_actions_normalizes_malformed_items():
+    out = plan_next_actions({"open_prs": []}, {}, 5, _MalformedPlanLLM())
+    assert out == [{
+        "title": "42",
+        "kind": "bugfix",
+        "theme": "stability",
+    }]
+
+
+# --- #271: a bare "#N" ordinal in prose must not be trusted as an open-PR reference. -----
+# "#N" is ordinary English for a ranking ("the #1 feature", "our #7 priority"). When such an
+# ordinal collides with a real open PR's number it must NOT hijack that PR: unlike a genuine
+# "PR #N" / "review #N", a bare ordinal has to pass a review-context or content check first.
+
+def test_bare_ordinal_hash_is_not_treated_as_a_pr_reference():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    # Item is about dark mode; "#7" is an ordinal, not a reference to PR #7.
+    ordinal = {"title": "Ship the #7 requested feature: dark mode", "kind": "feature",
+               "rationale": "users have wanted dark mode for months"}
+    assert _matched_pr(ordinal, prs) is None
+
+
+def test_bare_ordinal_does_not_hijack_queue_reconciliation():
+    plan = [{"title": "Deliver our #7 priority: dark mode", "kind": "feature",
+             "rationale": "top user request, unrelated to the export work"}]
+    out = reconcile_plan_with_queue(plan, CTX, 5)
+    ship = [i for i in out if "dark mode" in i["title"]][0]
+    assert ship["kind"] == "feature"                  # not downgraded to a triage/review item
+    assert "restates_pr" not in ship                  # not flagged as restating PR #7
+
+
+def test_bare_hash_still_matches_when_item_reads_as_review():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    assert _matched_pr({"title": "Review #7 before the release", "kind": "triage"}, prs) == prs[0]
+    assert _matched_pr({"title": "Merge #7 once CI is green", "kind": "triage"}, prs) == prs[0]
+
+
+def test_bare_hash_still_matches_when_content_overlaps_the_pr():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    # No review vocabulary, but the item's own content names the PR's subject -> genuine ref.
+    item = {"title": "Finish the streaming export work (#7)", "kind": "feature"}
+    assert _matched_pr(item, prs) == prs[0]
+
+
+def test_qualified_pr_reference_is_still_authoritative_even_when_stale():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    # "PR #9" is qualified and stale (no PR 9) -> matches None, suppressing fallback matching.
+    stale = {"title": "PR #9: something unrelated", "kind": "triage",
+             "rationale": "streaming export export export"}
+    assert _matched_pr(stale, prs) is None
+
+
+def test_qualified_reference_wins_over_an_earlier_bare_ordinal():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    # A bare ordinal ("our #1 priority") in the title precedes a genuine "PR #7" reference in
+    # the rationale; the qualified reference must still win instead of the earlier bare match
+    # shadowing it.
+    item = {"title": "Address our #1 priority next", "kind": "feature",
+            "rationale": "See PR #7 for the same feature; ship it soon"}
+    assert _matched_pr(item, prs) == prs[0]
+
+    out = reconcile_plan_with_queue([item], {"open_prs": prs}, 5)
+    assert len(out) == 1                    # no duplicate "Review pull request #7" prepended
+    assert out[0]["restates_pr"] == 7
+
+
+# --- #426: a non-list open_prs queue must not abort planner reconciliation ---------------
+
+_MALFORMED_OPEN_PRS = [42, 3.14, True, {"number": 1, "title": "Fix bug"}, "not a list"]
+
+
+def test_open_prs_list_accepts_only_real_lists():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    assert _open_prs_list({"open_prs": prs}) == prs
+    for bad in _MALFORMED_OPEN_PRS:
+        assert _open_prs_list({"open_prs": bad}) == [], bad
+    assert _open_prs_list({}) == []
+    assert _open_prs_list({"open_prs": None}) == []
+
+
+def test_pr_queue_note_tolerates_non_list_open_prs():
+    for bad in _MALFORMED_OPEN_PRS:
+        assert _pr_queue_note({"open_prs": bad}) == ""
+
+
+def test_reconcile_tolerates_non_list_open_prs():
+    plan = [{"title": "Write docs", "kind": "docs"}]
+    for bad in _MALFORMED_OPEN_PRS:
+        out = reconcile_plan_with_queue(plan, {"open_prs": bad}, 5)
+        assert out == plan
+
+
+def test_reconcile_honors_valid_prs_when_list_contains_junk_entries():
+    plan = [{"title": "Write docs", "kind": "docs"}]
+    ctx = {"open_prs": [42, {"number": 9, "title": "Add streaming export"}]}
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    assert out[0]["restates_pr"] == 9
+    assert "streaming export" in out[0]["title"].lower()

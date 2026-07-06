@@ -34,7 +34,7 @@ _URL_STOP = "<>()[]{}\"'`"
 # repo/owner URL (no item path, e.g. github.com/owner/repo) is deliberately left intact so
 # legitimate references survive.
 _GH_LINK = re.compile(
-    r"https?://github\.com"
+    r"https?://(?:www\.)?github\.com"                        # github.com or www.github.com
     r"/[^\s" + re.escape(_URL_STOP) + r"]+/"                  # owner/repo/
     r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|"
     r"milestone|milestones|discussions)/"           # a forward-referencing link type
@@ -75,6 +75,8 @@ def _looks_like_sha(token: str) -> bool:
 
 def strip_forward_refs(text: str) -> str:
     """Mask issue/PR back-references, GitHub links, and raw SHAs in free text."""
+    if not isinstance(text, str):
+        return ""
     if not text:
         return text
     text = _GH_LINK.sub(_mask_link, text)
@@ -83,9 +85,18 @@ def strip_forward_refs(text: str) -> str:
     return text
 
 
+def _scrub_list(items) -> list:
+    """Return ``items`` when it is a list; otherwise treat as no entries.
+
+    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for item in items``
+    or malformed frozen context aborts leakage scrubbing (#467).
+    """
+    return items if isinstance(items, list) else []
+
+
 def _scrub_titles(items, key):
     out = []
-    for item in items or []:
+    for item in _scrub_list(items):
         if isinstance(item, dict):
             item = dict(item)
             if key in item:
@@ -104,6 +115,8 @@ def scrub_context(context: dict) -> dict:
     ctx["open_issues"] = _scrub_titles(ctx.get("open_issues"), "title")
     ctx["open_prs"] = _scrub_titles(ctx.get("open_prs"), "title")
     ctx["milestones"] = _scrub_titles(ctx.get("milestones"), "title")
-    ctx["releases"] = _scrub_titles(ctx.get("releases"), "name")
+    # Scrub both keys: the GitHub-API path carries `name`, but the default git-freeze path
+    # emits `{"tag": t}` with no `name`, so the tag is a release's only identifier there.
+    ctx["releases"] = _scrub_titles(_scrub_titles(ctx.get("releases"), "tag"), "name")
     ctx["_forward_signal_scrubbed"] = True
     return ctx

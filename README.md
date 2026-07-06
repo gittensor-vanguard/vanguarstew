@@ -89,8 +89,20 @@ VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repos /path/to/a /path/to/b -
 # repo-set: replay a checked-in curated config (clone listed repos locally first)
 VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo-set benchmark/repo_sets/curated.json --tasks 2 --horizon 5
 
+# validate a repo-set JSON before replay (types + freeze-window bounds)
+python -m scripts.validate_repo_set benchmark/repo_sets/example.json
+
 # smoke test (no network, no git needed)
 VANGUARSTEW_OFFLINE=1 python -m pytest -q
+
+# CI gate: exit non-zero when composite_mean drops below a floor
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo /path/to/repo --tasks 2 --horizon 5 --fail-under 0.5
+
+# compare two saved --out artifacts (JSON on stdout, headline on stderr)
+python -m scripts.compare_eval baseline.json candidate.json
+
+# render a saved --out artifact as a readable Markdown report
+python -m scripts.report result.json
 ```
 
 > **Dev-only backend:** [`tools/codex_llm.py`](tools/codex_llm.py) can drive the benchmark and

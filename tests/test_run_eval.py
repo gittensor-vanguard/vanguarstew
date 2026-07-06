@@ -8,7 +8,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from scripts.run_eval import result_summary_lines, write_result_artifact  # noqa: E402
+from scripts.run_eval import (  # noqa: E402
+    check_score_floor,
+    result_summary_lines,
+    write_result_artifact,
+)
 
 
 def test_write_result_artifact_preserves_judge_order_stats(tmp_path):
@@ -46,3 +50,56 @@ def test_result_summary_lines_emit_judge_headline_when_present():
 
 def test_result_summary_lines_omit_missing_judge_report():
     assert result_summary_lines({"tasks": 0, "error": "no usable tasks"}) == []
+
+
+def test_check_score_floor_passes_when_above():
+    assert check_score_floor({"composite_mean": 0.6}, 0.5) is None
+
+
+def test_check_score_floor_passes_at_exact_threshold():
+    assert check_score_floor({"composite_mean": 0.5}, 0.5) is None
+
+
+def test_check_score_floor_fails_when_below():
+    msg = check_score_floor({"composite_mean": 0.4}, 0.5)
+    assert msg is not None
+    assert "below threshold" in msg
+    assert "0.400" in msg
+
+
+def test_check_score_floor_fails_when_missing():
+    msg = check_score_floor({}, 0.5)
+    assert msg is not None
+    assert "missing" in msg
+
+
+def test_check_score_floor_skipped_when_disabled():
+    assert check_score_floor({"composite_mean": 0.1}, None) is None
+
+
+def _generalization_result(tuned=0.6, held_out=0.6, tuned_scored=2, held_scored=1):
+    return {
+        "repo_set": "foo.json",
+        "tuned": {"composite_mean": tuned, "scored_repos": tuned_scored},
+        "held_out": {"composite_mean": held_out, "scored_repos": held_scored},
+        "generalization_gap": round(tuned - held_out, 3) if tuned_scored and held_scored else None,
+    }
+
+
+def test_check_score_floor_passes_for_generalization_shape():
+    assert check_score_floor(_generalization_result(), 0.0) is None
+    assert check_score_floor(_generalization_result(tuned=0.6, held_out=0.55), 0.5) is None
+
+
+def test_check_score_floor_fails_when_generalization_partition_below_floor():
+    msg = check_score_floor(_generalization_result(tuned=0.4, held_out=0.6), 0.5)
+    assert msg is not None and "tuned composite_mean" in msg and "0.400" in msg
+    msg = check_score_floor(_generalization_result(tuned=0.6, held_out=0.4), 0.5)
+    assert msg is not None and "held_out composite_mean" in msg
+
+
+def test_check_score_floor_skips_unscored_generalization_partition():
+    # A partition with scored_repos=0 is not gated — same posture as generalization_gap.
+    assert check_score_floor(
+        _generalization_result(tuned=0.95, tuned_scored=2, held_scored=0), 0.9,
+    ) is None

@@ -22,6 +22,8 @@ import json
 import random
 import re
 
+from benchmark.score import _plan_list
+
 _WINNER = re.compile(r'"?winner"?\s*[:=]\s*"?(A|B|tie)\b', re.I)
 
 SYSTEM = (
@@ -65,6 +67,16 @@ _FILLER_TITLES = frozenset({
 })
 
 
+def _text(value) -> str:
+    """A field's stripped text when it is a string; any non-string (or None) yields ''.
+
+    Plan-item fields come straight from an LLM and are not guaranteed to be strings — a model
+    may emit a list/dict/number for `title`, `theme`, `kind`, or `rationale`. Guarding here
+    keeps the `.strip()` calls below from raising `AttributeError` and aborting the whole run.
+    """
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _item_substance(item) -> int:
     """Substance weight of a single plan item.
 
@@ -76,7 +88,7 @@ def _item_substance(item) -> int:
     rewarding substance over the mere presence of a title.
     """
     if isinstance(item, dict):
-        title = (item.get("title") or item.get("theme") or "").strip().lower()
+        title = (_text(item.get("title")) or _text(item.get("theme"))).lower()
     else:
         # A JSON `null` plan item stringifies to "none" — neither blank nor a filler word —
         # so it would slip past the guard below and score 1, letting a null-padded plan
@@ -86,11 +98,11 @@ def _item_substance(item) -> int:
         return 0
     weight = 1
     if isinstance(item, dict):
-        if (item.get("kind") or "").strip():
+        if _text(item.get("kind")):
             weight += 1
         if item.get("files"):
             weight += 1
-        if (item.get("rationale") or "").strip():
+        if _text(item.get("rationale")):
             weight += 1
     return weight
 
@@ -102,14 +114,16 @@ def _plan_substance(plan) -> int:
     structured items are rewarded — so a shorter plan of real actions outranks a longer
     plan of generic filler.
     """
-    return sum(_item_substance(item) for item in plan or [])
+    return sum(_item_substance(item) for item in _plan_list(plan))
 
 
 def _offline_rank(submission: dict) -> tuple:
     """Deterministic stand-in ordering: reward a substantive plan plus real reasoning."""
+    if not isinstance(submission, dict):
+        return (0, 0, 0)  # non-dict submission (LLM emitted a list/string/number) — no substance
     philosophy = submission.get("philosophy") or {}
-    plan = submission.get("plan") or []
-    rationale = (submission.get("rationale") or "").strip()
+    plan = _plan_list(submission.get("plan"))
+    rationale = _text(submission.get("rationale"))
     philosophy_signal = 1 if isinstance(philosophy, dict) and any(
         philosophy.get(k) for k in ("summary", "direction", "values")) else 0
     return (_plan_substance(plan), philosophy_signal, 1 if rationale else 0)

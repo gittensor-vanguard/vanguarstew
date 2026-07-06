@@ -16,6 +16,8 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from benchmark.judge import (  # noqa: E402
+    _item_substance,
+    _offline_rank,
     _parse_winner,
     _plan_substance,
     build_judge_report,
@@ -257,3 +259,80 @@ def test_build_judge_report_summarizes_outcomes_and_disagreement():
 
 def test_build_judge_report_none_without_stats():
     assert build_judge_report({"challenger": 1, "baseline": 0, "tie": 0}, None) is None
+
+
+# --- #287: _item_substance must tolerate non-string plan-item fields (no crash) -------------
+
+def test_item_substance_tolerates_non_string_fields():
+    # A truthy non-string title/theme/kind/rationale (a plausible LLM shape) must not raise;
+    # the field is treated as absent rather than aborting the whole replay run.
+    assert _item_substance({"title": ["Fix", "bug"]}) == 0            # no usable title/theme
+    assert _item_substance({"title": 123, "theme": "concurrency"}) == 1   # falls back to theme
+    assert _item_substance(
+        {"title": "Fix bug", "kind": ["fix"], "rationale": {"x": 1}}) == 1  # only the title counts
+    assert _item_substance(
+        {"title": "Add loader", "kind": "feature", "rationale": "needed"}) == 3  # all real -> 3
+
+
+def test_item_substance_string_behavior_unchanged():
+    assert _item_substance({"title": "misc"}) == 0          # filler
+    assert _item_substance("overhaul the core") == 1        # scalar string
+    assert _item_substance(None) == 0                       # null item
+
+
+def test_plan_substance_survives_a_malformed_item():
+    # One malformed item in a plan must not crash the whole substance tally.
+    plan = [{"title": "Real work", "kind": "feature"}, {"title": ["broken"], "kind": 7}]
+    assert _plan_substance(plan) == 2   # 2 from the real item, 0 from the malformed one
+
+
+def test_offline_judge_ranks_plan_with_non_string_field_without_crashing():
+    strong = {"plan": [{"title": "Cut the v1 release", "kind": "release",
+                        "rationale": "ready"}], "rationale": "sound"}
+    malformed = {"plan": [{"title": ["x"], "kind": ["y"], "rationale": 3}], "philosophy": {}}
+    llm = LLM(api_key="offline")
+    assert pairwise_judge({}, strong, malformed, [], llm, random.Random(0)) == "A"
+
+
+def test_plan_substance_tolerates_non_list_plan_container():
+    for bad in (42, True, {"title": "oops"}):
+        assert _plan_substance(bad) == 0
+
+
+def test_offline_rank_tolerates_non_list_plan_container():
+    ranked = _offline_rank({"plan": 42, "philosophy": {}, "rationale": "x"})
+    assert ranked[0] == 0
+    good = _offline_rank({
+        "plan": [{"title": "add retry to loader", "kind": "fix"}],
+        "philosophy": {"summary": "ship fixes"},
+        "rationale": "because",
+    })
+    assert good[0] > 0
+
+
+# --- #350: _offline_rank must tolerate a non-string top-level rationale (no crash) --------
+
+def test_offline_rank_tolerates_non_string_rationale():
+    for bad in (["not", "a", "string"], {"why": "x"}, 42, 3.14, True, b"because"):
+        ranked = _offline_rank({"philosophy": {}, "plan": [], "rationale": bad})
+        assert ranked[-1] == 0  # no rationale credit when the field isn't a string
+    with_rationale = _offline_rank({"philosophy": {}, "plan": [], "rationale": "because"})
+    assert with_rationale[-1] == 1
+
+
+def test_judge_verbose_tolerates_non_string_top_level_rationale():
+    llm = LLM(api_key="offline")
+    good = {"philosophy": {}, "plan": [{"title": "ship fix", "kind": "bugfix"}], "rationale": "sound"}
+    bad = {"philosophy": {}, "plan": [], "rationale": ["broken"]}
+    winner, judge_order = judge_verbose({}, good, bad, [], llm)
+    assert winner == "A"
+    assert judge_order == "offline"
+
+def test_offline_rank_handles_non_dict_submissions():
+    """Non-dict submissions from a miner must not crash the judge (#472)."""
+    assert _offline_rank("not a dict") == (0, 0, 0)
+    assert _offline_rank(None) == (0, 0, 0)
+    assert _offline_rank(42) == (0, 0, 0)
+    assert _offline_rank([]) == (0, 0, 0)
+    # Normal submissions are unaffected.
+    assert _offline_rank({"philosophy": {"summary": "good"}, "plan": [{"title": "fix"}], "rationale": "yes"})

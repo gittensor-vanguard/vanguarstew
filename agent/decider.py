@@ -8,8 +8,11 @@ the right action, a patch. The `rationale` is what the decision-process judge ev
 from __future__ import annotations
 
 import json
+import logging
 
 from agent.context import context_for_agent
+
+logger = logging.getLogger(__name__)
 
 SYSTEM = (
     "You are an experienced repository maintainer making a concrete decision. Decide as the "
@@ -38,6 +41,9 @@ _ACTION_SYNONYMS = {
     "labelled": "label",
 }
 
+_BUMP_LEVELS = frozenset({"major", "minor", "patch"})
+_NULL_BUMPS = frozenset({"null", "none", "n/a"})
+
 
 def _normalize_action(action) -> str:
     """Map `action` onto `VALID_ACTIONS`, via a known synonym or a plain match.
@@ -46,7 +52,13 @@ def _normalize_action(action) -> str:
     maintainer decision has a hard ground truth, so it must never carry arbitrary
     free-text through to the objective scorer.
     """
-    key = (action or "").strip().lower()
+    if not isinstance(action, str):
+        logger.warning(
+            "decide: LLM returned a non-string action field (%s: %r); defaulting to 'plan'",
+            type(action).__name__, action,
+        )
+        return "plan"
+    key = action.strip().lower()
     if key in VALID_ACTIONS:
         return key
     return _ACTION_SYNONYMS.get(key, "plan")
@@ -102,6 +114,22 @@ def _normalize_patch(value) -> str | None:
     return None
 
 
+def _normalize_version_bump(bump) -> str | None:
+    """Map ``version_bump`` onto major/minor/patch, else ``None``.
+
+    Matches the scoring contract in ``benchmark.score._norm_bump`` so release prediction
+    is not silently dropped because of case or synonym noise in the model output.
+    """
+    if bump is None:
+        return None
+    if not isinstance(bump, str):
+        return None
+    level = bump.strip().lower()
+    if not level or level in _NULL_BUMPS:
+        return None
+    return level if level in _BUMP_LEVELS else None
+
+
 def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:3000]}\n\n"
@@ -131,6 +159,7 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out["reviewer"] = _normalize_reviewer(out.get("reviewer"))
     out["rationale"] = _normalize_rationale(out.get("rationale"))
     out["patch"] = _normalize_patch(out.get("patch"))
+    out["version_bump"] = _normalize_version_bump(out.get("version_bump"))
     return out
 
 

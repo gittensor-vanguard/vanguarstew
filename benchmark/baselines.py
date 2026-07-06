@@ -1,6 +1,6 @@
 """Reference baseline maintainers — the opponents a challenger is judged against.
 
-The pairwise judge only means something relative to an opponent. Two are provided:
+The pairwise judge only means something relative to an opponent. Three are provided:
 
 - ``empty``     — proposes nothing concrete. The floor: any real plan should beat it.
 - ``heuristic`` — a deterministic, LLM-free maintainer that extrapolates the repo's own
@@ -8,6 +8,11 @@ The pairwise judge only means something relative to an opponent. Two are provide
                   themes that dominate recent commit history. A stronger, harder-to-beat
                   bar than ``empty`` — a challenger has to actually out-reason "keep doing
                   what this repo has been doing."
+- ``queue_first`` — like ``heuristic`` but clears the open-PR **review queue** first, mirroring
+                  the planner's own guidance that a strong maintainer clears or explicitly
+                  schedules the review queue before unrelated greenfield work. On a repo with a
+                  live queue it is the hardest bar; with no queue it degrades to exactly
+                  ``heuristic``, so it is never a weaker opponent.
 
 Each baseline exposes the same shape as the agent's ``solve`` output (philosophy + plan +
 rationale), so it can flow through ``_submission`` and the judge unchanged. Select one by
@@ -16,10 +21,29 @@ name via :func:`get_baseline`; the runner exposes this as ``--baseline``.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 
 from agent.context import load_context
-from benchmark.score import is_release_subject
+from benchmark.score import commit_kind, is_release_subject
+
+logger = logging.getLogger(__name__)
+
+# Map normalized commit_kind values onto the planner's baseline vocabulary.
+_COMMIT_KIND_TO_BASELINE = {
+    "feat": "feature",
+    "fix": "bugfix",
+    "docs": "docs",
+    "refactor": "refactor",
+    "perf": "refactor",
+    "release": "release",
+    "chore": "dep",
+    "ci": "refactor",
+    "test": "refactor",
+    "build": "refactor",
+    "style": "refactor",
+    "revert": "bugfix",
+}
 
 # Map a free-text title/subject to one of the planner's kinds. Order matters: earlier
 # entries win, so dep is checked before the broader "feature" verbs. Release detection
@@ -37,18 +61,47 @@ _KIND_KEYWORDS = (
 _ALLOWED = {"feature", "bugfix", "refactor", "docs", "release", "dep", "triage"}
 
 
+def _issue_title(issue) -> str:
+    """Return a stripped issue title when it is a string; else empty."""
+    if not isinstance(issue, dict):
+        return ""
+    title = issue.get("title")
+    return title.strip() if isinstance(title, str) else ""
+
+
+def _commit_subject(commit) -> str:
+    """Return a commit's ``subject`` when the entry is a dict; else empty.
+
+    ``recent_commits`` entries come from the (unvalidated) frozen context; a malformed entry
+    that isn't a dict must not crash the heuristic baseline — log and skip it instead.
+    """
+    if not isinstance(commit, dict):
+        logger.warning(
+            "heuristic baseline: skipping a non-dict recent_commits entry (%s: %r)",
+            type(commit).__name__, commit,
+        )
+        return ""
+    return commit.get("subject", "") or ""
+
+
 def _infer_kind(text: str) -> str:
     if is_release_subject(text):
         return "release"
+    ck = commit_kind(text)
+    if ck:
+        return _COMMIT_KIND_TO_BASELINE.get(ck, "triage")
     low = (text or "").lower()
     for kind, needles in _KIND_KEYWORDS:
         if any(n in low for n in needles):
+            # The planner has no "test" kind; CI/test hardening is infra momentum, not triage.
+            if kind == "test":
+                return "refactor"
             return kind if kind in _ALLOWED else "triage"
     return "triage"
 
 
 def _commit_kinds(context: dict) -> Counter:
-    return Counter(_infer_kind(c.get("subject", "")) for c in context.get("recent_commits") or [])
+    return Counter(_infer_kind(_commit_subject(c)) for c in context.get("recent_commits") or [])
 
 
 def heuristic_philosophy(context: dict) -> dict:
@@ -61,7 +114,7 @@ def heuristic_philosophy(context: dict) -> dict:
         "values": [k for k, _ in kinds.most_common(3)] or ["triage"],
         "merge_bar": "inferred from recent commit patterns (no explicit signal)",
         "direction": f"continue {dominant}-oriented work and clear the issue backlog",
-        "evidence": [c.get("subject", "") for c in (context.get("recent_commits") or [])[:5]],
+        "evidence": [_commit_subject(c) for c in (context.get("recent_commits") or [])[:5]],
     }
 
 
@@ -71,7 +124,7 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
 
     # 1. The backlog the maintainer can see right now.
     for issue in context.get("open_issues") or []:
-        title = (issue.get("title") or "").strip()
+        title = _issue_title(issue)
         if not title:
             continue
         items.append({
@@ -91,7 +144,7 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
         })
 
     # 3. If the repo has been cutting releases, expect another.
-    if any(_infer_kind(c.get("subject", "")) == "release"
+    if any(_infer_kind(_commit_subject(c)) == "release"
            for c in context.get("recent_commits") or []):
         items.append({
             "title": "Prepare the next release",
@@ -103,9 +156,84 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
     return items[:n]
 
 
+def _pr_title(pr) -> str:
+    """A stripped open-PR title when the entry is a dict with a string title, else empty.
+
+    ``open_prs`` entries come from the (unvalidated) frozen context; a malformed entry that
+    isn't a dict, or whose ``title`` isn't a string, is skipped rather than crashing the
+    baseline (mirrors :func:`_issue_title`).
+    """
+    if not isinstance(pr, dict):
+        return ""
+    title = pr.get("title")
+    return title.strip() if isinstance(title, str) else ""
+
+
+def _review_queue_items(context: dict, limit: int) -> list:
+    """Plan items that clear the open-PR review queue, in the order the queue is given.
+
+    A strong maintainer clears (or explicitly schedules) the open review queue before starting
+    unrelated greenfield work — the same guidance the planner's system prompt encodes. Each open
+    PR with a usable title becomes one concrete triage item, capped at ``limit``. Malformed or
+    titleless PR entries are skipped.
+    """
+    items = []
+    for pr in context.get("open_prs") or []:
+        title = _pr_title(pr)
+        if not title:
+            continue
+        number = pr.get("number")
+        ref = f" (#{number})" if isinstance(number, int) and not isinstance(number, bool) else ""
+        items.append({
+            "title": f"Review and merge PR: {title}{ref}",
+            "kind": "triage",
+            "rationale": "open pull request awaiting review; clear the queue before greenfield work",
+            "theme": "PR review queue",
+        })
+        if limit is not None and len(items) >= limit:
+            break
+    return items
+
+
+def queue_first_plan(context: dict, n: int = 5) -> list:
+    """Clear the open-PR review queue first, then fall back to the heuristic backlog plan.
+
+    Fills up to ``n`` items: review items for the open-PR queue, then — only if the queue leaves
+    room — the ordinary :func:`heuristic_plan` (backlog issues, recent-theme momentum, release
+    cadence). When the queue already fills the horizon, only review items are returned; when the
+    queue is empty this is exactly ``heuristic_plan``.
+    """
+    reviews = _review_queue_items(context, n)
+    if len(reviews) >= n:
+        return reviews[:n]
+    return reviews + heuristic_plan(context, n - len(reviews))
+
+
 def empty_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dict:
     """A naive maintainer that proposes nothing concrete — the bar to beat."""
     return {"plan": [], "philosophy": {}, "action": "plan", "rationale": "baseline"}
+
+
+def queue_first_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dict:
+    """A reference maintainer that clears the open-PR review queue before greenfield work.
+
+    On a repo with a live review queue this is a stronger, more realistic opponent than
+    ``heuristic``: it mirrors the planner's own guidance that a strong maintainer clears or
+    schedules the queue first. With an empty queue it degrades to exactly the ``heuristic``
+    backlog plan, so it is never a weaker bar than ``heuristic`` for lack of a queue.
+    """
+    ctx = context if context is not None else load_context(repo_path)
+    plan = queue_first_plan(ctx, n)
+    n_prs = sum(1 for pr in (ctx.get("open_prs") or []) if _pr_title(pr))
+    return {
+        "philosophy": heuristic_philosophy(ctx),
+        "plan": plan,
+        "action": "plan",
+        "rationale": (
+            f"queue-first baseline: clear {n_prs} open PR(s) in the review queue, "
+            "then continue the dominant recent themes"
+        ),
+    }
 
 
 def heuristic_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dict:
@@ -127,6 +255,7 @@ def heuristic_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dic
 BASELINES = {
     "empty": empty_solve,
     "heuristic": heuristic_solve,
+    "queue_first": queue_first_solve,
 }
 DEFAULT_BASELINE = "empty"
 

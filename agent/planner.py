@@ -25,7 +25,7 @@ _STOPWORDS = frozenset({
 # "merge") doesn't misclassify greenfield work as an existing review item. Anchored only
 # at the start, so real suffixes ("reviews", "merged", "approved") still count.
 _REVIEW_MARKER_RE = re.compile(
-    r"\b(?:review|merge|approve|request\s+changes|pull\s+request|pr\s*#)",
+    r"\b(?:review|merge|approve|request\s+changes|pull\s+request)",
     re.I,
 )
 # Explicit PR references: "#7", "PR #7", "pull request 7"
@@ -36,6 +36,10 @@ _PR_NUMBER = re.compile(
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
 _MIN_SUBJECT_PHRASE = 8
 
+_PLAN_KINDS = frozenset({
+    "feature", "bugfix", "refactor", "docs", "release", "dep", "triage",
+})
+
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
     "maintainer philosophy, plan the next concrete maintainer actions / PRs that should "
@@ -45,11 +49,29 @@ SYSTEM = (
 )
 
 
+def _pr_title(pr: dict) -> str:
+    """Return a stripped PR title when it is a string; else empty."""
+    if not isinstance(pr, dict):
+        return ""
+    title = pr.get("title")
+    return title.strip() if isinstance(title, str) else ""
+
+
+def _open_prs_list(context: dict) -> list:
+    """Return ``open_prs`` when it is a list; otherwise treat as no PR queue.
+
+    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for p in open_prs``
+    or malformed frozen context aborts queue reconciliation.
+    """
+    raw = (context or {}).get("open_prs")
+    return raw if isinstance(raw, list) else []
+
+
 def _pr_queue_note(context: dict) -> str:
-    prs = [p for p in (context.get("open_prs") or []) if (p.get("title") or "").strip()]
+    prs = [p for p in _open_prs_list(context) if _pr_title(p)]
     if not prs:
         return ""
-    lines = [f"- #{p.get('number', '?')}: {p['title'].strip()}" for p in prs]
+    lines = [f"- #{p.get('number', '?')}: {_pr_title(p)}" for p in prs]
     return (
         f"\nOpen pull requests awaiting review ({len(lines)}):\n"
         + "\n".join(lines)
@@ -61,8 +83,8 @@ def _pr_queue_note(context: dict) -> str:
 def _offline_plan_stub(context: dict, n: int) -> list:
     """Deterministic offline plan: prioritize the visible PR queue when present."""
     items = []
-    for pr in context.get("open_prs") or []:
-        title = (pr.get("title") or "").strip()
+    for pr in _open_prs_list(context):
+        title = _pr_title(pr)
         if not title:
             continue
         items.append({
@@ -83,8 +105,8 @@ def _offline_plan_stub(context: dict, n: int) -> list:
 
 def _pr_queue(context: dict) -> list:
     return [
-        p for p in (context.get("open_prs") or [])
-        if isinstance(p, dict) and (p.get("title") or "").strip()
+        p for p in _open_prs_list(context)
+        if isinstance(p, dict) and _pr_title(p)
     ]
 
 
@@ -95,25 +117,68 @@ def _significant_tokens(text: str) -> set:
     }
 
 
-def _explicit_pr_number(*texts: str) -> int | None:
-    """Return an explicit PR number referenced in plan text, if any."""
+def _pr_reference(*texts: str):
+    """Return ``(pr_number, qualified)`` for the most authoritative PR reference in the texts.
+
+    ``qualified`` is True for an unambiguous ``"PR #N"`` / ``"pull request N"`` phrasing, and
+    False for a bare ``"#N"`` — which is frequently an ordinal ("the #1 requested feature",
+    "our #7 priority") rather than a pull-request reference, so callers must content-validate a
+    bare match before trusting it. A qualified match anywhere in the texts always wins, even if
+    a bare match appears earlier — otherwise an incidental ordinal ("our #1 priority") ahead of
+    a genuine "PR #7" reference in the same sentence would shadow it. Only when no qualified
+    match exists anywhere does the first bare match apply. Returns ``(None, False)`` when no
+    reference is present.
+    """
+    bare = None
     for text in texts:
         if not text:
             continue
         for match in _PR_NUMBER.finditer(text):
-            raw = match.group(1) or match.group(2)
-            if raw:
-                return int(raw)
-    return None
+            if match.group(2):        # "PR #N" / "pull request N" — unambiguous, always wins
+                return int(match.group(2)), True
+            if bare is None and match.group(1):  # bare "#N" — could be an ordinal
+                bare = int(match.group(1))
+    return (bare, False) if bare is not None else (None, False)
+
+
+def _explicit_pr_number(*texts: str) -> int | None:
+    """The PR number referenced in plan text, if any (qualified or bare — see ``_pr_reference``)."""
+    return _pr_reference(*texts)[0]
+
+
+def _reads_as_pr_reference(item: dict) -> bool:
+    """True when the item's own text uses PR/review vocabulary, so a bare ``#N`` in it denotes a
+    pull request rather than an ordinal ranking numeral ("our #1 priority")."""
+    blob = f"{item.get('title', '')} {item.get('rationale', '')}"
+    return bool(_REVIEW_MARKER_RE.search(blob))
 
 
 def _title_contains_pr_subject(item: dict, pr: dict) -> bool:
     """True when the plan item quotes the PR's subject as a phrase (not a lone token)."""
-    subject = (pr.get("title") or "").strip().lower()
+    subject = _pr_title(pr).lower()
     if len(subject) < _MIN_SUBJECT_PHRASE:
         return False
     blob = f"{item.get('title', '')} {item.get('rationale', '')}".lower()
     return subject in blob
+
+
+def _pr_content_matches(item: dict, pr: dict) -> bool:
+    """True when a plan item's content actually corresponds to a PR — it quotes the PR's
+    subject phrase, or shares a strong token overlap on the same terms ``_matched_pr`` uses,
+    independent of any ``#N`` it mentions.
+
+    Applies the same guards as the overlap path in ``_matched_pr`` so a bare ``#N`` is never
+    trusted on a weaker signal than ordinary matching: a single-token PR title is too
+    ambiguous to match on overlap alone, and at least two significant shared tokens are
+    required.
+    """
+    if _title_contains_pr_subject(item, pr):
+        return True
+    itoks = _significant_tokens(item.get("title", "")) | _significant_tokens(item.get("theme", ""))
+    ptoks = _significant_tokens(_pr_title(pr))
+    if len(ptoks) < 2:
+        return False  # single-token PR titles: overlap-only matching disabled
+    return len(itoks & ptoks) >= 2
 
 
 def _matched_pr(item: dict, prs: list):
@@ -128,9 +193,15 @@ def _matched_pr(item: dict, prs: list):
     """
     by_number = {p.get("number"): p for p in prs if p.get("number") is not None}
 
-    ref = _explicit_pr_number(item.get("title", ""), item.get("rationale", ""))
+    ref, qualified = _pr_reference(item.get("title", ""), item.get("rationale", ""))
     if ref is not None:
-        return by_number.get(ref)  # None when stale (suppresses fallback matching)
+        pr = by_number.get(ref)
+        # A qualified "PR #N" is authoritative (even when stale -> None, which suppresses
+        # fallback matching). A bare "#N" is trusted only when the item actually reads as a PR
+        # reference or its content matches the PR; otherwise "#N" is an ordinal ("the #1
+        # feature") and must not hijack an unrelated open PR — fall through to content matching.
+        if qualified or _reads_as_pr_reference(item) or (pr is not None and _pr_content_matches(item, pr)):
+            return pr
 
     # Full-subject phrase match. Nested titles ("Add streaming export" is a substring of
     # "Add streaming export docs") can both appear in the plan text; prefer the longest
@@ -138,7 +209,7 @@ def _matched_pr(item: dict, prs: list):
     # order.
     subject_matches = [pr for pr in prs if _title_contains_pr_subject(item, pr)]
     if subject_matches:
-        return max(subject_matches, key=lambda pr: len((pr.get("title") or "").strip()))
+        return max(subject_matches, key=lambda pr: len(_pr_title(pr)))
 
     itoks = _significant_tokens(item.get("title", "")) | _significant_tokens(item.get("theme", ""))
     if not itoks:
@@ -146,7 +217,7 @@ def _matched_pr(item: dict, prs: list):
 
     best, best_overlap = None, 0
     for pr in prs:
-        ptoks = _significant_tokens(pr.get("title", ""))
+        ptoks = _significant_tokens(_pr_title(pr))
         if not ptoks:
             continue
         overlap = len(itoks & ptoks)
@@ -168,6 +239,53 @@ def _is_review_item(item: dict) -> bool:
     return bool(_REVIEW_MARKER_RE.search(item.get("title") or ""))
 
 
+def _normalize_text_field(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _normalize_plan_item(item) -> dict | None:
+    """Coerce one LLM plan item onto the documented shape, or drop it."""
+    if not isinstance(item, dict):
+        return None
+    title = _normalize_text_field(item.get("title"))
+    if not title:
+        return None
+    kind = item.get("kind")
+    if isinstance(kind, str):
+        kind = kind.strip().lower()
+    else:
+        kind = ""
+    if kind not in _PLAN_KINDS:
+        kind = "triage"
+    normalized = {
+        "title": title,
+        "kind": kind,
+    }
+    rationale = _normalize_text_field(item.get("rationale"))
+    theme = _normalize_text_field(item.get("theme"))
+    if rationale:
+        normalized["rationale"] = rationale
+    if theme:
+        normalized["theme"] = theme
+    for key in ("restates_pr", "files"):
+        if key in item:
+            normalized[key] = item[key]
+    return normalized
+
+
+def _normalize_plan(plan) -> list:
+    out = []
+    for item in plan or []:
+        normalized = _normalize_plan_item(item)
+        if normalized is not None:
+            out.append(normalized)
+    return out
+
+
 def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     """Make the plan honor the open-PR queue, deterministically and independent of the LLM.
 
@@ -181,7 +299,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     With no open PRs (or none matched) the plan passes through unchanged, capped to `n`.
     """
     prs = _pr_queue(context)
-    plan = [i for i in (plan or []) if isinstance(i, dict) and (i.get("title") or "").strip()]
+    plan = _normalize_plan(plan)
     if not prs:
         return plan[:n]
 
@@ -209,7 +327,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     if not addressed:
         top = prs[0]
         out.insert(0, {
-            "title": f"Review pull request #{top.get('number', '?')}: {top['title'].strip()}",
+            "title": f"Review pull request #{top.get('number', '?')}: {_pr_title(top)}",
             "kind": "triage",
             "restates_pr": top.get("number"),
             "rationale": (
@@ -236,7 +354,8 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     plan = llm.chat_json(SYSTEM, user, stub=stub)
     if isinstance(plan, dict):  # tolerate {"plan": [...]}
         plan = plan.get("plan") or plan.get("actions") or []
-    return reconcile_plan_with_queue(plan if isinstance(plan, list) else [], context, n)
+    plan = _normalize_plan(plan if isinstance(plan, list) else [])
+    return reconcile_plan_with_queue(plan, context, n)
 
 
 def _render(context: dict) -> str:

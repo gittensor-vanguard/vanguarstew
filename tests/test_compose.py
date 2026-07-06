@@ -7,7 +7,35 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.score import composite_score, objective_component  # noqa: E402
+from benchmark.score import composite_score, objective_component, objective_score  # noqa: E402
+
+REVEALED = [
+    {"subject": "add plugin loader", "files": ["plugins/loader.py", "README.md"]},
+    {"subject": "refactor core engine", "files": ["core/engine.py"]},
+    {"subject": "Release v1.2.0", "files": ["CHANGELOG.md"]},
+]
+
+
+def _realistic_objective_score(**backlog_overrides) -> dict:
+    """Build a full objective_score-shaped dict with optional backlog field overrides."""
+    plan = [
+        {"title": "extend plugins loader", "kind": "feature", "theme": "plugins"},
+        {"title": "cut release", "kind": "release", "theme": "changelog"},
+    ]
+    open_issues = [
+        {"number": 12, "title": "Memory leak under load"},
+        {"number": 15, "title": "Support YAML config"},
+    ]
+    revealed = [
+        {"subject": "fix: memory leak under heavy load", "files": ["core/leak.py"]},
+        {"subject": "Release v1.2.0", "files": ["CHANGELOG.md", "core/version.py"]},
+    ]
+    score = objective_score(
+        plan, revealed, version_bump="minor", base_version="v1.1.0",
+        open_issues=open_issues,
+    )
+    score.update(backlog_overrides)
+    return score
 
 
 def test_objective_component_module_recall_only():
@@ -72,3 +100,72 @@ def test_composite_weights_are_normalized():
     assert composite_score("B", obj, w_judge=1.0, w_objective=0.0) == 0.0
     # weights that don't sum to 1 are normalized
     assert composite_score("A", obj, w_judge=3.0, w_objective=1.0) == 1.0
+
+
+def test_objective_component_uses_only_ranking_fields_from_full_objective_dict():
+    """#148: backlog diagnostics in a realistic objective_score dict must not move the anchor."""
+    matched = _realistic_objective_score()
+    missed = _realistic_objective_score(
+        backlog_recall=0.0,
+        matched_issue_numbers=[],
+        addressed_issue_numbers=[12],
+        addressed_backlog_diagnostics=[{
+            "number": 12,
+            "title": "Memory leak under load",
+            "matched_subject": "fix: memory leak under heavy load",
+        }],
+    )
+    inflated = _realistic_objective_score(
+        backlog_recall=1.0,
+        matched_issue_numbers=[12, 15],
+        addressed_issue_numbers=[12, 15],
+        addressed_backlog_diagnostics=[
+            {"number": 12, "title": "Memory leak under load",
+             "matched_subject": "fix: memory leak under heavy load"},
+            {"number": 15, "title": "Support YAML config",
+             "matched_subject": "fix: memory leak under heavy load"},
+        ],
+    )
+    assert matched["backlog_recall"] == 0.0
+    assert inflated["backlog_recall"] == 1.0
+    # weighted recall + release predicted + bump match
+    expected = round(
+        (matched["weighted_module_recall"] + 1.0 + 1.0) / 3,
+        3,
+    )
+    assert objective_component(missed) == expected
+    assert objective_component(matched) == expected
+    assert objective_component(inflated) == expected
+
+
+def test_composite_score_ignores_backlog_fields_in_full_objective_dict():
+    missed = _realistic_objective_score(backlog_recall=0.0, matched_issue_numbers=[])
+    inflated = _realistic_objective_score(
+        backlog_recall=1.0,
+        matched_issue_numbers=[12, 15],
+        addressed_issue_numbers=[12, 15],
+    )
+    anchor = objective_component(missed)
+    expected_tie = round(0.6 * 0.5 + 0.4 * anchor, 3)
+    for winner, judge_value in (("A", 1.0), ("B", 0.0), ("tie", 0.5)):
+        expected = round((0.6 * judge_value + 0.4 * anchor) / 1.0, 3)
+        assert composite_score(winner, missed) == expected
+        assert composite_score(winner, inflated) == expected
+    assert composite_score("tie", missed) == expected_tie
+
+
+def test_objective_score_backlog_change_does_not_move_component_when_modules_match():
+    """End-to-end #148 with matched vs missed backlog and identical module recall."""
+    open_issues = [
+        {"number": 12, "title": "Memory leak under load"},
+        {"number": 99, "title": "Unrelated roadmap item"},
+    ]
+    revealed = [{"subject": "fix: memory leak under heavy load", "files": ["core/leak.py"]}]
+    plan_match = [{"title": "Fix memory leak under load", "kind": "bugfix", "theme": "core"}]
+    plan_miss = [{"title": "Refactor core internals", "kind": "refactor", "theme": "core"}]
+    score_match = objective_score(plan_match, revealed, open_issues=open_issues)
+    score_miss = objective_score(plan_miss, revealed, open_issues=open_issues)
+    assert score_match["backlog_recall"] == 1.0
+    assert score_miss["backlog_recall"] == 0.0
+    assert score_match["module_recall"] == score_miss["module_recall"] == 1.0
+    assert objective_component(score_match) == objective_component(score_miss) == 1.0

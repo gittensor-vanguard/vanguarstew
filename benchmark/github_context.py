@@ -36,9 +36,12 @@ than leaked as a present-day value):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.request
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
@@ -50,7 +53,9 @@ _ENRICH_META_KEYS = ("_issues_truncated", "_knowable_until", "_source")
 
 def parse_owner_repo(remote_url: str):
     """Extract (owner, repo) from an ssh or https GitHub remote URL."""
-    s = (remote_url or "").strip()
+    if not isinstance(remote_url, str):
+        return None, None
+    s = remote_url.strip()
     if s.endswith(".git"):
         s = s[:-4]
     if s.startswith("git@"):
@@ -66,9 +71,13 @@ def parse_owner_repo(remote_url: str):
 
 
 def _parse_dt(value):
-    if not value:
+    """Parse an ISO-8601 timestamp string, or None when the input is unusable."""
+    if not isinstance(value, str) or not value:
         return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _item_open_at(item: dict, until: datetime) -> bool:
@@ -87,9 +96,11 @@ def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int
     ``title`` is copied live (present-day value): it may have been edited after T — an accepted
     residual limitation noted in the module's field-stability contract.
     """
-    as_of_t = _labels_at(
-        _issue_timeline(base, item.get("number"), token, timeout), until
-    )
+    events, truncated = _issue_timeline(base, item.get("number"), token, timeout)
+    # A truncated timeline can produce a label set that actively contradicts the true as-of-T
+    # membership, so fail closed exactly like the timeline-unavailable case: omit labels and
+    # report labels_as_of_t=False rather than trusting a partial (possibly wrong) reconstruction.
+    as_of_t = None if truncated else _labels_at(events, until)
     return {
         "number": item.get("number"),
         "title": item.get("title"),
@@ -149,6 +160,23 @@ def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100)
     return items
 
 
+def _timeline_events(events) -> list:
+    """Return ``events`` when it is a list; otherwise treat as no timeline.
+
+    A truthy non-list must not reach ``for ev in events`` or malformed timeline JSON
+    aborts label reconstruction (#488). An empty timeline makes :func:`_labels_at` return
+    ``None``, so the caller omits labels (fail-closed) rather than leaking live labels.
+    """
+    if isinstance(events, list):
+        return events
+    if events is not None:
+        logger.warning(
+            "github_context: timeline events is %s, not a list; treating as empty",
+            type(events).__name__,
+        )
+    return []
+
+
 def _labels_at(events, until: datetime):
     """Reconstruct an issue/PR's label set *as of `until`* from its timeline.
 
@@ -157,17 +185,32 @@ def _labels_at(events, until: datetime):
     today's live labels. Returns a sorted list of label names, or ``None`` when the
     timeline carries no usable label event at/or before T — the caller then falls
     back to omitting labels rather than leaking the present-day set.
+
+    A non-list ``events`` value is treated as an empty timeline (``None``), matching
+    the fail-closed posture used when reconstruction is unavailable.
     """
     relevant = []
-    for ev in events or []:
+    for idx, ev in enumerate(_timeline_events(events)):
+        if not isinstance(ev, dict):
+            logger.warning(
+                "github_context: skipping non-dict timeline event at index %d (%s: %r)",
+                idx,
+                type(ev).__name__,
+                ev,
+            )
+            continue
         if ev.get("event") not in ("labeled", "unlabeled"):
             continue
         ts = _parse_dt(ev.get("created_at"))
         if ts is None or ts > until:
             continue
-        name = (ev.get("label") or {}).get("name")
-        if name:
-            relevant.append((ts, ev.get("event"), name))
+        label = ev.get("label")
+        if not isinstance(label, dict):
+            continue
+        name = label.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        relevant.append((ts, ev.get("event"), name.strip()))
     if not relevant:
         return None
     relevant.sort(key=lambda x: x[0])
@@ -181,11 +224,18 @@ def _labels_at(events, until: datetime):
 
 
 def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
-    """Fetch an issue/PR's timeline events (paginated). Returns ``[]`` on any error,
-    so label reconstruction degrades to the safe omit-labels fallback offline."""
+    """Fetch an issue/PR's timeline events (paginated).
+
+    Returns ``(events, truncated)``. ``truncated`` is True when the page cap is hit with a
+    full final page — more events may exist before T than were fetched, so a label
+    reconstruction from ``events`` could be *confidently wrong* (a later ``unlabeled`` beyond
+    the cap never gets applied) and the caller must not trust it. Returns ``([], False)`` on
+    any error or missing number, so reconstruction degrades to the safe omit-labels fallback.
+    """
     if number is None:
-        return []
+        return [], False
     events = []
+    truncated = False
     for page in range(1, max_pages + 1):
         try:
             batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
@@ -197,7 +247,9 @@ def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
         events.extend(batch)
         if len(batch) < 100:
             break
-    return events
+        if page == max_pages:
+            truncated = True      # full final page at the cap: more events may remain before T
+    return events, truncated
 
 
 def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages: int):
@@ -276,6 +328,14 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
     }
 
 
+def _frozen_at_date(context: dict):
+    """Parse ``context['frozen_at']['date']``, or None when missing or unusable."""
+    frozen = context.get("frozen_at")
+    if not isinstance(frozen, dict):
+        return None
+    return _parse_dt(frozen.get("date"))
+
+
 def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
     """Merge GitHub state (as of the freeze time in `context`) into a git-only context.
 
@@ -285,7 +345,7 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
     try:
         from benchmark.freeze import origin_url
         owner, repo = parse_owner_repo(origin_url(source_repo_path))
-        until = _parse_dt((context.get("frozen_at") or {}).get("date"))
+        until = _frozen_at_date(context)
         if not (owner and repo and until):
             return context
         gh = fetch_context_at(owner, repo, until, token=token)

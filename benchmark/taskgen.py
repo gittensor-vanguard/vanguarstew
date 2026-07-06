@@ -33,7 +33,7 @@ def revealed_window(repo: str, commits: list, idx: int, n: int) -> list:
         raw = _git(repo, "show", "-m", "--first-parent", "--name-only", "-z",
                    "--pretty=format:", sha, check=False)
         files = parse_path_list(raw)
-        window.append({"sha": sha[:10], "subject": subject, "files": files[:20]})
+        window.append({"sha": sha[:10], "subject": subject, "files": files})
     return window
 
 
