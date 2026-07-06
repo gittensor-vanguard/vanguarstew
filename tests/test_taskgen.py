@@ -30,7 +30,8 @@ if ROOT not in sys.path:
 
 from benchmark.freeze import _git as _read_git
 from benchmark.freeze import parse_path_list  # noqa: E402
-from benchmark.taskgen import linear_history, revealed_window  # noqa: E402
+from benchmark.score import changed_modules  # noqa: E402
+from benchmark.taskgen import generate_tasks, linear_history, revealed_window  # noqa: E402
 
 
 def _run(repo, *args):
@@ -200,5 +201,41 @@ def test_revealed_window_preserves_paths_with_spaces_and_specials():
         assert sorted(window[0]["files"]) == sorted(tricky)
         # The space-containing path must arrive whole, not split into two entries.
         assert "docs/my file.md" in window[0]["files"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_generate_tasks_preserves_large_revealed_file_list():
+    """End-to-end: task metadata must retain every path from large commits (#157)."""
+    repo = tempfile.mkdtemp()
+    try:
+        _run(repo, "init", "-q")
+        _run(repo, "config", "user.email", "t@t")
+        _run(repo, "config", "user.name", "t")
+        for i in range(11):
+            _commit(repo, f"base{i}.py", "x\n", f"base {i}")
+
+        expected_paths = []
+        for i in range(25):
+            path = f"pkg{i}/file.py"
+            expected_paths.append(path)
+            full = os.path.join(repo, path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as f:
+                f.write("x\n")
+        _run(repo, "add", "-A")
+        _run(repo, "commit", "-q", "-m", "add 25 modules")
+
+        tasks = generate_tasks(
+            repo, num_tasks=1, horizon=1, min_history=10, rotation_seed=0,
+        )
+        assert len(tasks) == 1
+        revealed = tasks[0]["revealed"]
+        assert len(revealed) == 1
+        assert sorted(revealed[0]["files"]) == sorted(expected_paths)
+
+        expected_modules = {f"pkg{i}" for i in range(25)}
+        assert changed_modules(revealed) == expected_modules
     finally:
         shutil.rmtree(repo, ignore_errors=True)
