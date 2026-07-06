@@ -75,6 +75,48 @@ def test_offline_chat_json_returns_empty_dict_when_stub_is_none(monkeypatch):
     assert LLM(api_key="offline").chat_json("system", "user", stub=None) == {}
 
 
+# --- Live chat_json() resilience to malformed output ----------------------------------------
+
+def _live_llm(monkeypatch, reply):
+    """A non-offline LLM whose transport returns ``reply`` verbatim (no network)."""
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+    assert llm.offline is False
+    llm.chat = lambda system, user: reply
+    return llm
+
+
+def test_chat_json_falls_back_to_stub_on_unparseable_output(monkeypatch):
+    # Malformed model output (no JSON anywhere) must not crash the agent: fall back to the stub
+    # (M4 acceptance: no agent crashes from malformed LLM output).
+    llm = _live_llm(monkeypatch, "Sure, I'd merge it. (no JSON here)")
+    stub = {"action": "plan", "labels": []}
+    assert llm.chat_json("system", "user", stub=stub) == stub
+
+
+def test_chat_json_falls_back_to_empty_dict_when_stub_is_none(monkeypatch):
+    llm = _live_llm(monkeypatch, "no json at all")
+    assert llm.chat_json("system", "user", stub=None) == {}
+
+
+def test_chat_json_returns_parsed_json_when_output_is_valid(monkeypatch):
+    llm = _live_llm(monkeypatch, 'Here you go:\n```json\n{"action": "merge"}\n```')
+    assert llm.chat_json("system", "user", stub={"action": "plan"}) == {"action": "merge"}
+
+
+def test_chat_json_still_propagates_a_transport_error(monkeypatch):
+    # Only a parse failure falls back to the stub; a transport/connection error must still raise.
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+
+    def boom(system, user):
+        raise ConnectionError("network down")
+
+    llm.chat = boom
+    with pytest.raises(ConnectionError):
+        llm.chat_json("system", "user", stub={"action": "plan"})
+
+
 # --- JSON extraction order ------------------------------------------------------------------
 
 def test_extract_json_parses_fenced_code_block():

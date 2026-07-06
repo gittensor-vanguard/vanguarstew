@@ -53,10 +53,21 @@ class LLM:
         return body["choices"][0]["message"]["content"]
 
     def chat_json(self, system: str, user: str, stub=None):
-        """Completion parsed as JSON. In offline mode, returns `stub` verbatim."""
+        """Completion parsed as JSON, with `stub` as the fallback.
+
+        Returns `stub` verbatim in offline mode. For a live call, returns the parsed JSON —
+        but when the response can't be parsed as JSON, falls back to `stub` instead of
+        raising, so malformed model output does not crash the agent (M4: no agent crashes
+        from malformed LLM output). Callers already treat the stub shape as "the model gave
+        us nothing usable". Transport errors from `chat` still propagate.
+        """
         if self.offline:
             return stub if stub is not None else {}
-        return extract_json(self.chat(system, user))
+        raw = self.chat(system, user)
+        try:
+            return extract_json(raw)
+        except (ValueError, TypeError):
+            return stub if stub is not None else {}
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
