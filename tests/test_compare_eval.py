@@ -103,3 +103,43 @@ def test_compare_eval_artifacts_matches_rows_with_null_freeze_commit():
     row = diff["per_repo"][0]
     assert row["repo"] == repr(sorted(["composite_mean", "freeze_commit", "tasks"]))
     assert row["composite_mean"]["delta"] == 0.1
+
+
+def _generalization_artifact(tuned=0.5, held_out=0.4, gap=0.1):
+    return {
+        "repo_set": "foo.json",
+        "tuned": {"composite_mean": tuned, "scored_repos": 2},
+        "held_out": {"composite_mean": held_out, "scored_repos": 1},
+        "generalization_gap": gap,
+    }
+
+
+def test_compare_eval_artifacts_diffs_generalization_reports():
+    diff = compare_eval_artifacts(
+        _generalization_artifact(tuned=0.5, held_out=0.4, gap=0.1),
+        _generalization_artifact(tuned=0.6, held_out=0.45, gap=0.15),
+    )
+    assert diff["report_type"] == "generalization"
+    assert diff["tuned"]["composite_mean"]["delta"] == 0.1
+    assert diff["held_out"]["composite_mean"]["delta"] == 0.05
+    assert diff["generalization_gap"]["delta"] == 0.05
+
+
+def test_comparison_headline_describes_generalization_deltas():
+    diff = compare_eval_artifacts(
+        _generalization_artifact(tuned=0.5, held_out=0.4, gap=0.1),
+        _generalization_artifact(tuned=0.6, held_out=0.45, gap=0.15),
+    )
+    headline = comparison_headline(diff)
+    assert "tuned composite_mean" in headline
+    assert "held_out composite_mean" in headline
+    assert "generalization_gap" in headline
+
+
+def test_compare_eval_artifacts_reports_shape_mismatch():
+    diff = compare_eval_artifacts(
+        {"composite_mean": 0.5},
+        _generalization_artifact(),
+    )
+    assert "error" in diff
+    assert diff["composite_mean"]["delta"] is None

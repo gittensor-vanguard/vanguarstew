@@ -64,8 +64,49 @@ def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
     return out
 
 
+def _is_generalization_report(artifact: dict) -> bool:
+    """True when ``artifact`` matches ``run_generalization_report()`` output."""
+    return isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict)
+
+
+def _compare_generalization_reports(baseline: dict, candidate: dict) -> dict:
+    """Diff two ``run_eval --generalization --out`` artifacts."""
+    out = {"report_type": "generalization"}
+    if baseline.get("repo_set") or candidate.get("repo_set"):
+        out["repo_set"] = {
+            "baseline": baseline.get("repo_set"),
+            "candidate": candidate.get("repo_set"),
+        }
+    for part in ("tuned", "held_out"):
+        base_part = baseline.get(part) or {}
+        cand_part = candidate.get(part) or {}
+        out[part] = {
+            "composite_mean": _metric_triplet(base_part, cand_part, "composite_mean"),
+            "scored_repos": {
+                "baseline": base_part.get("scored_repos"),
+                "candidate": cand_part.get("scored_repos"),
+            },
+        }
+    out["generalization_gap"] = {
+        "baseline": baseline.get("generalization_gap"),
+        "candidate": candidate.get("generalization_gap"),
+        "delta": _delta(candidate.get("generalization_gap"), baseline.get("generalization_gap")),
+    }
+    return out
+
+
 def compare_eval_artifacts(baseline: dict, candidate: dict) -> dict:
     """Return a stable JSON summary of how ``candidate`` differs from ``baseline``."""
+    base_gen = _is_generalization_report(baseline)
+    cand_gen = _is_generalization_report(candidate)
+    if base_gen or cand_gen:
+        if base_gen != cand_gen:
+            return {
+                "error": "artifact shape mismatch (generalization vs standard replay result)",
+                "composite_mean": _metric_triplet({}, {}, "composite_mean"),
+            }
+        return _compare_generalization_reports(baseline, candidate)
+
     parts = {}
     base_parts = baseline.get("composite_parts") or {}
     cand_parts = candidate.get("composite_parts") or {}
@@ -96,6 +137,29 @@ def compare_eval_artifacts(baseline: dict, candidate: dict) -> dict:
 
 def comparison_headline(diff: dict) -> str:
     """One-line human summary for stderr."""
+    if diff.get("report_type") == "generalization":
+        chunks = []
+        for part in ("tuned", "held_out"):
+            mean = (diff.get(part) or {}).get("composite_mean") or {}
+            delta = mean.get("delta")
+            if delta is not None:
+                direction = "up" if delta > 0 else "down" if delta < 0 else "unchanged"
+                chunks.append(
+                    f"{part} composite_mean {mean.get('baseline')} -> {mean.get('candidate')} "
+                    f"({direction} {delta:+.3f})"
+                )
+        gap = diff.get("generalization_gap") or {}
+        gap_delta = gap.get("delta")
+        if gap_delta is not None:
+            direction = "up" if gap_delta > 0 else "down" if gap_delta < 0 else "unchanged"
+            chunks.append(
+                f"generalization_gap {gap.get('baseline')} -> {gap.get('candidate')} "
+                f"({direction} {gap_delta:+.3f})"
+            )
+        if chunks:
+            return "compare_eval: " + "; ".join(chunks)
+        return "compare_eval: generalization metrics delta unavailable"
+
     mean = diff.get("composite_mean") or {}
     delta = mean.get("delta")
     if delta is None:
