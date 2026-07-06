@@ -83,6 +83,14 @@ def test_parse_path_list_drops_empty_fields():
     assert parse_path_list("") == []
 
 
+def test_parse_path_list_preserves_embedded_newlines():
+    # Git forbids only NUL and '/' in a path -- a literal newline is a legal (if unusual)
+    # byte in a filename. The docstring claims newlines "survive intact"; this pins that
+    # claim directly at the unit level rather than only through a full git round-trip.
+    raw = "weird\nname.txt\0normal.txt\0"
+    assert parse_path_list(raw) == ["weird\nname.txt", "normal.txt"]
+
+
 # --- linear_history ------------------------------------------------------------------
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
