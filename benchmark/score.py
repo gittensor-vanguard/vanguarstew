@@ -27,8 +27,20 @@ _SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
 _BUMP_LEVELS = ("major", "minor", "patch")
 
 
-def _tokens(text: str) -> set:
-    return set(_TOK.findall((text or "").lower()))
+def _as_text(value) -> str:
+    """Coerce a plan/commit text field to a string, the single contract every text
+    helper below relies on.
+
+    Plan items are built straight from LLM JSON, so a field (`title`/`theme`/`kind`,
+    or a revealed commit `subject`) may be a non-string. A truthy list/dict slips past
+    a ``value or ""`` guard and crashes downstream (``.lower()``, ``.strip()``, the
+    regex engine). A non-string carries no maintainer signal, so it collapses to ``""``.
+    """
+    return value if isinstance(value, str) else ""
+
+
+def _tokens(text) -> set:
+    return set(_TOK.findall(_as_text(text).lower()))
 
 
 def parse_semver(text: str):
@@ -172,14 +184,18 @@ def module_recall(plan, revealed) -> dict:
     return result
 
 
-def is_release_subject(text: str) -> bool:
+def is_release_subject(text) -> bool:
     """True only for a genuine release/version-cut subject.
 
     Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
     that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
     in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
+
+    Tolerates a non-string `text` (a malformed LLM plan field / commit subject): a
+    non-string is not a release subject, so it collapses to "" and returns False
+    rather than raising on `.search()`.
     """
-    s = text or ""
+    s = _as_text(text)
     return bool(_RELEASE_KW.search(s) or _RELEASE_TAG_SUBJECT.match(s))
 
 
@@ -219,14 +235,15 @@ _PLAN_KIND = {
 }
 
 
-def commit_kind(subject: str):
+def commit_kind(subject):
     """Normalized maintainer kind for a revealed commit subject, or None.
 
     Prefers a Conventional-Commit prefix (`feat:`, `fix(scope):`, `docs!:`), then falls
     back to release subjects (`Release v1.2.0`, `bump version`). Merge commits and
-    prefix-less subjects carry no reliable kind and return None.
+    prefix-less subjects carry no reliable kind and return None. A non-string subject
+    collapses to "" (no kind).
     """
-    subject = subject or ""
+    subject = _as_text(subject)
     m = _CC_PREFIX.match(subject)
     if m:
         kind = _COMMIT_KIND.get(m.group(1).lower())
@@ -237,9 +254,10 @@ def commit_kind(subject: str):
     return None
 
 
-def plan_kind(kind: str):
-    """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind."""
-    return _PLAN_KIND.get((kind or "").strip().lower())
+def plan_kind(kind):
+    """Normalized kind for a plan item's `kind` field, or None if it maps to no commit
+    kind. A non-string `kind` (a malformed LLM field) collapses to "" (no kind)."""
+    return _PLAN_KIND.get(_as_text(kind).strip().lower())
 
 
 def kind_recall(plan, revealed) -> dict:
