@@ -11,6 +11,7 @@ import logging
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
+from benchmark.repo_set import RepoSetError
 from benchmark.runner import (
     run_generalization_report,
     run_multi_replay,
@@ -150,15 +151,20 @@ def main() -> None:
         w_judge=args.w_judge, w_objective=args.w_objective,
         dual_order_judge=not args.single_order_judge,
     )
-    if args.repo_set and args.generalization:
-        result = run_generalization_report(args.repo_set, **common)
-    elif args.repo_set:
-        partition = "held_out" if args.held_out and args.repo_set_partition == "tuned" else args.repo_set_partition
-        result = run_multi_replay(repo_set=args.repo_set, repo_set_partition=partition, **common)
-    elif args.repos:
-        result = run_multi_replay(args.repos, **common)
-    else:
-        result = run_replay(repo_path=args.repo, **common)
+    try:
+        if args.repo_set and args.generalization:
+            result = run_generalization_report(args.repo_set, **common)
+        elif args.repo_set:
+            partition = ("held_out" if args.held_out and args.repo_set_partition == "tuned"
+                        else args.repo_set_partition)
+            result = run_multi_replay(repo_set=args.repo_set, repo_set_partition=partition, **common)
+        elif args.repos:
+            result = run_multi_replay(args.repos, **common)
+        else:
+            result = run_replay(repo_path=args.repo, **common)
+    except (RuntimeError, RepoSetError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
     if args.sweep_weights:
         rows = result.get("rows")
         if rows:
@@ -167,7 +173,11 @@ def main() -> None:
             print("--sweep-weights needs a single-repo run (--repo); no per-task rows to sweep",
                   file=sys.stderr)
     if args.out:
-        write_result_artifact(args.out, result)
+        try:
+            write_result_artifact(args.out, result)
+        except OSError as exc:
+            print(f"cannot write --out {args.out}: {exc}", file=sys.stderr)
+            sys.exit(1)
     for line in result_summary_lines(result):
         print(line, file=sys.stderr)
     for row in _weight_sweep_rows(result):

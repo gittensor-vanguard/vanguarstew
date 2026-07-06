@@ -2,18 +2,47 @@
 
 import json
 import os
+import shutil
+import subprocess
 import sys
+from unittest.mock import patch
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from benchmark.repo_set import RepoSetError  # noqa: E402
 from scripts.run_eval import (  # noqa: E402
     _weight_sweep_rows,
     check_score_floor,
+    main,
     result_summary_lines,
     write_result_artifact,
 )
+
+
+def _tiny_repo(dirpath, n=4, prefix="feat"):
+    subprocess.run(["git", "init", "-q", dirpath], check=True)
+    subprocess.run(["git", "-C", dirpath, "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", dirpath, "config", "user.name", "t"], check=True)
+    for i in range(n):
+        with open(os.path.join(dirpath, f"{prefix}{i}.py"), "w", encoding="utf-8") as f:
+            f.write(f"x = {i}\n")
+        subprocess.run(["git", "-C", dirpath, "add", "-A"], check=True)
+        subprocess.run(["git", "-C", dirpath, "commit", "-q", "-m", f"{prefix} {i}"], check=True)
+    return dirpath
+
+
+def _run_cli(*args, env=None):
+    full_env = {**os.environ, "VANGUARSTEW_OFFLINE": "1"}
+    if env:
+        full_env.update(env)
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.run_eval", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False, env=full_env,
+    )
 
 
 def test_write_result_artifact_preserves_judge_order_stats(tmp_path):
@@ -125,3 +154,130 @@ def test_weight_sweep_rows_logs_warning_for_non_list_field(caplog):
     with caplog.at_level(logging.WARNING, logger="scripts.run_eval"):
         assert _weight_sweep_rows({"weight_sweep": 42}) == []
     assert any("weight_sweep is int" in r.message for r in caplog.records)
+
+
+# --- unit-level: main()'s try/except around the dispatch, without needing real git/repo-set
+# fixtures -- isolates the error-handling logic itself from the subprocess integration tests
+# below, so a regression in the except clause is caught even if the integration tests' exact
+# git/gh error text ever changes. -----------------------------------------------------------
+
+def _argv(*args):
+    return ["run_eval.py", *args]
+
+
+def test_main_catches_runtime_error_from_run_replay(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", _argv("--repo", "/some/repo", "--tasks", "1", "--horizon", "1"))
+    with patch("scripts.run_eval.run_replay", side_effect=RuntimeError("git thing failed: boom")):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1
+    assert "git thing failed: boom" in capsys.readouterr().err
+
+
+def test_main_catches_repo_set_error_from_run_multi_replay(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", _argv("--repo-set", "/some/config.json"))
+    with patch("scripts.run_eval.run_multi_replay", side_effect=RepoSetError("bad config: boom")):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1
+    assert "bad config: boom" in capsys.readouterr().err
+
+
+def test_main_catches_repo_set_error_from_run_generalization_report(monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys, "argv",
+        _argv("--repo-set", "/some/config.json", "--generalization"),
+    )
+    with patch("scripts.run_eval.run_generalization_report",
+               side_effect=RepoSetError("bad config: boom")):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1
+    assert "bad config: boom" in capsys.readouterr().err
+
+
+def test_main_catches_os_error_writing_the_out_artifact(monkeypatch, capsys, tmp_path):
+    bad_out = tmp_path / "does-not-exist-dir" / "out.json"
+    monkeypatch.setattr(
+        sys, "argv",
+        _argv("--repo", "/some/repo", "--tasks", "1", "--horizon", "1", "--out", str(bad_out)),
+    )
+    with patch("scripts.run_eval.run_replay", return_value={"composite_mean": 0.6, "tasks": 1}):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot write --out" in err
+    assert str(bad_out) in err
+
+
+def test_main_does_not_catch_unrelated_exceptions(monkeypatch):
+    # The guard is deliberately narrow to (RuntimeError, RepoSetError); anything else (a real
+    # bug elsewhere) must still surface normally rather than being silently swallowed.
+    monkeypatch.setattr(sys, "argv", _argv("--repo", "/some/repo", "--tasks", "1", "--horizon", "1"))
+    with patch("scripts.run_eval.run_replay", side_effect=KeyError("unexpected")):
+        with pytest.raises(KeyError):
+            main()
+
+
+# --- subprocess-level: drive the actual CLI entry point end to end -------------------------
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_reports_a_clean_error_for_a_non_git_repo_path(tmp_path):
+    # --repo pointing at a directory that isn't a git repo must not crash with a raw
+    # traceback -- it's the CLI's most basic invocation path.
+    not_git = tmp_path / "not-a-git-dir"
+    not_git.mkdir()
+    result = _run_cli("--repo", str(not_git), "--tasks", "1", "--horizon", "1")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "not a git repository" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_reports_a_clean_error_for_a_nonexistent_repo_path(tmp_path):
+    missing = tmp_path / "does-not-exist"
+    result = _run_cli("--repo", str(missing), "--tasks", "1", "--horizon", "1")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the real git stderr text, not a generic placeholder
+    assert "No such file or directory" in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_missing_repo_set(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli("--repo-set", str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # benchmark/repo_set.py's own _require message: "repo-set config not found: {path}"
+    assert "not found" in result.stderr
+    assert str(missing) in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_reports_a_clean_error_for_an_unwritable_out_path(tmp_path):
+    repo = _tiny_repo(str(tmp_path / "repo"), n=16)
+    bad_out = tmp_path / "does-not-exist-dir" / "out.json"
+    result = _run_cli("--repo", repo, "--tasks", "1", "--horizon", "1", "--out", str(bad_out))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "cannot write --out" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_still_replays_a_well_formed_repo(tmp_path):
+    # The guard must be inert on the happy path: a real git repo still produces a real
+    # replay artifact -- proving the try/except doesn't swallow successful runs, and that
+    # the run actually executed the replay logic (not just an empty/stub result).
+    repo = _tiny_repo(str(tmp_path / "repo"), n=16)
+    out_path = tmp_path / "result.json"
+    result = _run_cli("--repo", repo, "--tasks", "1", "--horizon", "1", "--out", str(out_path))
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert "composite_mean" in payload
+    assert isinstance(payload.get("tasks"), int) and payload["tasks"] >= 1
+    assert "rows" in payload and len(payload["rows"]) == payload["tasks"]
+    # --out actually wrote the same artifact that was printed to stdout
+    with open(out_path, "r", encoding="utf-8") as f:
+        assert json.load(f) == payload
