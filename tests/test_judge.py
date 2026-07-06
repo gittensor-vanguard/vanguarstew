@@ -16,6 +16,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from benchmark.judge import (  # noqa: E402
+    _item_substance,
     _parse_winner,
     _plan_substance,
     build_judge_report,
@@ -257,3 +258,36 @@ def test_build_judge_report_summarizes_outcomes_and_disagreement():
 
 def test_build_judge_report_none_without_stats():
     assert build_judge_report({"challenger": 1, "baseline": 0, "tie": 0}, None) is None
+
+
+# --- #287: _item_substance must tolerate non-string plan-item fields (no crash) -------------
+
+def test_item_substance_tolerates_non_string_fields():
+    # A truthy non-string title/theme/kind/rationale (a plausible LLM shape) must not raise;
+    # the field is treated as absent rather than aborting the whole replay run.
+    assert _item_substance({"title": ["Fix", "bug"]}) == 0            # no usable title/theme
+    assert _item_substance({"title": 123, "theme": "concurrency"}) == 1   # falls back to theme
+    assert _item_substance(
+        {"title": "Fix bug", "kind": ["fix"], "rationale": {"x": 1}}) == 1  # only the title counts
+    assert _item_substance(
+        {"title": "Add loader", "kind": "feature", "rationale": "needed"}) == 3  # all real -> 3
+
+
+def test_item_substance_string_behavior_unchanged():
+    assert _item_substance({"title": "misc"}) == 0          # filler
+    assert _item_substance("overhaul the core") == 1        # scalar string
+    assert _item_substance(None) == 0                       # null item
+
+
+def test_plan_substance_survives_a_malformed_item():
+    # One malformed item in a plan must not crash the whole substance tally.
+    plan = [{"title": "Real work", "kind": "feature"}, {"title": ["broken"], "kind": 7}]
+    assert _plan_substance(plan) == 2   # 2 from the real item, 0 from the malformed one
+
+
+def test_offline_judge_ranks_plan_with_non_string_field_without_crashing():
+    strong = {"plan": [{"title": "Cut the v1 release", "kind": "release",
+                        "rationale": "ready"}], "rationale": "sound"}
+    malformed = {"plan": [{"title": ["x"], "kind": ["y"], "rationale": 3}], "philosophy": {}}
+    llm = LLM(api_key="offline")
+    assert pairwise_judge({}, strong, malformed, [], llm, random.Random(0)) == "A"

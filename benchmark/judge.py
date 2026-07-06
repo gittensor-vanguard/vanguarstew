@@ -65,6 +65,16 @@ _FILLER_TITLES = frozenset({
 })
 
 
+def _text(value) -> str:
+    """A field's stripped text when it is a string; any non-string (or None) yields ''.
+
+    Plan-item fields come straight from an LLM and are not guaranteed to be strings — a model
+    may emit a list/dict/number for `title`, `theme`, `kind`, or `rationale`. Guarding here
+    keeps the `.strip()` calls below from raising `AttributeError` and aborting the whole run.
+    """
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _item_substance(item) -> int:
     """Substance weight of a single plan item.
 
@@ -76,7 +86,7 @@ def _item_substance(item) -> int:
     rewarding substance over the mere presence of a title.
     """
     if isinstance(item, dict):
-        title = (item.get("title") or item.get("theme") or "").strip().lower()
+        title = (_text(item.get("title")) or _text(item.get("theme"))).lower()
     else:
         # A JSON `null` plan item stringifies to "none" — neither blank nor a filler word —
         # so it would slip past the guard below and score 1, letting a null-padded plan
@@ -86,11 +96,11 @@ def _item_substance(item) -> int:
         return 0
     weight = 1
     if isinstance(item, dict):
-        if (item.get("kind") or "").strip():
+        if _text(item.get("kind")):
             weight += 1
         if item.get("files"):
             weight += 1
-        if (item.get("rationale") or "").strip():
+        if _text(item.get("rationale")):
             weight += 1
     return weight
 
