@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Fixed
+- Leakage: `agent/context.py::_context_from_git`'s README excerpt and commit subjects now mask
+  bare issue/PR back-references (`#123` -> `#ref`), the same class of forward-reference leak
+  `benchmark.leakage.strip_forward_refs` guards against on the harness path — this fallback had
+  no masking at all. Scoped to just the stable back-reference regex, not the fuller GitHub-link
+  masking, since `agent/` must not import from `benchmark/` (#283).
 - Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
   `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
   reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.

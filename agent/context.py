@@ -10,9 +10,24 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 
 CONTEXT_FILE = ".vanguarstew_context.json"
+
+# Masks a bare issue/PR back-reference (`#123`) in free text pulled straight from git,
+# mirroring the one part of `benchmark.leakage.strip_forward_refs` this fallback can safely
+# replicate on its own: a stable, single-purpose regex, not the fuller (and more frequently
+# hardened) GitHub-link/SHA masking. `agent/` must not import from `benchmark/` -- they're on
+# opposite sides of the miner/validator split docs/architecture.md describes, with a future
+# repo split planned -- so this is a deliberately narrow, self-contained mirror, not a shared
+# implementation. Residual risk is bounded: this path isn't used by the actual scored replay,
+# which always populates `.vanguarstew_context.json` via `benchmark.freeze.write_frozen` first.
+_ISSUE_REF = re.compile(r"#\d+")
+
+
+def _mask_issue_refs(text: str) -> str:
+    return _ISSUE_REF.sub("#ref", text) if text else text
 
 
 def _git(repo_path, *args):
@@ -60,7 +75,7 @@ def _context_from_git(repo_path: str) -> dict:
     for line in log.splitlines():
         if "\t" in line:
             h, subj = line.split("\t", 1)
-            commits.append({"sha": h[:10], "subject": subj})
+            commits.append({"sha": h[:10], "subject": _mask_issue_refs(subj)})
     # `--merged head` restricts to tags reachable from T -- without it, a tag that only
     # exists on an unmerged branch (or otherwise isn't an ancestor of T) would leak into
     # "releases" even though it was never knowable at T. Mirrors the same reachability
@@ -74,7 +89,7 @@ def _context_from_git(repo_path: str) -> dict:
         p = os.path.join(repo_path, name)
         if os.path.exists(p):
             with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                readme = f.read()[:4000]
+                readme = _mask_issue_refs(f.read()[:4000])
             break
     return {
         "frozen_at": {"commit": head[:10]},

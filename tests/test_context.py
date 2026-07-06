@@ -13,7 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from agent.context import _context_from_git, context_for_agent  # noqa: E402
+from agent.context import _context_from_git, _mask_issue_refs, context_for_agent  # noqa: E402
 from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
 from agent.planner import _render as render_planner_context  # noqa: E402
@@ -126,5 +126,31 @@ def test_context_from_git_excludes_tags_unreachable_from_head():
 
         ctx = _context_from_git(repo)
         assert [r["tag"] for r in ctx["releases"]] == ["v1.0"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_mask_issue_refs_replaces_bare_references():
+    assert _mask_issue_refs("see #150 for the roadmap") == "see #ref for the roadmap"
+    assert _mask_issue_refs("#1 and #23 both matter") == "#ref and #ref both matter"
+    assert _mask_issue_refs("") == ""
+    assert _mask_issue_refs(None) is None
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_masks_issue_refs_in_readme_and_commit_subjects():
+    # The git-only fallback has no forward-reference scrubbing at all otherwise (unlike the
+    # harness path's benchmark.leakage.strip_forward_refs) -- a README or commit subject
+    # naming a later issue/PR number must not leak through verbatim.
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        _write(repo, "README.md", "Roadmap: see #150 for what's next.\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "part of #200 rollout")
+
+        ctx = _context_from_git(repo)
+        assert ctx["readme_excerpt"] == "Roadmap: see #ref for what's next.\n"
+        assert ctx["recent_commits"][0]["subject"] == "part of #ref rollout"
     finally:
         shutil.rmtree(repo, ignore_errors=True)
