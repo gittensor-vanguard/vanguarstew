@@ -202,6 +202,62 @@ def test_open_issue_labels_omitted_when_timeline_unavailable(monkeypatch):
     assert iss["labels_as_of_t"] is False
 
 
+def test_issue_timeline_flags_truncation_on_full_last_page(monkeypatch):
+    def fake_get(url, token, timeout=20):
+        return [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 100
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    events, truncated = gc._issue_timeline("https://api.github.com/repos/foo/bar", 1,
+                                            None, 20, max_pages=2)
+    assert truncated is True
+    assert len(events) == 200
+
+
+def test_issue_timeline_not_truncated_on_short_final_page(monkeypatch):
+    def fake_get(url, token, timeout=20):
+        return [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 50
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    events, truncated = gc._issue_timeline("https://api.github.com/repos/foo/bar", 1,
+                                            None, 20, max_pages=5)
+    assert truncated is False
+    assert len(events) == 50
+
+
+def test_issue_timeline_truncated_on_request_error(monkeypatch):
+    def fake_get(url, token, timeout=20):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    events, truncated = gc._issue_timeline("https://api.github.com/repos/foo/bar", 1, None, 20)
+    assert truncated is True
+    assert events == []
+
+
+def test_truncated_timeline_omits_labels_instead_of_reconstructing_partial_state(monkeypatch):
+    # A "labeled" event lands inside every full page, so the pre-fix behavior would have
+    # replayed it into a confident (but potentially stale) ["bug"] label set even though
+    # later labeled/unlabeled events beyond the page cap, up to T, are missing.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "shipped"}]}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            batch = [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 100
+            batch[0] = {"event": "labeled", "created_at": "2023-01-02T00:00:00Z",
+                        "label": {"name": "bug"}}
+            return batch
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == []
+    assert iss["labels_as_of_t"] is False
+
+
 def test_enrich_context_preserves_truncation_metadata(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
 

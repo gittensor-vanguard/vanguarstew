@@ -87,9 +87,11 @@ def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int
     ``title`` is copied live (present-day value): it may have been edited after T — an accepted
     residual limitation noted in the module's field-stability contract.
     """
-    as_of_t = _labels_at(
-        _issue_timeline(base, item.get("number"), token, timeout), until
-    )
+    events, truncated = _issue_timeline(base, item.get("number"), token, timeout)
+    # A truncated timeline is missing events between the last page fetched and T, which can
+    # include a later labeled/unlabeled event — replaying only the partial history would yield
+    # a confidently-wrong label set rather than an honestly-incomplete one. Omit instead.
+    as_of_t = None if truncated else _labels_at(events, until)
     return {
         "number": item.get("number"),
         "title": item.get("title"),
@@ -181,23 +183,30 @@ def _labels_at(events, until: datetime):
 
 
 def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
-    """Fetch an issue/PR's timeline events (paginated). Returns ``[]`` on any error,
-    so label reconstruction degrades to the safe omit-labels fallback offline."""
+    """Fetch an issue/PR's timeline events (paginated).
+
+    Returns ``(events, truncated)``. On any request error, returns ``([], True)`` so label
+    reconstruction degrades to the safe omit-labels fallback offline. ``truncated`` is also
+    True when the page cap is hit with a full last page, since events beyond the cap (up to
+    T) are then missing and must not be silently treated as a complete history.
+    """
     if number is None:
-        return []
+        return [], False
     events = []
     for page in range(1, max_pages + 1):
         try:
             batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
                          token, timeout)
         except Exception:
-            break
+            return events, True
         if not batch:
             break
         events.extend(batch)
         if len(batch) < 100:
             break
-    return events
+    else:
+        return events, True
+    return events, False
 
 
 def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages: int):
