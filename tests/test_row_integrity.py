@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.row_integrity import (  # noqa: E402
+    _check_rows_list,
     _row_slices,
     check_row_integrity,
     failed_checks,
@@ -199,6 +200,53 @@ def test_integrity_headline_reports_consistent_and_inconsistent():
     art = _artifact()
     art["rows"][0]["composite"] = 0.0
     assert "INCONSISTENT" in integrity_headline(check_row_integrity(art))
+
+
+def test_integrity_headline_survives_non_list_checks(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.row_integrity"):
+        line = integrity_headline({"checks": 42, "passed": False})
+    assert line == "row integrity: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)
+
+
+# --- checks row sanitization for row integrity headlines -----------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "rows_present"}, "not a list",
+    ({"name": "rows_present", "passed": False},),
+    range(2),
+]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "rows_present", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "rows_present", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.row_integrity"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+
+
+def test_integrity_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "rows_present", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.row_integrity"):
+        line = integrity_headline({"checks": checks, "passed": False})
+    assert line == "row integrity: INCONSISTENT (1/1 checks failed: rows_present)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [{"name": "rows_present", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.row_integrity"):
+        assert failed_checks({"checks": checks}) == ["rows_present"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_check_row_integrity_does_not_mutate_the_artifact():
