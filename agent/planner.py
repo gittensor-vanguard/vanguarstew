@@ -7,9 +7,12 @@ not on naming the exact PRs that happened.
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from agent.context import context_for_agent
+
+logger = logging.getLogger(__name__)
 
 # Generic verbs / queue words dropped before matching a plan item to a PR, so the match
 # keys on the real subject ("loader race") not the framing ("review the PR to fix ...").
@@ -277,9 +280,26 @@ def _normalize_plan_item(item) -> dict | None:
     return normalized
 
 
+def _plan_list(plan, field: str = "plan") -> list:
+    """Return ``plan`` when it is a list; otherwise treat as no plan items.
+
+    A truthy non-list must not reach ``for item in plan`` or malformed LLM / caller input
+    aborts queue reconciliation (#545).
+    """
+    if isinstance(plan, list):
+        return plan
+    if plan is not None:
+        logger.warning(
+            "planner: %s is %s, not a list; treating as empty",
+            field,
+            type(plan).__name__,
+        )
+    return []
+
+
 def _normalize_plan(plan) -> list:
     out = []
-    for item in plan or []:
+    for item in _plan_list(plan):
         normalized = _normalize_plan_item(item)
         if normalized is not None:
             out.append(normalized)

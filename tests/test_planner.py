@@ -17,8 +17,10 @@ from agent.planner import (  # noqa: E402
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
+    _normalize_plan,
     _normalize_plan_item,
     _open_prs_list,
+    _plan_list,
     _pr_queue_note,
     _pr_title,
     plan_next_actions,
@@ -443,6 +445,44 @@ def test_reconcile_honors_valid_prs_when_list_contains_junk_entries():
     out = reconcile_plan_with_queue(plan, ctx, 5)
     assert out[0]["restates_pr"] == 9
     assert "streaming export" in out[0]["title"].lower()
+
+
+# --- #545: a non-list plan must not abort planner normalization ----------------------
+
+_MALFORMED_PLANS = [42, 3.14, True, {"title": "Fix bug"}, "not a list"]
+
+
+def test_plan_list_accepts_only_real_lists():
+    rows = [{"title": "Fix bug", "kind": "bugfix"}]
+    for bad in _MALFORMED_PLANS:
+        assert _plan_list(bad) == [], bad
+    assert _plan_list(rows) == rows
+    assert _plan_list(None) == []
+
+
+def test_normalize_plan_survives_non_list_plan():
+    for bad in _MALFORMED_PLANS:
+        assert _normalize_plan(bad) == [], bad
+
+
+def test_reconcile_plan_with_queue_survives_non_list_plan():
+    for bad in _MALFORMED_PLANS:
+        assert reconcile_plan_with_queue(bad, {"open_prs": []}, 5) == [], bad
+
+
+def test_normalize_plan_honors_valid_rows_when_list_contains_junk_entries():
+    out = _normalize_plan([42, {"title": "Fix crash", "kind": "bugfix"}, None])
+    assert len(out) == 1
+    assert out[0]["title"] == "Fix crash"
+
+
+def test_plan_list_logs_warning_for_non_list_plan(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="agent.planner"):
+        assert _normalize_plan(42) == []
+    assert any("plan is int" in r.message for r in caplog.records)
+
 
 def test_plan_next_actions_handles_non_dict_context():
     from agent.llm import LLM
