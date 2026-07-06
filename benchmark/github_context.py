@@ -36,8 +36,8 @@ FIELD_PROVENANCE = {
         "applied after T"
     ),
     "issue_or_pr.labels_as_of_t": (
-        "true only when label membership was reconstructed from timeline events at/or before T; "
-        "false means label history was unavailable, not that the item had no labels at T"
+        "true when timeline history was available and label membership was reconstructed as of "
+        "T, including the empty set; false means label history was unavailable or incomplete"
     ),
     "issue_or_pr.membership": (
         "guarded: an item is included only if created_at <= T and not closed by T; its live "
@@ -131,12 +131,13 @@ def _labels_at(events, until: datetime):
 
     Replays ``labeled`` / ``unlabeled`` events in chronological order, ignoring any
     event after T, so the result reflects membership at the freeze time rather than
-    today's live labels. Returns a sorted list of label names, or ``None`` when the
-    timeline carries no usable label event at/or before T — the caller then falls
-    back to omitting labels rather than leaking the present-day set.
+    today's live labels. Returns a sorted list of label names, possibly empty when
+    the timeline shows no labels at T, or ``None`` when the timeline was unavailable.
     """
+    if events is None:
+        return None
     relevant = []
-    for ev in events or []:
+    for ev in events:
         if ev.get("event") not in ("labeled", "unlabeled"):
             continue
         ts = _parse_dt(ev.get("created_at"))
@@ -145,8 +146,6 @@ def _labels_at(events, until: datetime):
         name = (ev.get("label") or {}).get("name")
         if name:
             relevant.append((ts, ev.get("event"), name))
-    if not relevant:
-        return None
     relevant.sort(key=lambda x: x[0])
     labels = set()
     for _, etype, name in relevant:
@@ -158,23 +157,22 @@ def _labels_at(events, until: datetime):
 
 
 def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
-    """Fetch an issue/PR's timeline events (paginated). Returns ``[]`` on any error,
-    so label reconstruction degrades to the safe omit-labels fallback offline."""
+    """Fetch an issue/PR's timeline events, or ``None`` when history is unavailable."""
     if number is None:
-        return []
+        return None
     events = []
     for page in range(1, max_pages + 1):
         try:
             batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
                          token, timeout)
         except Exception:
-            break
+            return None
         if not batch:
-            break
+            return events
         events.extend(batch)
         if len(batch) < 100:
-            break
-    return events
+            return events
+    return None
 
 
 def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages: int):
@@ -203,7 +201,7 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
             # Labels are mutable and the live list leaks today's state, so
             # reconstruct membership as-of-T from the item's timeline instead of
             # copying it.get("labels"). When the timeline can't be read (offline,
-            # rate-limited, or no label events), omit labels rather than leak.
+            # rate-limited, or capped before completion), omit labels rather than leak.
             as_of_t = _labels_at(
                 _issue_timeline(base, it.get("number"), token, timeout), until
             )

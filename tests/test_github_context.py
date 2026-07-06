@@ -119,14 +119,32 @@ def test_labels_at_replays_events_in_chronological_order():
     assert gc._labels_at(events, T) == ["y"]  # +x, +y, -x
 
 
-def test_labels_at_none_when_nothing_reconstructable():
+def test_labels_at_empty_when_no_labels_at_T_and_none_when_unavailable():
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
-    assert gc._labels_at([], T) is None
-    assert gc._labels_at([{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}], T) is None
-    # Only post-T label events => nothing knowable at T.
+    assert gc._labels_at(None, T) is None
+    assert gc._labels_at([], T) == []
+    assert gc._labels_at([{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}], T) == []
+    # Only post-T label events => the issue had no labels at T.
     assert gc._labels_at(
         [{"event": "labeled", "created_at": "2023-09-01T00:00:00Z", "label": {"name": "z"}}], T
-    ) is None
+    ) == []
+
+
+def test_issue_timeline_none_when_unavailable_or_incomplete(monkeypatch):
+    calls = []
+
+    def fake_get(url, token, timeout=20):
+        calls.append(url)
+        if "page=1" in url:
+            return [{"event": "commented"}] * 100
+        raise RuntimeError("page 2 unavailable")
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    assert gc._issue_timeline("https://api.github.com/repos/foo/bar", 1, None, 20, max_pages=2) is None
+    assert len(calls) == 2
+    calls.clear()
+    assert gc._issue_timeline("https://api.github.com/repos/foo/bar", 1, None, 20, max_pages=1) is None
+    assert len(calls) == 1
 
 
 def test_open_issue_labels_reconstructed_as_of_T(monkeypatch):
@@ -172,6 +190,28 @@ def test_open_issue_labels_omitted_when_timeline_unavailable(monkeypatch):
     assert iss["labels_as_of_t"] is False
 
 
+def test_open_issue_empty_label_history_is_reconstructed(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "shipped"}]}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return [
+                {"event": "commented", "created_at": "2023-01-02T00:00:00Z"},
+                {"event": "labeled", "created_at": "2023-08-01T00:00:00Z",
+                 "label": {"name": "shipped"}},
+            ]
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == []
+    assert iss["labels_as_of_t"] is True
+
+
 def test_as_of_t_record_whitelists_immutable_fields():
     raw = {
         "number": 9, "title": "do the thing", "created_at": "2023-01-01T00:00:00Z",
@@ -188,7 +228,8 @@ def test_as_of_t_record_whitelists_immutable_fields():
 def test_field_provenance_audits_every_snapshot_field(monkeypatch):
     prov = gc.FIELD_PROVENANCE
     assert "reconstructed from timeline" in prov["issue_or_pr.labels"]
-    assert "false means label history was unavailable" in prov["issue_or_pr.labels_as_of_t"]
+    assert "including the empty set" in prov["issue_or_pr.labels_as_of_t"]
+    assert "unavailable or incomplete" in prov["issue_or_pr.labels_as_of_t"]
     assert "unreconstructable" in prov["issue_or_pr.title"]
     assert "approximately stable" in prov["labels"]
     assert "best-effort" in prov["milestones.due_on"]
