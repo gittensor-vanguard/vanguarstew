@@ -36,7 +36,9 @@ _ACTION_SYNONYMS = {
 
 def _normalize_review_action(action) -> str:
     """Map ``action`` onto ``ACTIONS``; unknown values fall back to ``comment``."""
-    key = (action or "").strip().lower()
+    if not isinstance(action, str):
+        return "comment"
+    key = action.strip().lower()
     if key in ACTIONS:
         return key
     return _ACTION_SYNONYMS.get(key, "comment")

@@ -54,6 +54,14 @@ def test_normalize_review_action_maps_synonyms():
     assert _normalize_review_action("unknown") == "comment"
 
 
+def test_normalize_review_action_tolerates_non_string_input():
+    assert _normalize_review_action(["merge"]) == "comment"
+    assert _normalize_review_action({"value": "merge"}) == "comment"
+    assert _normalize_review_action(42) == "comment"
+    assert _normalize_review_action(4.2) == "comment"
+    assert _normalize_review_action(None) == "comment"
+
+
 def test_normalize_value_label_repairs_prefix_and_case():
     assert _normalize_value_label("mult:core-correctness") == "mult:core-correctness"
     assert _normalize_value_label("core-correctness") == "mult:core-correctness"
@@ -95,3 +103,24 @@ def test_review_pr_normalizes_malformed_field_types():
     assert rev["summary"] == ""
     assert rev["concerns"] == ["missing edge-case coverage"]
     assert rev["recommendation"] == ""
+
+
+class _NonStringActionReviewLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return {
+            "action": ["merge", "reject"],
+            "value_label": "mult:maintenance",
+            "scope_ok": True,
+            "tests_present": False,
+            "summary": "s",
+            "concerns": [],
+            "recommendation": "r",
+        }
+
+
+def test_review_pr_survives_non_string_action_field():
+    rev = review_pr({"number": 1, "title": "t", "files": []}, None,
+                     _NonStringActionReviewLLM())
+    assert rev["action"] == "comment"
