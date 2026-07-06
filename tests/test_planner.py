@@ -122,6 +122,25 @@ def test_redundant_items_targeting_same_pr_are_collapsed():
     assert any(i.get("kind") == "docs" for i in out)              # unrelated item survives
 
 
+def test_two_numberless_matched_prs_are_not_collapsed():
+    # Regression: two distinct open PRs that both lack a "number" must each stay matched and
+    # kept. The dedup used to key on pr.get("number"), so both keyed on None and the second
+    # correctly-matched plan item was silently dropped.
+    context = {"open_prs": [
+        {"title": "Fix loader race condition"},
+        {"title": "Add streaming export docs"},
+    ]}
+    plan = [
+        {"title": "Fix loader race condition", "kind": "bugfix"},
+        {"title": "Add streaming export docs", "kind": "docs"},
+    ]
+    out = reconcile_plan_with_queue(plan, context, 5)
+    titles = [i.get("title") for i in out]
+    assert "Fix loader race condition" in titles
+    assert "Add streaming export docs" in titles
+    assert len(out) == 2                                          # neither item dropped
+
+
 def test_plan_next_actions_offline_reconciles_queue():
     # End-to-end through the offline stub, which already prioritizes the queue.
     plan = plan_next_actions(CTX, {}, 3, LLM(api_key="offline"))

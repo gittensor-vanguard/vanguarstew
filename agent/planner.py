@@ -355,9 +355,13 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
         pr = _matched_pr(item, prs)
         if pr is not None:
             number = pr.get("number")
-            if number in seen_prs:
+            # Dedup by PR number when known, else by queue identity: two distinct open PRs that
+            # both lack a number must not collapse onto a shared ``None`` key (which would
+            # silently drop the second, correctly-matched plan item).
+            key = ("number", number) if number is not None else ("identity", id(pr))
+            if key in seen_prs:
                 continue
-            seen_prs.add(number)
+            seen_prs.add(key)
             addressed = True
             if not _is_review_item(item):
                 item = {
