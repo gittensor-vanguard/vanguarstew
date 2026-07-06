@@ -11,6 +11,7 @@ if ROOT not in sys.path:
 from benchmark.score import (  # noqa: E402
     _COMMIT_KIND,
     _PLAN_KIND,
+    _files_list,
     _meaningful_overlap,
     _plan_list,
     _plan_tokens,
@@ -996,6 +997,41 @@ def test_objective_score_survives_non_string_file_paths():
     score = objective_score(plan, revealed)
     assert score["module_recall"] == 1.0
     assert score["kind_recall"] == 1.0
+
+
+# --- #587: truthy non-list files must not abort module recall scoring ------------------
+
+_MALFORMED_FILES = [42, 3.14, True, {"path": "agent/x.py"}, "not a list"]
+
+
+def test_files_list_accepts_only_real_lists():
+    rows = ["agent/foo.py", "benchmark/x.py"]
+    for bad in _MALFORMED_FILES:
+        assert _files_list(bad, "plan.files") == [], bad
+    assert _files_list(rows, "plan.files") == rows
+    assert _files_list(None, "plan.files") == []
+
+
+def test_plan_tokens_survives_non_list_files(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.score"):
+        toks = _plan_tokens([{"title": "loader", "files": 42}])
+    assert toks == _tokens("loader")
+    assert any("plan.files is int" in r.message for r in caplog.records)
+
+
+def test_changed_modules_survives_non_list_revealed_files(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.score"):
+        assert changed_modules([{"files": 42}, {"files": ["agent/foo.py"]}]) == {"agent"}
+    assert any("revealed.files is int" in r.message for r in caplog.records)
+
+
+def test_objective_score_survives_non_list_files_field():
+    revealed = [{"subject": "feat: core work", "files": 42}]
+    plan = [{"title": "agent loader", "kind": "feat", "files": 42}]
+    score = objective_score(plan, revealed)
+    assert score["module_recall"] == 0.0
+    assert score["kind_recall"] == 1.0
+
 
 def test_objective_component_handles_non_dict():
     from benchmark.score import objective_component

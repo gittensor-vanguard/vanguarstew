@@ -58,6 +58,19 @@ def _releases_list(releases) -> list:
     return releases if isinstance(releases, list) else []
 
 
+def _files_list(files, field: str = "files") -> list:
+    """Return ``files`` when it is a list; otherwise treat as no changed paths."""
+    if isinstance(files, list):
+        return files
+    if files is not None:
+        logger.warning(
+            "score: %s is %s, not a list; treating as empty",
+            field,
+            type(files).__name__,
+        )
+    return []
+
+
 def _tokens(text) -> set:
     # Plan and commit text fields originate in LLM-emitted JSON, where a `title`/`theme`/
     # `subject` can arrive as a list, dict, number, or null. Such a value carries no lexical
@@ -198,7 +211,7 @@ def _plan_tokens(plan) -> set:
             # Structured `files` are part of a concrete plan item (the judge counts them
             # toward substance); tokenize path segments so module recall can match on the
             # top-level module even when the title omits it.
-            for path in item.get("files") or []:
+            for path in _files_list(item.get("files"), "plan.files"):
                 if not isinstance(path, str):
                     continue
                 toks |= _tokens(path.replace("/", " "))
@@ -233,7 +246,7 @@ def changed_modules(revealed) -> set:
     for r in _revealed_list(revealed):
         if not isinstance(r, dict):
             continue
-        for path in r.get("files", []):
+        for path in _files_list(r.get("files"), "revealed.files"):
             top = _top_module(path)
             if top:
                 mods.add(top)
@@ -250,7 +263,7 @@ def _module_file_counts(revealed) -> dict:
     for r in _revealed_list(revealed):
         if not isinstance(r, dict):
             continue
-        for path in r.get("files", []):
+        for path in _files_list(r.get("files"), "revealed.files"):
             top = _top_module(path)
             if top:
                 counts[top] = counts.get(top, 0) + 1
