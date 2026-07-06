@@ -9,7 +9,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.report import render_report  # noqa: E402
+from benchmark.report import _is_number, render_report  # noqa: E402
 from scripts.report import load_artifact  # noqa: E402
 
 
@@ -174,3 +174,56 @@ def test_load_artifact_round_trip(tmp_path):
     payload = _single_repo()
     path.write_text(json.dumps(payload), encoding="utf-8")
     assert load_artifact(str(path)) == payload
+
+
+# --- non-finite (NaN/Infinity) numeric fields must render n/a, not crash render_report -------
+# json.load parses NaN/Infinity/-Infinity natively, so a saved artifact can carry them; they are
+# float instances that pass a bare isinstance check but blow up int(nan)/int(inf) in count
+# formatting. render_report promises to tolerate malformed fields rather than raise.
+
+def test_is_number_rejects_non_finite_floats():
+    assert _is_number(0.5) is True
+    assert _is_number(3) is True
+    assert _is_number(-2.0) is True
+    assert _is_number(True) is False          # bools are not numbers here
+    assert _is_number("0.5") is False
+    assert _is_number(float("nan")) is False
+    assert _is_number(float("inf")) is False
+    assert _is_number(float("-inf")) is False
+
+
+def test_render_single_repo_tolerates_non_finite_count_fields():
+    # int(nan) would raise ValueError; the whole report must still render.
+    art = _single_repo()
+    art["tasks"] = float("nan")
+    art["judge_report"] = {"wins": float("inf"), "losses": 1, "ties": 0,
+                           "disagreement_rate": float("nan")}
+    md = render_report(art)
+    assert "# Benchmark report (single-repo)" in md
+    assert "Tasks:" not in md                 # non-finite task count is dropped, not rendered
+    assert "Judge W-L-T: n/a" in md           # a non-finite tally degrades to n/a
+    assert "Order disagreement rate: n/a" in md
+    assert "Composite mean: 0.650" in md      # finite fields around it still render
+
+
+def test_render_multi_repo_tolerates_non_finite_counts():
+    # int(inf) would raise OverflowError across the repos/scored/skipped and per-repo task counts.
+    art = _multi_repo()
+    art["repos"] = float("inf")
+    art["scored_repos"] = float("nan")
+    art["skipped"] = float("inf")
+    art["per_repo"] = [{"repo_path": "/a", "composite_mean": 0.55, "tasks": float("nan")}]
+    md = render_report(art)
+    assert "# Benchmark report (multi-repo)" in md
+    assert "Repos:" not in md                  # non-finite repo count is not rendered
+    assert "| /a | 0.550 | n/a |" in md        # bad task count -> n/a, composite still shown
+
+
+def test_render_generalization_tolerates_non_finite_gap_and_partition_counts():
+    art = _generalization()
+    art["generalization_gap"] = float("inf")
+    art["tuned"]["scored_repos"] = float("nan")
+    md = render_report(art)
+    assert "# Benchmark report (generalization)" in md
+    assert "Generalization gap (tuned − held-out): n/a" in md
+    assert "Verdict: n/a" in md                # a non-finite gap can't be compared to threshold

@@ -7,12 +7,20 @@ report.
 
 from __future__ import annotations
 
+import math
+
 # Tuned minus held-out above this threshold triggers an "inspect" verdict on generalization runs.
 DEFAULT_GAP_INSPECT_THRESHOLD = 0.10
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats (``NaN``/``Infinity``) are ``float`` instances but not renderable
+    # values: ``json.load`` parses them from a saved artifact, and ``int(nan)`` / ``int(inf)``
+    # raise ``ValueError`` / ``OverflowError`` in the ``int(...)`` count formatting below. Treat
+    # them as malformed so every field degrades to ``n/a`` instead of raising, per this module's
+    # "tolerates malformed fields rather than raising" contract.
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value))
 
 
 def _fmt_score(value) -> str:
