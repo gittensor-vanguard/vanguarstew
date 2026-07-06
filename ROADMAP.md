@@ -34,18 +34,33 @@ The score is defensible, not just subjective prose-judging.
 - Richer context via GitHub API (issues, PRs, reviews, releases) where available.
 - **Acceptance:** composite score = objective anchor + judged layer; documented leakage controls; an agent that merely restates a memorized outcome does **not** win.
 
-## M3 — Generalization
+## M3 — Generalization ✅
 
 A *general* maintainer, not one tuned to a single repo.
 
-- Diverse + **held-out** repos; dimension-weight tuning; judge-robustness checks.
-- Spot-check / manual review of the top agent (as ninja does).
-- **Acceptance:** scores track maintainer skill on repos the agent was never tuned against; held-out performance doesn't collapse.
+- [x] Diverse + **held-out** repos: `benchmark/repo_sets/curated.json` (5 repos), repo-set config, `--repo-set` wiring.
+- [x] Generalization report: `run_eval --generalization` replays tuned+held-out partitions, reports `generalization_gap`.
+- [x] Judge-robustness: disagreement tracking, pairwise judging, evidence anchoring.
+- [x] Spot-check / manual review of the top agent (as ninja does).
+- [ ] **Acceptance run:** run `--generalization` on the curated set with a current model and confirm `generalization_gap` is reasonable.
+- **Status:** code complete. Acceptance run pending — blocked on closing M4 hardening bugs (non-string field crashes prevent a clean multi-repo replay).
 
-## M4 — gittensor integration / tau reuse
+## M4 — Hardening & release readiness
 
-Fully agentic, 66-style.
+Close the crash-and-correctness gap so a full benchmark run completes clean.
+
+- [ ] **Agent hardening:** every field the LLM emits is guarded against non-string types (philosophy, planner, decider, reviewer, judge). Open: #297, #313, #317.
+- [ ] **Benchmark scoring:** close module-recall farming (#289), unreachable backlog threshold (#308), composite-score wiring.
+- [ ] **Leakage lockout:** tag-scrubbing for git-freeze releases (#245), milestone deep-link masking, forward-reference audit for git-only fallback (#283).
+- [ ] **Tooling:** `compare_eval` CLI for diffing replay artifacts (#306), `--fail-under` score floor for CI gating (#315).
+- [ ] **Acceptance run:** `run_eval --generalization` on curated set completes clean, zero crashes, `generalization_gap` documented.
+- **Acceptance:** benchmark runs clean on 5 diverse repos; no agent crashes from malformed LLM output; leakage audit clean.
+
+## M5 — gittensor integration / subnet launch
+
+Fully on-chain, 66-style.
 
 - Decide reuse vs. fork of `tau` (Generate → Solve → Compare/eval) and its managed inference.
-- Register the repo on gittensor; wire the full submit → evaluate → rank loop (subnet economics handled by gittensor).
+- Register the repo on gittensor (#1578 config: maintainer_cut 0.5, trusted_label_pipeline, label_multipliers).
+- Wire the full submit → evaluate → rank loop (subnet economics handled by gittensor).
 - **Acceptance:** miners can submit a maintainer agent and have it evaluated and ranked autonomously, end-to-end.
