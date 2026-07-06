@@ -22,6 +22,17 @@ def _gen(tuned_score):
     }
 
 
+def _gen_unscored_tuned():
+    # A tuned partition that scored nothing (empty/failed repo set) carries a placeholder
+    # composite_mean of 0.0, per run_multi_replay's own error shape -- not a real score.
+    return {
+        "tuned": {"error": "repo set has no tuned repos to replay",
+                  "scored_repos": 0, "composite_mean": 0.0},
+        "held_out": {"composite_mean": 0.56, "scored_repos": 2},
+        "generalization_gap": None,
+    }
+
+
 def test_headline_score_reads_top_level_and_generalization_tuned():
     assert headline_score(_single(0.62)) == 0.62
     assert headline_score({"per_repo": [], "composite_mean": 0.4}) == 0.4   # multi-repo
@@ -29,6 +40,13 @@ def test_headline_score_reads_top_level_and_generalization_tuned():
     assert headline_score({"error": "no tasks"}) is None                    # no score
     assert headline_score("not a dict") is None                            # non-dict, no crash
     assert headline_score({"composite_mean": "bad"}) is None                # non-numeric
+
+
+def test_headline_score_ignores_an_unscored_tuned_partitions_placeholder_zero():
+    # scored_repos: 0 means nothing was actually scored; its composite_mean: 0.0 is a
+    # placeholder, not a real (catastrophic) score, and must read as None like any other
+    # missing score -- not as a genuine 0.0.
+    assert headline_score(_gen_unscored_tuned()) is None
 
 
 def test_trend_computes_points_deltas_and_overall_change():
@@ -99,6 +117,19 @@ def test_trend_over_a_generalization_series_uses_tuned_score():
     assert [p["composite_mean"] for p in out["points"]] == [0.60, 0.64, 0.58]
     assert out["change"] == -0.02
     assert [r["from_label"] for r in out["regressions"]] == ["q2"]     # 0.64 -> 0.58 drop 0.06
+
+
+def test_trend_does_not_fabricate_a_regression_from_an_unscored_tuned_partition():
+    # A tuned partition that scored 0 repos (transient repo-set failure) must be treated as
+    # unscored, not as the score collapsing to 0.0 -- proving the guard is actually consumed
+    # by trend(), not just by headline_score() in isolation.
+    series = [("run1", _gen(0.62)), ("run2", _gen_unscored_tuned())]
+    out = trend(series)
+    assert out["points"][1]["composite_mean"] is None
+    assert out["points"][1]["delta"] is None
+    assert out["scored"] == 1                  # run2 does not count as a scored point
+    assert out["regressions"] == []            # no fabricated -0.62 "collapse"
+    assert out["last"] == 0.62                 # last *scored* value is still run1's
 
 
 def test_trend_drop_exactly_at_threshold_is_not_a_regression():

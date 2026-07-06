@@ -29,13 +29,17 @@ def headline_score(artifact) -> float | None:
     Single-repo and multi-repo artifacts expose a top-level ``composite_mean``. A
     ``--generalization`` artifact nests scores under ``tuned`` / ``held_out``; its headline is
     the **tuned** ``composite_mean`` (the primary figure, mirrored by ``held_out`` and the gap).
-    Anything without a numeric score yields ``None``.
+    Anything without a numeric score yields ``None`` -- including a ``tuned`` partition with
+    ``scored_repos: 0`` (an empty/failed repo set, per ``run_multi_replay``'s own error shape),
+    whose placeholder ``composite_mean: 0.0`` is not a real score and must not be read as one
+    (mirrors the same ``scored_repos`` guard already applied in
+    ``scripts.run_eval.check_score_floor``).
     """
     if not isinstance(artifact, dict):
         return None
     if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
         tuned = artifact["tuned"]
-        score = tuned.get("composite_mean") if isinstance(tuned, dict) else None
+        score = tuned.get("composite_mean") if tuned.get("scored_repos") else None
     else:
         score = artifact.get("composite_mean")
     return round(float(score), 3) if _is_number(score) else None
