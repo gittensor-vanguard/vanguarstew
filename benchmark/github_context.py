@@ -299,6 +299,14 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
     }
 
 
+def _frozen_at_date(context: dict):
+    """Parse ``context['frozen_at']['date']``, or None when missing or unusable."""
+    frozen = context.get("frozen_at")
+    if not isinstance(frozen, dict):
+        return None
+    return _parse_dt(frozen.get("date"))
+
+
 def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
     """Merge GitHub state (as of the freeze time in `context`) into a git-only context.
 
@@ -308,7 +316,7 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
     try:
         from benchmark.freeze import origin_url
         owner, repo = parse_owner_repo(origin_url(source_repo_path))
-        until = _parse_dt((context.get("frozen_at") or {}).get("date"))
+        until = _frozen_at_date(context)
         if not (owner and repo and until):
             return context
         gh = fetch_context_at(owner, repo, until, token=token)

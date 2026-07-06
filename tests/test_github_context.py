@@ -253,6 +253,24 @@ def test_enrich_context_degrades_on_failure(monkeypatch):
     assert "_github_error" in out and out["open_issues"] == []
 
 
+def test_frozen_at_date_tolerates_unusable_context():
+    assert gc._frozen_at_date({}) is None
+    assert gc._frozen_at_date({"frozen_at": 123}) is None
+    assert gc._frozen_at_date({"frozen_at": "2023-06-01T00:00:00Z"}) is None
+    assert gc._frozen_at_date({"frozen_at": {"date": "not-a-date"}}) is None
+    assert gc._frozen_at_date({"frozen_at": {"date": None}}) is None
+    parsed = gc._frozen_at_date({"frozen_at": {"date": "2023-06-01T00:00:00Z"}})
+    assert parsed is not None and parsed.year == 2023
+
+
+def test_enrich_context_tolerates_non_dict_frozen_at(monkeypatch):
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    base = {"frozen_at": 123, "open_issues": []}
+    out = gc.enrich_context(base, "/some/repo")
+    assert out == base
+    assert "_github_enriched" not in out
+
+
 import re  # noqa: E402
 
 
