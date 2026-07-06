@@ -29,7 +29,10 @@ def fetch_pr(repo: str, number: int) -> dict:
         "number": data["number"],
         "title": data["title"],
         "body": data.get("body"),
-        "author": data["author"]["login"],
+        # GitHub returns "author": null once the PR author's account is deleted/suspended — a
+        # naturally-occurring case, not a malformed payload. Fall back to GitHub's own "ghost"
+        # placeholder instead of crashing on data["author"]["login"].
+        "author": (data.get("author") or {}).get("login") or "ghost",
         "additions": data["additions"],
         "deletions": data["deletions"],
         "files": [f["path"] for f in data.get("files", [])],
