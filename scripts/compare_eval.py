@@ -16,6 +16,23 @@ def _numeric(value) -> float | None:
     return None
 
 
+def _is_scored_unavailable(artifact: dict) -> bool:
+    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder."""
+    if not isinstance(artifact, dict):
+        return False
+    scored = artifact.get("scored_repos")
+    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
+
+
+def _effective_composite_mean(artifact: dict):
+    """Partition or aggregate composite mean, or ``None`` when nothing was scored."""
+    if not isinstance(artifact, dict):
+        return None
+    if _is_scored_unavailable(artifact):
+        return None
+    return artifact.get("composite_mean")
+
+
 def _delta(candidate, baseline) -> float | None:
     c = _numeric(candidate)
     b = _numeric(baseline)
@@ -25,8 +42,12 @@ def _delta(candidate, baseline) -> float | None:
 
 
 def _metric_triplet(baseline: dict, candidate: dict, key: str) -> dict:
-    base = baseline.get(key)
-    cand = candidate.get(key)
+    if key == "composite_mean":
+        base = _effective_composite_mean(baseline)
+        cand = _effective_composite_mean(candidate)
+    else:
+        base = baseline.get(key) if isinstance(baseline, dict) else None
+        cand = candidate.get(key) if isinstance(candidate, dict) else None
     return {
         "baseline": base,
         "candidate": cand,
@@ -45,10 +66,23 @@ def _repo_key(entry: dict) -> str:
     return repr(sorted(entry.keys()))
 
 
+def _repo_rows(artifact: dict) -> list:
+    """The ``per_repo`` table when it is a list of dict rows, else empty (#464).
+
+    A truthy non-list (a malformed artifact) must not reach ``for row in ...`` — it would raise
+    ``TypeError`` and abort the whole diff — and a non-dict row inside the list is skipped,
+    matching the fail-soft posture used across the codebase.
+    """
+    rows = artifact.get("per_repo")
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
-    base_by_key = {_repo_key(row): row for row in baseline.get("per_repo") or []}
+    base_by_key = {_repo_key(row): row for row in _repo_rows(baseline)}
     out = []
-    for row in candidate.get("per_repo") or []:
+    for row in _repo_rows(candidate):
         key = _repo_key(row)
         base_row = base_by_key.get(key)
         if base_row is None:
@@ -97,7 +131,9 @@ def _generalization_diff(baseline: dict, candidate: dict) -> dict:
 
     Every value is read through ``_metric_triplet``/``_delta``, which coerce a missing,
     ``None``, or non-numeric field to a ``None`` delta rather than crashing — so a partition
-    that only recorded an ``error`` (``scored_repos == 0``) diffs to ``None`` cleanly.
+    that only recorded an ``error`` (``scored_repos == 0``) diffs to ``None`` cleanly, and a
+    placeholder ``composite_mean`` of ``0.0`` on an unscored partition is treated as
+    unavailable (mirroring ``benchmark/trend.py`` and ``benchmark/report.py``).
     """
     out = {}
     for partition in ("tuned", "held_out"):
@@ -190,7 +226,15 @@ def main() -> None:
     ap.add_argument("baseline", help="earlier or reference result JSON")
     ap.add_argument("candidate", help="newer or candidate result JSON")
     args = ap.parse_args()
-    diff = compare_eval_artifacts(load_artifact(args.baseline), load_artifact(args.candidate))
+
+    try:
+        baseline = load_artifact(args.baseline)
+        candidate = load_artifact(args.candidate)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+    diff = compare_eval_artifacts(baseline, candidate)
     print(comparison_headline(diff), file=sys.stderr)
     print(json.dumps(diff, indent=2))
 

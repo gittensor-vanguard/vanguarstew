@@ -18,7 +18,11 @@ Pure analysis: no I/O, and it never mutates its inputs.
 
 from __future__ import annotations
 
+import logging
+
 from benchmark.trend import headline_score
+
+logger = logging.getLogger(__name__)
 
 
 def _is_number(value) -> bool:
@@ -45,6 +49,22 @@ def _components(artifact) -> dict:
     return {"judge_mean": _round(parts.get("judge_mean")), "objective_mean": _round(parts.get("objective_mean"))}
 
 
+def _leaderboard_entries(entries) -> list:
+    """Return ``entries`` when it is a list; otherwise treat as no candidates.
+
+    A truthy non-list must not reach ``for label, artifact in entries`` or malformed CLI /
+    saved-artifact input aborts leaderboard ranking (#532).
+    """
+    if isinstance(entries, list):
+        return entries
+    if entries is not None:
+        logger.warning(
+            "leaderboard: entries is %s, not a list; treating as empty",
+            type(entries).__name__,
+        )
+    return []
+
+
 def rank(entries) -> dict:
     """Rank an iterable of ``(label, artifact)`` by headline composite score, best first.
 
@@ -60,7 +80,7 @@ def rank(entries) -> dict:
     """
     scored = []       # (index, label, score, components) — index keeps ties in input order
     unscored = []
-    for index, (label, artifact) in enumerate(entries or []):
+    for index, (label, artifact) in enumerate(_leaderboard_entries(entries)):
         score = headline_score(artifact)
         if score is None:
             unscored.append(label)
@@ -97,6 +117,18 @@ def rank(entries) -> dict:
     }
 
 
+def _leaderboard_unscored(unscored) -> list:
+    """Return ``unscored`` when it is a list; otherwise treat as no unscored labels."""
+    if isinstance(unscored, list):
+        return unscored
+    if unscored is not None:
+        logger.warning(
+            "leaderboard: summary unscored is %s, not a list; treating as empty",
+            type(unscored).__name__,
+        )
+    return []
+
+
 def leaderboard_headline(summary: dict) -> str:
     """A one-line human summary of a :func:`rank` result."""
     if not isinstance(summary, dict) or not summary.get("scored"):
@@ -104,7 +136,7 @@ def leaderboard_headline(summary: dict) -> str:
     best = summary.get("best") or {}
     runners = summary["scored"] - 1
     tail = f" over {runners} other(s)" if runners > 0 else ""
-    unscored = len(summary.get("unscored") or [])
+    unscored = len(_leaderboard_unscored(summary.get("unscored")))
     unscored_txt = f"; {unscored} unscored" if unscored else ""
     return (
         f"leaderboard: {best.get('label')} leads at "

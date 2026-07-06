@@ -1,0 +1,52 @@
+{
+  "id": "rationale-breaks-tie",
+  "description": "Top-level rationale breaks tie when plans equal",
+  "tags": [
+    "rationale"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "Continue refactor work"
+      }
+    ],
+    "rationale": "infra hardening"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "Continue refactor work"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

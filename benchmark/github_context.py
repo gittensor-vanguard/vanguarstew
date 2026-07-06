@@ -330,6 +330,8 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
 
 def _frozen_at_date(context: dict):
     """Parse ``context['frozen_at']['date']``, or None when missing or unusable."""
+    if not isinstance(context, dict):
+        return None
     frozen = context.get("frozen_at")
     if not isinstance(frozen, dict):
         return None
@@ -341,7 +343,16 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
 
     Remote is read from `source_repo_path` (the original clone), since the frozen checkout
     has no `.git`. Returns the context unchanged (annotated) on any failure.
+
+    A non-dict ``context`` is returned unchanged so callers can degrade without aborting
+    the replay path (#518).
     """
+    if not isinstance(context, dict):
+        logger.warning(
+            "github_context: enrich_context context is %s, not a dict; returning unchanged",
+            type(context).__name__ if context is not None else "None",
+        )
+        return context
     try:
         from benchmark.freeze import origin_url
         owner, repo = parse_owner_repo(origin_url(source_repo_path))

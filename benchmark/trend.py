@@ -14,6 +14,10 @@ math) so a partial series still produces a trend instead of raising.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # A drop larger than this between consecutive points is reported as a regression. Small enough
 # to catch a real slide, large enough to ignore run-to-run scoring noise.
 DEFAULT_REGRESSION_THRESHOLD = 0.02
@@ -29,27 +33,41 @@ def headline_score(artifact) -> float | None:
     Single-repo and multi-repo artifacts expose a top-level ``composite_mean``. A
     ``--generalization`` artifact nests scores under ``tuned`` / ``held_out``; its headline is
     the **tuned** ``composite_mean`` (the primary figure, mirrored by ``held_out`` and the gap).
-    Anything without a numeric score yields ``None``.
+    An aggregate run that scored no repos (``scored_repos: 0``) carries a placeholder 0.0 and is
+    treated as unscored. Anything without a numeric score yields ``None``.
     """
     if not isinstance(artifact, dict):
         return None
-    if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
-        tuned = artifact["tuned"]
-        # A tuned partition that scored nothing (scored_repos: 0 — empty set, or every repo
-        # too small/unreachable that run) carries a placeholder composite_mean of 0.0. That is
-        # a transient/infra outcome, not the agent scoring zero, so treat it as unscored (None)
-        # rather than letting --fail-on-regression raise a false alarm — mirroring the
-        # scored_repos guard in scripts/run_eval.check_score_floor.
-        if not tuned.get("scored_repos"):
-            return None
-        score = tuned.get("composite_mean")
-    else:
-        score = artifact.get("composite_mean")
+    # A --generalization artifact scores under its tuned partition; anything else at the top level.
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    source = tuned if isinstance(tuned, dict) and isinstance(held_out, dict) else artifact
+    # An aggregate that scored no repos reports a placeholder composite_mean of 0.0, not a real
+    # score. A single-repo artifact has no scored_repos key and keeps its score.
+    scored = source.get("scored_repos")
+    if _is_number(scored) and not scored:
+        return None
+    score = source.get("composite_mean")
     return round(float(score), 3) if _is_number(score) else None
 
 
 def _round(value):
     return round(float(value), 3) if _is_number(value) else None
+
+
+def _trend_series(series) -> list:
+    """Return ``series`` when it is a list; otherwise treat as no trend points.
+
+    A truthy non-list must not reach ``for label, artifact in series`` or malformed CLI /
+    saved-artifact input aborts trend analysis (#528).
+    """
+    if isinstance(series, list):
+        return series
+    if series is not None:
+        logger.warning(
+            "trend: series is %s, not a list; treating as empty",
+            type(series).__name__,
+        )
+    return []
 
 
 def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) -> dict:
@@ -70,7 +88,7 @@ def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) ->
     points = []
     scored = []           # (label, score) for points with a numeric score, in order
     prev_score = None
-    for label, artifact in series or []:
+    for label, artifact in _trend_series(series):
         score = headline_score(artifact)
         delta = _round(score - prev_score) if (score is not None and prev_score is not None) else None
         points.append({"label": label, "composite_mean": score, "delta": delta})
@@ -105,6 +123,18 @@ def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) ->
     }
 
 
+def _trend_regressions(regressions) -> list:
+    """Return ``regressions`` when it is a list; otherwise treat as no regressions."""
+    if isinstance(regressions, list):
+        return regressions
+    if regressions is not None:
+        logger.warning(
+            "trend: summary regressions is %s, not a list; treating as empty",
+            type(regressions).__name__,
+        )
+    return []
+
+
 def trend_headline(summary: dict) -> str:
     """A one-line human summary of a :func:`trend` result."""
     if not isinstance(summary, dict) or not summary.get("scored"):
@@ -113,7 +143,7 @@ def trend_headline(summary: dict) -> str:
     arrow = "flat"
     if _is_number(change):
         arrow = "up" if change > 0 else "down" if change < 0 else "flat"
-    regs = len(summary.get("regressions") or [])
+    regs = len(_trend_regressions(summary.get("regressions")))
     change_txt = f"{change:+.3f}" if _is_number(change) else "n/a"
     return (
         f"trend: {summary.get('first')} -> {summary.get('last')} "

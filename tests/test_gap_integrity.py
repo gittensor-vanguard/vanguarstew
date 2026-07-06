@@ -1,0 +1,224 @@
+"""Tests for the generalization-gap integrity gate (deterministic, offline)."""
+
+import copy
+import json
+import logging
+import os
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from benchmark.gap_integrity import (  # noqa: E402
+    DEFAULT_TOLERANCE,
+    _expected_gap,
+    check_gap_integrity,
+    failed_checks,
+    integrity_headline,
+)
+
+
+def _report(tuned_mean=0.62, held_mean=0.57, tuned_scored=2, held_scored=1, gap=None):
+    if gap is None:
+        gap = _expected_gap(tuned_mean, held_mean) if tuned_scored and held_scored else None
+    return {
+        "tuned": {"composite_mean": tuned_mean, "scored_repos": tuned_scored},
+        "held_out": {"composite_mean": held_mean, "scored_repos": held_scored},
+        "generalization_gap": gap,
+    }
+
+
+def _names(result):
+    return [c["name"] for c in result["checks"]]
+
+
+def test_a_consistent_generalization_report_passes():
+    result = check_gap_integrity(_report())
+    assert result["passed"] is True
+    assert _names(result) == [
+        "is_generalization", "gap_absent_when_unscored", "gap_present_when_both_scored",
+        "tuned_composite_reported", "held_out_composite_reported", "gap_matches_partitions",
+    ]
+
+
+def test_expected_gap_matches_runner_semantics():
+    assert _expected_gap(0.62, 0.57) == 0.05
+    assert _expected_gap(0.6, 0.58) == 0.02
+    assert _expected_gap("high", 0.5) is None
+
+
+def test_wrong_gap_fails_gap_matches_partitions():
+    art = _report(gap=0.99)
+    result = check_gap_integrity(art)
+    assert result["passed"] is False
+    assert failed_checks(result) == ["gap_matches_partitions"]
+
+
+def test_gap_present_when_unscored_fails():
+    art = _report(tuned_scored=0, gap=0.05)
+    result = check_gap_integrity(art)
+    assert result["passed"] is False
+    assert "gap_absent_when_unscored" in failed_checks(result)
+
+
+def test_gap_missing_when_both_scored_fails():
+    art = _report()
+    art["generalization_gap"] = None
+    result = check_gap_integrity(art)
+    assert result["passed"] is False
+    assert "gap_present_when_both_scored" in failed_checks(result)
+
+
+def test_missing_tuned_composite_fails_explicit_check():
+    art = _report()
+    art["tuned"]["composite_mean"] = "high"
+    result = check_gap_integrity(art)
+    assert result["passed"] is False
+    assert "tuned_composite_reported" in failed_checks(result)
+    assert "gap_matches_partitions" in failed_checks(result)
+
+
+def test_missing_held_out_composite_fails_explicit_check():
+    art = _report()
+    del art["held_out"]["composite_mean"]
+    result = check_gap_integrity(art)
+    assert result["passed"] is False
+    assert "held_out_composite_reported" in failed_checks(result)
+
+
+def test_zero_scored_repos_on_one_side_requires_null_gap():
+    art = _report(held_scored=0, gap=None)
+    assert check_gap_integrity(art)["passed"] is True
+    art["generalization_gap"] = 0.01
+    assert "gap_absent_when_unscored" in failed_checks(check_gap_integrity(art))
+
+
+def test_negative_gap_is_consistent_when_computed():
+    art = _report(tuned_mean=0.5, held_mean=0.55, gap=-0.05)
+    assert check_gap_integrity(art)["passed"] is True
+
+
+def test_tolerance_accepts_small_delta_after_rounding():
+    art = _report(gap=0.051)
+    assert check_gap_integrity(art, tolerance=0.0)["passed"] is False
+    assert check_gap_integrity(art, tolerance=0.001)["passed"] is True
+
+
+def test_non_dict_artifact_fails_gracefully():
+    for bad in (None, "not a dict", 42, [1, 2]):
+        result = check_gap_integrity(bad)
+        assert result["passed"] is False
+        assert failed_checks(result) == ["artifact_shape"]
+
+
+def test_non_generalization_artifact_fails_structural_check():
+    for bad in ({"composite_mean": 0.6}, {"per_repo": []}, {}):
+        result = check_gap_integrity(bad)
+        assert result["passed"] is False
+        assert "is_generalization" in failed_checks(result)
+
+
+def test_malformed_partition_types_do_not_crash():
+    weird = {
+        "tuned": "broken",
+        "held_out": {"composite_mean": 0.5, "scored_repos": 1},
+        "generalization_gap": 0.1,
+    }
+    result = check_gap_integrity(weird)
+    assert result["passed"] is False
+    assert "is_generalization" in failed_checks(result)
+
+
+def test_non_numeric_gap_or_scored_counts_fail_explicitly():
+    weird = {
+        "tuned": {"composite_mean": 0.6, "scored_repos": "two"},
+        "held_out": {"composite_mean": 0.5, "scored_repos": 1},
+        "generalization_gap": "wide",
+    }
+    result = check_gap_integrity(weird)
+    assert result["passed"] is False
+    assert "gap_absent_when_unscored" in failed_checks(result)
+
+
+def test_every_check_is_reported_even_when_several_fail():
+    result = check_gap_integrity(_report(gap=0.99, tuned_scored=0))
+    assert len(result["checks"]) == 6
+
+
+def test_integrity_headline_reports_consistent_and_inconsistent():
+    assert "CONSISTENT" in integrity_headline(check_gap_integrity(_report()))
+    assert "INCONSISTENT" in integrity_headline(check_gap_integrity(_report(gap=0.99)))
+
+
+def test_integrity_headline_survives_non_list_checks(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.gap_integrity"):
+        line = integrity_headline({"checks": 42, "passed": False})
+    assert line == "gap integrity: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_check_gap_integrity_does_not_mutate_the_report():
+    report = _report()
+    snapshot = copy.deepcopy(report)
+    check_gap_integrity(report)
+    assert report == snapshot
+
+
+def test_failed_checks_helper_is_robust():
+    assert failed_checks({}) == []
+    assert failed_checks("not a dict") == []
+    assert failed_checks(check_gap_integrity(_report(gap=0.99))) == ["gap_matches_partitions"]
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.gap_integrity", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_strict_passes_for_consistent_artifact(tmp_path):
+    path = tmp_path / "good.json"
+    path.write_text(json.dumps(_report()), encoding="utf-8")
+    result = _run_cli(str(path), "--strict")
+    assert result.returncode == 0
+    assert "CONSISTENT" in result.stderr
+    assert json.loads(result.stdout)["passed"] is True
+
+
+def test_cli_strict_exits_nonzero_on_inconsistent(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(_report(gap=0.99)), encoding="utf-8")
+    result = _run_cli(str(path), "--strict")
+    assert result.returncode == 1
+    assert "INCONSISTENT" in result.stderr
+
+
+def test_cli_reports_clean_error_for_missing_file(tmp_path):
+    missing = tmp_path / "missing.json"
+    result = _run_cli(str(missing), "--strict")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "No such file" in result.stderr
+
+
+def test_cli_reports_clean_error_for_non_object_artifact(tmp_path):
+    path = tmp_path / "array.json"
+    path.write_text(json.dumps([1, 2]), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "broken.json"
+    path.write_text("{not json", encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_default_tolerance_is_zero():
+    assert DEFAULT_TOLERANCE == 0.0

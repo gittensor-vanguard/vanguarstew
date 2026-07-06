@@ -7,9 +7,12 @@ not on naming the exact PRs that happened.
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from agent.context import context_for_agent
+
+logger = logging.getLogger(__name__)
 
 # Generic verbs / queue words dropped before matching a plan item to a PR, so the match
 # keys on the real subject ("loader race") not the framing ("review the PR to fix ...").
@@ -111,6 +114,8 @@ def _pr_queue(context: dict) -> list:
 
 
 def _significant_tokens(text: str) -> set:
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
     return {
         t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
         if len(t) > 2 and t not in _STOPWORDS
@@ -247,6 +252,29 @@ def _normalize_text_field(value) -> str:
     return str(value).strip()
 
 
+def _normalize_files(value) -> list:
+    """Coerce ``files`` to the documented ``list[str]`` contract."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        path = value.strip()
+        return [path] if path else []
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            if item is None:
+                continue
+            path = item.strip() if isinstance(item, str) else str(item).strip()
+            if path:
+                out.append(path)
+        return out
+    logger.warning(
+        "plan: LLM returned a non-list files field (%s: %r); dropping",
+        type(value).__name__, value,
+    )
+    return []
+
+
 def _normalize_plan_item(item) -> dict | None:
     """Coerce one LLM plan item onto the documented shape, or drop it."""
     if not isinstance(item, dict):
@@ -271,15 +299,34 @@ def _normalize_plan_item(item) -> dict | None:
         normalized["rationale"] = rationale
     if theme:
         normalized["theme"] = theme
-    for key in ("restates_pr", "files"):
-        if key in item:
-            normalized[key] = item[key]
+    files = _normalize_files(item.get("files"))
+    if files:
+        normalized["files"] = files
+    if "restates_pr" in item:
+        normalized["restates_pr"] = item["restates_pr"]
     return normalized
+
+
+def _plan_list(plan, field: str = "plan") -> list:
+    """Return ``plan`` when it is a list; otherwise treat as no plan items.
+
+    A truthy non-list must not reach ``for item in plan`` or malformed LLM / caller input
+    aborts queue reconciliation (#545).
+    """
+    if isinstance(plan, list):
+        return plan
+    if plan is not None:
+        logger.warning(
+            "planner: %s is %s, not a list; treating as empty",
+            field,
+            type(plan).__name__,
+        )
+    return []
 
 
 def _normalize_plan(plan) -> list:
     out = []
-    for item in plan or []:
+    for item in _plan_list(plan):
         normalized = _normalize_plan_item(item)
         if normalized is not None:
             out.append(normalized)
@@ -340,6 +387,8 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
 
 
 def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
+    if not isinstance(context, dict):
+        return _offline_plan_stub({}, n)
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
@@ -353,7 +402,8 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     stub = _offline_plan_stub(context, n)
     plan = llm.chat_json(SYSTEM, user, stub=stub)
     if isinstance(plan, dict):  # tolerate {"plan": [...]}
-        plan = plan.get("plan") or plan.get("actions") or []
+        wrapped = _plan_list(plan.get("plan"), "plan")
+        plan = wrapped or _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
     return reconcile_plan_with_queue(plan, context, n)
 

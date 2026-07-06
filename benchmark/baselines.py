@@ -1,6 +1,6 @@
 """Reference baseline maintainers — the opponents a challenger is judged against.
 
-The pairwise judge only means something relative to an opponent. Three are provided:
+The pairwise judge only means something relative to an opponent. Four are provided:
 
 - ``empty``     — proposes nothing concrete. The floor: any real plan should beat it.
 - ``heuristic`` — a deterministic, LLM-free maintainer that extrapolates the repo's own
@@ -13,6 +13,10 @@ The pairwise judge only means something relative to an opponent. Three are provi
                   schedules the review queue before unrelated greenfield work. On a repo with a
                   live queue it is the hardest bar; with no queue it degrades to exactly
                   ``heuristic``, so it is never a weaker opponent.
+- ``stability_first`` — like ``heuristic`` but **reorders** the same candidate actions by a
+                  fixed stability priority: bugfix/refactor before release, release before
+                  feature/docs, triage last. Models a conservative maintainer who stabilizes
+                  before shipping greenfield work.
 
 Each baseline exposes the same shape as the agent's ``solve`` output (philosophy + plan +
 rationale), so it can flow through ``_submission`` and the judge unchanged. Select one by
@@ -69,6 +73,23 @@ def _issue_title(issue) -> str:
     return title.strip() if isinstance(title, str) else ""
 
 
+def _baseline_list(items, field: str) -> list:
+    """Return ``items`` when it is a list; otherwise treat as no entries.
+
+    A truthy non-list must not reach ``for item in items`` or malformed frozen context
+    aborts the heuristic baseline replay path (#515).
+    """
+    if isinstance(items, list):
+        return items
+    if items is not None:
+        logger.warning(
+            "heuristic baseline: %s is %s, not a list; treating as empty",
+            field,
+            type(items).__name__,
+        )
+    return []
+
+
 def _commit_subject(commit) -> str:
     """Return a commit's ``subject`` when the entry is a dict; else empty.
 
@@ -101,29 +122,39 @@ def _infer_kind(text: str) -> str:
 
 
 def _commit_kinds(context: dict) -> Counter:
-    return Counter(_infer_kind(_commit_subject(c)) for c in context.get("recent_commits") or [])
+    return Counter(
+        _infer_kind(_commit_subject(c))
+        for c in _baseline_list(context.get("recent_commits"), "recent_commits")
+    )
 
 
 def heuristic_philosophy(context: dict) -> dict:
+    if not isinstance(context, dict):
+        context = {}
     kinds = _commit_kinds(context)
     dominant = kinds.most_common(1)[0][0] if kinds else "triage"
-    n_issues = len(context.get("open_issues") or [])
+    n_issues = len(_baseline_list(context.get("open_issues"), "open_issues"))
     return {
         "summary": f"Recent activity is dominated by {dominant} work; "
                    f"{n_issues} open issue(s) await triage.",
         "values": [k for k, _ in kinds.most_common(3)] or ["triage"],
         "merge_bar": "inferred from recent commit patterns (no explicit signal)",
         "direction": f"continue {dominant}-oriented work and clear the issue backlog",
-        "evidence": [_commit_subject(c) for c in (context.get("recent_commits") or [])[:5]],
+        "evidence": [
+            _commit_subject(c)
+            for c in _baseline_list(context.get("recent_commits"), "recent_commits")[:5]
+        ],
     }
 
 
 def heuristic_plan(context: dict, n: int = 5) -> list:
     """Extrapolate recent behavior: address open issues, then continue dominant themes."""
+    if not isinstance(context, dict):
+        context = {}
     items = []
 
     # 1. The backlog the maintainer can see right now.
-    for issue in context.get("open_issues") or []:
+    for issue in _baseline_list(context.get("open_issues"), "open_issues"):
         title = _issue_title(issue)
         if not title:
             continue
@@ -144,8 +175,10 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
         })
 
     # 3. If the repo has been cutting releases, expect another.
-    if any(_infer_kind(_commit_subject(c)) == "release"
-           for c in context.get("recent_commits") or []):
+    if any(
+        _infer_kind(_commit_subject(c)) == "release"
+        for c in _baseline_list(context.get("recent_commits"), "recent_commits")
+    ):
         items.append({
             "title": "Prepare the next release",
             "kind": "release",
@@ -177,8 +210,10 @@ def _review_queue_items(context: dict, limit: int) -> list:
     PR with a usable title becomes one concrete triage item, capped at ``limit``. Malformed or
     titleless PR entries are skipped.
     """
+    if not isinstance(context, dict):
+        context = {}
     items = []
-    for pr in context.get("open_prs") or []:
+    for pr in _baseline_list(context.get("open_prs"), "open_prs"):
         title = _pr_title(pr)
         if not title:
             continue
@@ -193,6 +228,34 @@ def _review_queue_items(context: dict, limit: int) -> list:
         if limit is not None and len(items) >= limit:
             break
     return items
+
+
+# Stability-first tier: lower rank sorts earlier. A stable sort preserves heuristic order
+# within each tier so this is a pure reprioritization of the same action set.
+_STABILITY_KIND_RANK = {
+    "bugfix": 0,
+    "refactor": 0,
+    "release": 1,
+    "feature": 2,
+    "docs": 2,
+    "dep": 2,
+    "triage": 3,
+}
+
+
+def _stability_rank(kind: str) -> int:
+    return _STABILITY_KIND_RANK.get(kind, 3)
+
+
+def stability_first_plan(context: dict, n: int = 5) -> list:
+    """Reprioritize the heuristic candidate set: stabilize before greenfield.
+
+    Takes the same actions :func:`heuristic_plan` would propose for ``n``, then stable-sorts
+    them: bugfix/refactor first, release after stabilization but before features/docs, triage
+    last. Nothing is added or dropped — only the order changes.
+    """
+    items = heuristic_plan(context, n)
+    return sorted(items, key=lambda item: _stability_rank(item.get("kind", "triage")))
 
 
 def queue_first_plan(context: dict, n: int = 5) -> list:
@@ -224,7 +287,9 @@ def queue_first_solve(repo_path=None, request="", context=None, n=5, **_kw) -> d
     """
     ctx = context if context is not None else load_context(repo_path)
     plan = queue_first_plan(ctx, n)
-    n_prs = sum(1 for pr in (ctx.get("open_prs") or []) if _pr_title(pr))
+    n_prs = sum(
+        1 for pr in _baseline_list(ctx.get("open_prs"), "open_prs") if _pr_title(pr)
+    )
     return {
         "philosophy": heuristic_philosophy(ctx),
         "plan": plan,
@@ -240,7 +305,7 @@ def heuristic_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dic
     """Deterministic reference maintainer derived from the repo's own recent patterns."""
     ctx = context if context is not None else load_context(repo_path)
     plan = heuristic_plan(ctx, n)
-    n_issues = len(ctx.get("open_issues") or [])
+    n_issues = len(_baseline_list(ctx.get("open_issues"), "open_issues"))
     return {
         "philosophy": heuristic_philosophy(ctx),
         "plan": plan,
@@ -252,10 +317,32 @@ def heuristic_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dic
     }
 
 
+def stability_first_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dict:
+    """A reference maintainer that stabilizes (bugfix/refactor) before greenfield work.
+
+    Proposes the same concrete actions as ``heuristic`` but reorders them by a fixed
+    stability priority so bugfix/refactor precede feature/docs and release sits after
+    stabilization but before features.
+    """
+    ctx = context if context is not None else load_context(repo_path)
+    plan = stability_first_plan(ctx, n)
+    n_issues = len(_baseline_list(ctx.get("open_issues"), "open_issues"))
+    return {
+        "philosophy": heuristic_philosophy(ctx),
+        "plan": plan,
+        "action": "plan",
+        "rationale": (
+            f"stability-first baseline: stabilize before greenfield across "
+            f"{n_issues} open issue(s) and recent-theme momentum"
+        ),
+    }
+
+
 BASELINES = {
     "empty": empty_solve,
     "heuristic": heuristic_solve,
     "queue_first": queue_first_solve,
+    "stability_first": stability_first_solve,
 }
 DEFAULT_BASELINE = "empty"
 

@@ -11,7 +11,9 @@ if ROOT not in sys.path:
 from benchmark.score import (  # noqa: E402
     _COMMIT_KIND,
     _PLAN_KIND,
+    _files_list,
     _meaningful_overlap,
+    _plan_file_paths,
     _plan_list,
     _plan_tokens,
     _releases_list,
@@ -981,6 +983,24 @@ def test_plan_tokens_skips_non_string_files_entries():
     assert "123" not in toks
 
 
+def test_plan_file_paths_wraps_scalar_string():
+    assert _plan_file_paths("core/loader.py") == ["core/loader.py"]
+    assert _plan_file_paths({"bad": True}) == []
+
+
+def test_plan_tokens_honors_scalar_files_without_char_split():
+    toks = _plan_tokens([{"title": "loader", "files": "core/loader.py"}])
+    assert "core" in toks
+    assert "loader" in toks
+    assert "c" not in toks  # would appear if the string were iterated char-by-char
+
+
+def test_module_recall_honors_scalar_plan_files():
+    revealed = [{"subject": "fix loader", "files": ["core/loader.py"]}]
+    plan = [{"title": "unrelated", "kind": "bugfix", "files": "core/loader.py"}]
+    assert module_recall(plan, revealed)["module_recall"] == 1.0
+
+
 def test_module_recall_survives_non_string_paths_in_plan_and_revealed():
     plan = [{"title": "loader", "files": [None, "agent/plan.py"]}]
     revealed = [{"subject": "ship it", "files": [42, "agent/foo.py", "benchmark/x.py"]}]
@@ -996,3 +1016,59 @@ def test_objective_score_survives_non_string_file_paths():
     score = objective_score(plan, revealed)
     assert score["module_recall"] == 1.0
     assert score["kind_recall"] == 1.0
+
+
+# --- #587: truthy non-list files must not abort module recall scoring ------------------
+
+_MALFORMED_FILES = [42, 3.14, True, {"path": "agent/x.py"}, "not a list"]
+
+
+def test_files_list_accepts_only_real_lists():
+    rows = ["agent/foo.py", "benchmark/x.py"]
+    for bad in _MALFORMED_FILES:
+        assert _files_list(bad, "plan.files") == [], bad
+    assert _files_list(rows, "plan.files") == rows
+    assert _files_list(None, "plan.files") == []
+
+
+def test_plan_tokens_survives_non_list_files(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.score"):
+        toks = _plan_tokens([{"title": "loader", "files": 42}])
+    assert toks == _tokens("loader")
+    assert any("plan.files is int" in r.message for r in caplog.records)
+
+
+def test_changed_modules_survives_non_list_revealed_files(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.score"):
+        assert changed_modules([{"files": 42}, {"files": ["agent/foo.py"]}]) == {"agent"}
+    assert any("revealed.files is int" in r.message for r in caplog.records)
+
+
+def test_objective_score_survives_non_list_files_field():
+    revealed = [{"subject": "feat: core work", "files": 42}]
+    plan = [{"title": "agent loader", "kind": "feat", "files": 42}]
+    score = objective_score(plan, revealed)
+    assert score["module_recall"] == 0.0
+    assert score["kind_recall"] == 1.0
+
+
+def test_objective_component_handles_non_dict():
+    from benchmark.score import objective_component
+    assert objective_component(None) == 0.0
+    assert objective_component(42) == 0.0
+
+def test_objective_component_handles_non_numeric_recall():
+    from benchmark.score import objective_component
+    assert objective_component({"module_recall": "not-a-number"}) == 0.0
+    assert objective_component({"weighted_module_recall": [1,2,3]}) == 0.0
+
+def test_bump_level_handles_non_tuple():
+    assert bump_level(None, (1,0,0)) is None
+    assert bump_level("str", (1,0,0)) is None
+    assert bump_level((1,0,0), None) is None
+    assert bump_level((1,), (1,0,0)) is None
+
+def test_composite_score_handles_non_numeric_weights():
+    from benchmark.score import composite_score
+    assert composite_score("tie", {"module_recall": 0.5}, w_judge=None) >= 0
+    assert composite_score("tie", {"module_recall": 0.5}, w_objective="str") >= 0

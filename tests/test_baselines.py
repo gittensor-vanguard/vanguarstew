@@ -18,12 +18,14 @@ if ROOT not in sys.path:
 
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
-from benchmark.baselines import (  # noqa: E402
+from benchmark.baselines import (
     BASELINES,
+    _baseline_list,
     _commit_subject,
     _infer_kind,
     _issue_title,
     _pr_title,
+    _review_queue_items,  # noqa: E402
     empty_solve,
     get_baseline,
     heuristic_philosophy,
@@ -31,6 +33,8 @@ from benchmark.baselines import (  # noqa: E402
     heuristic_solve,
     queue_first_plan,
     queue_first_solve,
+    stability_first_plan,
+    stability_first_solve,
 )
 from benchmark.runner import run_replay  # noqa: E402
 from benchmark.score import is_release_subject  # noqa: E402
@@ -55,9 +59,86 @@ def test_registry_selection_and_unknown():
     assert get_baseline("empty") is empty_solve
     assert get_baseline("heuristic") is heuristic_solve
     assert get_baseline("queue_first") is queue_first_solve
-    assert set(BASELINES) >= {"empty", "heuristic", "queue_first"}
+    assert get_baseline("stability_first") is stability_first_solve
+    assert set(BASELINES) >= {"empty", "heuristic", "queue_first", "stability_first"}
     with pytest.raises(ValueError):
         get_baseline("does-not-exist")
+
+
+# --- stability_first baseline: stabilize bugfix/refactor before greenfield --------------------
+
+def test_stability_first_same_action_set_as_heuristic():
+    """Reprioritization only: nothing added or dropped relative to heuristic_plan."""
+    for n in range(1, 10):
+        heuristic = heuristic_plan(CTX, n)
+        stable = stability_first_plan(CTX, n)
+        assert len(heuristic) == len(stable)
+        assert sorted(heuristic, key=lambda i: i["title"]) == sorted(
+            stable, key=lambda i: i["title"]
+        )
+
+
+def test_stability_first_prioritizes_bugfix_and_refactor_before_features():
+    plan = stability_first_plan(CTX, n=5)
+    kinds = [item["kind"] for item in plan]
+    stabilization = {"bugfix", "refactor"}
+    greenfield = {"feature", "docs", "dep"}
+    last_stab = max((i for i, k in enumerate(kinds) if k in stabilization), default=-1)
+    first_green = min((i for i, k in enumerate(kinds) if k in greenfield), default=len(kinds))
+    assert last_stab < first_green
+
+
+def test_stability_first_release_after_stabilization_before_features():
+    plan = stability_first_plan(CTX, n=8)
+    kinds = [item["kind"] for item in plan]
+    assert "release" in kinds
+    release_idx = kinds.index("release")
+    assert all(k in {"bugfix", "refactor"} for k in kinds[:release_idx])
+    assert all(k in {"feature", "docs", "dep", "release", "triage"} for k in kinds[release_idx:])
+    greenfield = {"feature", "docs", "dep"}
+    if any(k in greenfield for k in kinds):
+        assert release_idx < min(i for i, k in enumerate(kinds) if k in greenfield)
+
+
+def test_stability_first_triage_sorts_last():
+    ctx = {
+        "open_issues": [
+            {"title": "Mystery widget regression"},
+            {"title": "Fix crash in loader"},
+        ],
+        "recent_commits": [],
+    }
+    stable = stability_first_plan(ctx, n=5)
+    kinds = [item["kind"] for item in stable]
+    if "triage" in kinds:
+        assert kinds.index("triage") > kinds.index("bugfix")
+
+
+def test_stability_first_preserves_within_tier_order():
+    heuristic = heuristic_plan(CTX, n=5)
+    stable = stability_first_plan(CTX, n=5)
+    for kind in {"bugfix", "refactor", "feature", "docs", "release", "dep", "triage"}:
+        h_titles = [i["title"] for i in heuristic if i["kind"] == kind]
+        s_titles = [i["title"] for i in stable if i["kind"] == kind]
+        assert h_titles == s_titles
+
+
+def test_stability_first_solve_is_well_formed():
+    out = stability_first_solve(context=CTX, n=5)
+    assert isinstance(out["philosophy"], dict) and isinstance(out["plan"], list)
+    assert out["action"] == "plan"
+    assert "stability-first baseline" in out["rationale"]
+
+
+def test_stability_first_caps_at_horizon():
+    plan = stability_first_plan(CTX, n=3)
+    assert len(plan) == 3
+    assert len(heuristic_plan(CTX, n=3)) == 3
+
+
+def test_stability_first_tolerates_malformed_context():
+    out = stability_first_solve(context={"open_issues": 42, "recent_commits": []}, n=3)
+    assert out["plan"] == []
 
 
 # --- queue_first baseline: clear the open-PR review queue before greenfield work ------------
@@ -298,3 +379,56 @@ def test_replay_selects_baseline_and_tallies():
         assert res["tasks"] >= 1
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+# --- #515: truthy non-list context containers must not abort baselines -----------
+
+_MALFORMED_LIST_FIELDS = [42, 3.14, True, {"title": "Fix bug"}, "not a list"]
+
+
+def test_baseline_list_accepts_only_real_lists():
+    rows = [{"subject": "Fix bug"}]
+    for bad in _MALFORMED_LIST_FIELDS:
+        assert _baseline_list(bad, "recent_commits") == [], bad
+    assert _baseline_list(rows, "recent_commits") == rows
+    assert _baseline_list(None, "open_issues") == []
+
+
+def test_heuristic_plan_survives_non_list_recent_commits_and_open_issues():
+    for field, bad in (("recent_commits", 42), ("open_issues", 42)):
+        ctx = {"recent_commits": [], "open_issues": [], field: bad}
+        assert heuristic_plan(ctx, 5) == [], field
+        assert heuristic_philosophy(ctx)["evidence"] == [], field
+
+
+def test_heuristic_plan_honors_valid_rows_when_one_list_field_is_malformed():
+    ctx = {
+        "recent_commits": [{"subject": "Fix crash in parser"}],
+        "open_issues": 42,
+    }
+    plan = heuristic_plan(ctx, 5)
+    assert any(item["kind"] == "bugfix" for item in plan)
+    assert heuristic_philosophy(ctx)["evidence"] == ["Fix crash in parser"]
+
+
+def test_queue_first_plan_survives_non_list_open_prs():
+    ctx = {"open_prs": 42, "recent_commits": [], "open_issues": []}
+    assert queue_first_plan(ctx, 3) == []
+
+
+def test_baseline_list_logs_warning_for_non_list_field(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.baselines"):
+        assert _baseline_list(42, "open_issues") == []
+    assert any("open_issues is int" in r.message for r in caplog.records)
+
+
+def test_heuristic_functions_handle_non_dict_context():
+    """heuristic_philosophy and heuristic_plan must not crash on non-dict context."""
+    assert heuristic_philosophy(None)["summary"]
+    assert heuristic_philosophy("not a dict")["summary"]
+    assert heuristic_plan(None, 3) == []
+    assert heuristic_plan(42, 3) == []
+
+
+def test_review_queue_items_handles_non_dict_context():
+    assert _review_queue_items(None, 3) == []
+    assert _review_queue_items("str", 3) == []

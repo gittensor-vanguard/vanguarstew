@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -75,6 +76,32 @@ def test_compare_eval_artifacts_reports_per_repo_deltas():
     assert by_repo["/b"]["composite_mean"]["delta"] == 0.0
 
 
+def test_compare_eval_artifacts_tolerates_non_list_per_repo():
+    # A malformed artifact whose per_repo is not a list must not crash the diff (#464); it is
+    # treated as an empty repo table, so the top-level composite_mean still diffs.
+    for bad in (42, True, {"repo_path": "/a"}, "rows"):
+        diff = compare_eval_artifacts({"per_repo": bad, "composite_mean": 0.5},
+                                      {"per_repo": [], "composite_mean": 0.6})
+        assert diff["composite_mean"]["delta"] == 0.1
+        assert "per_repo" not in diff
+        # symmetric: a non-list on the candidate side is equally tolerated
+        diff = compare_eval_artifacts({"per_repo": [], "composite_mean": 0.5},
+                                      {"per_repo": bad, "composite_mean": 0.6})
+        assert diff["composite_mean"]["delta"] == 0.1
+        assert "per_repo" not in diff
+
+
+def test_compare_eval_artifacts_skips_non_dict_per_repo_rows():
+    # A non-dict row inside the per_repo list is skipped, while well-formed rows still diff.
+    baseline = {"composite_mean": 0.5, "per_repo": ["junk", {"repo_path": "/a",
+                                                             "composite_mean": 0.4, "tasks": 2}]}
+    candidate = {"composite_mean": 0.55, "per_repo": [{"repo_path": "/a",
+                                                       "composite_mean": 0.5, "tasks": 2}, 99]}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert [row["repo"] for row in diff["per_repo"]] == ["/a"]
+    assert diff["per_repo"][0]["composite_mean"]["delta"] == 0.1
+
+
 def test_comparison_headline_describes_direction():
     diff = {"composite_mean": {"baseline": 0.4, "candidate": 0.55, "delta": 0.15}}
     assert "up +0.150" in comparison_headline(diff)
@@ -84,6 +111,57 @@ def test_load_artifact_reads_json_file(tmp_path):
     path = tmp_path / "result.json"
     path.write_text(json.dumps({"composite_mean": 0.42}), encoding="utf-8")
     assert load_artifact(str(path))["composite_mean"] == 0.42
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.compare_eval", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(good), str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(good), str(bad))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(good), str(invalid))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_still_compares_well_formed_artifacts(tmp_path):
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps({"composite_mean": 0.6}), encoding="utf-8")
+    result = _run_cli(str(baseline), str(candidate))
+    assert result.returncode == 0
+    assert "compare_eval" in result.stderr
+    diff = json.loads(result.stdout)
+    assert diff["composite_mean"]["baseline"] == 0.5
+    assert diff["composite_mean"]["candidate"] == 0.6
 
 
 def test_repo_key_handles_explicit_null_freeze_commit():
@@ -183,6 +261,34 @@ def test_generalization_diff_tolerates_missing_and_none_partition_scores():
     assert gen["tuned"]["composite_mean"]["delta"] is None
     assert gen["held_out"]["composite_mean"]["delta"] == 0.1
     assert gen["generalization_gap"]["delta"] is None
+
+
+def test_generalization_diff_treats_placeholder_zero_on_unscored_partition_as_unavailable():
+    # scored_repos: 0 carries composite_mean: 0.0 as a placeholder — not a real score.
+    baseline = {"repo_set": "foo.json",
+                "tuned": {"composite_mean": 0.0, "scored_repos": 0},
+                "held_out": {"composite_mean": 0.5, "scored_repos": 1},
+                "generalization_gap": None}
+    candidate = {"repo_set": "foo.json",
+                 "tuned": {"composite_mean": 0.6, "scored_repos": 1},
+                 "held_out": {"composite_mean": 0.5, "scored_repos": 1},
+                 "generalization_gap": 0.1}
+    diff = compare_eval_artifacts(baseline, candidate)
+    gen = diff["generalization"]
+    assert gen["tuned"]["composite_mean"] == {
+        "baseline": None,
+        "candidate": 0.6,
+        "delta": None,
+    }
+    assert "tuned +0.600" not in comparison_headline(diff)
+    assert "tuned n/a" in comparison_headline(diff)
+
+
+def test_compare_eval_treats_unscored_multi_repo_placeholder_as_unavailable():
+    baseline = {"composite_mean": 0.0, "scored_repos": 0, "repos": 2, "skipped": 2}
+    candidate = {"composite_mean": 0.6, "scored_repos": 2, "repos": 2, "skipped": 0}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_mean"] == {"baseline": None, "candidate": 0.6, "delta": None}
 
 
 def test_mixed_shapes_fall_back_to_standard_without_crashing():

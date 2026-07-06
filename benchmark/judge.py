@@ -19,10 +19,14 @@ mirroring ninja's judge.
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
+from collections.abc import Iterable
 
 from benchmark.score import _plan_list
+
+logger = logging.getLogger(__name__)
 
 _WINNER = re.compile(r'"?winner"?\s*[:=]\s*"?(A|B|tie)\b', re.I)
 
@@ -52,6 +56,8 @@ def _parse_winner(text: str) -> str:
 
 
 def _render(submission: dict) -> str:
+    if not isinstance(submission, dict):
+        return json.dumps({"error": "non-dict submission"})
     return json.dumps({
         "philosophy": submission.get("philosophy"),
         "plan": submission.get("plan"),
@@ -77,6 +83,15 @@ def _text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _has_structured_files(files) -> bool:
+    """True when ``files`` names at least one path (list or scalar string)."""
+    if isinstance(files, str):
+        return bool(files.strip())
+    if isinstance(files, list):
+        return any(isinstance(f, str) and f.strip() for f in files)
+    return False
+
+
 def _item_substance(item) -> int:
     """Substance weight of a single plan item.
 
@@ -100,7 +115,7 @@ def _item_substance(item) -> int:
     if isinstance(item, dict):
         if _text(item.get("kind")):
             weight += 1
-        if item.get("files"):
+        if _has_structured_files(item.get("files")):
             weight += 1
         if _text(item.get("rationale")):
             weight += 1
@@ -134,6 +149,8 @@ def _judge_order(context: dict, first, second, revealed, llm) -> str:
 
     Returns 'first', 'second', or 'tie' — which of the two shown positions the judge picked.
     """
+    if not isinstance(context, dict):
+        context = {}
     user = (
         f"Repository frozen at: {json.dumps(context.get('frozen_at'))}\n\n"
         f"SUBMISSION ONE:\n{_render(first)}\n\n"
@@ -199,6 +216,37 @@ def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng
     return winner
 
 
+def _order_categories_list(categories) -> list:
+    """Return judge-order category strings when ``categories`` is a proper container.
+
+    ``run_replay`` passes a generator of per-task ``judge_order`` values, so real iterables
+    (generators, tuples) are accepted. Scalars and strings must not be iterated — a bare
+    ``"agree"`` would count characters, and ``42`` raises ``TypeError``.
+    """
+    if isinstance(categories, list):
+        return categories
+    if isinstance(categories, tuple):
+        return list(categories)
+    if categories is None:
+        return []
+    if isinstance(categories, (str, bytes, dict, int, float, bool)):
+        logger.warning(
+            "judge: judge_order categories is %s, not a list; treating as empty",
+            type(categories).__name__,
+        )
+        return []
+    if isinstance(categories, Iterable):
+        try:
+            return list(categories)
+        except TypeError:
+            pass
+    logger.warning(
+        "judge: judge_order categories is %s, not a list; treating as empty",
+        type(categories).__name__,
+    )
+    return []
+
+
 def summarize_judge_orders(categories) -> dict:
     """Aggregate order-sensitivity telemetry for replay artifacts.
 
@@ -207,7 +255,7 @@ def summarize_judge_orders(categories) -> dict:
     not as evidence that challenger and baseline are closer in quality.
     """
     stats = {key: 0 for key in ("agree", "disagree", "tie", "single", "offline")}
-    for category in categories:
+    for category in _order_categories_list(categories):
         if category in stats:
             stats[category] += 1
     dual_order_tasks = stats["agree"] + stats["disagree"] + stats["tie"]

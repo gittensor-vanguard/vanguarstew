@@ -103,6 +103,9 @@ python -m scripts.compare_eval baseline.json candidate.json
 
 # render a saved --out artifact as a readable Markdown report
 python -m scripts.report result.json
+
+# rank several saved --out artifacts (pick the best candidate agent)
+python -m scripts.leaderboard agent_a=run_a.json agent_b=run_b.json
 ```
 
 > **Dev-only backend:** [`tools/codex_llm.py`](tools/codex_llm.py) can drive the benchmark and

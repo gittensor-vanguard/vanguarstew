@@ -7,7 +7,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.runner import WEIGHT_SWEEP_GRID, weight_sweep  # noqa: E402
+from benchmark.runner import (  # noqa: E402
+    WEIGHT_SWEEP_GRID,
+    _freeze_window_dict,
+    _rows_list,
+    _sweep_rows,
+    weight_sweep,
+)
 from benchmark.score import composite_score  # noqa: E402
 
 # A tiny per-task shape mirroring run_replay's `rows`: a judge `winner` plus an `objective`
@@ -70,3 +76,86 @@ def test_weight_sweep_empty_rows_is_zero_not_a_crash():
         assert row["composite_mean"] == 0.0
     # Rows with an unrecognized winner contribute nothing rather than raising.
     assert weight_sweep([{"winner": "???", "objective": {}}])[0]["composite_mean"] == 0.0
+
+
+# --- #561: a non-list rows container must not abort weight_sweep --------------------
+
+_MALFORMED_ROWS = [42, 3.14, True, {"winner": "challenger"}, "not a list"]
+
+
+def test_sweep_rows_accepts_only_real_lists():
+    for bad in _MALFORMED_ROWS:
+        assert _sweep_rows(bad) == [], bad
+    assert _sweep_rows(ROWS) == ROWS
+    assert _sweep_rows(None) == []
+
+
+def test_weight_sweep_survives_non_list_rows():
+    for bad in _MALFORMED_ROWS:
+        sweep = weight_sweep(bad)
+        assert len(sweep) == len(WEIGHT_SWEEP_GRID), bad
+        assert all(row["composite_mean"] == 0.0 for row in sweep), bad
+
+
+def test_weight_sweep_logs_warning_for_non_list_rows(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        sweep = weight_sweep(42)
+    assert all(row["composite_mean"] == 0.0 for row in sweep)
+    assert any("rows is int" in r.message for r in caplog.records)
+
+
+# --- #597: non-list replay rows must not abort multi-repo judge aggregation -----------
+
+def test_rows_list_accepts_only_real_lists():
+    for bad in _MALFORMED_ROWS:
+        assert _rows_list(bad, "replay rows") == [], bad
+    assert _rows_list(ROWS, "replay rows") == ROWS
+    assert _rows_list(None, "replay rows") == []
+
+
+def test_multi_repo_judge_order_collection_survives_non_list_rows(caplog):
+    import logging
+
+    res = {"rows": 42, "tasks": 1, "composite_mean": 0.5}
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        orders = [
+            row.get("judge_order")
+            for row in _rows_list(res.get("rows"), "replay rows")
+        ]
+    assert orders == []
+    assert any("replay rows is int" in r.message for r in caplog.records)
+
+
+# --- #643: truthy non-dict freeze_window must not abort multi-repo replay --------------
+
+_MALFORMED_FREEZE_WINDOWS = [42, 3.14, True, ["after"], "not a dict"]
+
+
+def test_freeze_window_dict_accepts_only_real_dicts():
+    good = {"min_history": 3, "rotation_seed": 5}
+    for bad in _MALFORMED_FREEZE_WINDOWS:
+        assert _freeze_window_dict(bad) == {}, bad
+    assert _freeze_window_dict(good) == good
+    assert _freeze_window_dict(None) == {}
+
+
+def test_freeze_window_dict_missing_key_emits_no_warning(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        assert _freeze_window_dict(None) == {}
+    assert not caplog.records
+
+
+def test_freeze_window_dict_warns_for_non_dict_value(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        merged = {
+            key: value
+            for key, value in _freeze_window_dict(42).items()
+        }
+    assert merged == {}
+    assert any("freeze_window is int" in r.message for r in caplog.records)

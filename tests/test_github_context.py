@@ -263,6 +263,29 @@ def test_frozen_at_date_tolerates_unusable_context():
     assert parsed is not None and parsed.year == 2023
 
 
+# --- #518: non-dict context must not abort enrich_context -----------------------------
+
+_MALFORMED_CONTEXTS = [42, 3.14, True, "not a dict", ["open_issues"], None]
+
+
+def test_frozen_at_date_tolerates_non_dict_context():
+    for bad in _MALFORMED_CONTEXTS:
+        assert gc._frozen_at_date(bad) is None, bad
+
+
+def test_enrich_context_returns_non_dict_context_unchanged():
+    for bad in _MALFORMED_CONTEXTS:
+        assert gc.enrich_context(bad, "/some/repo") is bad, bad
+
+
+def test_enrich_context_logs_warning_for_non_dict_context(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.github_context"):
+        assert gc.enrich_context(42, "/some/repo") == 42
+    assert any("context is int" in r.message for r in caplog.records)
+
+
 def test_enrich_context_tolerates_non_dict_frozen_at(monkeypatch):
     monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
     base = {"frozen_at": 123, "open_issues": []}

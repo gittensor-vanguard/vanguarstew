@@ -4,6 +4,7 @@ Covers the M2 addition: the judge weighs the decision process (philosophy + reas
 not just plan direction — so when plans are equal, sounder reasoning breaks the tie.
 """
 
+import logging
 import os
 import random
 import sys
@@ -18,8 +19,10 @@ from agent.llm import LLM  # noqa: E402
 from benchmark.judge import (  # noqa: E402
     _item_substance,
     _offline_rank,
+    _order_categories_list,
     _parse_winner,
     _plan_substance,
+    _render,
     build_judge_report,
     judge_verbose,
     pairwise_judge,
@@ -125,6 +128,14 @@ def test_plan_substance_normalizes_scalar_items_through_filler_check():
     }
     assert pairwise_judge({}, substance, fluff, [], llm) == "A"
     assert pairwise_judge({}, fluff, substance, [], llm) == "B"
+
+
+def test_plan_substance_counts_scalar_files_once():
+    assert _plan_substance([{"title": "fix loader", "kind": "bugfix", "files": "core/loader.py"}]) == 3
+
+
+def test_plan_substance_ignores_truthy_non_path_files():
+    assert _plan_substance([{"title": "fix loader", "kind": "bugfix", "files": 42}]) == 2
 
 
 def test_generic_filler_titles_do_not_outrank_concrete_plan():
@@ -243,6 +254,42 @@ def test_summarize_judge_orders_reports_disagreement_rate():
     assert summarize_judge_orders(["offline", "single"])["disagreement_rate"] is None
 
 
+# --- #592: invalid judge_order category containers must not abort telemetry ------------
+
+_MALFORMED_CATEGORIES = [42, 3.14, True, {"agree": 1}, "agree", b"agree"]
+_EMPTY_STATS = {
+    "agree": 0,
+    "disagree": 0,
+    "tie": 0,
+    "single": 0,
+    "offline": 0,
+    "dual_order_tasks": 0,
+    "disagreement_rate": None,
+}
+
+
+def test_order_categories_list_accepts_only_real_containers():
+    rows = ["agree", "disagree", "tie"]
+    for bad in _MALFORMED_CATEGORIES:
+        assert _order_categories_list(bad) == [], bad
+    assert _order_categories_list(rows) == rows
+    assert _order_categories_list(tuple(rows)) == rows
+    assert _order_categories_list(None) == []
+    assert _order_categories_list((r for r in rows)) == rows
+
+
+def test_summarize_judge_orders_survives_non_list_categories():
+    for bad in _MALFORMED_CATEGORIES:
+        assert summarize_judge_orders(bad) == _EMPTY_STATS, bad
+
+
+def test_summarize_judge_orders_logs_warning_for_non_list_categories(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge"):
+        stats = summarize_judge_orders(42)
+    assert stats == _EMPTY_STATS
+    assert any("categories is int" in r.message for r in caplog.records)
+
+
 def test_build_judge_report_summarizes_outcomes_and_disagreement():
     stats = summarize_judge_orders(["agree", "disagree", "tie", "single", "offline"])
     report = build_judge_report({"challenger": 4, "baseline": 2, "tie": 3}, stats)
@@ -336,3 +383,15 @@ def test_offline_rank_handles_non_dict_submissions():
     assert _offline_rank([]) == (0, 0, 0)
     # Normal submissions are unaffected.
     assert _offline_rank({"philosophy": {"summary": "good"}, "plan": [{"title": "fix"}], "rationale": "yes"})
+
+def test_render_handles_non_dict_submission():
+    """_render must not crash on non-dict submissions."""
+    assert "error" in _render(None)
+    assert "error" in _render("not a dict")
+
+def test_judge_order_handles_non_dict_context():
+    from agent.llm import LLM
+    from benchmark.judge import _judge_order
+    llm = LLM(api_key='offline')
+    assert _judge_order(None, {}, {}, [], llm) in ('first', 'second', 'tie')
+    assert _judge_order(42, {}, {}, [], llm) in ('first', 'second', 'tie')

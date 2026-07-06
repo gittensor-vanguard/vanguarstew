@@ -39,18 +39,31 @@ def main() -> None:
                     help="exit 1 if any consecutive drop exceeds the threshold (CI gating)")
     args = ap.parse_args()
 
-    series = [(os.path.basename(p), load_artifact(p)) for p in args.artifacts]
-    summary = trend(series, regression_threshold=args.threshold)
+    # OSError covers FileNotFoundError, PermissionError, and IsADirectoryError alike;
+    # json.JSONDecodeError is invalid JSON; ValueError is a valid-JSON non-object artifact.
+    # Same guard as the acceptance/promotion/repeatability/compare_eval/leaderboard/report CLIs.
+    try:
+        series = [(os.path.basename(p), load_artifact(p)) for p in args.artifacts]
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
 
-    print(trend_headline(summary), file=sys.stderr)
-    for point in summary["points"]:
-        delta = point["delta"]
-        delta_txt = f" ({delta:+.3f})" if isinstance(delta, (int, float)) and not isinstance(delta, bool) else ""
-        print(f"  {point['label']}: {_fmt(point['composite_mean'])}{delta_txt}", file=sys.stderr)
-    for reg in summary["regressions"]:
-        print(f"  REGRESSION {reg['from_label']} -> {reg['to_label']}: -{reg['drop']:.3f}", file=sys.stderr)
-
-    print(json.dumps(summary, indent=2))
+    # A loadable artifact can still be arbitrarily malformed inside (miner/CI-controlled
+    # content), so the analysis and rendering paths get the same clean-error treatment as
+    # loading -- a CI step must never see a raw traceback from a bad artifact.
+    try:
+        summary = trend(series, regression_threshold=args.threshold)
+        print(trend_headline(summary), file=sys.stderr)
+        for point in summary["points"]:
+            delta = point["delta"]
+            delta_txt = f" ({delta:+.3f})" if isinstance(delta, (int, float)) and not isinstance(delta, bool) else ""
+            print(f"  {point['label']}: {_fmt(point['composite_mean'])}{delta_txt}", file=sys.stderr)
+        for reg in summary["regressions"]:
+            print(f"  REGRESSION {reg['from_label']} -> {reg['to_label']}: -{reg['drop']:.3f}", file=sys.stderr)
+        print(json.dumps(summary, indent=2))
+    except (KeyError, TypeError, ValueError) as exc:
+        print(f"trend: cannot analyze artifacts: {exc!r}", file=sys.stderr)
+        sys.exit(1)
 
     if args.fail_on_regression and summary["regressions"]:
         print(f"trend: {len(summary['regressions'])} regression(s) exceed the threshold",

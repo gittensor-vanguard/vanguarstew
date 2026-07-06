@@ -95,6 +95,8 @@ def _normalize_philosophy(out: dict, stub: dict) -> dict:
 
 
 def infer_philosophy(context: dict, llm) -> dict:
+    if not isinstance(context, dict):
+        return {"summary": "offline stub philosophy", "values": ["triage"]}
     user = (
         "Infer the maintainer philosophy from this repository state.\n\n"
         f"{FEWSHOT}\n\n"

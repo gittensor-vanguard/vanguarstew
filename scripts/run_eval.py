@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
@@ -16,6 +17,8 @@ from benchmark.runner import (
     run_replay,
     weight_sweep,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def write_result_artifact(path: str, result: dict) -> None:
@@ -66,6 +69,23 @@ def check_score_floor(result: dict, fail_under: float | None) -> str | None:
     if score < fail_under:
         return f"score floor {fail_under}: composite_mean {score:.3f} below threshold"
     return None
+
+
+def _weight_sweep_rows(result: dict) -> list:
+    """Return ``weight_sweep`` rows when list-shaped; otherwise treat as no sweep output.
+
+    A truthy non-list in a loaded or malformed result must not abort stderr reporting
+    (#573).
+    """
+    rows = result.get("weight_sweep")
+    if isinstance(rows, list):
+        return rows
+    if rows is not None:
+        logger.warning(
+            "run_eval: weight_sweep is %s, not a list; skipping stderr sweep output",
+            type(rows).__name__,
+        )
+    return []
 
 
 def main() -> None:
@@ -150,7 +170,7 @@ def main() -> None:
         write_result_artifact(args.out, result)
     for line in result_summary_lines(result):
         print(line, file=sys.stderr)
-    for row in result.get("weight_sweep") or []:
+    for row in _weight_sweep_rows(result):
         print(f"  weights judge={row['w_judge']} objective={row['w_objective']} "
               f"-> composite_mean={row['composite_mean']}", file=sys.stderr)
     print(json.dumps(result, indent=2))

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import random
 import shutil
@@ -23,7 +24,7 @@ from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
 from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
-from benchmark.repo_set import RepoSetError, load_repo_set
+from benchmark.repo_set import RepoSetError, is_placeholder_source, load_repo_set
 from benchmark.score import (
     base_from_releases,
     composite_score,
@@ -32,6 +33,8 @@ from benchmark.score import (
     trajectory_overlap,
 )
 from benchmark.taskgen import generate_tasks
+
+logger = logging.getLogger(__name__)
 
 # Challenger-perspective judge outcome per row (mirrors score._JUDGE_OUTCOME, keyed by the
 # runner's decoded winner label): a win is 1.0, a tie 0.5, a loss 0.0.
@@ -54,6 +57,8 @@ baseline_solve = empty_solve
 
 def _submission(out: dict) -> dict:
     """The judged view of an agent's output: philosophy + plan + reasoning."""
+    if not isinstance(out, dict):
+        return {"philosophy": None, "plan": None, "rationale": None}
     return {
         "philosophy": out.get("philosophy"),
         "plan": out.get("plan"),
@@ -61,13 +66,9 @@ def _submission(out: dict) -> dict:
     }
 
 
-def _is_placeholder_source(source: str) -> bool:
-    return "OWNER/" in source
-
-
 def _materialize_repo_source(source: str, checkout_root: str | None) -> tuple[str, bool]:
     """Return a local repo path for a repo-set source plus whether it should be cleaned up."""
-    if _is_placeholder_source(source):
+    if is_placeholder_source(source):
         raise RepoSetError(
             f"repo-set source {source!r} is a placeholder (OWNER/...); "
             "copy the example config and replace placeholder sources with vetted repos"
@@ -179,6 +180,41 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
 WEIGHT_SWEEP_GRID = ((0.2, 0.8), (0.4, 0.6), (0.5, 0.5), (0.6, 0.4), (0.8, 0.2))
 
 
+def _rows_list(rows, field: str = "rows") -> list:
+    """Return ``rows`` when it is a list; otherwise treat as no per-task replay rows."""
+    if isinstance(rows, list):
+        return rows
+    if rows is not None:
+        logger.warning(
+            "runner: %s is %s, not a list; treating as empty",
+            field,
+            type(rows).__name__,
+        )
+    return []
+
+
+def _freeze_window_dict(freeze_window, field: str = "freeze_window") -> dict:
+    """Return ``freeze_window`` when it is a dict; otherwise ignore replay hints."""
+    if isinstance(freeze_window, dict):
+        return freeze_window
+    if freeze_window is not None:
+        logger.warning(
+            "runner: %s is %s, not a dict; ignoring freeze_window hints",
+            field,
+            type(freeze_window).__name__,
+        )
+    return {}
+
+
+def _sweep_rows(rows) -> list:
+    """Return ``rows`` when it is a list; otherwise treat as no scored tasks.
+
+    A truthy non-list must not reach ``for r in rows`` or malformed replay output aborts
+    the weight-sweep helper (#561).
+    """
+    return _rows_list(rows, "weight_sweep rows")
+
+
 def weight_sweep(rows, grid=WEIGHT_SWEEP_GRID) -> list:
     """Recompute `composite_mean` across a grid of judge/objective blend weights (#53).
 
@@ -195,7 +231,7 @@ def weight_sweep(rows, grid=WEIGHT_SWEEP_GRID) -> list:
     """
     scored = [
         (_JUDGE_COMPONENT[r["winner"]], objective_component(r.get("objective") or {}))
-        for r in rows or []
+        for r in _sweep_rows(rows)
         if r.get("winner") in _JUDGE_COMPONENT
     ]
     sweep = []
@@ -220,8 +256,9 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
     miscounted as scored.
 
     Deterministic given a fixed `seed` (passed through to each run and the judge's RNG).
-    Repos too small to yield tasks are kept in `per_repo` with their error and excluded from
-    the mean (and counted in `skipped`).
+    A repo that fails to score — too small to yield tasks, or unusable (missing path, not a git
+    repo, freeze failure) — is kept in `per_repo` with its error and counted in `skipped`, so one
+    bad repo can neither abort the batch nor dilute the aggregate.
     """
     if (repos is None) == (repo_set is None):
         raise ValueError("pass exactly one of 'repos' or 'repo_set'")
@@ -270,11 +307,19 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
     tally = {"challenger": 0, "baseline": 0, "tie": 0}
     try:
         for repo in selected:
-            repo_kwargs = dict(kwargs)
-            for key, value in repo.get("freeze_window", {}).items():
-                repo_kwargs[key] = value
-            res = run_replay(repo["repo_path"], **repo_kwargs)
             meta = {k: v for k, v in repo.items() if k not in ("repo_path", "cleanup")}
+            try:
+                repo_kwargs = dict(kwargs)
+                for key, value in _freeze_window_dict(repo.get("freeze_window")).items():
+                    repo_kwargs[key] = value
+                res = run_replay(repo["repo_path"], **repo_kwargs)
+            except RuntimeError as exc:
+                # A repo-level failure (missing path, not a git repo, freeze error) surfaces from
+                # freeze._git as RuntimeError; record it like a zero-task repo so the batch keeps
+                # going and the tasks > 0 gate below leaves it out of the mean.
+                logger.warning("runner: replay failed for %s: %s",
+                               repo.get("repo") or repo.get("repo_path"), exc)
+                res = {"error": str(exc), "tasks": 0}
             per_repo.append({**meta, **res})
             for outcome in tally:
                 tally[outcome] += int((res.get("tally") or {}).get(outcome, 0))
@@ -283,7 +328,10 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
                 parts = res.get("composite_parts", {})
                 judge_parts.append(parts.get("judge_mean", 0.0))
                 objective_parts.append(parts.get("objective_mean", 0.0))
-                judge_orders.extend(r.get("judge_order") for r in res.get("rows", []))
+                judge_orders.extend(
+                    r.get("judge_order")
+                    for r in _rows_list(res.get("rows"), "replay rows")
+                )
     finally:
         if checkout_root:
             shutil.rmtree(checkout_root, ignore_errors=True)

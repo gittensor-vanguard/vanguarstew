@@ -58,6 +58,19 @@ def _releases_list(releases) -> list:
     return releases if isinstance(releases, list) else []
 
 
+def _files_list(files, field: str = "files") -> list:
+    """Return ``files`` when it is a list; otherwise treat as no changed paths."""
+    if isinstance(files, list):
+        return files
+    if files is not None:
+        logger.warning(
+            "score: %s is %s, not a list; treating as empty",
+            field,
+            type(files).__name__,
+        )
+    return []
+
+
 def _tokens(text) -> set:
     # Plan and commit text fields originate in LLM-emitted JSON, where a `title`/`theme`/
     # `subject` can arrive as a list, dict, number, or null. Such a value carries no lexical
@@ -65,6 +78,34 @@ def _tokens(text) -> set:
     if not isinstance(text, str):
         return set()
     return set(_TOK.findall(text.lower()))
+
+
+def _plan_file_paths(files, field: str = "plan.files") -> list:
+    """Normalize a plan item's ``files`` field to stripped path strings.
+
+    A scalar string (a common LLM shape) must not be iterated character-by-character; a
+    non-list/non-string value is treated as absent (with a warning, mirroring ``_files_list``).
+    """
+    if files is None:
+        return []
+    if isinstance(files, str):
+        path = files.strip()
+        return [path] if path else []
+    if isinstance(files, list):
+        out = []
+        for path in files:
+            if not isinstance(path, str):
+                continue
+            p = path.strip()
+            if p:
+                out.append(p)
+        return out
+    logger.warning(
+        "score: %s is %s, not a list; treating as empty",
+        field,
+        type(files).__name__,
+    )
+    return []
 
 
 def parse_semver(text):
@@ -93,6 +134,10 @@ def bump_level(old, new):
 
     Returns None when either side is missing or `new` is not a forward bump over `old`.
     """
+    if not isinstance(old, tuple) or not isinstance(new, tuple):
+        return None
+    if len(old) < 3 or len(new) < 3:
+        return None
     if not old or not new or new <= old:
         return None
     if new[0] != old[0]:
@@ -194,9 +239,7 @@ def _plan_tokens(plan) -> set:
             # Structured `files` are part of a concrete plan item (the judge counts them
             # toward substance); tokenize path segments so module recall can match on the
             # top-level module even when the title omits it.
-            for path in item.get("files") or []:
-                if not isinstance(path, str):
-                    continue
+            for path in _plan_file_paths(item.get("files")):
                 toks |= _tokens(path.replace("/", " "))
         else:
             toks |= _tokens(str(item))
@@ -229,7 +272,7 @@ def changed_modules(revealed) -> set:
     for r in _revealed_list(revealed):
         if not isinstance(r, dict):
             continue
-        for path in r.get("files", []):
+        for path in _files_list(r.get("files"), "revealed.files"):
             top = _top_module(path)
             if top:
                 mods.add(top)
@@ -246,7 +289,7 @@ def _module_file_counts(revealed) -> dict:
     for r in _revealed_list(revealed):
         if not isinstance(r, dict):
             continue
-        for path in r.get("files", []):
+        for path in _files_list(r.get("files"), "revealed.files"):
             top = _top_module(path)
             if top:
                 counts[top] = counts.get(top, 0) + 1
@@ -518,6 +561,8 @@ _BACKLOG_DIAGNOSTIC_KEYS = frozenset({
 _COMPONENT_SCORE_KEYS = (
     "weighted_module_recall",
     "module_recall",
+    "kind_recall",
+    "actual_kinds",
     "release_signaled",
     "release_predicted",
     "bump_actual",
@@ -581,18 +626,26 @@ def objective_component(objective: dict) -> float:
 
     Module recall always counts — the file-weighted recall (``weighted_module_recall``) is
     preferred when present, so the score reflects where change actually concentrated, and it
-    falls back to plain ``module_recall`` otherwise. Release-prediction and (when present)
-    bump-level correctness count only when there was actually a release to get right, so a
-    window with no release isn't scored on a trivial "predicted nothing" match.
-
+    falls back to plain ``module_recall`` otherwise. Commit-kind recall counts only when the
+    revealed window carries recognizable maintainer kinds, mirroring the release axis. Release-
+    prediction and (when present) bump-level correctness count only when there was actually a
+    release to get right, so a window with no release isn't scored on a trivial "predicted
+    nothing" match.
     ``backlog_recall`` and its companion diagnostics are reported by :func:`objective_score`
     but are deliberately excluded here — backlog anticipation remains diagnostic-only (#148).
     """
+    if not isinstance(objective, dict):
+        return 0.0
     obj = _objective_for_component(objective)
     recall = obj.get("weighted_module_recall")
     if recall is None:
         recall = obj.get("module_recall", 0.0)
-    parts = [float(recall)]
+    try:
+        parts = [float(recall)]
+    except (ValueError, TypeError):
+        parts = [0.0]
+    if obj.get("actual_kinds"):
+        parts.append(float(obj.get("kind_recall", 0.0)))
     if obj.get("release_signaled"):
         parts.append(1.0 if obj.get("release_predicted") else 0.0)
     if obj.get("bump_actual") is not None:
@@ -610,8 +663,10 @@ def composite_score(winner: str, objective: dict, w_judge: float = 0.6,
     """
     judged = _JUDGE_OUTCOME.get(winner, 0.5)
     anchored = objective_component(objective)
-    total = (w_judge + w_objective) or 1.0
-    return round((w_judge * judged + w_objective * anchored) / total, 3)
+    wj = w_judge if isinstance(w_judge, (int, float)) and not isinstance(w_judge, bool) else 0.6
+    wo = w_objective if isinstance(w_objective, (int, float)) and not isinstance(w_objective, bool) else 0.4
+    total = (wj + wo) or 1.0
+    return round((wj * judged + wo * anchored) / total, 3)
 
 
 def trajectory_overlap(plan, revealed) -> float:

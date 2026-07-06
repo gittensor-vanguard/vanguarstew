@@ -265,3 +265,9 @@ def test_generate_tasks_respects_after_before_bounds(monkeypatch):
     tasks = taskgen.generate_tasks(
         "x", num_tasks=10, horizon=2, min_history=2, after="2026-01-05", before="2026-01-08")
     assert [t["freeze_index"] for t in tasks] == [4, 5, 6, 7]
+
+def test_scrub_context_handles_non_dict():
+    """scrub_context must not crash on non-dict input."""
+    assert scrub_context(None)["_forward_signal_scrubbed"]
+    assert scrub_context("not a dict")["_forward_signal_scrubbed"]
+    assert scrub_context(42)["_forward_signal_scrubbed"]

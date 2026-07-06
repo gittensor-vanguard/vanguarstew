@@ -1,0 +1,292 @@
+{
+  "id": "heavy-revealed-window",
+  "description": "Large revealed trajectory does not affect offline rank",
+  "tags": [
+    "revealed"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Commit 0",
+        "files": [
+          "src/f0.py"
+        ]
+      },
+      {
+        "subject": "Commit 1",
+        "files": [
+          "src/f1.py"
+        ]
+      },
+      {
+        "subject": "Commit 2",
+        "files": [
+          "src/f2.py"
+        ]
+      },
+      {
+        "subject": "Commit 3",
+        "files": [
+          "src/f3.py"
+        ]
+      },
+      {
+        "subject": "Commit 4",
+        "files": [
+          "src/f4.py"
+        ]
+      },
+      {
+        "subject": "Commit 5",
+        "files": [
+          "src/f5.py"
+        ]
+      },
+      {
+        "subject": "Commit 6",
+        "files": [
+          "src/f6.py"
+        ]
+      },
+      {
+        "subject": "Commit 7",
+        "files": [
+          "src/f7.py"
+        ]
+      },
+      {
+        "subject": "Commit 8",
+        "files": [
+          "src/f8.py"
+        ]
+      },
+      {
+        "subject": "Commit 9",
+        "files": [
+          "src/f9.py"
+        ]
+      },
+      {
+        "subject": "Commit 10",
+        "files": [
+          "src/f10.py"
+        ]
+      },
+      {
+        "subject": "Commit 11",
+        "files": [
+          "src/f11.py"
+        ]
+      },
+      {
+        "subject": "Commit 12",
+        "files": [
+          "src/f12.py"
+        ]
+      },
+      {
+        "subject": "Commit 13",
+        "files": [
+          "src/f13.py"
+        ]
+      },
+      {
+        "subject": "Commit 14",
+        "files": [
+          "src/f14.py"
+        ]
+      },
+      {
+        "subject": "Commit 15",
+        "files": [
+          "src/f15.py"
+        ]
+      },
+      {
+        "subject": "Commit 16",
+        "files": [
+          "src/f16.py"
+        ]
+      },
+      {
+        "subject": "Commit 17",
+        "files": [
+          "src/f17.py"
+        ]
+      },
+      {
+        "subject": "Commit 18",
+        "files": [
+          "src/f18.py"
+        ]
+      },
+      {
+        "subject": "Commit 19",
+        "files": [
+          "src/f19.py"
+        ]
+      },
+      {
+        "subject": "Commit 20",
+        "files": [
+          "src/f20.py"
+        ]
+      },
+      {
+        "subject": "Commit 21",
+        "files": [
+          "src/f21.py"
+        ]
+      },
+      {
+        "subject": "Commit 22",
+        "files": [
+          "src/f22.py"
+        ]
+      },
+      {
+        "subject": "Commit 23",
+        "files": [
+          "src/f23.py"
+        ]
+      },
+      {
+        "subject": "Commit 24",
+        "files": [
+          "src/f24.py"
+        ]
+      },
+      {
+        "subject": "Commit 25",
+        "files": [
+          "src/f25.py"
+        ]
+      },
+      {
+        "subject": "Commit 26",
+        "files": [
+          "src/f26.py"
+        ]
+      },
+      {
+        "subject": "Commit 27",
+        "files": [
+          "src/f27.py"
+        ]
+      },
+      {
+        "subject": "Commit 28",
+        "files": [
+          "src/f28.py"
+        ]
+      },
+      {
+        "subject": "Commit 29",
+        "files": [
+          "src/f29.py"
+        ]
+      },
+      {
+        "subject": "Commit 30",
+        "files": [
+          "src/f30.py"
+        ]
+      },
+      {
+        "subject": "Commit 31",
+        "files": [
+          "src/f31.py"
+        ]
+      },
+      {
+        "subject": "Commit 32",
+        "files": [
+          "src/f32.py"
+        ]
+      },
+      {
+        "subject": "Commit 33",
+        "files": [
+          "src/f33.py"
+        ]
+      },
+      {
+        "subject": "Commit 34",
+        "files": [
+          "src/f34.py"
+        ]
+      },
+      {
+        "subject": "Commit 35",
+        "files": [
+          "src/f35.py"
+        ]
+      },
+      {
+        "subject": "Commit 36",
+        "files": [
+          "src/f36.py"
+        ]
+      },
+      {
+        "subject": "Commit 37",
+        "files": [
+          "src/f37.py"
+        ]
+      },
+      {
+        "subject": "Commit 38",
+        "files": [
+          "src/f38.py"
+        ]
+      },
+      {
+        "subject": "Commit 39",
+        "files": [
+          "src/f39.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Fix race",
+        "kind": "bugfix",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ],
+    "rationale": "x"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

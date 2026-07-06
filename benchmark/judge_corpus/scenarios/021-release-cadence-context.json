@@ -1,0 +1,58 @@
+{
+  "id": "release-cadence-context",
+  "description": "Release-themed revealed window; concrete plan still wins",
+  "tags": [
+    "context",
+    "release"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Bump version to 2.0.0"
+      }
+    ],
+    "tag": "v2.0.0"
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Prepare next release",
+        "kind": "release"
+      }
+    ],
+    "rationale": "cadence"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "stuff"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

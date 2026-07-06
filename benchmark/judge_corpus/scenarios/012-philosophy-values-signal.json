@@ -1,0 +1,57 @@
+{
+  "id": "philosophy-values-signal",
+  "description": "Philosophy values alone provide process signal",
+  "tags": [
+    "philosophy"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "values": [
+        "conservative",
+        "stability-over-features"
+      ]
+    },
+    "plan": [
+      {
+        "title": "Fix leak"
+      }
+    ],
+    "rationale": ""
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "Fix leak"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}
