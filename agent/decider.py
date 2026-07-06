@@ -52,6 +52,56 @@ def _normalize_action(action) -> str:
     return _ACTION_SYNONYMS.get(key, "plan")
 
 
+def _normalize_labels(value) -> list:
+    """Coerce ``labels`` to the documented ``list[str]`` contract."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        label = value.strip()
+        return [label] if label else []
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            if item is None:
+                continue
+            label = str(item).strip()
+            if label:
+                out.append(label)
+        return out
+    return []
+
+
+def _normalize_reviewer(value) -> str | None:
+    """Coerce ``reviewer`` to ``str | None``."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        reviewer = value.strip()
+        return reviewer or None
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return None
+
+
+def _normalize_rationale(value) -> str:
+    """Coerce ``rationale`` to a string (never ``None``)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _normalize_patch(value) -> str | None:
+    """Coerce ``patch`` to ``str | None``."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        patch = value.strip()
+        return patch or None
+    return None
+
+
 def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:3000]}\n\n"
@@ -77,6 +127,10 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     if not isinstance(out, dict):
         out = dict(stub)
     out["action"] = _normalize_action(out.get("action"))
+    out["labels"] = _normalize_labels(out.get("labels"))
+    out["reviewer"] = _normalize_reviewer(out.get("reviewer"))
+    out["rationale"] = _normalize_rationale(out.get("rationale"))
+    out["patch"] = _normalize_patch(out.get("patch"))
     return out
 
 
