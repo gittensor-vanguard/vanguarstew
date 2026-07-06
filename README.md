@@ -86,6 +86,9 @@ python -m scripts.run_eval --repo /path/to/repo --tasks 5 --horizon 5 \
 # multi-repo: replay several repos and aggregate a cross-repo composite (generalization)
 VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repos /path/to/a /path/to/b --tasks 2 --horizon 5
 
+# tune the composite blend: sweep --w-judge/--w-objective over one run
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo /path/to/repo --tasks 2 --sweep --sweep-step 0.25
+
 # smoke test (no network, no git needed)
 VANGUARSTEW_OFFLINE=1 python -m pytest -q
 ```
@@ -123,6 +126,10 @@ The `--repos` aggregate result shape is:
   "per_repo": [ /* each repo's full run_replay result, or its {"error": ...} */ ]
 }
 ```
+
+`--sweep` (single-repo) adds a `weight_sweep` array to the JSON output — one
+`{w_judge, w_objective, composite_mean}` entry per blend on a `[0, 1]` grid (`--sweep-step`,
+in `(0, 1]`) — recomputed from the single run's judge outcomes, so no agents are re-run.
 
 ## Status
 

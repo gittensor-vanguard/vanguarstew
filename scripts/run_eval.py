@@ -10,6 +10,7 @@ import json
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
 from benchmark.runner import run_multi_replay, run_replay
+from benchmark.score import default_weight_grid, sweep_composite
 
 
 def main() -> None:
@@ -41,6 +42,11 @@ def main() -> None:
     ap.add_argument("--single-order-judge", action="store_true",
                     help="ask the judge one randomized order instead of both "
                          "(cheaper, but no position-swap consistency check)")
+    ap.add_argument("--sweep", action="store_true",
+                    help="after a single-repo run, sweep composite weights and report "
+                         "composite_mean per blend")
+    ap.add_argument("--sweep-step", type=float, default=0.25,
+                    help="w-judge grid step in (0, 1] for --sweep (default 0.25)")
     args = ap.parse_args()
 
     common = dict(
@@ -55,6 +61,9 @@ def main() -> None:
         result = run_multi_replay(args.repos, **common)
     else:
         result = run_replay(repo_path=args.repo, **common)
+        if args.sweep:
+            result["weight_sweep"] = sweep_composite(
+                result.get("rows", []), default_weight_grid(args.sweep_step))
     print(json.dumps(result, indent=2))
 
 

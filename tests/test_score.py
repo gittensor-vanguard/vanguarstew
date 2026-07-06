@@ -15,6 +15,7 @@ from benchmark.score import (  # noqa: E402
     bump_level,
     changed_modules,
     commit_kind,
+    default_weight_grid,
     is_release_subject,
     kind_recall,
     module_recall,
@@ -23,6 +24,7 @@ from benchmark.score import (  # noqa: E402
     plan_kind,
     release_predicted,
     release_signaled,
+    sweep_composite,
 )
 
 REVEALED = [
@@ -330,3 +332,52 @@ def test_objective_score_includes_kind_recall():
     assert score["actual_kinds"] == ["release"]  # only "Release v1.2.0" carries a kind
     assert score["matched_kinds"] == ["release"]
     assert score["kind_recall"] == 1.0
+
+
+def test_default_weight_grid():
+    grid = default_weight_grid(0.25)
+    assert grid[0] == (0.0, 1.0)
+    assert grid[-1] == (1.0, 0.0)
+    assert len(grid) == 5
+    assert all(round(wj + wo, 3) == 1.0 for wj, wo in grid)
+
+
+def test_default_weight_grid_uneven_step_reaches_one():
+    # A step that doesn't divide 1.0 evenly must still include both endpoints.
+    grid = default_weight_grid(0.3)
+    assert grid[0] == (0.0, 1.0)
+    assert grid[-1] == (1.0, 0.0)
+    assert [wj for wj, _ in grid] == [0.0, 0.3, 0.6, 0.9, 1.0]
+    assert all(round(wj + wo, 3) == 1.0 for wj, wo in grid)
+
+
+def test_default_weight_grid_rejects_out_of_range_step():
+    import pytest
+
+    for bad in (0.0, -0.25, 1.5):
+        with pytest.raises(ValueError):
+            default_weight_grid(bad)
+
+
+_SWEEP_ROWS = [
+    # challenger win with a strong objective anchor
+    {"winner": "challenger", "objective": {"module_recall": 1.0}},
+    # challenger loss with a weak anchor
+    {"winner": "baseline", "objective": {"module_recall": 0.0}},
+]
+
+
+def test_sweep_composite_shape_and_extremes():
+    swept = sweep_composite(_SWEEP_ROWS, [(1.0, 0.0), (0.0, 1.0)])
+    assert [set(row) for row in swept] == [{"w_judge", "w_objective", "composite_mean"}] * 2
+    # all judge weight: mean of a win (1.0) and a loss (0.0)
+    assert swept[0]["composite_mean"] == 0.5
+    # all objective weight: mean of anchor 1.0 and anchor 0.0
+    assert swept[1]["composite_mean"] == 0.5
+
+
+def test_sweep_composite_default_grid_and_empty():
+    assert len(sweep_composite(_SWEEP_ROWS)) == len(default_weight_grid())
+    assert sweep_composite([], [(0.6, 0.4)]) == [
+        {"w_judge": 0.6, "w_objective": 0.4, "composite_mean": 0.0}
+    ]
