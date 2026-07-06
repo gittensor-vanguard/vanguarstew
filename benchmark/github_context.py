@@ -68,7 +68,7 @@ def parse_owner_repo(remote_url: str):
 
 
 def _parse_dt(value):
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
