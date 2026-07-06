@@ -4,7 +4,9 @@ import json
 import logging
 import os
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -14,7 +16,17 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.review import review_pr  # noqa: E402
-from scripts.review_pr import _pr_author, fetch_pr, main  # noqa: E402
+from scripts.review_pr import _gh, _pr_author, fetch_pr, main  # noqa: E402
+
+
+def _fake_run(returncode=0, stdout="", stderr=""):
+    def _run(*args, **kwargs):
+        m = MagicMock()
+        m.returncode = returncode
+        m.stdout = stdout
+        m.stderr = stderr
+        return m
+    return _run
 
 
 def _gh_json(payload: dict):
@@ -148,3 +160,40 @@ def test_main_renders_ghost_author_for_deleted_account(capsys):
     out = capsys.readouterr().out
     assert "@ghost" in out
     assert "Fix off-by-one in scheduler" in out
+
+
+def test_gh_returns_stdout_on_success():
+    with patch("subprocess.run", side_effect=_fake_run(returncode=0, stdout="ok")):
+        assert _gh("pr", "view", "1") == "ok"
+
+
+def test_gh_raises_with_command_and_stderr_on_failure():
+    stderr = "GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)"
+    with patch("subprocess.run", side_effect=_fake_run(returncode=1, stderr=stderr)):
+        with pytest.raises(RuntimeError) as exc:
+            _gh("pr", "view", "1", "-R", "o/r")
+    message = str(exc.value)
+    assert "gh pr view 1 -R o/r" in message
+    assert stderr in message
+    assert "exit 1" in message
+
+
+def test_gh_raises_a_placeholder_when_gh_produced_no_stderr():
+    with patch("subprocess.run", side_effect=_fake_run(returncode=1, stderr="")):
+        with pytest.raises(RuntimeError, match="gh produced no error output"):
+            _gh("pr", "view", "1")
+
+
+def test_fetch_pr_propagates_gh_failure_without_a_json_decode_error():
+    stderr = "GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)"
+    with patch("subprocess.run", side_effect=_fake_run(returncode=1, stderr=stderr)):
+        with pytest.raises(RuntimeError, match="Could not resolve to a Repository"):
+            fetch_pr("o/r", 1)
+
+
+def test_main_surfaces_gh_failure_instead_of_a_json_decode_error(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["review_pr.py", "--repo", "o/r", "--pr", "1"])
+    stderr = "GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)"
+    with patch("subprocess.run", side_effect=_fake_run(returncode=1, stderr=stderr)):
+        with pytest.raises(RuntimeError, match="Could not resolve to a Repository"):
+            main()

@@ -22,7 +22,19 @@ logger = logging.getLogger(__name__)
 
 
 def _gh(*args) -> str:
-    return subprocess.run(["gh", *args], capture_output=True, text=True).stdout
+    """Run the ``gh`` CLI and return stdout; raise with gh's stderr on failure.
+
+    ``gh`` exits non-zero with empty stdout and a specific stderr message for bad
+    ``--repo``/``--pr``, missing auth, no repo access, rate limits, or network errors.
+    Without this check the failure surfaces only as a downstream ``JSONDecodeError``.
+    """
+    result = subprocess.run(["gh", *args], capture_output=True, text=True)
+    if result.returncode != 0:
+        cmd = " ".join(["gh", *args])
+        stderr = result.stderr.strip()
+        detail = f": {stderr}" if stderr else " (gh produced no error output)"
+        raise RuntimeError(f"`{cmd}` failed (exit {result.returncode}){detail}")
+    return result.stdout
 
 
 def _pr_author(data: dict, number: int) -> str:
