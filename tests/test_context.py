@@ -15,12 +15,14 @@ if ROOT not in sys.path:
 
 import benchmark.github_context as gc  # noqa: E402
 from agent.context import (  # noqa: E402
+    CONTEXT_FILE,
     README_PROBE_NAMES,
     _agent_context_list,
     _agent_issue_pr_list,
     _context_from_git,
     _mask_forward_refs,
     context_for_agent,
+    load_context,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
@@ -305,6 +307,36 @@ def _write(repo, relpath, text="x\n"):
     os.makedirs(os.path.dirname(full) or repo, exist_ok=True)
     with open(full, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_falls_back_to_git_on_malformed_file():
+    # A present-but-corrupt context file (truncated/partial write) must not crash solve():
+    # load_context rebuilds the knowable-at-T context from the frozen git checkout instead.
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        _write(repo, "f.txt")
+        _git(repo, "add", "-A", date="2024-01-10T12:00:00+00:00")
+        _git(repo, "commit", "-q", "-m", "c1", date="2024-01-10T12:00:00+00:00")
+        _write(repo, CONTEXT_FILE, '{"open_prs": [')  # truncated JSON
+
+        ctx = load_context(repo)  # no JSONDecodeError
+        assert ctx["_source"] == "git"
+        assert ctx["frozen_at"]["commit"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_load_context_reads_a_valid_file_verbatim():
+    # The happy path is unchanged: a well-formed context file is returned as-is.
+    repo = tempfile.mkdtemp()
+    try:
+        payload = {"_source": "github-api", "open_prs": [{"number": 1, "title": "x"}]}
+        _write(repo, CONTEXT_FILE, json.dumps(payload))
+        assert load_context(repo) == payload
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")

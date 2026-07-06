@@ -88,8 +88,16 @@ def _git(repo_path, *args):
 def load_context(repo_path: str) -> dict:
     path = os.path.join(repo_path, CONTEXT_FILE)
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        # A present-but-unreadable context file (a truncated/partial write from an interrupted
+        # freeze, or otherwise corrupt JSON) must not abort solve(): fall back to rebuilding the
+        # knowable-at-T context from the frozen git checkout, exactly as when the file is absent.
+        # The checkout is frozen at T, so this is leakage-safe, and it matches the repo's
+        # "degrade rather than crash on malformed frozen input" posture (spec 001).
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (ValueError, OSError) as exc:
+            logger.warning("load_context: %s unreadable (%s); rebuilding from git", path, exc)
     return _context_from_git(repo_path)
 
 
