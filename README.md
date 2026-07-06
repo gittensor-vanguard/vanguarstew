@@ -100,6 +100,9 @@ VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo /path/to/repo --tasks 2 
 
 # compare two saved --out artifacts (JSON on stdout, headline on stderr)
 python -m scripts.compare_eval baseline.json candidate.json
+
+# render a saved --out artifact as a readable Markdown report
+python -m scripts.report result.json
 ```
 
 > **Dev-only backend:** [`tools/codex_llm.py`](tools/codex_llm.py) can drive the benchmark and
