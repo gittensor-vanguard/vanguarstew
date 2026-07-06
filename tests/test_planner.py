@@ -18,6 +18,7 @@ from agent.planner import (  # noqa: E402
     _is_review_item,
     _matched_pr,
     _normalize_plan_item,
+    _pr_reference,
     _pr_title,
     plan_next_actions,
     reconcile_plan_with_queue,
@@ -375,3 +376,81 @@ def test_qualified_pr_reference_is_still_authoritative_even_when_stale():
     stale = {"title": "PR #9: something unrelated", "kind": "triage",
              "rationale": "streaming export export export"}
     assert _matched_pr(stale, prs) is None
+
+
+# --- #385: qualified "PR #N" must beat bare "#N" across all scanned texts. ---------------
+
+def test_pr_reference_prefers_qualified_over_bare_in_same_string():
+    assert _pr_reference("Address our #1 priority: review PR #7 before release") == (7, True)
+
+
+def test_pr_reference_prefers_qualified_in_title_over_bare_in_rationale():
+    assert _pr_reference("Review PR #7 before release", "our #1 priority this week") == (7, True)
+
+
+def test_pr_reference_prefers_qualified_in_rationale_over_bare_in_title():
+    assert _pr_reference("Address our #1 priority next", "See PR #7 for the export work") == (7, True)
+
+
+def test_pr_reference_prefers_qualified_before_bare_in_same_string():
+    assert _pr_reference("Land PR #7 before the #1 blocker") == (7, True)
+
+
+def test_pr_reference_returns_first_qualified_when_several_exist():
+    assert _pr_reference("Merge PR #7", "Also track pull request 12") == (7, True)
+
+
+def test_pr_reference_returns_first_bare_only_when_no_qualified():
+    assert _pr_reference("Ship the #1 requested feature", "still our #2 ask") == (1, False)
+
+
+def test_pr_reference_pull_request_form_counts_as_qualified():
+    assert _pr_reference("Top priority", "pull request 7 is ready") == (7, True)
+
+
+def test_matched_pr_links_qualified_reference_after_bare_ordinal_in_title():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    item = {
+        "title": "Address our #1 priority: review PR #7 before release",
+        "kind": "triage",
+        "rationale": "top item in the queue",
+    }
+    assert _matched_pr(item, prs) == prs[0]
+
+
+def test_matched_pr_links_qualified_reference_in_rationale_after_bare_ordinal_title():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    item = {
+        "title": "Address our #1 priority next",
+        "kind": "feature",
+        "rationale": "See PR #7 for the same feature; ship it soon",
+    }
+    assert _matched_pr(item, prs) == prs[0]
+
+
+def test_reconcile_does_not_prepend_duplicate_when_item_already_names_pr():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    ctx = {"open_prs": prs}
+    item = {
+        "title": "Address our #1 priority: review PR #7 before release",
+        "kind": "triage",
+        "rationale": "top item in the queue",
+    }
+    out = reconcile_plan_with_queue([item], ctx, 5)
+    assert len(out) == 1
+    assert out[0]["title"] == item["title"]
+    assert not any(i["title"].startswith("Review pull request #7:") for i in out)
+
+
+def test_reconcile_downweights_feature_when_qualified_reference_is_in_rationale():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    ctx = {"open_prs": prs}
+    item = {
+        "title": "Address our #1 priority next",
+        "kind": "feature",
+        "rationale": "See PR #7 for the same feature; ship it soon",
+    }
+    out = reconcile_plan_with_queue([item], ctx, 5)
+    assert len(out) == 1
+    assert out[0]["restates_pr"] == 7
+    assert out[0]["kind"] == "triage"

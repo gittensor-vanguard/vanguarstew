@@ -108,21 +108,30 @@ def _significant_tokens(text: str) -> set:
 
 
 def _pr_reference(*texts: str):
-    """Return ``(pr_number, qualified)`` for the first explicit PR reference in the texts.
+    """Return ``(pr_number, qualified)`` for the most authoritative PR reference across ``texts``.
 
-    ``qualified`` is True for an unambiguous ``"PR #N"`` / ``"pull request N"`` phrasing, and
-    False for a bare ``"#N"`` — which is frequently an ordinal ("the #1 requested feature",
-    "our #7 priority") rather than a pull-request reference, so callers must content-validate a
-    bare match before trusting it. Returns ``(None, False)`` when no reference is present.
+    Each argument is scanned in call order (typically title, then rationale), left-to-right
+    within the string. A qualified ``"PR #N"`` / ``"pull request N"`` match anywhere in the
+    call beats any bare ``"#N"`` token, regardless of which argument or position it appeared
+    in — bare ordinals ("our #1 priority") must not shadow a genuine ``"PR #7"`` later in the
+    same item (#385). When no qualified reference exists, the first bare ``"#N"`` is returned
+    for callers to content-validate. Returns ``(None, False)`` when no reference is present.
     """
+    qualified = None
+    bare = None
     for text in texts:
         if not text:
             continue
         for match in _PR_NUMBER.finditer(text):
-            if match.group(2):        # "PR #N" / "pull request N" — unambiguous
-                return int(match.group(2)), True
-            if match.group(1):        # bare "#N" — could be an ordinal, not a PR reference
-                return int(match.group(1)), False
+            if match.group(2) is not None:
+                if qualified is None:
+                    qualified = int(match.group(2))
+            elif match.group(1) is not None and bare is None:
+                bare = int(match.group(1))
+    if qualified is not None:
+        return qualified, True
+    if bare is not None:
+        return bare, False
     return None, False
 
 
