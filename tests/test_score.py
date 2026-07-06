@@ -8,6 +8,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.score import (  # noqa: E402
+    _tokens,
     addressed_issues,
     backlog_diagnostics,
     backlog_recall,
@@ -106,6 +107,14 @@ def test_module_recall_ignores_non_string_plan_text_fields():
     assert res["actual_modules"] == ["agent"]
     assert res["matched_modules"] == []
     assert res["module_recall"] == 0.0
+
+
+def test_text_helpers_treat_non_strings_as_empty_text():
+    assert _tokens(["core", "release"]) == set()
+    assert parse_semver({"tag": "v1.2.3"}) is None
+    assert is_release_subject(["Release v1.2.3"]) is False
+    assert commit_kind({"subject": "fix: crash"}) is None
+    assert plan_kind({"kind": "release"}) is None
 
 
 def test_release_signals():
@@ -244,6 +253,7 @@ def test_release_signaled_ignores_dependency_bumps():
 def test_release_predicted_ignores_inline_version_but_honors_kind():
     assert release_predicted([{"title": "bump pytest to 8.0.0", "kind": "dep"}]) is False
     assert release_predicted([{"title": "prepare v1.2.0", "kind": "release"}]) is True   # kind
+    assert release_predicted([{"title": "prepare v1.2.0", "kind": " Release "}]) is True
     assert release_predicted([{"title": "Release v1.2.0", "kind": "misc"}]) is True      # subject
 
 

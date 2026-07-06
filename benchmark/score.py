@@ -27,16 +27,16 @@ _SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
 _BUMP_LEVELS = ("major", "minor", "patch")
 
 
-def _text(value) -> str:
+def _text(value: object) -> str:
     """Return `value` only when it is already a string; otherwise treat it as empty text."""
     return value if isinstance(value, str) else ""
 
 
-def _tokens(text: str) -> set:
+def _tokens(text: object) -> set:
     return set(_TOK.findall(_text(text).lower()))
 
 
-def parse_semver(text: str):
+def parse_semver(text: object):
     """Parse the *last* semver core in `text` -> (major, minor, patch), or None.
 
     In a release commit subject the project's own version typically appears after
@@ -177,7 +177,7 @@ def module_recall(plan, revealed) -> dict:
     return result
 
 
-def is_release_subject(text: str) -> bool:
+def is_release_subject(text: object) -> bool:
     """True only for a genuine release/version-cut subject.
 
     Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
@@ -224,7 +224,7 @@ _PLAN_KIND = {
 }
 
 
-def commit_kind(subject: str):
+def commit_kind(subject: object):
     """Normalized maintainer kind for a revealed commit subject, or None.
 
     Prefers a Conventional-Commit prefix (`feat:`, `fix(scope):`, `docs!:`), then falls
@@ -242,7 +242,7 @@ def commit_kind(subject: str):
     return None
 
 
-def plan_kind(kind: str):
+def plan_kind(kind: object):
     """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind."""
     return _PLAN_KIND.get(_text(kind).strip().lower())
 
@@ -271,7 +271,7 @@ def release_signaled(revealed) -> bool:
 def release_predicted(plan) -> bool:
     for item in plan or []:
         if isinstance(item, dict):
-            if item.get("kind") == "release" or is_release_subject(item.get("title", "") or ""):
+            if plan_kind(item.get("kind")) == "release" or is_release_subject(item.get("title")):
                 return True
     return False
 
