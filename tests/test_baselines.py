@@ -33,6 +33,8 @@ from benchmark.baselines import (
     heuristic_solve,
     queue_first_plan,
     queue_first_solve,
+    stability_first_plan,
+    stability_first_solve,
 )
 from benchmark.runner import run_replay  # noqa: E402
 from benchmark.score import is_release_subject  # noqa: E402
@@ -57,9 +59,86 @@ def test_registry_selection_and_unknown():
     assert get_baseline("empty") is empty_solve
     assert get_baseline("heuristic") is heuristic_solve
     assert get_baseline("queue_first") is queue_first_solve
-    assert set(BASELINES) >= {"empty", "heuristic", "queue_first"}
+    assert get_baseline("stability_first") is stability_first_solve
+    assert set(BASELINES) >= {"empty", "heuristic", "queue_first", "stability_first"}
     with pytest.raises(ValueError):
         get_baseline("does-not-exist")
+
+
+# --- stability_first baseline: stabilize bugfix/refactor before greenfield --------------------
+
+def test_stability_first_same_action_set_as_heuristic():
+    """Reprioritization only: nothing added or dropped relative to heuristic_plan."""
+    for n in range(1, 10):
+        heuristic = heuristic_plan(CTX, n)
+        stable = stability_first_plan(CTX, n)
+        assert len(heuristic) == len(stable)
+        assert sorted(heuristic, key=lambda i: i["title"]) == sorted(
+            stable, key=lambda i: i["title"]
+        )
+
+
+def test_stability_first_prioritizes_bugfix_and_refactor_before_features():
+    plan = stability_first_plan(CTX, n=5)
+    kinds = [item["kind"] for item in plan]
+    stabilization = {"bugfix", "refactor"}
+    greenfield = {"feature", "docs", "dep"}
+    last_stab = max((i for i, k in enumerate(kinds) if k in stabilization), default=-1)
+    first_green = min((i for i, k in enumerate(kinds) if k in greenfield), default=len(kinds))
+    assert last_stab < first_green
+
+
+def test_stability_first_release_after_stabilization_before_features():
+    plan = stability_first_plan(CTX, n=8)
+    kinds = [item["kind"] for item in plan]
+    assert "release" in kinds
+    release_idx = kinds.index("release")
+    assert all(k in {"bugfix", "refactor"} for k in kinds[:release_idx])
+    assert all(k in {"feature", "docs", "dep", "release", "triage"} for k in kinds[release_idx:])
+    greenfield = {"feature", "docs", "dep"}
+    if any(k in greenfield for k in kinds):
+        assert release_idx < min(i for i, k in enumerate(kinds) if k in greenfield)
+
+
+def test_stability_first_triage_sorts_last():
+    ctx = {
+        "open_issues": [
+            {"title": "Mystery widget regression"},
+            {"title": "Fix crash in loader"},
+        ],
+        "recent_commits": [],
+    }
+    stable = stability_first_plan(ctx, n=5)
+    kinds = [item["kind"] for item in stable]
+    if "triage" in kinds:
+        assert kinds.index("triage") > kinds.index("bugfix")
+
+
+def test_stability_first_preserves_within_tier_order():
+    heuristic = heuristic_plan(CTX, n=5)
+    stable = stability_first_plan(CTX, n=5)
+    for kind in {"bugfix", "refactor", "feature", "docs", "release", "dep", "triage"}:
+        h_titles = [i["title"] for i in heuristic if i["kind"] == kind]
+        s_titles = [i["title"] for i in stable if i["kind"] == kind]
+        assert h_titles == s_titles
+
+
+def test_stability_first_solve_is_well_formed():
+    out = stability_first_solve(context=CTX, n=5)
+    assert isinstance(out["philosophy"], dict) and isinstance(out["plan"], list)
+    assert out["action"] == "plan"
+    assert "stability-first baseline" in out["rationale"]
+
+
+def test_stability_first_caps_at_horizon():
+    plan = stability_first_plan(CTX, n=3)
+    assert len(plan) == 3
+    assert len(heuristic_plan(CTX, n=3)) == 3
+
+
+def test_stability_first_tolerates_malformed_context():
+    out = stability_first_solve(context={"open_issues": 42, "recent_commits": []}, n=3)
+    assert out["plan"] == []
 
 
 # --- queue_first baseline: clear the open-PR review queue before greenfield work ------------

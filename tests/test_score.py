@@ -1006,3 +1006,14 @@ def test_objective_component_handles_non_numeric_recall():
     from benchmark.score import objective_component
     assert objective_component({"module_recall": "not-a-number"}) == 0.0
     assert objective_component({"weighted_module_recall": [1,2,3]}) == 0.0
+
+def test_bump_level_handles_non_tuple():
+    assert bump_level(None, (1,0,0)) is None
+    assert bump_level("str", (1,0,0)) is None
+    assert bump_level((1,0,0), None) is None
+    assert bump_level((1,), (1,0,0)) is None
+
+def test_composite_score_handles_non_numeric_weights():
+    from benchmark.score import composite_score
+    assert composite_score("tie", {"module_recall": 0.5}, w_judge=None) >= 0
+    assert composite_score("tie", {"module_recall": 0.5}, w_objective="str") >= 0

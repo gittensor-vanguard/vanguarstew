@@ -1,6 +1,6 @@
 """Reference baseline maintainers — the opponents a challenger is judged against.
 
-The pairwise judge only means something relative to an opponent. Three are provided:
+The pairwise judge only means something relative to an opponent. Four are provided:
 
 - ``empty``     — proposes nothing concrete. The floor: any real plan should beat it.
 - ``heuristic`` — a deterministic, LLM-free maintainer that extrapolates the repo's own
@@ -13,6 +13,10 @@ The pairwise judge only means something relative to an opponent. Three are provi
                   schedules the review queue before unrelated greenfield work. On a repo with a
                   live queue it is the hardest bar; with no queue it degrades to exactly
                   ``heuristic``, so it is never a weaker opponent.
+- ``stability_first`` — like ``heuristic`` but **reorders** the same candidate actions by a
+                  fixed stability priority: bugfix/refactor before release, release before
+                  feature/docs, triage last. Models a conservative maintainer who stabilizes
+                  before shipping greenfield work.
 
 Each baseline exposes the same shape as the agent's ``solve`` output (philosophy + plan +
 rationale), so it can flow through ``_submission`` and the judge unchanged. Select one by
@@ -226,6 +230,34 @@ def _review_queue_items(context: dict, limit: int) -> list:
     return items
 
 
+# Stability-first tier: lower rank sorts earlier. A stable sort preserves heuristic order
+# within each tier so this is a pure reprioritization of the same action set.
+_STABILITY_KIND_RANK = {
+    "bugfix": 0,
+    "refactor": 0,
+    "release": 1,
+    "feature": 2,
+    "docs": 2,
+    "dep": 2,
+    "triage": 3,
+}
+
+
+def _stability_rank(kind: str) -> int:
+    return _STABILITY_KIND_RANK.get(kind, 3)
+
+
+def stability_first_plan(context: dict, n: int = 5) -> list:
+    """Reprioritize the heuristic candidate set: stabilize before greenfield.
+
+    Takes the same actions :func:`heuristic_plan` would propose for ``n``, then stable-sorts
+    them: bugfix/refactor first, release after stabilization but before features/docs, triage
+    last. Nothing is added or dropped — only the order changes.
+    """
+    items = heuristic_plan(context, n)
+    return sorted(items, key=lambda item: _stability_rank(item.get("kind", "triage")))
+
+
 def queue_first_plan(context: dict, n: int = 5) -> list:
     """Clear the open-PR review queue first, then fall back to the heuristic backlog plan.
 
@@ -285,10 +317,32 @@ def heuristic_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dic
     }
 
 
+def stability_first_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dict:
+    """A reference maintainer that stabilizes (bugfix/refactor) before greenfield work.
+
+    Proposes the same concrete actions as ``heuristic`` but reorders them by a fixed
+    stability priority so bugfix/refactor precede feature/docs and release sits after
+    stabilization but before features.
+    """
+    ctx = context if context is not None else load_context(repo_path)
+    plan = stability_first_plan(ctx, n)
+    n_issues = len(_baseline_list(ctx.get("open_issues"), "open_issues"))
+    return {
+        "philosophy": heuristic_philosophy(ctx),
+        "plan": plan,
+        "action": "plan",
+        "rationale": (
+            f"stability-first baseline: stabilize before greenfield across "
+            f"{n_issues} open issue(s) and recent-theme momentum"
+        ),
+    }
+
+
 BASELINES = {
     "empty": empty_solve,
     "heuristic": heuristic_solve,
     "queue_first": queue_first_solve,
+    "stability_first": stability_first_solve,
 }
 DEFAULT_BASELINE = "empty"
 
