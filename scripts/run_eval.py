@@ -36,12 +36,32 @@ def result_summary_lines(result: dict) -> list[str]:
     return []
 
 
+def _numeric_score(value) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
 def check_score_floor(result: dict, fail_under: float | None) -> str | None:
     """Return an error message when ``composite_mean`` is below ``fail_under``, else None."""
     if fail_under is None:
         return None
-    score = result.get("composite_mean")
-    if not isinstance(score, (int, float)) or isinstance(score, bool):
+    # Generalization reports nest composite_mean under tuned/held_out — no top-level field.
+    if "tuned" in result and "held_out" in result:
+        for label in ("tuned", "held_out"):
+            part = result.get(label) or {}
+            if not part.get("scored_repos"):
+                continue
+            score = _numeric_score(part.get("composite_mean"))
+            if score is None:
+                return (f"score floor {fail_under}: {label} composite_mean "
+                        "missing or non-numeric")
+            if score < fail_under:
+                return (f"score floor {fail_under}: {label} composite_mean "
+                        f"{score:.3f} below threshold")
+        return None
+    score = _numeric_score(result.get("composite_mean"))
+    if score is None:
         return f"score floor {fail_under}: composite_mean missing or non-numeric"
     if score < fail_under:
         return f"score floor {fail_under}: composite_mean {score:.3f} below threshold"

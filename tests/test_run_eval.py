@@ -75,3 +75,31 @@ def test_check_score_floor_fails_when_missing():
 
 def test_check_score_floor_skipped_when_disabled():
     assert check_score_floor({"composite_mean": 0.1}, None) is None
+
+
+def _generalization_result(tuned=0.6, held_out=0.6, tuned_scored=2, held_scored=1):
+    return {
+        "repo_set": "foo.json",
+        "tuned": {"composite_mean": tuned, "scored_repos": tuned_scored},
+        "held_out": {"composite_mean": held_out, "scored_repos": held_scored},
+        "generalization_gap": round(tuned - held_out, 3) if tuned_scored and held_scored else None,
+    }
+
+
+def test_check_score_floor_passes_for_generalization_shape():
+    assert check_score_floor(_generalization_result(), 0.0) is None
+    assert check_score_floor(_generalization_result(tuned=0.6, held_out=0.55), 0.5) is None
+
+
+def test_check_score_floor_fails_when_generalization_partition_below_floor():
+    msg = check_score_floor(_generalization_result(tuned=0.4, held_out=0.6), 0.5)
+    assert msg is not None and "tuned composite_mean" in msg and "0.400" in msg
+    msg = check_score_floor(_generalization_result(tuned=0.6, held_out=0.4), 0.5)
+    assert msg is not None and "held_out composite_mean" in msg
+
+
+def test_check_score_floor_skips_unscored_generalization_partition():
+    # A partition with scored_repos=0 is not gated — same posture as generalization_gap.
+    assert check_score_floor(
+        _generalization_result(tuned=0.95, tuned_scored=2, held_scored=0), 0.9,
+    ) is None
