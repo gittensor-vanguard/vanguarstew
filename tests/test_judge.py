@@ -64,6 +64,12 @@ def test_parse_winner_tolerant():
     assert _parse_winner("") == "tie"
 
 
+def test_parse_winner_non_string_defaults_to_tie():
+    """A truthy non-string model reply must not crash the judge (#724)."""
+    for bad in (None, 42, ["A"], {"winner": "A"}, True):
+        assert _parse_winner(bad) == "tie", bad
+
+
 def _sub(plan_items=0, philosophy=True, rationale=True):
     return {
         "philosophy": {"summary": "conservative, refactor-first"} if philosophy else {},

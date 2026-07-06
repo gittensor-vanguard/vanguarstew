@@ -48,6 +48,8 @@ SYSTEM = (
 
 def _parse_winner(text: str) -> str:
     """Extract the winner tolerantly — survives truncated JSON, smart quotes, extra prose."""
+    if not isinstance(text, str):
+        return "tie"
     match = _WINNER.search(text or "")
     if not match:
         return "tie"
