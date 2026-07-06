@@ -12,7 +12,9 @@ from benchmark.score import (  # noqa: E402
     _PLAN_KIND,
     _meaningful_overlap,
     _plan_list,
+    _plan_tokens,
     _tokens,
+    _top_module,
     addressed_issues,
     backlog_recall,
     base_from_releases,
@@ -755,3 +757,44 @@ def test_objective_score_tolerates_non_list_plan_container():
         assert score["module_recall"] == 0.0
         assert score["kind_recall"] == 0.0
         assert score["release_predicted"] is False
+
+
+# --- #399: non-string file-path entries must not abort module recall scoring ---------------
+
+_MALFORMED_PATHS = [42, 3.14, None, True, ["agent"], {"path": "agent/x.py"}, b"agent/x.py"]
+
+
+def test_top_module_returns_none_for_non_string_paths():
+    for bad in _MALFORMED_PATHS:
+        assert _top_module(bad) is None, f"_top_module({bad!r}) should be None"
+    assert _top_module("agent/loader.py") == "agent"
+    assert _top_module(".gitignore") == "gitignore"
+
+
+def test_changed_modules_skips_non_string_revealed_paths():
+    mods = changed_modules([{"files": [42, None, "agent/foo.py", "benchmark/x.py"]}])
+    assert mods == {"agent", "benchmark"}
+
+
+def test_plan_tokens_skips_non_string_files_entries():
+    toks = _plan_tokens([{"title": "loader", "files": [123, "agent/plan.py"]}])
+    assert "agent" in toks
+    assert "plan" in toks
+    assert "123" not in toks
+
+
+def test_module_recall_survives_non_string_paths_in_plan_and_revealed():
+    plan = [{"title": "loader", "files": [None, "agent/plan.py"]}]
+    revealed = [{"subject": "ship it", "files": [42, "agent/foo.py", "benchmark/x.py"]}]
+    res = module_recall(plan, revealed)
+    assert res["module_recall"] == 0.5
+    assert res["matched_modules"] == ["agent"]
+    assert res["actual_modules"] == ["agent", "benchmark"]
+
+
+def test_objective_score_survives_non_string_file_paths():
+    revealed = [{"subject": "feat: core work", "files": [42, None, "agent/loader.py"]}]
+    plan = [{"title": "agent loader", "kind": "feat", "files": [123, "agent/plan.py"]}]
+    score = objective_score(plan, revealed)
+    assert score["module_recall"] == 1.0
+    assert score["kind_recall"] == 1.0

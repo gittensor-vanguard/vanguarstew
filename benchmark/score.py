@@ -173,7 +173,9 @@ def _plan_tokens(plan) -> set:
             # toward substance); tokenize path segments so module recall can match on the
             # top-level module even when the title omits it.
             for path in item.get("files") or []:
-                toks |= _tokens((path or "").replace("/", " "))
+                if not isinstance(path, str):
+                    continue
+                toks |= _tokens(path.replace("/", " "))
         else:
             toks |= _tokens(str(item))
     return toks
@@ -185,8 +187,10 @@ def _top_module(path: str):
     A nested path takes its first segment (`agent/foo.py` -> `agent`). A top-level file
     strips a single extension (`README.md` -> `readme`); a top-level dotfile has no extension
     to strip (`.gitignore`), so it falls back to the bare filename sans leading dots rather
-    than being silently dropped from the ground truth.
+    than being silently dropped from the ground truth. Non-string paths are skipped (#399).
     """
+    if not isinstance(path, str):
+        return None
     parts = [p for p in path.split("/") if p]
     if not parts:
         return None
