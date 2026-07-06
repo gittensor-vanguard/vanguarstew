@@ -1,9 +1,9 @@
 """Enrich a frozen snapshot with GitHub state that was knowable at time T.
 
 `freeze.py` gives us git-only context (commits, tags, README). This adds the maintainer's
-real working surface — open issues, open PRs, labels, milestones, releases — reconstructed
-*as of T* so nothing from the future leaks: an item counts as "open at T" only if it was
-created on or before T and was not already closed by T.
+real working surface — open issues, open PRs, milestones, releases, and other fields we can
+defend *as of T* — so nothing from the future leaks: an item counts as "open at T" only if it
+was created on or before T and was not already closed by T.
 
 Network access is optional. Any failure (offline, rate limit, private repo) is caught and
 the git-only context is returned unchanged, so the benchmark still runs without GitHub.
@@ -49,13 +49,16 @@ def _milestone_at(milestone: dict, until: datetime):
     Returns None when the milestone was created after T. Otherwise `state` is derived from
     `closed_at` *as of T* — `"closed"` only when it was already closed by T — rather than the
     milestone's present-day state, so a milestone closed after T isn't leaked as completed.
+
+    `due_on` is intentionally omitted: the REST snapshot is today's editable due date, and we
+    do not have a cheap historical edit stream to reconstruct it reliably as-of-T.
     """
     created = _parse_dt(milestone.get("created_at"))
     if created is None or created > until:
         return None
     closed = _parse_dt(milestone.get("closed_at"))
     state = "closed" if closed is not None and closed <= until else "open"
-    return {"title": milestone.get("title"), "due_on": milestone.get("due_on"), "state": state}
+    return {"title": milestone.get("title"), "state": state}
 
 
 def _get(url: str, token, timeout: int = 20):
@@ -67,6 +70,57 @@ def _get(url: str, token, timeout: int = 20):
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _labels_at(events, until: datetime):
+    """Reconstruct an issue/PR's label set *as of `until`* from its timeline.
+
+    Replays ``labeled`` / ``unlabeled`` events in chronological order, ignoring any
+    event after T, so the result reflects membership at the freeze time rather than
+    today's live labels. Returns a sorted list of label names, or ``None`` when the
+    timeline carries no usable label event at/or before T — the caller then falls
+    back to omitting labels rather than leaking the present-day set.
+    """
+    relevant = []
+    for ev in events or []:
+        if ev.get("event") not in ("labeled", "unlabeled"):
+            continue
+        ts = _parse_dt(ev.get("created_at"))
+        if ts is None or ts > until:
+            continue
+        name = (ev.get("label") or {}).get("name")
+        if name:
+            relevant.append((ts, ev.get("event"), name))
+    if not relevant:
+        return None
+    relevant.sort(key=lambda x: x[0])
+    labels = set()
+    for _, etype, name in relevant:
+        if etype == "labeled":
+            labels.add(name)
+        else:
+            labels.discard(name)
+    return sorted(labels)
+
+
+def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
+    """Fetch an issue/PR's timeline events (paginated). Returns ``[]`` on any error,
+    so label reconstruction degrades to the safe omit-labels fallback offline."""
+    if number is None:
+        return []
+    events = []
+    for page in range(1, max_pages + 1):
+        try:
+            batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
+                         token, timeout)
+        except Exception:
+            break
+        if not batch:
+            break
+        events.extend(batch)
+        if len(batch) < 100:
+            break
+    return events
 
 
 def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages: int):
@@ -92,10 +146,18 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
             closed = _parse_dt(it.get("closed_at"))
             if closed is not None and closed <= until:
                 continue          # already closed by T — not open
+            # Labels are mutable and the live list leaks today's state, so
+            # reconstruct membership as-of-T from the item's timeline instead of
+            # copying it.get("labels"). When the timeline can't be read (offline,
+            # rate-limited, or no label events), omit labels rather than leak.
+            as_of_t = _labels_at(
+                _issue_timeline(base, it.get("number"), token, timeout), until
+            )
             rec = {
                 "number": it.get("number"),
                 "title": it.get("title"),
-                "labels": [lbl.get("name") for lbl in it.get("labels", [])],
+                "labels": as_of_t if as_of_t is not None else [],
+                "labels_as_of_t": as_of_t is not None,
                 "created_at": it.get("created_at"),
             }
             (open_prs if it.get("pull_request") else open_issues).append(rec)
@@ -121,8 +183,6 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
     open_issues, open_prs, truncated = _collect_open_at(base, until, token, timeout,
                                                         max_issue_pages)
 
-    labels = [lbl.get("name") for lbl in _get(f"{base}/labels?per_page={per_page}", token, timeout)]
-
     milestones = []
     for m in _get(f"{base}/milestones?state=all&per_page={per_page}", token, timeout):
         rec = _milestone_at(m, until)
@@ -140,7 +200,6 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "repo": f"{owner}/{repo}",
         "open_issues": open_issues,
         "open_prs": open_prs,
-        "labels": labels,
         "milestones": milestones,
         "releases": releases,
         "_source": "github-api",
