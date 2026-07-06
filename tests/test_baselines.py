@@ -3,6 +3,7 @@
     VANGUARSTEW_OFFLINE=1 python -m pytest -q
 """
 
+import logging
 import os
 import shutil
 import subprocess
@@ -19,6 +20,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.baselines import (  # noqa: E402
     BASELINES,
+    _commit_subject,
     _infer_kind,
     _issue_title,
     empty_solve,
@@ -151,6 +153,46 @@ def test_heuristic_plan_skips_issues_with_non_string_title():
     })
     assert any("YAML config" in item["title"] for item in plan)
     assert not any("loader" in item["title"] for item in plan)
+
+
+def test_commit_subject_tolerates_non_dict_entries():
+    assert _commit_subject({"subject": "Fix loader"}) == "Fix loader"
+    assert _commit_subject("a bare string commit") == ""
+    assert _commit_subject(None) == ""
+    assert _commit_subject(42) == ""
+    assert _commit_subject(["Fix", "loader"]) == ""
+
+
+def test_commit_subject_logs_a_warning_for_non_dict_entries(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.baselines"):
+        assert _commit_subject("not a dict") == ""
+    assert any("non-dict recent_commits" in r.message for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="benchmark.baselines"):
+        assert _commit_subject({"subject": "Fix loader"}) == "Fix loader"
+    assert not caplog.records
+
+
+def test_heuristic_baseline_skips_non_dict_commit_entries():
+    # A malformed recent_commits entry (e.g. a bare string from an imperfect context
+    # producer) must not crash the heuristic baseline, and the well-formed commits
+    # around it must still be correctly classified and counted.
+    ctx = {
+        "recent_commits": [
+            {"subject": "Fix crash in parser"},
+            "a malformed string entry instead of a dict",
+            {"subject": "Fix another bug"},
+        ],
+        "open_issues": [],
+    }
+    kinds = heuristic_plan(ctx)
+    bugfix_items = [i for i in kinds if i["kind"] == "bugfix"]
+    assert len(bugfix_items) == 1
+    assert "2 recent" in bugfix_items[0]["rationale"]  # both good commits counted
+
+    phil = heuristic_philosophy(ctx)
+    assert "Fix crash in parser" in phil["evidence"]
+    assert "Fix another bug" in phil["evidence"]
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")

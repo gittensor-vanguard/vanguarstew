@@ -16,10 +16,13 @@ name via :func:`get_baseline`; the runner exposes this as ``--baseline``.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 
 from agent.context import load_context
 from benchmark.score import commit_kind, is_release_subject
+
+logger = logging.getLogger(__name__)
 
 # Map normalized commit_kind values onto the planner's baseline vocabulary.
 _COMMIT_KIND_TO_BASELINE = {
@@ -61,6 +64,21 @@ def _issue_title(issue) -> str:
     return title.strip() if isinstance(title, str) else ""
 
 
+def _commit_subject(commit) -> str:
+    """Return a commit's ``subject`` when the entry is a dict; else empty.
+
+    ``recent_commits`` entries come from the (unvalidated) frozen context; a malformed entry
+    that isn't a dict must not crash the heuristic baseline — log and skip it instead.
+    """
+    if not isinstance(commit, dict):
+        logger.warning(
+            "heuristic baseline: skipping a non-dict recent_commits entry (%s: %r)",
+            type(commit).__name__, commit,
+        )
+        return ""
+    return commit.get("subject", "") or ""
+
+
 def _infer_kind(text: str) -> str:
     if is_release_subject(text):
         return "release"
@@ -78,7 +96,7 @@ def _infer_kind(text: str) -> str:
 
 
 def _commit_kinds(context: dict) -> Counter:
-    return Counter(_infer_kind(c.get("subject", "")) for c in context.get("recent_commits") or [])
+    return Counter(_infer_kind(_commit_subject(c)) for c in context.get("recent_commits") or [])
 
 
 def heuristic_philosophy(context: dict) -> dict:
@@ -91,7 +109,7 @@ def heuristic_philosophy(context: dict) -> dict:
         "values": [k for k, _ in kinds.most_common(3)] or ["triage"],
         "merge_bar": "inferred from recent commit patterns (no explicit signal)",
         "direction": f"continue {dominant}-oriented work and clear the issue backlog",
-        "evidence": [c.get("subject", "") for c in (context.get("recent_commits") or [])[:5]],
+        "evidence": [_commit_subject(c) for c in (context.get("recent_commits") or [])[:5]],
     }
 
 
@@ -121,7 +139,7 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
         })
 
     # 3. If the repo has been cutting releases, expect another.
-    if any(_infer_kind(c.get("subject", "")) == "release"
+    if any(_infer_kind(_commit_subject(c)) == "release"
            for c in context.get("recent_commits") or []):
         items.append({
             "title": "Prepare the next release",
