@@ -105,6 +105,22 @@ def _iter_top_level_spans(text: str):
         i = end + 1
 
 
+def _pick_best_json(candidates):
+    """Prefer object payloads over arrays, then the longest serialization.
+
+    Mirrors the preference logic used for unfenced bracket spans so a throwaway
+    earlier example does not beat a later, more complete answer.
+    """
+    if not candidates:
+        return None
+
+    def _rank(value):
+        serialized = json.dumps(value, separators=(",", ":"))
+        return (isinstance(value, dict), len(serialized))
+
+    return max(candidates, key=_rank)
+
+
 def extract_json(text: str):
     """Best-effort JSON extraction from an LLM response.
 
@@ -118,12 +134,15 @@ def extract_json(text: str):
     if text is None:
         raise ValueError("empty LLM response")
 
-    fence_match = _FENCE.search(text)
-    if fence_match:
+    fence_candidates = []
+    for fence_match in _FENCE.finditer(text):
         try:
-            return json.loads(fence_match.group(1))
+            fence_candidates.append(json.loads(fence_match.group(1)))
         except (ValueError, TypeError):
-            pass
+            continue
+    best_fence = _pick_best_json(fence_candidates)
+    if best_fence is not None:
+        return best_fence
 
     try:
         return json.loads(text)
@@ -139,7 +158,6 @@ def extract_json(text: str):
         spans.append((opener, span, value))
 
     if spans:
-        spans.sort(key=lambda s: (s[0] != "{", -len(s[1])))
-        return spans[0][2]
+        return _pick_best_json([s[2] for s in spans])
 
     raise ValueError(f"could not parse JSON from response: {text[:200]!r}")
