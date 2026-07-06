@@ -123,6 +123,39 @@ def test_is_generalization_detector_is_strict():
     assert _is_generalization({"composite_mean": 0.5}) is False
     assert _is_generalization({"tuned": 0.5, "held_out": 0.4}) is False   # scalars, not dicts
     assert _is_generalization({"tuned": {"composite_mean": 0.5}}) is False  # held_out missing
+    assert _is_generalization({
+        "tuned": {"composite_mean": 0.5, "scored_repos": 1},
+        "held_out": {"composite_mean": 0.4, "scored_repos": 1},
+    }) is False  # missing generalization_gap and repo_set
+    assert _is_generalization({
+        "composite_mean": 0.5,
+        "tuned": {"composite_mean": 0.9},
+        "held_out": {"composite_mean": 0.1},
+    }) is False  # standard replay wins over partition keys
+
+
+def test_compare_eval_ignores_incomplete_generalization_shape():
+    artifact = {
+        "tuned": {"composite_mean": 0.5, "scored_repos": 1},
+        "held_out": {"composite_mean": 0.4, "scored_repos": 1},
+    }
+    diff = compare_eval_artifacts(artifact, artifact)
+    assert diff == {
+        "composite_mean": {"baseline": None, "candidate": None, "delta": None},
+    }
+    assert "generalization" not in diff
+
+
+def test_compare_eval_ignores_partition_keys_on_standard_artifacts():
+    baseline = {
+        "composite_mean": 0.5,
+        "tuned": {"composite_mean": 0.9},
+        "held_out": {"composite_mean": 0.1},
+    }
+    candidate = {"composite_mean": 0.6}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_mean"]["delta"] == 0.1
+    assert "generalization" not in diff
 
 
 def test_compare_eval_diffs_generalization_partitions_and_gap():
@@ -137,10 +170,12 @@ def test_compare_eval_diffs_generalization_partitions_and_gap():
 
 def test_generalization_diff_tolerates_missing_and_none_partition_scores():
     # A partition that only recorded an error (no composite_mean) diffs to None, no crash.
-    baseline = {"tuned": {"error": "no tuned repos", "scored_repos": 0},
+    baseline = {"repo_set": "foo.json",
+                "tuned": {"error": "no tuned repos", "scored_repos": 0},
                 "held_out": {"composite_mean": 0.4, "scored_repos": 1},
                 "generalization_gap": None}
-    candidate = {"tuned": {"composite_mean": None, "scored_repos": 0},
+    candidate = {"repo_set": "foo.json",
+                 "tuned": {"composite_mean": None, "scored_repos": 0},
                  "held_out": {"composite_mean": 0.5, "scored_repos": 1},
                  "generalization_gap": None}
     diff = compare_eval_artifacts(baseline, candidate)
@@ -168,9 +203,13 @@ def test_comparison_headline_describes_generalization_diff():
 
 def test_comparison_headline_generalization_marks_unavailable_delta():
     diff = compare_eval_artifacts(
-        {"tuned": {"composite_mean": None}, "held_out": {"composite_mean": 0.4},
+        {"repo_set": "foo.json",
+         "tuned": {"composite_mean": None, "scored_repos": 0},
+         "held_out": {"composite_mean": 0.4, "scored_repos": 1},
          "generalization_gap": None},
-        {"tuned": {"composite_mean": None}, "held_out": {"composite_mean": 0.5},
+        {"repo_set": "foo.json",
+         "tuned": {"composite_mean": None, "scored_repos": 0},
+         "held_out": {"composite_mean": 0.5, "scored_repos": 1},
          "generalization_gap": None},
     )
     line = comparison_headline(diff)

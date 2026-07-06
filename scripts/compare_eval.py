@@ -64,15 +64,32 @@ def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
     return out
 
 
+def _looks_like_partition(part: dict) -> bool:
+    """True when ``part`` resembles ``run_multi_replay()`` partition output."""
+    return bool(part) and any(k in part for k in ("scored_repos", "composite_mean", "error"))
+
+
 def _is_generalization(artifact: dict) -> bool:
     """True only for a ``run_generalization_report`` artifact.
 
     That report nests per-partition scores under ``tuned`` and ``held_out`` mappings and
-    carries no top-level ``composite_mean``. Requiring BOTH keys to be dicts keeps the
-    detector strict: a standard single/multi-repo artifact never carries two dict-valued
-    ``tuned``/``held_out`` fields, so it is never misread as generalization-shaped.
+    carries no top-level ``composite_mean``. Requiring ``repo_set``, ``generalization_gap``,
+    and partition-shaped dicts avoids false positives from unrelated artifacts that happen
+    to carry scalar or incomplete ``tuned``/``held_out`` fields.
     """
-    return isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict)
+    if not isinstance(artifact, dict):
+        return False
+    if "composite_mean" in artifact:
+        return False
+    if "generalization_gap" not in artifact:
+        return False
+    if not isinstance(artifact.get("repo_set"), str):
+        return False
+    tuned = artifact.get("tuned")
+    held_out = artifact.get("held_out")
+    if not isinstance(tuned, dict) or not isinstance(held_out, dict):
+        return False
+    return _looks_like_partition(tuned) and _looks_like_partition(held_out)
 
 
 def _generalization_diff(baseline: dict, candidate: dict) -> dict:
