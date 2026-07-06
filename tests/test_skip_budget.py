@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import sys
 
@@ -14,6 +15,7 @@ if ROOT not in sys.path:
 from benchmark.skip_budget import (  # noqa: E402
     DEFAULT_MAX_SKIP_RATE,
     DEFAULT_MIN_SCORED,
+    _check_rows_list,
     check_skip_budget,
     failed_checks,
     skip_budget_headline,
@@ -178,6 +180,117 @@ def test_check_skip_budget_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_skip_budget(run)
     assert run == snapshot
+
+
+# --- checks row sanitization for skip-budget headlines --------------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "multi_repo_accounting"}, "not a list",
+    ({"name": "multi_repo_accounting", "passed": False},),
+    range(2),
+]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "multi_repo_accounting", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "multi_repo_accounting", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "multi_repo_accounting", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list([{"name": "multi_repo_accounting"}]) == []
+    assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
+
+
+def test_skip_budget_headline_survives_non_list_checks():
+    base = {"passed": False, "repos": 8, "scored_repos": 2}
+    for bad in _MALFORMED_CHECKS:
+        assert skip_budget_headline({**base, "checks": bad}) == (
+            "skip budget: no checks evaluated"
+        ), bad
+
+
+def test_skip_budget_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "enough_scored"}],
+        [{}],
+    ):
+        assert skip_budget_headline({"checks": checks, "passed": False}) == (
+            "skip budget: no checks evaluated"
+        )
+
+
+def test_skip_budget_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "enough_scored", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        line = skip_budget_headline({"checks": checks, "passed": False})
+    assert line == "skip budget: UNDER-COVERED (1/1 checks failed: enough_scored)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+def test_skip_budget_headline_logs_warning_for_non_list_checks(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        line = skip_budget_headline({"checks": 42, "passed": False})
+    assert line == "skip budget: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [
+        {"name": "multi_repo_accounting", "passed": False},
+        42,
+        {"name": "enough_scored", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert failed_checks({"checks": checks}) == ["multi_repo_accounting"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 # --- CLI ---

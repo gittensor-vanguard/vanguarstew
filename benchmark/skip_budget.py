@@ -26,6 +26,10 @@ with a non-list ``checks``) simply fails the relevant checks rather than raising
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_MIN_SCORED = 3
 DEFAULT_MAX_SKIP_RATE = 0.25
 
@@ -40,10 +44,50 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _checks_list(result) -> list:
-    """The ``checks`` of a result, but only when it is actually a list of check dicts."""
-    checks = _dict(result).get("checks")
-    return checks if isinstance(checks, list) else []
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return skip-budget gate-check rows for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers (scalars, dicts, tuples, ranges, strings, etc.) are warned and
+    treated as empty (never coerced). Dict rows missing ``name`` or ``passed`` are skipped
+    with a warning.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
+        logger.warning(
+            "skip_budget: checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "skip_budget: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "skip_budget: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "skip_budget: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _counts(result: dict):
@@ -109,19 +153,23 @@ def check_skip_budget(result, min_scored: int = DEFAULT_MIN_SCORED,
 def failed_checks(result: dict) -> list:
     """The names of the checks that failed in a :func:`check_skip_budget` result.
 
-    Robust to a malformed result whose ``checks`` is not a list, or whose entries are not dicts.
+    Malformed ``checks`` containers, rows missing ``name``/``passed``, and other unusable
+    entries are skipped after logging a warning; they never raise.
     """
-    return [c["name"] for c in _checks_list(result)
-            if isinstance(c, dict) and not c.get("passed")]
+    return [
+        c["name"] for c in _check_rows_list(_dict(result).get("checks"))
+        if not c.get("passed")
+    ]
 
 
 def skip_budget_headline(result: dict) -> str:
     """A one-line human summary of a :func:`check_skip_budget` result.
 
-    Robust to a malformed result whose ``checks`` is missing or not a list.
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"skip budget: no checks evaluated"`` after logging any warnings.
     """
     result = _dict(result)
-    checks = _checks_list(result)
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "skip budget: no checks evaluated"
     if result.get("passed"):
