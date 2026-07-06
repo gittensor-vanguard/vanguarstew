@@ -522,6 +522,22 @@ def test_mask_forward_refs_masks_github_links_and_shas():
     assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
 
 
+def test_mask_forward_refs_masks_scheme_less_github_links():
+    # GitHub/markdown auto-link a scheme-less `github.com/...`, so it is just as much a
+    # forward-reference and must be masked — mirroring benchmark/leakage.py (the git-only
+    # fallback previously masked only scheme-ful links, re-leaking future refs).
+    for text in (
+        "Roadmap: see github.com/o/r/pull/900 for the plan.",
+        "tracked at www.github.com/o/r/issues/512 now",
+        "cut in github.com/o/r/releases/tag/v9.9.9 next",
+    ):
+        out = _mask_forward_refs(text)
+        assert "github.com" not in out and "<link>" in out
+    # A look-alike host must NOT be masked (the (?<![\w.]) boundary guard).
+    safe = "see notgithub.com/x/y/pull/1 and foo.github.com/x/y/pull/2"
+    assert _mask_forward_refs(safe) == safe
+
+
 def test_mask_forward_refs_preserves_plain_numbers():
     text = "supports 2500000 requests per second, up from 1200000 last year"
     out = _mask_forward_refs(text)
