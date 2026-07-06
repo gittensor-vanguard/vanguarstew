@@ -23,6 +23,7 @@ from benchmark.score import (  # noqa: E402
     plan_kind,
     release_predicted,
     release_signaled,
+    released_version,
 )
 
 REVEALED = [
@@ -241,6 +242,19 @@ def test_is_release_subject_rejects_incidental_versions():
     assert not is_release_subject("fix crash in v1.2.0 parser")
     assert not is_release_subject("docs: mention support for Python 3.11.0")
     assert not is_release_subject("add retry logic")
+
+
+def test_is_release_subject_accepts_two_component_tags():
+    # parse_semver already tolerates a missing patch component ("1.4" -> (1, 4, 0));
+    # is_release_subject must recognize the same bare two-component tags as releases.
+    assert is_release_subject("v2.0")
+    assert is_release_subject("2.0")
+    assert is_release_subject("Release v2.0")
+
+
+def test_released_version_recognizes_two_component_tag():
+    revealed = [{"subject": "v2.0", "files": ["CHANGELOG.md"]}]
+    assert released_version(revealed) == (2, 0, 0)
 
 
 def test_release_signaled_ignores_dependency_bumps():
