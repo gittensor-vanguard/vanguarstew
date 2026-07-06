@@ -55,6 +55,25 @@ def test_context_for_agent_keeps_reconstructed_labels():
     assert out["open_issues"][0]["labels_as_of_t"] is True
 
 
+def test_context_for_agent_tolerates_malformed_context_and_lists():
+    # A non-dict context, or a non-list open_issues/open_prs (a malformed frozen snapshot), must
+    # not raise TypeError and abort the agent — treat them as empty, mirroring the fail-soft
+    # posture elsewhere. None/falsy is the ordinary empty case.
+    for bad in (42, True, "ctx", None):
+        out = context_for_agent(bad)
+        assert out["open_issues"] == [] and out["open_prs"] == []
+
+    out = context_for_agent({"open_issues": 42, "open_prs": {"n": 1}})
+    assert out["open_issues"] == [] and out["open_prs"] == []
+
+    # A non-dict row inside a list is still passed through unchanged (existing behavior),
+    # while well-formed rows alongside it are processed normally.
+    out = context_for_agent({"open_issues": ["junk", {"number": 1, "labels": [],
+                                                      "labels_as_of_t": False}]})
+    assert out["open_issues"][0] == "junk"
+    assert "labels" not in out["open_issues"][1]
+
+
 def test_prompt_renderers_do_not_serialize_unknown_labels_as_empty_history():
     ctx = {
         "frozen_at": {"commit": "abc"},

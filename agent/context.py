@@ -9,9 +9,12 @@ T, tags as releases, the README). The agent must never look past T.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 CONTEXT_FILE = ".vanguarstew_context.json"
 
@@ -59,11 +62,23 @@ def context_for_agent(context: dict) -> dict:
     false we omit ``labels`` from the agent-facing prompt view, so ``[]`` is not misread as
     "this item had no labels at T" when the real meaning is "label history unavailable".
     """
-    out = dict(context or {})
+    if not isinstance(context, dict):
+        if context:  # None / falsy is the ordinary "no context" case, not worth a warning
+            logger.warning("context_for_agent: context is %s, not a dict; using {}",
+                           type(context).__name__)
+        context = {}
+    out = dict(context)
     for key in ("open_issues", "open_prs"):
+        raw = out.get(key)
+        if raw is not None and not isinstance(raw, list):
+            logger.warning("context_for_agent: %s is %s, not a list; treating as empty",
+                           key, type(raw).__name__)
+            raw = []
         items = []
-        for item in out.get(key) or []:
+        for idx, item in enumerate(raw or []):
             if not isinstance(item, dict):
+                logger.warning("context_for_agent: %s[%d] is %s, not a dict; passing it through",
+                               key, idx, type(item).__name__)
                 items.append(item)
                 continue
             clean = dict(item)
