@@ -121,7 +121,7 @@ def _offline_rank(submission: dict) -> tuple:
     """Deterministic stand-in ordering: reward a substantive plan plus real reasoning."""
     philosophy = submission.get("philosophy") or {}
     plan = _plan_list(submission.get("plan"))
-    rationale = (submission.get("rationale") or "").strip()
+    rationale = _text(submission.get("rationale"))
     philosophy_signal = 1 if isinstance(philosophy, dict) and any(
         philosophy.get(k) for k in ("summary", "direction", "values")) else 0
     return (_plan_substance(plan), philosophy_signal, 1 if rationale else 0)

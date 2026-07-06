@@ -308,3 +308,22 @@ def test_offline_rank_tolerates_non_list_plan_container():
         "rationale": "because",
     })
     assert good[0] > 0
+
+
+# --- #350: _offline_rank must tolerate a non-string top-level rationale (no crash) --------
+
+def test_offline_rank_tolerates_non_string_rationale():
+    for bad in (["not", "a", "string"], {"why": "x"}, 42, 3.14, True, b"because"):
+        ranked = _offline_rank({"philosophy": {}, "plan": [], "rationale": bad})
+        assert ranked[-1] == 0  # no rationale credit when the field isn't a string
+    with_rationale = _offline_rank({"philosophy": {}, "plan": [], "rationale": "because"})
+    assert with_rationale[-1] == 1
+
+
+def test_judge_verbose_tolerates_non_string_top_level_rationale():
+    llm = LLM(api_key="offline")
+    good = {"philosophy": {}, "plan": [{"title": "ship fix", "kind": "bugfix"}], "rationale": "sound"}
+    bad = {"philosophy": {}, "plan": [], "rationale": ["broken"]}
+    winner, judge_order = judge_verbose({}, good, bad, [], llm)
+    assert winner == "A"
+    assert judge_order == "offline"
