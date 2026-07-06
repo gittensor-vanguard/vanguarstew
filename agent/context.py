@@ -28,8 +28,12 @@ def _mask_forward_refs(text: str) -> str:
 
     A README or commit subject like "see #150 for the roadmap" would otherwise leak where the
     repo went next, violating the knowable-at-T contract this module's fallback must honor.
+    Non-string inputs are treated as empty scrubbable text, matching the fail-soft posture
+    of ``benchmark.leakage.strip_forward_refs`` without importing from ``benchmark/``.
     """
-    return _ISSUE_REF.sub("#ref", text or "")
+    if not isinstance(text, str) or not text:
+        return ""
+    return _ISSUE_REF.sub("#ref", text)
 
 
 def _git(repo_path, *args):

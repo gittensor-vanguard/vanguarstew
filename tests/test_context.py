@@ -140,6 +140,12 @@ def test_mask_forward_refs_only_touches_hash_digits():
     assert _mask_forward_refs(None) == ""
 
 
+def test_mask_forward_refs_tolerates_non_string_input():
+    assert _mask_forward_refs(["see #900"]) == ""
+    assert _mask_forward_refs(42) == ""
+    assert _mask_forward_refs({"title": "Fix #900"}) == ""
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_masks_forward_refs_in_subjects_and_readme():
     # The scored path scrubs #N back-references from subjects/README before the agent sees
