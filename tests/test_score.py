@@ -24,6 +24,7 @@ from benchmark.score import (  # noqa: E402
     plan_kind,
     release_predicted,
     release_signaled,
+    released_version,
     sweep_composite,
 )
 
@@ -192,6 +193,28 @@ def test_parse_semver_with_and_without_leading_v():
     assert parse_semver("1.4") == (1, 4, 0)             # missing patch -> 0
     assert parse_semver("v3.1.4-rc2") == (3, 1, 4)      # pre-release suffix ignored
     assert parse_semver("no version here") is None
+
+
+def test_parse_semver_returns_last_version_when_multiple():
+    """In a release subject, the project's version follows incidental versions (#266)."""
+    assert parse_semver("Support Python 3.11, release 1.4.0") == (1, 4, 0)
+    # Single-version inputs are unchanged (last == first).
+    assert parse_semver("v1.2.0") == (1, 2, 0)
+    assert parse_semver("1.2.0") == (1, 2, 0)
+
+
+def test_released_version_uses_last_version_not_first():
+    """The release version must be extracted, not an earlier runtime/dep version."""
+    revealed = [
+        {"subject": "Support Python 3.11, release 1.4.0"},
+    ]
+    assert released_version(revealed) == (1, 4, 0)
+
+    # When there's only one version, it's still found.
+    assert released_version([{"subject": "Release v2.0.0"}]) == (2, 0, 0)
+
+    # Non-release subjects are filtered out.
+    assert released_version([{"subject": "fix crash in v1.2.0 parser"}]) is None
 
 
 def test_bump_level_major_minor_patch():

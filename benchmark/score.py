@@ -32,15 +32,19 @@ def _tokens(text: str) -> set:
 
 
 def parse_semver(text: str):
-    """Parse the first semver core in `text` -> (major, minor, patch), or None.
+    """Parse the *last* semver core in `text` -> (major, minor, patch), or None.
 
-    Tolerant of a leading `v` and of a missing patch (`1.2` -> (1, 2, 0)), and ignores any
-    pre-release/build suffix. Returns None when no version-looking token is present.
+    In a release commit subject the project's own version typically appears after
+    incidental versions (language runtimes, dependency specs), so the last version
+    is the most reliable signal. Tolerant of a leading ``v`` and of a missing patch
+    (``1.2`` -> (1, 2, 0)), and ignores any pre-release/build suffix. Returns None
+    when no version-looking token is present.
     """
-    m = _SEMVER.search(text or "")
-    if not m:
+    matches = _SEMVER.findall(text or "")
+    if not matches:
         return None
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+    m = matches[-1]
+    return (int(m[0]), int(m[1]), int(m[2] or 0))
 
 
 def _latest_semver(texts) -> tuple | None:
