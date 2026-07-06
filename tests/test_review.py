@@ -14,12 +14,52 @@ from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
     VALUE_LABELS,
+    _clip_text,
     _normalize_bool,
     _normalize_concerns,
     _normalize_review_action,
     _normalize_value_label,
     review_pr,
 )
+
+
+class _StubReviewLLM:
+    """A mocked LLM so review_pr tests don't depend on the offline stub machinery."""
+
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return stub
+
+
+# Every non-string type must clip to "" — a slice would raise (int/dict/set) or embed
+# garbage (bytes/bytearray/memoryview) in the assembled prompt.
+_NON_STRING_VALUES = [
+    123, 3.14, True, {"text": "hi"}, ["a line"], ("a", "b"), {1, 2}, frozenset({3}),
+    b"raw bytes", bytearray(b"buf"), memoryview(b"mv"), None,
+]
+
+
+def test_clip_text_clips_strings_to_the_limit():
+    assert _clip_text("hello world", 5) == "hello"
+    assert _clip_text("short", 100) == "short"
+    assert _clip_text("", 10) == ""
+
+
+def test_clip_text_resolves_every_non_string_type_to_empty():
+    for value in _NON_STRING_VALUES:
+        assert _clip_text(value, 10) == ""
+
+
+def test_review_pr_survives_a_non_string_body_or_diff():
+    # Regression: body/diff come from the unvalidated frozen context. A non-string value used to
+    # crash prompt assembly (int/dict/set raise on the slice; bytes/memoryview embed garbage).
+    llm = _StubReviewLLM()
+    for bad in _NON_STRING_VALUES:
+        pr = {"number": 1, "title": "t", "author": "a", "files": ["tests/test_x.py"],
+              "body": bad, "diff": bad}
+        rev = review_pr(pr, None, llm)          # must not raise
+        assert rev["action"] in ACTIONS
 
 
 def test_review_offline_shape():

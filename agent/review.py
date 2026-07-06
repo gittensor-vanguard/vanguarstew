@@ -129,6 +129,19 @@ def _normalize_review(out: dict, stub: dict) -> dict:
     }
 
 
+def _clip_text(value, limit: int) -> str:
+    """A string field clipped to ``limit`` chars; **any** non-string value clips to "".
+
+    PR fields (``body``, ``diff``) come from the unvalidated frozen context. Slicing them
+    directly (``value[:limit]``) raises on every non-string type — a number or bool
+    (``'int' object is not subscriptable``), a ``dict``/``set``/``frozenset`` (``TypeError`` /
+    ``KeyError`` on the slice), and even ``bytes``/``bytearray``/``memoryview`` (which slice
+    without raising but embed as ``b'...'`` garbage in the prompt). The single ``isinstance(value,
+    str)`` gate resolves *all* of those to "", the same way ``files`` is guarded above.
+    """
+    return value[:limit] if isinstance(value, str) else ""
+
+
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
     if not isinstance(pr, dict):
@@ -151,9 +164,9 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy else "")
         + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"
         + f"by @{pr.get('author')}  (+{pr.get('additions', 0)}/-{pr.get('deletions', 0)})\n\n"
-        + f"description:\n{(pr.get('body') or '')[:1500]}\n\n"
+        + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
         + f"changed files: {', '.join(files[:30])}\n\n"
-        + f"diff (truncated):\n{(pr.get('diff') or '')[:6000]}\n\n"
+        + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n\n"
         + "Return JSON with keys:\n"
         + f'  "action": one of {ACTIONS},\n'
         + f'  "value_label": the single best-fit tier from {VALUE_LABELS},\n'
