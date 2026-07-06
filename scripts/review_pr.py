@@ -12,14 +12,44 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import subprocess
 
 from agent.llm import LLM
 from agent.review import review_pr
 
+logger = logging.getLogger(__name__)
+
 
 def _gh(*args) -> str:
     return subprocess.run(["gh", *args], capture_output=True, text=True).stdout
+
+
+def _pr_author(data: dict, number: int) -> str:
+    """Return the PR author's login, or GitHub's ``ghost`` placeholder when unavailable.
+
+    GitHub returns ``"author": null`` once the author's account no longer exists. A missing
+    ``author`` key (not requested / absent from the payload) is treated the same for callers
+    but does not emit a warning.
+    """
+    if "author" not in data:
+        return "ghost"
+    author = data["author"]
+    if author is None:
+        logger.warning("review_pr: PR #%s has null author; using 'ghost'", number)
+        return "ghost"
+    if not isinstance(author, dict):
+        logger.warning(
+            "review_pr: PR #%s author is %s, not an object; using 'ghost'",
+            number,
+            type(author).__name__,
+        )
+        return "ghost"
+    login = author.get("login")
+    if not isinstance(login, str) or not login.strip():
+        logger.warning("review_pr: PR #%s has no author login; using 'ghost'", number)
+        return "ghost"
+    return login.strip()
 
 
 def fetch_pr(repo: str, number: int) -> dict:
@@ -29,7 +59,7 @@ def fetch_pr(repo: str, number: int) -> dict:
         "number": data["number"],
         "title": data["title"],
         "body": data.get("body"),
-        "author": data["author"]["login"],
+        "author": _pr_author(data, number),
         "additions": data["additions"],
         "deletions": data["deletions"],
         "files": [f["path"] for f in data.get("files", [])],
