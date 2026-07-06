@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import benchmark.github_context as gc  # noqa: E402
 from agent.context import (  # noqa: E402
     _agent_context_list,
     _agent_issue_pr_list,
@@ -46,6 +47,24 @@ def test_context_for_agent_omits_unknown_issue_labels():
     assert out["open_issues"][0]["labels_as_of_t"] is False
     assert "labels" not in out["open_prs"][0]
     assert out["open_prs"][0]["labels_as_of_t"] is False
+
+
+def test_context_for_agent_omits_labels_when_flag_missing():
+    # Older artifacts and hand-edited JSON may carry labels without labels_as_of_t — treat as
+    # unknown history, not knowable-at-T labels (#773).
+    ctx = {
+        "open_issues": [{"number": 1, "title": "bug", "labels": ["bug", "priority"]}],
+        "open_prs": [{"number": 2, "title": "fix", "labels": ["enhancement"]}],
+    }
+    out = context_for_agent(ctx)
+    assert "labels" not in out["open_issues"][0]
+    assert "labels_as_of_t" not in out["open_issues"][0]
+    assert "labels" not in out["open_prs"][0]
+    assert "labels_as_of_t" not in out["open_prs"][0]
+
+    payload = json.loads(render_decider_context(ctx))
+    assert "labels" not in payload["open_issues"][0]
+    assert "labels" not in payload["open_prs"][0]
 
 
 # --- #493: malformed context / issue-PR lists must not abort agent view ---------------
@@ -250,6 +269,53 @@ def _write(repo, relpath, text="x\n"):
     os.makedirs(os.path.dirname(full) or repo, exist_ok=True)
     with open(full, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_sets_frozen_at_date():
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        freeze_date = "2024-01-10T12:00:00+00:00"
+        _write(repo, "f.txt")
+        _git(repo, "add", "-A", date=freeze_date)
+        _git(repo, "commit", "-q", "-m", "c1", date=freeze_date)
+
+        ctx = _context_from_git(repo)
+        assert ctx["frozen_at"]["commit"]
+        assert ctx["frozen_at"]["date"]
+        assert gc._frozen_at_date(ctx) is not None
+        assert ctx["frozen_at"]["date"] == build_context(repo, "HEAD")["frozen_at"]["date"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_enrich_context_proceeds_for_git_fallback_context(monkeypatch):
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        freeze_date = "2024-01-10T12:00:00+00:00"
+        _write(repo, "f.txt")
+        _git(repo, "add", "-A", date=freeze_date)
+        _git(repo, "commit", "-q", "-m", "c1", date=freeze_date)
+
+        def fake_fetch(*a, **k):
+            return {
+                "repo": "foo/bar",
+                "open_issues": [],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [],
+                "_source": "github-api",
+            }
+
+        monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+        monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+        out = gc.enrich_context(_context_from_git(repo), repo)
+        assert out.get("_github_enriched") is True
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")

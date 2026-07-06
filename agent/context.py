@@ -114,9 +114,10 @@ _agent_issue_pr_list = _agent_context_list
 def context_for_agent(context: dict) -> dict:
     """Return the agent-facing view of frozen context.
 
-    Issue/PR labels are historical only when ``labels_as_of_t`` is true. When that flag is
-    false we omit ``labels`` from the agent-facing prompt view, so ``[]`` is not misread as
-    "this item had no labels at T" when the real meaning is "label history unavailable".
+    Issue/PR labels are historical only when ``labels_as_of_t`` is explicitly true. When the
+    flag is false or missing we omit ``labels`` from the agent-facing prompt view, so ``[]`` is
+    not misread as "this item had no labels at T" when the real meaning is "label history
+    unavailable".
 
     A non-dict ``context`` is treated as empty (``{}``), matching the fail-closed posture
     used when frozen context is unavailable.
@@ -142,7 +143,7 @@ def context_for_agent(context: dict) -> dict:
                 items.append(item)
                 continue
             clean = dict(item)
-            if clean.get("labels_as_of_t") is False:
+            if clean.get("labels_as_of_t") is not True:
                 clean.pop("labels", None)
             items.append(clean)
         out[key] = items
@@ -157,6 +158,7 @@ def context_for_agent(context: dict) -> dict:
 
 def _context_from_git(repo_path: str) -> dict:
     head = _git(repo_path, "rev-parse", "HEAD")
+    freeze_date = _git(repo_path, "show", "-s", "--format=%cI", head).strip() or None
     log = _git(repo_path, "log", "--pretty=format:%H%x09%s", "-n", "50")
     commits = []
     for line in log.splitlines():
@@ -189,7 +191,7 @@ def _context_from_git(repo_path: str) -> dict:
                 readme = _mask_forward_refs(f.read()[:4000])
             break
     return {
-        "frozen_at": {"commit": head[:10]},
+        "frozen_at": {"commit": head[:10], "date": freeze_date},
         "recent_commits": commits,
         "open_issues": [],
         "open_prs": [],
