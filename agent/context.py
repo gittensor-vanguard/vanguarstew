@@ -153,13 +153,13 @@ def context_for_agent(context: dict) -> dict:
         out[key] = items
     for key in ("recent_commits", "releases", "milestones", "labels"):
         out[key] = _agent_context_list(out.get(key), key)
-    if out.get("_issues_truncated"):
+    if out.get("_issues_truncated") is True:
         # Defense in depth for older frozen artifacts that still carry a partial backlog.
         out["open_issues"] = []
         out["open_prs"] = []
-    if out.get("_milestones_truncated"):
+    if out.get("_milestones_truncated") is True:
         out["milestones"] = []
-    if out.get("_releases_truncated"):
+    if out.get("_releases_truncated") is True:
         out["releases"] = []
     return out
 

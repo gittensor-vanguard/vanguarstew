@@ -491,6 +491,12 @@ def test_open_issues_from_context_omits_truncated_backlog():
     assert gc.open_issues_from_context(complete) == complete["open_issues"]
 
 
+def test_open_issues_from_context_keeps_backlog_when_truncated_is_not_boolean_true():
+    issues = [{"number": 1, "title": "Memory leak under load"}]
+    ctx = {"_issues_truncated": "false", "open_issues": issues}
+    assert gc.open_issues_from_context(ctx) == issues
+
+
 # --- contract edge cases (docstring "Field stability") -----------------------------
 
 def test_item_open_at_boundary_created_or_closed_exactly_at_T():

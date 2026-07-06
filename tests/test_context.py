@@ -217,6 +217,29 @@ def test_context_for_agent_clears_backlog_when_issues_truncated():
     assert out["open_prs"] == []
 
 
+def test_context_for_agent_keeps_backlog_when_issues_truncated_is_not_boolean_true():
+    issues = [{"number": 1, "title": "Memory leak under load", "labels_as_of_t": True}]
+    prs = [{"number": 2, "title": "Fix parser edge case", "labels_as_of_t": True}]
+    ctx = {"_issues_truncated": "false", "open_issues": issues, "open_prs": prs}
+    out = context_for_agent(ctx)
+    assert out["open_issues"] == issues
+    assert out["open_prs"] == prs
+
+
+def test_context_for_agent_keeps_milestones_and_releases_when_truncated_is_not_boolean_true():
+    milestones = [{"title": "v1 milestone", "state": "open"}]
+    releases = [{"tag": "v1.0.0", "name": "Initial release"}]
+    ctx = {
+        "_milestones_truncated": "false",
+        "_releases_truncated": "false",
+        "milestones": milestones,
+        "releases": releases,
+    }
+    out = context_for_agent(ctx)
+    assert out["milestones"] == milestones
+    assert out["releases"] == releases
+
+
 def test_context_for_agent_clears_milestones_and_releases_when_truncated():
     ctx = {
         "_milestones_truncated": True,

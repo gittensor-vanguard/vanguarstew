@@ -418,6 +418,6 @@ def open_issues_from_context(context: dict):
     """
     if not isinstance(context, dict):
         return None
-    if context.get("_issues_truncated"):
+    if context.get("_issues_truncated") is True:
         return None
     return context.get("open_issues")
