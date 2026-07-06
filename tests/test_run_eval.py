@@ -2,7 +2,11 @@
 
 import json
 import os
+import shutil
+import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -14,6 +18,28 @@ from scripts.run_eval import (  # noqa: E402
     result_summary_lines,
     write_result_artifact,
 )
+
+
+def _tiny_repo(dirpath, n=4, prefix="feat"):
+    subprocess.run(["git", "init", "-q", dirpath], check=True)
+    subprocess.run(["git", "-C", dirpath, "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", dirpath, "config", "user.name", "t"], check=True)
+    for i in range(n):
+        with open(os.path.join(dirpath, f"{prefix}{i}.py"), "w", encoding="utf-8") as f:
+            f.write(f"x = {i}\n")
+        subprocess.run(["git", "-C", dirpath, "add", "-A"], check=True)
+        subprocess.run(["git", "-C", dirpath, "commit", "-q", "-m", f"{prefix} {i}"], check=True)
+    return dirpath
+
+
+def _run_cli(*args, env=None):
+    full_env = {**os.environ, "VANGUARSTEW_OFFLINE": "1"}
+    if env:
+        full_env.update(env)
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.run_eval", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False, env=full_env,
+    )
 
 
 def test_write_result_artifact_preserves_judge_order_stats(tmp_path):
@@ -125,3 +151,42 @@ def test_weight_sweep_rows_logs_warning_for_non_list_field(caplog):
     with caplog.at_level(logging.WARNING, logger="scripts.run_eval"):
         assert _weight_sweep_rows({"weight_sweep": 42}) == []
     assert any("weight_sweep is int" in r.message for r in caplog.records)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_reports_a_clean_error_for_a_non_git_repo_path(tmp_path):
+    # --repo pointing at a directory that isn't a git repo must not crash with a raw
+    # traceback -- it's the CLI's most basic invocation path.
+    not_git = tmp_path / "not-a-git-dir"
+    not_git.mkdir()
+    result = _run_cli("--repo", str(not_git), "--tasks", "1", "--horizon", "1")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "not a git repository" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_reports_a_clean_error_for_a_nonexistent_repo_path(tmp_path):
+    missing = tmp_path / "does-not-exist"
+    result = _run_cli("--repo", str(missing), "--tasks", "1", "--horizon", "1")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_missing_repo_set(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli("--repo-set", str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert f"repo-set config not found: {missing}" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_still_replays_a_well_formed_repo(tmp_path):
+    # The guard must be inert on the happy path: a real git repo still produces a real
+    # replay artifact, proving the try/except doesn't swallow successful runs.
+    repo = _tiny_repo(str(tmp_path / "repo"), n=16)
+    result = _run_cli("--repo", repo, "--tasks", "1", "--horizon", "1")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert "composite_mean" in payload
