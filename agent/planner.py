@@ -57,8 +57,18 @@ def _pr_title(pr: dict) -> str:
     return title.strip() if isinstance(title, str) else ""
 
 
+def _open_prs_list(context: dict) -> list:
+    """Return ``open_prs`` when it is a list; otherwise treat as no PR queue.
+
+    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for p in open_prs``
+    or malformed frozen context aborts queue reconciliation.
+    """
+    raw = (context or {}).get("open_prs")
+    return raw if isinstance(raw, list) else []
+
+
 def _pr_queue_note(context: dict) -> str:
-    prs = [p for p in (context.get("open_prs") or []) if _pr_title(p)]
+    prs = [p for p in _open_prs_list(context) if _pr_title(p)]
     if not prs:
         return ""
     lines = [f"- #{p.get('number', '?')}: {_pr_title(p)}" for p in prs]
@@ -73,7 +83,7 @@ def _pr_queue_note(context: dict) -> str:
 def _offline_plan_stub(context: dict, n: int) -> list:
     """Deterministic offline plan: prioritize the visible PR queue when present."""
     items = []
-    for pr in context.get("open_prs") or []:
+    for pr in _open_prs_list(context):
         title = _pr_title(pr)
         if not title:
             continue
@@ -95,7 +105,7 @@ def _offline_plan_stub(context: dict, n: int) -> list:
 
 def _pr_queue(context: dict) -> list:
     return [
-        p for p in (context.get("open_prs") or [])
+        p for p in _open_prs_list(context)
         if isinstance(p, dict) and _pr_title(p)
     ]
 

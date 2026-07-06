@@ -18,6 +18,8 @@ from agent.planner import (  # noqa: E402
     _is_review_item,
     _matched_pr,
     _normalize_plan_item,
+    _open_prs_list,
+    _pr_queue_note,
     _pr_title,
     plan_next_actions,
     reconcile_plan_with_queue,
@@ -407,3 +409,37 @@ def test_qualified_reference_wins_over_an_earlier_bare_ordinal():
     out = reconcile_plan_with_queue([item], {"open_prs": prs}, 5)
     assert len(out) == 1                    # no duplicate "Review pull request #7" prepended
     assert out[0]["restates_pr"] == 7
+
+
+# --- #426: a non-list open_prs queue must not abort planner reconciliation ---------------
+
+_MALFORMED_OPEN_PRS = [42, 3.14, True, {"number": 1, "title": "Fix bug"}, "not a list"]
+
+
+def test_open_prs_list_accepts_only_real_lists():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    assert _open_prs_list({"open_prs": prs}) == prs
+    for bad in _MALFORMED_OPEN_PRS:
+        assert _open_prs_list({"open_prs": bad}) == [], bad
+    assert _open_prs_list({}) == []
+    assert _open_prs_list({"open_prs": None}) == []
+
+
+def test_pr_queue_note_tolerates_non_list_open_prs():
+    for bad in _MALFORMED_OPEN_PRS:
+        assert _pr_queue_note({"open_prs": bad}) == ""
+
+
+def test_reconcile_tolerates_non_list_open_prs():
+    plan = [{"title": "Write docs", "kind": "docs"}]
+    for bad in _MALFORMED_OPEN_PRS:
+        out = reconcile_plan_with_queue(plan, {"open_prs": bad}, 5)
+        assert out == plan
+
+
+def test_reconcile_honors_valid_prs_when_list_contains_junk_entries():
+    plan = [{"title": "Write docs", "kind": "docs"}]
+    ctx = {"open_prs": [42, {"number": 9, "title": "Add streaming export"}]}
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    assert out[0]["restates_pr"] == 9
+    assert "streaming export" in out[0]["title"].lower()
