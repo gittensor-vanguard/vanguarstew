@@ -173,9 +173,13 @@ def _labels_at(events, until: datetime):
         ts = _parse_dt(ev.get("created_at"))
         if ts is None or ts > until:
             continue
-        name = (ev.get("label") or {}).get("name")
-        if name:
-            relevant.append((ts, ev.get("event"), name))
+        label = ev.get("label")
+        if not isinstance(label, dict):
+            continue
+        name = label.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        relevant.append((ts, ev.get("event"), name.strip()))
     if not relevant:
         return None
     relevant.sort(key=lambda x: x[0])
