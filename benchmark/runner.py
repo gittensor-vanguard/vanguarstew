@@ -21,7 +21,7 @@ from agent.context import CONTEXT_FILE
 from agent.llm import LLM
 from benchmark.baselines import DEFAULT_BASELINE, empty_solve, get_baseline
 from benchmark.freeze import write_frozen
-from benchmark.github_context import enrich_context
+from benchmark.github_context import enrich_context, open_issues_from_context
 from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
 from benchmark.repo_set import RepoSetError, is_placeholder_source, load_repo_set
@@ -133,7 +133,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 challenger.get("plan"), task["revealed"],
                 version_bump=challenger.get("version_bump"),
                 base_version=base_from_releases(ctx.get("releases")),
-                open_issues=ctx.get("open_issues"),
+                open_issues=open_issues_from_context(ctx),
             )
             rows.append({
                 "task": k,
