@@ -63,13 +63,18 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
 def extract_json(text: str):
-    """Best-effort JSON extraction from an LLM response (handles code fences)."""
+    """Best-effort JSON extraction from an LLM response (handles code fences).
+
+    When a response contains more than one fenced code block -- a verbose/chain-of-
+    thought model can restate a schema example in an earlier fence before its real
+    answer in a later one -- fences are tried last-to-first, so the final (most
+    likely genuine) fenced answer is preferred over an earlier throwaway example.
+    """
     if text is None:
         raise ValueError("empty LLM response")
     candidates = [text]
-    m = _FENCE.search(text)
-    if m:
-        candidates.insert(0, m.group(1))
+    fences = [m.group(1) for m in _FENCE.finditer(text)]
+    candidates = list(reversed(fences)) + candidates
     # also try the first {...} or [...] span
     brace = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
     if brace:

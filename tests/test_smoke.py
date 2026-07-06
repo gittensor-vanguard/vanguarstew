@@ -27,6 +27,23 @@ def test_extract_json():
     assert extract_json('noise {"x": [1, 2]} trailing') == {"x": [1, 2]}
 
 
+def test_extract_json_prefers_the_last_of_two_fenced_blocks():
+    # A verbose/chain-of-thought response can restate a schema example in an earlier
+    # fenced block before its real answer in a later one. Trusting only the FIRST fence
+    # would return the throwaway example instead of the real, final decision.
+    text = (
+        'Sure, I will respond in this format:\n'
+        '```json\n{"action": "merge", "rationale": "example"}\n```\n\n'
+        'Given the repo state, my actual decision:\n'
+        '```json\n{"action": "reject", "rationale": "missing tests, high risk change"}\n```\n'
+    )
+    assert extract_json(text) == {"action": "reject", "rationale": "missing tests, high risk change"}
+
+
+def test_extract_json_single_fence_still_works():
+    assert extract_json('```json\n{"a": 1, "b": 2}\n```\n\nfootnote: [1]') == {"a": 1, "b": 2}
+
+
 def test_solve_offline_returns_decision():
     d = tempfile.mkdtemp()
     try:

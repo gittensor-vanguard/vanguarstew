@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format is based on
   or a git-only run (#135).
 
 ### Fixed
+- Agent robustness: `agent/llm.py::extract_json` no longer trusts only the *first* fenced
+  code block in an LLM response. A verbose/chain-of-thought response can restate a schema
+  example in an earlier fence before its real answer in a later one; fences are now tried
+  last-to-first, so the final (most likely genuine) fenced answer is preferred over an
+  earlier throwaway example (#290).
 - Repo-set integrity: the config loader now validates freeze-window *values*, not just types —
   `freeze_window.min_history` must be `>= 1` (a `0`/negative bound would let task generation
   freeze at the very first commit, with no prior history, defeating the bound), and
