@@ -5,6 +5,8 @@ import logging
 import os
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -111,13 +113,14 @@ def test_headline_reports_robust_and_shaky():
     assert DEFAULT_MAX_DISAGREEMENT == 0.3
 
 
-# --- #656: checks row sanitization for judge gate headlines -----------------------------
+# --- #793: checks row sanitization for judge gate headlines ----------------------------
 
 _MALFORMED_CHECKS = [
     42, 3.14, True, {"name": "dual_order_judging"}, "not a list",
     ({"name": "dual_order_judging", "passed": False},),  # tuple, not list
     range(2),  # iterable but not a list
 ]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
 
 
 def test_check_rows_list_accepts_only_real_lists():
@@ -127,6 +130,13 @@ def test_check_rows_list_accepts_only_real_lists():
     assert _check_rows_list(rows) == rows
     assert _check_rows_list(None) == []
     assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
 
 
 def test_check_rows_list_missing_key_emits_no_warning(caplog):
@@ -183,6 +193,83 @@ def test_check_rows_list_skips_empty_dict(caplog):
     assert any("missing required key(s)" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "dual_order_judging", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "dual_order_judging", "passed": False},
+        {"name": "low_disagreement", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": "", "passed": False},
+        {"name": 99, "passed": False},
+        {"name": "dual_order_judging", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_accepts_native_bool_values():
+    rows = [
+        {"name": "dual_order_judging", "passed": True},
+        {"name": "low_disagreement", "passed": False},
+    ]
+    assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_empty_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+    assert any("name is empty str" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_accepts_numpy_bool_when_available():
+    np = pytest.importorskip("numpy")
+    for factory in (np.bool_, np.bool8):
+        rows = [{"name": "dual_order_judging", "passed": factory(True)}]
+        assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_int_as_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{"name": "dual_order_judging", "passed": 1}]) == []
+    assert any("passed is int" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_rejects_non_bool_passed_values(caplog):
+    class AlmostBool:
+        def __bool__(self):
+            return True
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{"name": "dual_order_judging", "passed": AlmostBool()}]) == []
+        assert _check_rows_list([{"name": "dual_order_judging", "passed": "true"}]) == []
+    messages = [r.message for r in caplog.records]
+    assert any("passed is AlmostBool" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+
+
+def test_failed_checks_helper_is_robust():
+    assert failed_checks({}) == []
+    assert failed_checks("not a dict") == []
+    shaky = check_judge(_result(dual_order=False))
+    assert failed_checks(shaky) == ["dual_order_judging"]
+    assert failed_checks(check_judge(_result())) == []
+
+
 def test_judge_headline_survives_non_list_checks():
     base = {"passed": False, "dual_order_tasks": 0, "disagreement_rate": 0.5}
     for bad in _MALFORMED_CHECKS:
@@ -194,6 +281,9 @@ def test_judge_headline_survives_rows_missing_required_keys():
         [{"passed": False}],
         [{"name": "dual_order_judging"}],
         [{}],
+        [{"name": 42, "passed": True}],
+        [{"name": "", "passed": False}],
+        [{"name": "dual_order_judging", "passed": 1}],
     ):
         assert judge_headline({"checks": checks, "passed": False}) == "judge: no checks evaluated"
 
@@ -213,6 +303,21 @@ def test_judge_headline_logs_warning_for_non_list_checks(caplog):
     assert any("checks is int" in r.message for r in caplog.records)
 
 
+def test_judge_headline_ignores_unsanitized_rows_in_denominator(caplog):
+    checks = [
+        {"name": "dual_order_judging", "passed": False},
+        {"name": "", "passed": False},
+        {"name": "low_disagreement", "passed": 1},
+        42,
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        line = judge_headline({"checks": checks, "passed": False})
+    assert line == "judge: SHAKY (1/1 checks failed: dual_order_judging)"
+    assert any("name is empty str" in r.message for r in caplog.records)
+    assert any("passed is int" in r.message for r in caplog.records)
+    assert any("checks[3] is int" in r.message for r in caplog.records)
+
+
 def test_failed_checks_survives_non_list_checks():
     for bad in _MALFORMED_CHECKS:
         assert failed_checks({"checks": bad}) == [], bad
@@ -224,17 +329,22 @@ def test_failed_checks_never_raises_on_malformed_rows():
         [{"name": "dual_order_judging"}],
         [{}],
         [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "", "passed": False}],
+        [{"name": "dual_order_judging", "passed": "no"}],
     ):
         assert failed_checks({"checks": checks}) == []
 
 
-def test_failed_checks_skips_non_dict_rows():
+def test_failed_checks_integration_with_check_rows_list(caplog):
     checks = [
         {"name": "dual_order_judging", "passed": False},
         42,
         {"name": "low_disagreement", "passed": True},
     ]
-    assert failed_checks({"checks": checks}) == ["dual_order_judging"]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert failed_checks({"checks": checks}) == ["dual_order_judging"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_every_check_reported_even_when_all_fail():
