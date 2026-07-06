@@ -42,16 +42,64 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _checks_list(checks) -> list:
-    """Return ``checks`` when it is a list; otherwise treat as no gate checks."""
-    if isinstance(checks, list):
-        return checks
-    if checks is not None:
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return score-integrity check rows for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers (scalars, dicts, tuples, ranges, strings, etc.) are warned and
+    treated as empty (never coerced). A usable row is a dict whose ``name`` is a ``str`` and
+    whose ``passed`` is a ``bool``; anything else is skipped with a warning.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
         logger.warning(
             "score_integrity: checks is %s, not a list; treating as empty",
             type(checks).__name__,
         )
-    return []
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "score_integrity: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "score_integrity: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        if not isinstance(row["name"], str):
+            logger.warning(
+                "score_integrity: checks[%s] name is %s, not str; skipping",
+                idx,
+                type(row["name"]).__name__,
+            )
+            continue
+        if type(row["passed"]) is not bool:
+            logger.warning(
+                "score_integrity: checks[%s] passed is %s, not bool; skipping",
+                idx,
+                type(row["passed"]).__name__,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "score_integrity: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _round3(value):
@@ -274,17 +322,25 @@ def check_score_integrity(result, tolerance: float = DEFAULT_TOLERANCE) -> dict:
 
 
 def failed_checks(result: dict) -> list:
-    """The names of the checks that failed in a :func:`check_score_integrity` result."""
+    """The names of the checks that failed in a :func:`check_score_integrity` result.
+
+    Malformed ``checks`` containers and unusable rows (missing keys, wrong types) are skipped
+    after logging a warning; they never raise.
+    """
     return [
-        c["name"] for c in _checks_list(_dict(result).get("checks"))
-        if isinstance(c, dict) and not c.get("passed")
+        c["name"] for c in _check_rows_list(_dict(result).get("checks"))
+        if not c["passed"]
     ]
 
 
 def integrity_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_score_integrity` result."""
+    """A one-line human summary of a :func:`check_score_integrity` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"score integrity: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = _checks_list(result.get("checks"))
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "score integrity: no checks evaluated"
     if result.get("passed"):
