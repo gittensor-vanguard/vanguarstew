@@ -205,19 +205,33 @@ def base_from_releases(releases) -> str | None:
 
     Accepts the context `releases` shape (`[{"tag": "v1.2.0"}, ...]`) and returns the raw
     tag string of the highest semver, so it can be fed back as `base_version`.
+
+    A release is authoritatively versioned by its `tag`; the display `name` is only a
+    fallback consulted when the tag is absent or not semver-shaped. Each release is resolved
+    to a single representative version *before* comparing across releases, so a lower release's
+    name can never outrank another release's tag (an older release titled e.g. `Preview of 9.0`
+    must not override the real highest tag and hand a bogus `base_version` to bump scoring).
+
+    Missing or invalid input degrades to "no known base", never to a corrupt one: a non-list
+    `releases` and non-dict rows are skipped (#459), and a release whose tag and name are both
+    absent or non-semver contributes no version and is skipped rather than nulling out or
+    shadowing a real versioned release. The result is `None` when no release carries a
+    parseable version.
     """
     best_tag, best_ver = None, None
     for rel in _releases_list(releases):
         if not isinstance(rel, dict):
             continue
-        candidates = (rel.get("tag"), rel.get("name"))
-        for raw in candidates:
-            if not raw:
+        raw, ver = None, None
+        for candidate in (rel.get("tag"), rel.get("name")):
+            if not candidate:
                 continue
-            ver = parse_semver(str(raw))
-            if ver is not None and (best_ver is None or ver > best_ver):
-                best_tag, best_ver = raw, ver
+            parsed = parse_semver(str(candidate))
+            if parsed is not None:
+                raw, ver = candidate, parsed
                 break
+        if ver is not None and (best_ver is None or ver > best_ver):
+            best_tag, best_ver = raw, ver
     return best_tag
 
 

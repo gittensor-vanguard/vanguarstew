@@ -578,6 +578,86 @@ def test_base_from_releases_falls_back_to_release_name():
     assert base_from_releases([{"tag": "latest", "name": "v1.5.0"}]) == "v1.5.0"
 
 
+def test_base_from_releases_name_never_outranks_another_rows_tag():
+    # A higher name on the *same* release is ignored: the tag is authoritative per release.
+    assert base_from_releases([{"tag": "v1.5.0", "name": "v9.9.9"}]) == "v1.5.0"
+    # tag-first must resolve per release *before* comparing across releases: a lower release's
+    # display name must not override the authoritative highest tag. The per-row shape above
+    # (tag beats name within one row) is not enough, because a lower-tag row can fall through
+    # to its name and beat a *different* row's tag.
+    assert base_from_releases([
+        {"tag": "v1.5.0", "name": "v1.5.0"},
+        {"tag": "v1.4.0", "name": "v9.9.9"},
+    ]) == "v1.5.0"
+    # A realistic corruption: an older release titled with a higher marketing/roadmap version.
+    # The winner must be the real highest *tag*, never the human title string.
+    marketing = [
+        {"tag": "v2.5.0", "name": "v2.5.0"},
+        {"tag": "v2.4.0", "name": "Preview of 9.0"},
+    ]
+    assert base_from_releases(marketing) == "v2.5.0"
+    # Order-independent: the corrupt-name row appearing first must not change the outcome.
+    assert base_from_releases(list(reversed(marketing))) == "v2.5.0"
+    # The result is always an actual tag, never a name string, when a real tag is present.
+    assert base_from_releases(marketing) not in {"Preview of 9.0", "v9.9.9"}
+
+
+def test_base_from_releases_name_fallback_survives_across_rows():
+    # The tag-first rule must not suppress a legitimate name fallback: when a release's own tag
+    # is unparseable, its name still supplies that release's version and can win globally.
+    assert base_from_releases([
+        {"tag": "latest", "name": "v3.0.0"},
+        {"tag": "v2.0.0"},
+    ]) == "v3.0.0"
+    # When every release's tag is unparseable, the names are compared across rows by semver
+    # (highest wins), not left to first-seen order.
+    assert base_from_releases([
+        {"tag": "latest", "name": "v2.0.0"},
+        {"tag": "nightly", "name": "v3.0.0"},
+    ]) == "v3.0.0"
+
+
+def test_base_from_releases_ignores_releases_without_a_parseable_version():
+    # A release whose tag and name are both non-semver carries no version: it is skipped, not
+    # allowed to null out or shadow a real versioned release.
+    assert base_from_releases([
+        {"tag": "nightly", "name": "latest"},
+        {"tag": "v1.2.0"},
+    ]) == "v1.2.0"
+    # When no release carries a parseable version, the base is unknown (None), never a guess.
+    assert base_from_releases([{"tag": "nightly", "name": "latest"}]) is None
+    assert base_from_releases([{"tag": None, "name": None}]) is None
+    # An empty release list is also "no known base".
+    assert base_from_releases([]) is None
+
+
+def test_base_from_releases_feeds_correct_bump_actual():
+    # The base_from_releases result is the base_version fed to objective_score's release/bump
+    # axis. Isolate the two steps so a failure pinpoints which one broke, and add a control so
+    # the assertion pins the causal chain rather than a coincidental blend.
+    releases = [
+        {"tag": "v1.5.0", "name": "v1.5.0"},
+        {"tag": "v1.4.0", "name": "Preview of 9.0"},
+    ]
+    # Step 1 (base resolution, in isolation): the resolved base is the real highest tag.
+    base = base_from_releases(releases)
+    assert base == "v1.5.0"
+
+    # Step 2 (objective_score bump axis, in isolation): a revealed v2.0.0 is a genuine major
+    # bump the agent predicted, so the correct base scores it as a match.
+    revealed = [{"subject": "release v2.0.0"}]
+    good = objective_score({}, revealed, version_bump="major", base_version=base)
+    assert good["bump_actual"] == "major"
+    assert good["bump_match"] is True
+
+    # Control: the pre-fix corrupted base ("Preview of 9.0") inflates the base above the
+    # revealed release, so bump_level reads a non-forward delta and the axis collapses to
+    # None / False. This is exactly the regression the fix removes.
+    bad = objective_score({}, revealed, version_bump="major", base_version="Preview of 9.0")
+    assert bad["bump_actual"] is None
+    assert bad["bump_match"] is False
+
+
 # --- #459: a non-list releases field must not abort replay scoring -------------------------
 
 _MALFORMED_RELEASES = [42, 3.14, True, {"tag": "v1.0.0"}, "not a list", None]
