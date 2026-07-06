@@ -357,6 +357,33 @@ def test_reconcile_plan_with_queue_skips_non_string_open_pr_title():
     }
     out = reconcile_plan_with_queue(plan, ctx, 5)
     assert out[0]["title"].startswith("Review pull request #2:")
+
+
+def test_reconcile_plan_with_queue_keeps_two_numberless_matched_prs():
+    """Two distinct open PRs without a number must not dedup onto shared None."""
+    context = {
+        "open_prs": [
+            {"title": "Fix loader race condition"},
+            {"title": "Add streaming export docs"},
+        ],
+    }
+    plan = [
+        {"title": "Fix loader race condition", "kind": "bugfix"},
+        {"title": "Add streaming export docs", "kind": "docs"},
+    ]
+    out = reconcile_plan_with_queue(plan, context, 5)
+    assert len(out) == 2
+    assert {item["title"] for item in out} == {item["title"] for item in plan}
+
+
+def test_reconcile_plan_with_queue_still_dedups_same_numberless_pr_by_title():
+    context = {"open_prs": [{"title": "Fix loader race condition"}]}
+    plan = [
+        {"title": "Fix loader race condition", "kind": "bugfix"},
+        {"title": "Review PR: Fix loader race condition", "kind": "triage"},
+    ]
+    out = reconcile_plan_with_queue(plan, context, 5)
+    assert len(out) == 1
     assert all("restates_pr" not in item or item.get("restates_pr") != 1 for item in out)
 
 
