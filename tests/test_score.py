@@ -131,6 +131,33 @@ def test_module_recall_produces_weighted_recall_and_weights():
     assert res["weighted_module_recall"] == 0.5
 
 
+def test_module_recall_reports_weighted_matched_modules():
+    # #43 acceptance: alongside the aggregate, report just the matched modules each with their
+    # file weight, so it is visible *which* anticipated modules carried the weighted recall.
+    revealed = [
+        {"subject": "big core refactor", "files": ["core/a.py", "core/b.py", "core/c.py"]},
+        {"subject": "touch plugins", "files": ["plugins/x.py"]},
+        {"subject": "docs tweak", "files": ["readme/readme.md"]},   # changed but NOT anticipated
+    ]
+    plan = [{"title": "rewrite the core engine and a plugins loader", "kind": "refactor"}]
+    res = module_recall(plan, revealed)
+    # Only the matched modules appear (readme is changed but unmatched, so it is excluded),
+    # each carrying its own file count from module_weights.
+    assert res["weighted_matched_modules"] == {"core": 3, "plugins": 1}
+    assert res["module_weights"] == {"core": 3, "plugins": 1, "readme": 1}
+    # It is exactly the matched subset of module_weights, and its weight sum over the total
+    # reproduces weighted_module_recall (4 of 5 files anticipated).
+    assert set(res["weighted_matched_modules"]) == set(res["matched_modules"])
+    assert res["weighted_module_recall"] == 0.8
+
+
+def test_weighted_matched_modules_absent_on_empty_window():
+    # No changed files -> no weighting to report; the key is simply absent (same graceful
+    # fallback as weighted_module_recall / module_weights).
+    res = module_recall([{"title": "anything"}], [{"subject": "merge", "files": []}])
+    assert "weighted_matched_modules" not in res
+
+
 def test_weighted_recall_rewards_the_module_where_change_concentrated():
     # core absorbs 4 of 5 changed files; plugins 1. Naming the heavy module must outscore
     # naming the light one under weighting, while plain recall stays 0.5 for both.

@@ -230,7 +230,10 @@ def module_recall(plan, revealed) -> dict:
     weighted by how many revealed-window file changes landed in it, so a plan that names the
     module where the maintainer's effort actually concentrated scores higher than one naming a
     single-file module. The match set is identical for both — they differ only in weighting
-    (#215, #43). `module_weights` is reported alongside for inspectability.
+    (#215, #43). `module_weights` (every changed module -> file count) and
+    `weighted_matched_modules` (just the matched subset, each with its file count) are reported
+    alongside so the weighted recall is inspectable — you can see *which* anticipated modules
+    carried the weight, not only the aggregate.
     """
     actual = changed_modules(revealed)
     if not actual:
@@ -249,6 +252,7 @@ def module_recall(plan, revealed) -> dict:
             sum(file_counts.get(m, 0) for m in matched) / total, 3
         )
         result["module_weights"] = dict(sorted(file_counts.items()))
+        result["weighted_matched_modules"] = {m: file_counts[m] for m in matched}
     return result
 
 
