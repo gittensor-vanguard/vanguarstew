@@ -52,7 +52,11 @@ _ENRICH_META_KEYS = ("_issues_truncated", "_knowable_until", "_source")
 
 
 def parse_owner_repo(remote_url: str):
-    """Extract (owner, repo) from an ssh or https GitHub remote URL."""
+    """Extract (owner, repo) from an ssh or https GitHub remote URL.
+
+    Uses the first two non-empty path segments after ``github.com/`` so URLs with trailing
+    ``/tree/``, ``/blob/``, or other subpaths still resolve to the repository root.
+    """
     if not isinstance(remote_url, str):
         return None, None
     s = remote_url.strip()
@@ -66,7 +70,7 @@ def parse_owner_repo(remote_url: str):
         path = s
     parts = [p for p in path.split("/") if p]
     if len(parts) >= 2:
-        return parts[-2], parts[-1]
+        return parts[0], parts[1]
     return None, None
 
 
