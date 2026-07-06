@@ -179,6 +179,15 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
 WEIGHT_SWEEP_GRID = ((0.2, 0.8), (0.4, 0.6), (0.5, 0.5), (0.6, 0.4), (0.8, 0.2))
 
 
+def _replay_rows(rows) -> list:
+    """Return ``rows`` when it is a list; otherwise treat as no scored replay tasks.
+
+    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for r in rows`` or
+    malformed post-replay input aborts the weight-sweep helper (#543).
+    """
+    return rows if isinstance(rows, list) else []
+
+
 def weight_sweep(rows, grid=WEIGHT_SWEEP_GRID) -> list:
     """Recompute `composite_mean` across a grid of judge/objective blend weights (#53).
 
@@ -195,7 +204,7 @@ def weight_sweep(rows, grid=WEIGHT_SWEEP_GRID) -> list:
     """
     scored = [
         (_JUDGE_COMPONENT[r["winner"]], objective_component(r.get("objective") or {}))
-        for r in rows or []
+        for r in _replay_rows(rows)
         if r.get("winner") in _JUDGE_COMPONENT
     ]
     sweep = []

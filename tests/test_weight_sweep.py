@@ -7,7 +7,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.runner import WEIGHT_SWEEP_GRID, weight_sweep  # noqa: E402
+from benchmark.runner import WEIGHT_SWEEP_GRID, _replay_rows, weight_sweep  # noqa: E402
 from benchmark.score import composite_score  # noqa: E402
 
 # A tiny per-task shape mirroring run_replay's `rows`: a judge `winner` plus an `objective`
@@ -70,3 +70,23 @@ def test_weight_sweep_empty_rows_is_zero_not_a_crash():
         assert row["composite_mean"] == 0.0
     # Rows with an unrecognized winner contribute nothing rather than raising.
     assert weight_sweep([{"winner": "???", "objective": {}}])[0]["composite_mean"] == 0.0
+
+
+# --- #543: non-list rows must not abort weight_sweep ----------------------------------------
+
+_MALFORMED_ROWS = [42, 3.14, True, {"winner": "challenger"}, "not a list", None]
+
+
+def test_replay_rows_accepts_only_real_lists():
+    assert _replay_rows(ROWS) == ROWS
+    assert _replay_rows(None) == []
+    for bad in _MALFORMED_ROWS:
+        assert _replay_rows(bad) == [], bad
+
+
+def test_weight_sweep_tolerates_non_list_rows_container():
+    for bad in _MALFORMED_ROWS:
+        sweep = weight_sweep(bad)
+        assert len(sweep) == len(WEIGHT_SWEEP_GRID)
+        for row in sweep:
+            assert row["composite_mean"] == 0.0
