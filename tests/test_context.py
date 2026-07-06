@@ -26,6 +26,35 @@ from agent.planner import _render as render_planner_context  # noqa: E402
 from benchmark.freeze import build_context  # noqa: E402
 
 
+def test_context_for_agent_omits_labels_when_flag_missing():
+    ctx = {
+        "open_issues": [{"number": 1, "title": "bug", "labels": ["bug", "priority"]}],
+        "open_prs": [{"number": 2, "title": "fix", "labels": ["enhancement"]}],
+    }
+    out = context_for_agent(ctx)
+    assert "labels" not in out["open_issues"][0]
+    assert "labels_as_of_t" not in out["open_issues"][0]
+    assert "labels" not in out["open_prs"][0]
+    assert "labels_as_of_t" not in out["open_prs"][0]
+
+
+def test_prompt_renderers_omit_labels_when_flag_missing():
+    ctx = {
+        "frozen_at": {"commit": "abc"},
+        "recent_commits": [{"sha": "1", "subject": "init"}],
+        "open_issues": [{"number": 1, "title": "bug", "labels": ["bug", "priority"]}],
+        "open_prs": [{"number": 2, "title": "fix", "labels": ["enhancement"]}],
+        "labels": [],
+        "milestones": [],
+        "releases": [],
+        "readme_excerpt": "",
+    }
+    for render in (render_philosophy_context, render_planner_context, render_decider_context):
+        payload = json.loads(render(ctx))
+        assert "labels" not in payload["open_issues"][0]
+        assert "labels" not in payload["open_prs"][0]
+
+
 def test_context_for_agent_omits_unknown_issue_labels():
     ctx = {
         "open_issues": [{
