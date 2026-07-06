@@ -1,8 +1,12 @@
 """Tests for the candidate-vs-baseline regression gate (deterministic, offline)."""
 
 import copy
+import json
 import os
+import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -144,3 +148,99 @@ def test_regression_headline_logs_warning_for_non_list_checks(caplog):
         line = regression_headline({"checks": 42, "passed": False})
     assert line == "regression: no checks evaluated"
     assert any("checks is int" in r.message for r in caplog.records)
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.regression", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(good), str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the real OSError message, not a paraphrase: errno, the exact reason, and the path
+    assert "No such file or directory" in result.stderr
+    assert str(missing) in result.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
+    # PermissionError is a subclass of OSError, so it is already caught by the existing
+    # except clause -- this proves that in practice, not just by inheritance.
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text(json.dumps(_run(0.5)), encoding="utf-8")
+    unreadable.chmod(0o000)
+    try:
+        result = _run_cli(str(good), str(unreadable))
+    finally:
+        unreadable.chmod(0o644)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "Permission denied" in result.stderr
+    assert str(unreadable) in result.stderr
+
+
+@pytest.mark.parametrize("payload", [[1, 2, 3], "just a string", 42, 3.14, True, None])
+def test_cli_reports_a_clean_error_for_every_non_object_json_shape(tmp_path, payload):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+    result = _run_cli(str(good), str(bad))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert f"artifact must be a JSON object: {bad}" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path), str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the real json.JSONDecodeError text, not a generic placeholder
+    assert "Expecting property name enclosed in double quotes" in result.stderr
+
+
+def test_cli_still_runs_the_real_regression_logic_for_well_formed_artifacts(tmp_path):
+    baseline_art, candidate_art = _run(0.6), _run(0.62)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(baseline_art), encoding="utf-8")
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps(candidate_art), encoding="utf-8")
+
+    result = _run_cli(str(baseline), str(candidate))
+    assert result.returncode == 0
+
+    expected = check_regression(candidate_art, baseline_art)
+    payload = json.loads(result.stdout)
+    # the CLI's JSON output must match check_regression's real result exactly, not just a
+    # "passed": True summary -- proving the artifacts actually flowed through the gate logic.
+    assert payload == expected
+    assert payload["passed"] is True
+    assert payload["composite_delta"] == 0.02
+    assert _names(payload) == ["both_scored", "no_composite_regression", "no_judge_instability_increase"]
+    assert regression_headline(expected) in result.stderr
+
+
+def test_cli_reports_blocked_for_a_genuine_regression(tmp_path):
+    baseline_art, candidate_art = _run(0.60), _run(0.40)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(baseline_art), encoding="utf-8")
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps(candidate_art), encoding="utf-8")
+
+    result = _run_cli(str(baseline), str(candidate), "--strict")
+    assert result.returncode == 1        # --strict exits 1 on a blocked gate
+    assert "regression: BLOCKED" in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["passed"] is False
+    assert "no_composite_regression" in failed_checks(payload)

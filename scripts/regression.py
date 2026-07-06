@@ -42,8 +42,15 @@ def main() -> None:
                     help="exit 1 when the candidate regressed (for CI gating)")
     args = ap.parse_args()
 
+    try:
+        candidate = load_artifact(args.candidate)
+        baseline = load_artifact(args.baseline)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
     result = check_regression(
-        load_artifact(args.candidate), load_artifact(args.baseline),
+        candidate, baseline,
         max_composite_drop=args.max_composite_drop,
         max_disagreement_increase=args.max_disagreement_increase,
     )
