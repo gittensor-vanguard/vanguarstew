@@ -137,3 +137,70 @@ def test_check_component_floors_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_component_floors(run)
     assert run == snapshot
+
+
+# --- unscored multi-repo placeholder must not be read as a real 0.0 score ---------------
+# `run_multi_replay` reports `scored_repos: 0` with placeholder means of `0.0` (averages over
+# empty lists). The gate drops those placeholders to None (same `scored_repos` guard promotion and
+# `run_eval --fail-under` already apply), so an unscored run never clears the floors — while a
+# genuinely scored run whose components are really 0.0 is preserved.
+
+
+def test_unscored_multi_repo_placeholder_fails_all_floors():
+    empty_run = {
+        "repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    }
+    result = check_component_floors(empty_run)
+    assert result["passed"] is False
+    assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
+    assert result["composite_mean"] is None
+    assert result["judge_mean"] is None
+    assert result["objective_mean"] is None
+
+
+def test_unscored_placeholder_is_not_passed_even_at_permissive_floors():
+    # Without the guard the placeholder 0.0 would clear zero floors and a no-op run that scored
+    # nothing could pass. It must stay held even at min_* = 0.0.
+    empty_run = {
+        "repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    }
+    result = check_component_floors(empty_run, min_composite=0.0, min_judge=0.0, min_objective=0.0)
+    assert result["passed"] is False
+    assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
+
+
+def test_genuine_zero_scored_run_is_a_real_score():
+    # Control: same 0.0 means, but scored_repos > 0 means the run really scored 0.0. It must keep
+    # its real values and be gated on them — proving scored_repos, not the numeric 0.0, marks the
+    # placeholder unscored.
+    scored_run = {
+        "repos": 2, "scored_repos": 2, "skipped": 0, "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    }
+    result = check_component_floors(scored_run)
+    assert result["composite_mean"] == 0.0
+    assert result["judge_mean"] == 0.0
+    assert result["objective_mean"] == 0.0
+    assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
+
+
+def test_single_repo_zero_components_are_unaffected():
+    # A single-repo run carries no scored_repos key, so its real 0.0 stays a real score.
+    result = check_component_floors(_result(0.0, 0.0, 0.0))
+    assert result["composite_mean"] == 0.0
+    assert result["judge_mean"] == 0.0
+    assert result["objective_mean"] == 0.0
+
+
+def test_bool_scored_repos_is_not_treated_as_an_unscored_placeholder():
+    # scored_repos must be a real int/float count; a bool is malformed, not the zero placeholder.
+    run = {
+        "repos": 1, "scored_repos": False, "composite_mean": 0.7,
+        "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.5},
+    }
+    result = check_component_floors(run)
+    assert result["composite_mean"] == 0.7
+    assert result["judge_mean"] == 0.6
+    assert result["passed"] is True

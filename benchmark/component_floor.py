@@ -42,6 +42,28 @@ def _floor_check(name, value, floor):
     return {"name": name, "passed": bool(ok), "detail": detail}
 
 
+def _scored_metric(result: dict, key: str, *, nested_key: str | None = None):
+    """A component mean, or ``None`` when the run has no real score for it.
+
+    A multi-repo run that scored no repos reports ``scored_repos == 0`` with placeholder
+    ``0.0`` means (averages over empty lists) — an infra/transient outcome, not the agent
+    scoring zero. That placeholder yields ``None`` here so the gate never reads it as a real
+    score. Mirrors :func:`benchmark.promotion._scored_composite` and the ``scored_repos``
+    guard ``scripts/run_eval.check_score_floor`` already apply. A single-repo run carries no
+    ``scored_repos`` key and keeps its real values (including a genuine ``0.0``).
+    """
+    if nested_key is None:
+        value = result.get(key)
+    else:
+        value = _dict(result.get(nested_key)).get(key)
+    if not _is_number(value):
+        return None
+    scored = result.get("scored_repos")
+    if _is_number(scored) and not scored:
+        return None
+    return value
+
+
 def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
                            min_judge: float = DEFAULT_MIN_JUDGE,
                            min_objective: float = DEFAULT_MIN_OBJECTIVE) -> dict:
@@ -52,10 +74,9 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     all checks are always reported.
     """
     result = _dict(result)
-    composite = result.get("composite_mean")
-    parts = _dict(result.get("composite_parts"))
-    judge = parts.get("judge_mean")
-    objective = parts.get("objective_mean")
+    composite = _scored_metric(result, "composite_mean")
+    judge = _scored_metric(result, "judge_mean", nested_key="composite_parts")
+    objective = _scored_metric(result, "objective_mean", nested_key="composite_parts")
 
     checks = [
         _floor_check("composite_floor", composite, min_composite),
@@ -66,9 +87,9 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     return {
         "passed": all(c["passed"] for c in checks),
         "checks": checks,
-        "composite_mean": composite if _is_number(composite) else None,
-        "judge_mean": judge if _is_number(judge) else None,
-        "objective_mean": objective if _is_number(objective) else None,
+        "composite_mean": composite,
+        "judge_mean": judge,
+        "objective_mean": objective,
         "min_composite": min_composite,
         "min_judge": min_judge,
         "min_objective": min_objective,
