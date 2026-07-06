@@ -375,3 +375,27 @@ def test_qualified_pr_reference_is_still_authoritative_even_when_stale():
     stale = {"title": "PR #9: something unrelated", "kind": "triage",
              "rationale": "streaming export export export"}
     assert _matched_pr(stale, prs) is None
+
+
+# --- #385: a qualified "PR #N" must win over an earlier bare ordinal in the same text. -----
+
+def test_qualified_pr_reference_wins_over_earlier_bare_ordinal():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    item = {
+        "title": "Address our #1 priority: review PR #7 before release",
+        "kind": "triage",
+        "rationale": "top item in the queue",
+    }
+    assert _matched_pr(item, prs) == prs[0]
+
+
+def test_reconcile_does_not_duplicate_pr_when_qualified_reference_wins():
+    item = {
+        "title": "Address our #1 priority: review PR #7 before release",
+        "kind": "triage",
+        "rationale": "top item in the queue",
+    }
+    out = reconcile_plan_with_queue([item], CTX, 5)
+    assert len(out) == 1
+    assert out[0]["title"] == item["title"]
+    assert not any(i["title"].startswith("Review pull request #7:") for i in out)
