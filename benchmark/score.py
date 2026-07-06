@@ -431,10 +431,11 @@ def _addressed_with_evidence(revealed, open_issues) -> list:
     """Open issues at T whose themes show up in the revealed commit subjects, paired with
     the commit subject that triggered the match (the diagnostic evidence for that match).
 
-    A non-dict entry in `open_issues` (a malformed backlog source) is skipped rather than
-    raising, so one bad entry doesn't abort scoring for the whole replay."""
+    A non-list `open_issues` (a malformed backlog source) is treated as an empty backlog, and a
+    non-dict entry within it is skipped, rather than raising — so a bad backlog value or entry
+    doesn't abort scoring for the whole replay."""
     out = []
-    for issue in open_issues or []:
+    for issue in open_issues if isinstance(open_issues, list) else []:
         if not isinstance(issue, dict):
             logger.warning(
                 "backlog_recall: skipping a non-dict open_issues entry (%s: %r)",

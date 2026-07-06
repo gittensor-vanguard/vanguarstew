@@ -809,6 +809,19 @@ def test_backlog_recall_logs_a_warning_for_non_dict_open_issues_entry(caplog):
     assert any("non-dict open_issues" in r.message for r in caplog.records)
 
 
+def test_objective_score_tolerates_non_list_open_issues():
+    # A non-list open_issues (a malformed backlog source, e.g. an int) must be treated as an
+    # empty backlog rather than raising `TypeError: 'int' object is not iterable` and aborting
+    # the whole replay — the same fail-soft posture as a non-dict entry or a non-list plan.
+    plan = [{"title": "Fix login", "kind": "bugfix"}]
+    revealed = [{"subject": "fix: login", "files": ["auth/login.py"]}]
+    for bad in (42, "issues", {"number": 1}, True):
+        score = objective_score(plan, revealed, open_issues=bad)
+        assert score["backlog_recall"] == 0.0
+        assert score["addressed_issue_numbers"] == []
+    assert addressed_issues(revealed, 42) == []
+
+
 def test_objective_score_unchanged_for_well_formed_plan_after_guards():
     # The guards must be inert on valid input: a plan naming the changed modules still scores
     # a perfect structural recall, proving no regression was introduced.
