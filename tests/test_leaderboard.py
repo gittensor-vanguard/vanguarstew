@@ -79,6 +79,18 @@ def test_unscored_artifacts_are_separated_never_ranked():
     assert out["scored"] == 1 and out["total"] == 4
 
 
+def test_unscored_multi_repo_run_is_separated_never_ranked():
+    # A multi-repo run that scored no repos (scored_repos: 0, placeholder 0.0) belongs in unscored,
+    # not ranked as a real 0.0 that would skew the board.
+    empty_run = {"repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
+                 "per_repo": [{"repo": "a", "error": "bad path", "tasks": 0}]}
+    out = rank([("cand_a", _single(0.6)), ("empty_run", empty_run)])
+    assert [r["label"] for r in out["ranking"]] == ["cand_a"]
+    assert out["unscored"] == ["empty_run"]
+    assert out["scored"] == 1 and out["total"] == 2
+    assert out["best"] == {"label": "cand_a", "composite_mean": 0.6}
+
+
 def test_rank_empty_and_all_unscored():
     assert rank([])["best"] is None and rank([])["ranking"] == []
     allbad = rank([("a", {"error": "x"}), ("b", 123)])

@@ -54,6 +54,25 @@ def test_headline_score_treats_unscored_tuned_partition_as_unscored():
     assert out["regressions"] == []
 
 
+def test_headline_score_treats_unscored_multi_repo_as_unscored():
+    # A multi-repo run where every repo was too small/unreachable reports scored_repos: 0 with a
+    # placeholder composite_mean of 0.0 — nothing scored, not a real zero. It must read as None.
+    unscored = {
+        "repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
+        "per_repo": [{"repo": "a", "error": "bad path", "tasks": 0}],
+    }
+    assert headline_score(unscored) is None
+    # A scored multi-repo run is unaffected; a single-repo artifact (no scored_repos key) keeps its score.
+    assert headline_score({"repos": 2, "scored_repos": 2, "composite_mean": 0.62}) == 0.62
+    assert headline_score(_single(0.0)) == 0.0
+    # A nothing-scored run between two healthy ones is skipped, so no spurious regression is flagged.
+    out = trend([("run1", {"scored_repos": 2, "composite_mean": 0.62}),
+                 ("run2", unscored),
+                 ("run3", {"scored_repos": 2, "composite_mean": 0.63})])
+    assert [p["composite_mean"] for p in out["points"]] == [0.62, None, 0.63]
+    assert out["regressions"] == []
+
+
 def test_trend_computes_points_deltas_and_overall_change():
     series = [("r1", _single(0.50)), ("r2", _single(0.55)), ("r3", _single(0.53))]
     out = trend(series)
