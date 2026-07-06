@@ -64,6 +64,51 @@ def _pr_author(data: dict, number: int) -> str:
     return login.strip()
 
 
+def _pr_files_list(files, number: int) -> list[str]:
+    """Normalize gh's ``files`` array to string paths for maintainer-assist review.
+
+    A missing ``files`` key (``None``) is treated as no changed files without a warning,
+    matching ``_pr_author``'s posture for a missing ``author`` key. Junk rows inside a list
+    log an indexed warning; when the list was non-empty but every entry was unusable, log a
+    summary warning so data corruption is visible in production logs.
+    """
+    if not isinstance(files, list):
+        if files is not None:
+            logger.warning(
+                "review_pr: PR #%s files is %s, not a list; treating as empty",
+                number,
+                type(files).__name__,
+            )
+        return []
+    paths = []
+    for idx, entry in enumerate(files):
+        if not isinstance(entry, dict):
+            logger.warning(
+                "review_pr: PR #%s files[%s] is %s, not an object; skipping",
+                number,
+                idx,
+                type(entry).__name__,
+            )
+            continue
+        path = entry.get("path")
+        if not isinstance(path, str) or not path.strip():
+            logger.warning(
+                "review_pr: PR #%s files[%s] has no usable path; skipping",
+                number,
+                idx,
+            )
+            continue
+        paths.append(path.strip())
+    if files and not paths:
+        logger.warning(
+            "review_pr: PR #%s files list had %d entr%s but no usable paths",
+            number,
+            len(files),
+            "y" if len(files) == 1 else "ies",
+        )
+    return paths
+
+
 def fetch_pr(repo: str, number: int) -> dict:
     raw = _gh("pr", "view", str(number), "-R", repo, "--json",
               "number,title,body,author,additions,deletions,files")
@@ -77,7 +122,7 @@ def fetch_pr(repo: str, number: int) -> dict:
         "author": _pr_author(data, number),
         "additions": data["additions"],
         "deletions": data["deletions"],
-        "files": [f["path"] for f in data.get("files", [])],
+        "files": _pr_files_list(data.get("files"), data["number"]),
         "diff": _gh("pr", "diff", str(number), "-R", repo),
     }
 
