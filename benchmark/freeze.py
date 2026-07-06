@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import tarfile
 
-from agent.context import CONTEXT_FILE
+from agent.context import CONTEXT_FILE, README_PROBE_NAMES
 from benchmark.leakage import scrub_context
 
 
@@ -165,7 +165,7 @@ def build_context(repo: str, commit: str, lookback: int = 50) -> dict:
             continue  # tag created after T — a leak; drop it
         tags.append(name)
     readme = ""
-    for name in ("README.md", "README.rst", "README", "docs/README.md"):
+    for name in README_PROBE_NAMES:
         content = file_at(repo, commit, name)
         if content:
             readme = content[:4000]
