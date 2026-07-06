@@ -19,7 +19,21 @@ from agent.review import review_pr
 
 
 def _gh(*args) -> str:
-    return subprocess.run(["gh", *args], capture_output=True, text=True).stdout
+    """Run the `gh` CLI and return stdout; raise gh's own diagnostic on failure.
+
+    `gh` exits non-zero with an empty stdout and a specific stderr message for any
+    failure (bad `--repo`/`--pr`, no `gh auth login`, no access to the repo, rate limiting,
+    a network error). Previously that stderr was discarded, so a failed call surfaced only
+    as a downstream `json.decoder.JSONDecodeError` on the empty stdout, with no indication
+    of what actually went wrong.
+    """
+    result = subprocess.run(["gh", *args], capture_output=True, text=True)
+    if result.returncode != 0:
+        cmd = " ".join(["gh", *args])
+        stderr = result.stderr.strip()
+        detail = f": {stderr}" if stderr else " (gh produced no error output)"
+        raise RuntimeError(f"`{cmd}` failed (exit {result.returncode}){detail}")
+    return result.stdout
 
 
 def fetch_pr(repo: str, number: int) -> dict:
