@@ -125,6 +125,18 @@ def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) ->
     }
 
 
+def _trend_regressions(regressions) -> list:
+    """Return ``regressions`` when it is a list; otherwise treat as no regressions."""
+    if isinstance(regressions, list):
+        return regressions
+    if regressions is not None:
+        logger.warning(
+            "trend: summary regressions is %s, not a list; treating as empty",
+            type(regressions).__name__,
+        )
+    return []
+
+
 def trend_headline(summary: dict) -> str:
     """A one-line human summary of a :func:`trend` result."""
     if not isinstance(summary, dict) or not summary.get("scored"):
@@ -133,7 +145,7 @@ def trend_headline(summary: dict) -> str:
     arrow = "flat"
     if _is_number(change):
         arrow = "up" if change > 0 else "down" if change < 0 else "flat"
-    regs = len(summary.get("regressions") or [])
+    regs = len(_trend_regressions(summary.get("regressions")))
     change_txt = f"{change:+.3f}" if _is_number(change) else "n/a"
     return (
         f"trend: {summary.get('first')} -> {summary.get('last')} "

@@ -11,6 +11,7 @@ if ROOT not in sys.path:
 from benchmark.leaderboard import (  # noqa: E402
     _components,
     _leaderboard_entries,
+    _leaderboard_unscored,
     leaderboard_headline,
     rank,
 )
@@ -121,6 +122,36 @@ def test_leaderboard_headline_names_the_leader_and_counts():
 
     assert leaderboard_headline({}) == "leaderboard: no scored artifacts"
     assert leaderboard_headline(rank([])) == "leaderboard: no scored artifacts"
+
+
+# --- #569: non-list unscored must not abort leaderboard_headline --------------------
+
+_MALFORMED_UNSCORED_LISTS = [42, 3.14, True, "bad", "not a list"]
+
+
+def test_leaderboard_unscored_accepts_only_real_lists():
+    rows = ["bad"]
+    for bad in _MALFORMED_UNSCORED_LISTS:
+        assert _leaderboard_unscored(bad) == [], bad
+    assert _leaderboard_unscored(rows) == rows
+    assert _leaderboard_unscored(None) == []
+
+
+def test_leaderboard_headline_survives_non_list_unscored():
+    base = {"scored": 1, "best": {"label": "A", "composite_mean": 0.5}}
+    for bad in _MALFORMED_UNSCORED_LISTS:
+        line = leaderboard_headline({**base, "unscored": bad})
+        assert "unscored" not in line, bad
+
+
+def test_leaderboard_headline_logs_warning_for_non_list_unscored(caplog):
+    import logging
+
+    summary = {"scored": 1, "best": {"label": "A", "composite_mean": 0.5}, "unscored": 42}
+    with caplog.at_level(logging.WARNING, logger="benchmark.leaderboard"):
+        line = leaderboard_headline(summary)
+    assert "unscored" not in line
+    assert any("unscored is int" in r.message for r in caplog.records)
 
 
 def test_single_scored_entry_leads_with_no_runners():

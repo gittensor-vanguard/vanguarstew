@@ -117,6 +117,18 @@ def rank(entries) -> dict:
     }
 
 
+def _leaderboard_unscored(unscored) -> list:
+    """Return ``unscored`` when it is a list; otherwise treat as no unscored labels."""
+    if isinstance(unscored, list):
+        return unscored
+    if unscored is not None:
+        logger.warning(
+            "leaderboard: summary unscored is %s, not a list; treating as empty",
+            type(unscored).__name__,
+        )
+    return []
+
+
 def leaderboard_headline(summary: dict) -> str:
     """A one-line human summary of a :func:`rank` result."""
     if not isinstance(summary, dict) or not summary.get("scored"):
@@ -124,7 +136,7 @@ def leaderboard_headline(summary: dict) -> str:
     best = summary.get("best") or {}
     runners = summary["scored"] - 1
     tail = f" over {runners} other(s)" if runners > 0 else ""
-    unscored = len(summary.get("unscored") or [])
+    unscored = len(_leaderboard_unscored(summary.get("unscored")))
     unscored_txt = f"; {unscored} unscored" if unscored else ""
     return (
         f"leaderboard: {best.get('label')} leads at "
