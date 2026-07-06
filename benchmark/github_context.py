@@ -36,9 +36,12 @@ than leaked as a present-day value):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.request
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
@@ -157,6 +160,23 @@ def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100)
     return items
 
 
+def _timeline_events(events) -> list:
+    """Return ``events`` when it is a list; otherwise treat as no timeline.
+
+    A truthy non-list must not reach ``for ev in events`` or malformed timeline JSON
+    aborts label reconstruction (#488). An empty timeline makes :func:`_labels_at` return
+    ``None``, so the caller omits labels (fail-closed) rather than leaking live labels.
+    """
+    if isinstance(events, list):
+        return events
+    if events is not None:
+        logger.warning(
+            "github_context: timeline events is %s, not a list; treating as empty",
+            type(events).__name__,
+        )
+    return []
+
+
 def _labels_at(events, until: datetime):
     """Reconstruct an issue/PR's label set *as of `until`* from its timeline.
 
@@ -165,10 +185,19 @@ def _labels_at(events, until: datetime):
     today's live labels. Returns a sorted list of label names, or ``None`` when the
     timeline carries no usable label event at/or before T — the caller then falls
     back to omitting labels rather than leaking the present-day set.
+
+    A non-list ``events`` value is treated as an empty timeline (``None``), matching
+    the fail-closed posture used when reconstruction is unavailable.
     """
     relevant = []
-    for ev in events or []:
+    for idx, ev in enumerate(_timeline_events(events)):
         if not isinstance(ev, dict):
+            logger.warning(
+                "github_context: skipping non-dict timeline event at index %d (%s: %r)",
+                idx,
+                type(ev).__name__,
+                ev,
+            )
             continue
         if ev.get("event") not in ("labeled", "unlabeled"):
             continue

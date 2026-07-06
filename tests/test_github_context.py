@@ -547,6 +547,56 @@ def test_labels_at_skips_non_dict_timeline_events():
     assert gc._labels_at(events, T) == ["bug"]
 
 
+# --- #488: a non-list timeline must not abort label reconstruction -------------------------
+
+_MALFORMED_EVENT_LISTS = [42, 3.14, True, {"event": "labeled"}, "not a list"]
+
+
+def test_timeline_events_accepts_only_real_lists():
+    events = [{"event": "labeled"}]
+    assert gc._timeline_events(events) == events
+    assert gc._timeline_events(None) == []
+    for bad in _MALFORMED_EVENT_LISTS:
+        assert gc._timeline_events(bad) == [], bad
+
+
+def test_labels_at_survives_non_list_events_container():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    for bad in _MALFORMED_EVENT_LISTS:
+        assert gc._labels_at(bad, T) is None, bad
+
+
+def test_labels_at_skips_falsy_non_dict_event_rows():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    for junk in (0, None, False, ""):
+        events = [
+            junk,
+            {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}},
+        ]
+        assert gc._labels_at(events, T) == ["bug"], junk
+
+
+def test_labels_at_logs_warning_for_non_list_events(caplog):
+    import logging
+
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    with caplog.at_level(logging.WARNING, logger="benchmark.github_context"):
+        assert gc._labels_at(42, T) is None
+    assert any("timeline events is int" in r.message for r in caplog.records)
+
+
+def test_labels_at_logs_warning_for_non_dict_event_with_index(caplog):
+    import logging
+
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    with caplog.at_level(logging.WARNING, logger="benchmark.github_context"):
+        assert gc._labels_at(
+            [0, {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}}],
+            T,
+        ) == ["bug"]
+    assert any("index 0" in r.message and "int" in r.message for r in caplog.records)
+
+
 def test_fetch_context_at_survives_malformed_timeline_label_event(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
