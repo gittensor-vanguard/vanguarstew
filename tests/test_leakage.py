@@ -149,6 +149,34 @@ def test_rotation_seed_is_deterministic(monkeypatch):
     assert [t["freeze_index"] for t in a] != [t["freeze_index"] for t in c]
 
 
+def test_strip_forward_refs_masks_release_tag_link_hiding_next_version():
+    # A link to a future release tag hands the agent the next version outright, which would
+    # defeat the release/bump scoring; both the link and the version must be scrubbed.
+    out = strip_forward_refs("cut it in https://github.com/o/r/releases/tag/v2.0.0 next")
+    assert "github.com" not in out and "v2.0.0" not in out and "<link>" in out
+
+
+def test_strip_forward_refs_masks_ref_and_milestone_deeplinks():
+    # tree/blob (a future ref), milestone, and discussion links all point at where the repo
+    # went next and must be masked, not just issues/pull/commit/compare.
+    for url in (
+        "https://github.com/o/r/tree/9f8e7d6",
+        "https://github.com/o/r/blob/feature-branch/src/app.py",
+        "https://github.com/o/r/milestone/5",
+        "https://github.com/o/r/discussions/42",
+    ):
+        out = strip_forward_refs(f"see {url} for details")
+        assert "github.com" not in out and "<link>" in out, url
+
+
+def test_strip_forward_refs_preserves_bare_repo_url():
+    # The bare repo/owner URL carries no forward reference; masking it would destroy
+    # legitimate context (badges, "see the repo"), so it must survive untouched.
+    for url in ("https://github.com/o/r", "https://github.com/o"):
+        out = strip_forward_refs(f"project home: {url}")
+        assert url in out and "<link>" not in out
+
+
 def test_generate_tasks_respects_after_before_bounds(monkeypatch):
     monkeypatch.setattr(taskgen, "linear_history", lambda repo: _fake_history(20))
     monkeypatch.setattr(taskgen, "revealed_window", lambda *a, **k: [])
