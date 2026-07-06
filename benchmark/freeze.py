@@ -7,6 +7,7 @@ reads that — it never sees anything after T.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -105,18 +106,23 @@ def _safe_extractall(tf: tarfile.TarFile, dest: str) -> None:
 
 def export_tree(repo: str, commit: str, dest: str) -> None:
     os.makedirs(dest, exist_ok=True)
-    proc = subprocess.Popen(
+    proc = subprocess.run(
         ["git", "-C", repo, "archive", "--format=tar", commit],
-        stdout=subprocess.PIPE,
+        capture_output=True,
     )
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()
+        msg = f"git archive failed for {commit}"
+        if err:
+            msg = f"{msg}: {err}"
+        raise RuntimeError(msg)
+    if not proc.stdout:
+        raise RuntimeError(f"git archive failed for {commit}: empty archive")
     # One explicit extraction policy on all supported Python versions (3.10-3.12);
     # never delegate to the stdlib `filter='data'` path, whose availability and exact
     # behavior differ by runtime and would make frozen trees non-reproducible.
-    with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
+    with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tf:
         _safe_extractall(tf, dest)
-    proc.wait()
-    if proc.returncode not in (0, None):
-        raise RuntimeError(f"git archive failed for {commit}")
 
 
 def file_at(repo: str, commit: str, path: str) -> str:

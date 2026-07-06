@@ -221,6 +221,27 @@ def test_export_tree_applies_uniform_policy_to_git_archive():
         shutil.rmtree(dest, ignore_errors=True)
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_export_tree_raises_runtime_error_for_bad_commit():
+    repo = tempfile.mkdtemp()
+    dest = tempfile.mkdtemp()
+    try:
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        with open(os.path.join(repo, "f.py"), "w", encoding="utf-8") as f:
+            f.write("x = 1\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "seed")
+
+        bad = "deadbeef0000000000000000000000000000dead"
+        with pytest.raises(RuntimeError, match=f"git archive failed for {bad}"):
+            export_tree(repo, bad, dest)
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(dest, ignore_errors=True)
+
+
 def _commit(repo: str, name: str, date_iso: str, message: str) -> None:
     """One commit dated `date_iso` (both author and committer), no tag."""
     with open(os.path.join(repo, name), "w", encoding="utf-8") as f:
