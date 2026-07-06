@@ -33,22 +33,20 @@ def headline_score(artifact) -> float | None:
     Single-repo and multi-repo artifacts expose a top-level ``composite_mean``. A
     ``--generalization`` artifact nests scores under ``tuned`` / ``held_out``; its headline is
     the **tuned** ``composite_mean`` (the primary figure, mirrored by ``held_out`` and the gap).
-    Anything without a numeric score yields ``None``.
+    An aggregate run that scored no repos (``scored_repos: 0``) carries a placeholder 0.0 and is
+    treated as unscored. Anything without a numeric score yields ``None``.
     """
     if not isinstance(artifact, dict):
         return None
-    if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
-        tuned = artifact["tuned"]
-        # A tuned partition that scored nothing (scored_repos: 0 — empty set, or every repo
-        # too small/unreachable that run) carries a placeholder composite_mean of 0.0. That is
-        # a transient/infra outcome, not the agent scoring zero, so treat it as unscored (None)
-        # rather than letting --fail-on-regression raise a false alarm — mirroring the
-        # scored_repos guard in scripts/run_eval.check_score_floor.
-        if not tuned.get("scored_repos"):
-            return None
-        score = tuned.get("composite_mean")
-    else:
-        score = artifact.get("composite_mean")
+    # A --generalization artifact scores under its tuned partition; anything else at the top level.
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    source = tuned if isinstance(tuned, dict) and isinstance(held_out, dict) else artifact
+    # An aggregate that scored no repos reports a placeholder composite_mean of 0.0, not a real
+    # score. A single-repo artifact has no scored_repos key and keeps its score.
+    scored = source.get("scored_repos")
+    if _is_number(scored) and not scored:
+        return None
+    score = source.get("composite_mean")
     return round(float(score), 3) if _is_number(score) else None
 
 
