@@ -60,11 +60,38 @@ def build_context(repo: str, commit: str, lookback: int = 50) -> dict:
             commits.append({"sha": parts[0][:10], "date": parts[1], "subject": parts[2]})
     # `git tag --merged` defaults to refname order, which is wrong for versions like
     # v1.10.0 vs v1.9.0. Sort by creation date so `tags[-10:]` is truly the recent window.
-    tags = [
-        t
-        for t in _git(repo, "tag", "--sort=creatordate", "--merged", commit, check=False).splitlines()
-        if t
-    ]
+    #
+    # `--merged <commit>` filters by reachability, not creation date — an annotated tag
+    # created *after* T that points to a commit already present at T passes the filter.
+    # We additionally exclude tags whose `creatordate:unix` is after the freeze commit's
+    # committer time, matching the GitHub-API path's `published_at <= T` policy (#245).
+    # Lightweight tags report their target commit's date (not creation date), so their
+    # real creation time can't be recovered — they are kept conservatively.
+    commit_ts_str = _git(
+        repo, "log", "-1", "--format=%ct", commit, check=False
+    ).strip()
+    commit_ts = int(commit_ts_str) if commit_ts_str else None
+
+    tags = []
+    for line in _git(
+        repo, "tag", "--sort=creatordate", "--merged", commit,
+        "--format=%(refname:strip=2)|%(creatordate:unix)",
+        check=False,
+    ).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "|" in line:
+            name, ts_str = line.split("|", 1)
+            if commit_ts is not None:
+                try:
+                    if int(ts_str) > commit_ts:
+                        continue  # tag created after T — exclude
+                except ValueError:
+                    pass  # unparseable timestamp — keep conservatively
+            tags.append(name)
+        else:
+            tags.append(line)
     readme = ""
     for name in ("README.md", "README.rst", "README", "docs/README.md"):
         content = file_at(repo, commit, name)

@@ -87,3 +87,58 @@ def test_build_context_release_order_is_not_lexicographic():
         assert tags != sorted(creation)      # explicitly NOT lexicographic refname order
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_build_context_excludes_tag_created_after_freeze_point():
+    """A tag created *after* T must not leak into the knowable-at-T context (#245).
+
+    ``git tag --merged <T>`` selects by reachability, not creation date, so an
+    annotated tag created after T that points to a commit reachable from T passes
+    the filter.  build_context now additionally excludes tags whose
+    ``creatordate:unix`` is after the freeze commit's committer time.
+    """
+    repo = tempfile.mkdtemp()
+    try:
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+
+        # Create two commits: one early, one at T (HEAD).
+        for seq in (1, 2):
+            env = os.environ.copy()
+            env.update({
+                "GIT_AUTHOR_DATE": f"2024-06-{seq:02d}T12:00:00+00:00",
+                "GIT_COMMITTER_DATE": f"2024-06-{seq:02d}T12:00:00+00:00",
+            })
+            path = os.path.join(repo, f"f{seq}.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"commit {seq}\n")
+            _git(repo, "add", "-A", env=env)
+            _git(repo, "commit", "-q", "-m", f"commit {seq}", env=env)
+
+        # Tag the first commit at T (June 2).
+        _git(repo, "tag", "v1.0", "HEAD~1")
+
+        freeze_sha = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        # Now create a tag pointing at the SAME old commit (v1.0's target), but
+        # with a creation date AFTER T — simulating a retroactive release.
+        after_t = os.environ.copy()
+        after_t.update({
+            "GIT_COMMITTER_DATE": "2024-07-01T12:00:00+00:00",
+        })
+        _git(repo, "tag", "-a", "-m", "future release", "vFUTURE", "HEAD~1", env=after_t)
+
+        ctx = build_context(repo, freeze_sha)
+        release_tags = [r["tag"] for r in ctx["releases"]]
+
+        assert "v1.0" in release_tags, "tag created at-or-before T must appear"
+        assert "vFUTURE" not in release_tags, (
+            "annotated tag created after T must not leak into frozen context"
+        )
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
