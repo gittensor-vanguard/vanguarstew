@@ -35,8 +35,6 @@ def test_open_at_T_filtering(monkeypatch):
     def fake_get(url, token, timeout=20):
         if "/issues" in url:
             return issues
-        if "/labels" in url:
-            return [{"name": "bug"}, {"name": "enhancement"}]
         if "/milestones" in url:
             return [
                 {"title": "v1", "created_at": "2023-01-01T00:00:00Z", "due_on": None, "state": "open"},
@@ -92,7 +90,29 @@ def test_fetch_context_milestone_state_not_leaked(monkeypatch):
 
     monkeypatch.setattr(gc, "_get", fake_get)
     ctx = gc.fetch_context_at("foo", "bar", T, token=None)
-    assert ctx["milestones"] == [{"title": "v1", "due_on": None, "state": "open"}]
+    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
+
+
+def test_fetch_context_omits_unsupported_live_only_fields(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_get(url, token, timeout=20):
+        if "/labels" in url:
+            raise AssertionError("repo label catalog should be omitted, not fetched live")
+        if "/milestones" in url:
+            return [{
+                "title": "v1",
+                "created_at": "2023-01-01T00:00:00Z",
+                "closed_at": None,
+                "due_on": "2023-12-31T00:00:00Z",
+                "state": "open",
+            }]
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert "labels" not in ctx
+    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
 
 
 def test_labels_at_reconstructs_membership_as_of_T():
