@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Benchmark tooling: **`scripts/compare_eval.py`** — diff two saved `run_eval --out` JSON
+  artifacts and report composite, judge, per-repo, and generalization-gap deltas. Makes the
+  documented comparison/trending workflow usable without hand-rolling JSON diffs (#306).
 - Generalization (M3): **tuned vs held-out generalization report** — `run_generalization_report`
   / `scripts/run_eval.py --repo-set <cfg> --generalization` replays both the tuned and held-out
   partitions of a repo set in one call and reports a `generalization_gap` (tuned minus held-out
