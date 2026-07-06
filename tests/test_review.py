@@ -2,6 +2,7 @@
 
 import os
 import sys
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -19,6 +20,7 @@ from agent.review import (  # noqa: E402
     _normalize_value_label,
     review_pr,
 )
+from scripts.review_pr import fetch_pr  # noqa: E402
 
 
 def test_review_offline_shape():
@@ -95,3 +97,14 @@ def test_review_pr_normalizes_malformed_field_types():
     assert rev["summary"] == ""
     assert rev["concerns"] == ["missing edge-case coverage"]
     assert rev["recommendation"] == ""
+
+
+def test_fetch_pr_falls_back_to_ghost_author():
+    fake = """{"number":42,"title":"Fix","body":"Fixes a bug.","author":null,
+    "additions":3,"deletions":1,"files":[{"path":"core/scheduler.py"}]}"""
+
+    with patch("scripts.review_pr._gh", side_effect=[fake, "diff --git a/core/scheduler.py b/core/scheduler.py"]):
+        pr = fetch_pr("some/repo", 42)
+
+    assert pr["author"] == "ghost"
+    assert pr["files"] == ["core/scheduler.py"]

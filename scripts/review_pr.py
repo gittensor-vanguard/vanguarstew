@@ -25,11 +25,12 @@ def _gh(*args) -> str:
 def fetch_pr(repo: str, number: int) -> dict:
     data = json.loads(_gh("pr", "view", str(number), "-R", repo, "--json",
                           "number,title,body,author,additions,deletions,files"))
+    author = data.get("author") or {}
     return {
         "number": data["number"],
         "title": data["title"],
         "body": data.get("body"),
-        "author": data["author"]["login"],
+        "author": author.get("login", "ghost"),
         "additions": data["additions"],
         "deletions": data["deletions"],
         "files": [f["path"] for f in data.get("files", [])],
