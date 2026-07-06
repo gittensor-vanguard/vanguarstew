@@ -105,18 +105,23 @@ def _pr_dedup_key(pr: dict):
     return ("title", title) if title else None
 
 
-def _open_prs_list(context: dict) -> list:
-    """Return ``open_prs`` when it is a list; otherwise treat as no PR queue.
+def _safe_prs(context: dict) -> list:
+    """Return the planner-visible open-PR queue, or ``[]`` when unavailable or untrusted.
 
-    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for p in open_prs``
-    or malformed frozen context aborts queue reconciliation.
+    Fail-closed on ``_issues_truncated is True`` (#722): a partial backlog must not drive
+    queue notes, offline stubs, or reconciliation. A non-list ``open_prs`` value is treated
+    as no queue rather than aborting the planner path.
     """
-    raw = (context or {}).get("open_prs")
+    if not isinstance(context, dict):
+        return []
+    if context.get("_issues_truncated") is True:
+        return []
+    raw = context.get("open_prs")
     return raw if isinstance(raw, list) else []
 
 
 def _pr_queue_note(context: dict) -> str:
-    prs = [p for p in _open_prs_list(context) if _pr_title(p)]
+    prs = [p for p in _safe_prs(context) if _pr_title(p)]
     if not prs:
         return ""
     lines = [f"- #{p.get('number', '?')}: {_pr_title(p)}" for p in prs]
@@ -131,7 +136,7 @@ def _pr_queue_note(context: dict) -> str:
 def _offline_plan_stub(context: dict, n: int) -> list:
     """Deterministic offline plan: prioritize the visible PR queue when present."""
     items = []
-    for pr in _open_prs_list(context):
+    for pr in _safe_prs(context):
         title = _pr_title(pr)
         if not title:
             continue
@@ -153,7 +158,7 @@ def _offline_plan_stub(context: dict, n: int) -> list:
 
 def _pr_queue(context: dict) -> list:
     return [
-        p for p in _open_prs_list(context)
+        p for p in _safe_prs(context)
         if isinstance(p, dict) and _pr_title(p)
     ]
 

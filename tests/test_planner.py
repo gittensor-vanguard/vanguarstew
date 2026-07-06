@@ -20,12 +20,13 @@ from agent.planner import (  # noqa: E402
     _normalize_files,
     _normalize_plan,
     _normalize_plan_item,
-    _open_prs_list,
+    _offline_plan_stub,
     _plan_list,
     _pr_dedup_key,
     _pr_number,
     _pr_queue_note,
     _pr_title,
+    _safe_prs,
     _significant_tokens,
     plan_next_actions,
     reconcile_plan_with_queue,
@@ -523,18 +524,39 @@ def test_qualified_reference_wins_over_an_earlier_bare_ordinal():
 _MALFORMED_OPEN_PRS = [42, 3.14, True, {"number": 1, "title": "Fix bug"}, "not a list"]
 
 
-def test_open_prs_list_accepts_only_real_lists():
+def test_safe_prs_accepts_only_real_lists():
     prs = [{"number": 7, "title": "Add streaming export"}]
-    assert _open_prs_list({"open_prs": prs}) == prs
+    assert _safe_prs({"open_prs": prs}) == prs
     for bad in _MALFORMED_OPEN_PRS:
-        assert _open_prs_list({"open_prs": bad}) == [], bad
-    assert _open_prs_list({}) == []
-    assert _open_prs_list({"open_prs": None}) == []
+        assert _safe_prs({"open_prs": bad}) == [], bad
+    assert _safe_prs({}) == []
+    assert _safe_prs({"open_prs": None}) == []
+
+
+def test_safe_prs_returns_empty_when_issues_truncated():
+    prs = [{"number": 2, "title": "partial pr awaiting review"}]
+    assert _safe_prs({"_issues_truncated": True, "open_prs": prs}) == []
+    assert _safe_prs({"_issues_truncated": "false", "open_prs": prs}) == prs
 
 
 def test_pr_queue_note_tolerates_non_list_open_prs():
     for bad in _MALFORMED_OPEN_PRS:
         assert _pr_queue_note({"open_prs": bad}) == ""
+
+
+_TRUNCATED_CTX = {
+    "_issues_truncated": True,
+    "open_prs": [{"number": 2, "title": "partial pr awaiting review"}],
+}
+
+
+def test_planner_queue_paths_ignore_truncated_open_prs():
+    assert _safe_prs(_TRUNCATED_CTX) == []
+    assert _pr_queue_note(_TRUNCATED_CTX) == ""
+    stub = _offline_plan_stub(_TRUNCATED_CTX, 3)
+    assert all("Review pull request" not in item["title"] for item in stub)
+    plan = [{"title": "Write docs", "kind": "docs"}]
+    assert reconcile_plan_with_queue(plan, _TRUNCATED_CTX, 5) == plan
 
 
 def test_reconcile_tolerates_non_list_open_prs():
