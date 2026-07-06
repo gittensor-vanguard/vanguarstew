@@ -13,6 +13,7 @@ if ROOT not in sys.path:
 
 from benchmark.judge import build_judge_report  # noqa: E402
 from benchmark.judge_report_integrity import (  # noqa: E402
+    _check_rows_list,
     _report_slices,
     check_judge_report_integrity,
     failed_checks,
@@ -210,3 +211,136 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
     )
     assert proc.returncode == 0
     assert "CONSISTENT" in proc.stderr
+
+
+# --- #783: checks row sanitization for judge report integrity headlines -----------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "report_present"}, "not a list",
+    ({"name": "report_present", "passed": False},),  # tuple, not list
+    range(2),  # iterable but not a list
+]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "report_present", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "report_present", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "report_present", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list([{"name": "report_present"}]) == []
+    assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_empty_dict(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        assert _check_rows_list([{}]) == []
+    assert any("missing required key(s)" in r.message for r in caplog.records)
+
+
+def test_integrity_headline_survives_non_list_checks():
+    base = {"passed": False}
+    for bad in _MALFORMED_CHECKS:
+        assert (
+            integrity_headline({**base, "checks": bad})
+            == "judge report integrity: no checks evaluated"
+        ), bad
+
+
+def test_integrity_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "report_present"}],
+        [{}],
+    ):
+        assert integrity_headline({"checks": checks, "passed": False}) == (
+            "judge report integrity: no checks evaluated"
+        )
+
+
+def test_integrity_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "report_present", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        line = integrity_headline({"checks": checks, "passed": False})
+    assert line == (
+        "judge report integrity: INCONSISTENT (1/1 checks failed: report_present)"
+    )
+    assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+def test_integrity_headline_logs_warning_for_non_list_checks(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
+        line = integrity_headline({"checks": 42, "passed": False})
+    assert line == "judge report integrity: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "report_present"}],
+        [{}],
+        [42],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_skips_non_dict_rows():
+    checks = [
+        {"name": "report_present", "passed": False},
+        42,
+        {"name": "stats_present", "passed": True},
+    ]
+    assert failed_checks({"checks": checks}) == ["report_present"]
