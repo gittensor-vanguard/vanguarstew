@@ -256,8 +256,9 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
     miscounted as scored.
 
     Deterministic given a fixed `seed` (passed through to each run and the judge's RNG).
-    Repos too small to yield tasks are kept in `per_repo` with their error and excluded from
-    the mean (and counted in `skipped`).
+    A repo that fails to score — too small to yield tasks, or unusable (missing path, not a git
+    repo, freeze failure) — is kept in `per_repo` with its error and counted in `skipped`, so one
+    bad repo can neither abort the batch nor dilute the aggregate.
     """
     if (repos is None) == (repo_set is None):
         raise ValueError("pass exactly one of 'repos' or 'repo_set'")
@@ -306,11 +307,19 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
     tally = {"challenger": 0, "baseline": 0, "tie": 0}
     try:
         for repo in selected:
-            repo_kwargs = dict(kwargs)
-            for key, value in _freeze_window_dict(repo.get("freeze_window")).items():
-                repo_kwargs[key] = value
-            res = run_replay(repo["repo_path"], **repo_kwargs)
             meta = {k: v for k, v in repo.items() if k not in ("repo_path", "cleanup")}
+            try:
+                repo_kwargs = dict(kwargs)
+                for key, value in _freeze_window_dict(repo.get("freeze_window")).items():
+                    repo_kwargs[key] = value
+                res = run_replay(repo["repo_path"], **repo_kwargs)
+            except RuntimeError as exc:
+                # A repo-level failure (missing path, not a git repo, freeze error) surfaces from
+                # freeze._git as RuntimeError; record it like a zero-task repo so the batch keeps
+                # going and the tasks > 0 gate below leaves it out of the mean.
+                logger.warning("runner: replay failed for %s: %s",
+                               repo.get("repo") or repo.get("repo_path"), exc)
+                res = {"error": str(exc), "tasks": 0}
             per_repo.append({**meta, **res})
             for outcome in tally:
                 tally[outcome] += int((res.get("tally") or {}).get(outcome, 0))
