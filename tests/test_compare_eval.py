@@ -75,6 +75,32 @@ def test_compare_eval_artifacts_reports_per_repo_deltas():
     assert by_repo["/b"]["composite_mean"]["delta"] == 0.0
 
 
+def test_compare_eval_artifacts_tolerates_non_list_per_repo():
+    # A malformed artifact whose per_repo is not a list must not crash the diff (#464); it is
+    # treated as an empty repo table, so the top-level composite_mean still diffs.
+    for bad in (42, True, {"repo_path": "/a"}, "rows"):
+        diff = compare_eval_artifacts({"per_repo": bad, "composite_mean": 0.5},
+                                      {"per_repo": [], "composite_mean": 0.6})
+        assert diff["composite_mean"]["delta"] == 0.1
+        assert "per_repo" not in diff
+        # symmetric: a non-list on the candidate side is equally tolerated
+        diff = compare_eval_artifacts({"per_repo": [], "composite_mean": 0.5},
+                                      {"per_repo": bad, "composite_mean": 0.6})
+        assert diff["composite_mean"]["delta"] == 0.1
+        assert "per_repo" not in diff
+
+
+def test_compare_eval_artifacts_skips_non_dict_per_repo_rows():
+    # A non-dict row inside the per_repo list is skipped, while well-formed rows still diff.
+    baseline = {"composite_mean": 0.5, "per_repo": ["junk", {"repo_path": "/a",
+                                                             "composite_mean": 0.4, "tasks": 2}]}
+    candidate = {"composite_mean": 0.55, "per_repo": [{"repo_path": "/a",
+                                                       "composite_mean": 0.5, "tasks": 2}, 99]}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert [row["repo"] for row in diff["per_repo"]] == ["/a"]
+    assert diff["per_repo"][0]["composite_mean"]["delta"] == 0.1
+
+
 def test_comparison_headline_describes_direction():
     diff = {"composite_mean": {"baseline": 0.4, "candidate": 0.55, "delta": 0.15}}
     assert "up +0.150" in comparison_headline(diff)

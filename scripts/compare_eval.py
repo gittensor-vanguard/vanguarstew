@@ -45,10 +45,23 @@ def _repo_key(entry: dict) -> str:
     return repr(sorted(entry.keys()))
 
 
+def _repo_rows(artifact: dict) -> list:
+    """The ``per_repo`` table when it is a list of dict rows, else empty (#464).
+
+    A truthy non-list (a malformed artifact) must not reach ``for row in ...`` — it would raise
+    ``TypeError`` and abort the whole diff — and a non-dict row inside the list is skipped,
+    matching the fail-soft posture used across the codebase.
+    """
+    rows = artifact.get("per_repo")
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
-    base_by_key = {_repo_key(row): row for row in baseline.get("per_repo") or []}
+    base_by_key = {_repo_key(row): row for row in _repo_rows(baseline)}
     out = []
-    for row in candidate.get("per_repo") or []:
+    for row in _repo_rows(candidate):
         key = _repo_key(row)
         base_row = base_by_key.get(key)
         if base_row is None:
