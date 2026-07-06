@@ -38,6 +38,14 @@ def _margin(artifact: dict) -> int | None:
     tally = artifact.get("tally")
     if isinstance(tally, dict):
         return _margin_from_tally(tally)
+    # Multi-repo and --generalization aggregates emit neither decisive_margin nor a top-level tally;
+    # their win/loss counts live only under judge_report (runner.py). Fall back to that, the same
+    # judge_report source judge_wlt reads and the class fixed for promotion._decisive_margin in #931.
+    report = artifact.get("judge_report")
+    if isinstance(report, dict):
+        wins, losses = report.get("wins"), report.get("losses")
+        if _is_int(wins) and _is_int(losses):
+            return wins - losses
     return None
 
 

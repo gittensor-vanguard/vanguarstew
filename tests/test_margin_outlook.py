@@ -63,3 +63,26 @@ def test_cli(tmp_artifact, capsys):
     assert cli.run([path]) == 0
     body = json.loads(capsys.readouterr().out)
     assert body["outlook"] == "ahead"
+
+
+# --- judge_report fallback for multi-repo aggregates (regression for #967) ------------------------
+
+def test_margin_falls_back_to_judge_report_wins_losses():
+    # Multi-repo / generalization aggregates carry win/loss only under judge_report — no
+    # decisive_margin, no top-level tally. margin_outlook must still report the margin.
+    summary = summarize_margin_outlook(
+        {"per_repo": [], "judge_report": {"wins": 5, "losses": 2, "ties": 1}})
+    assert summary["decisive_margin"] == 3
+    assert summary["outlook"] == "ahead"
+    # A behind aggregate reads negative; a malformed judge_report yields None (not a crash).
+    assert summarize_margin_outlook({"judge_report": {"wins": 1, "losses": 4}})["outlook"] == "behind"
+    assert summarize_margin_outlook({"judge_report": {"wins": "x"}})["decisive_margin"] is None
+
+
+def test_decisive_margin_and_tally_take_precedence_over_judge_report():
+    # The existing sources win when present, so the fallback never overrides real data.
+    assert summarize_margin_outlook(
+        {"decisive_margin": -3, "judge_report": {"wins": 9, "losses": 0}})["decisive_margin"] == -3
+    assert summarize_margin_outlook(
+        {"tally": {"challenger": 4, "baseline": 1}, "judge_report": {"wins": 9, "losses": 0}}
+    )["decisive_margin"] == 3
