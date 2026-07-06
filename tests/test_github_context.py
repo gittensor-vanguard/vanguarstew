@@ -282,7 +282,7 @@ def test_enrich_context_logs_warning_for_non_dict_context(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="benchmark.github_context"):
-        assert gc.enrich_context(42, "/some/repo") is 42
+        assert gc.enrich_context(42, "/some/repo") == 42
     assert any("context is int" in r.message for r in caplog.records)
 
 
