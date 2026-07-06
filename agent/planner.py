@@ -31,6 +31,17 @@ _REVIEW_MARKER_RE = re.compile(
     r"\b(?:review|merge|approve|request\s+changes|pull\s+request)",
     re.I,
 )
+# A bare "#N" denotes a pull request only when a review verb *governs* it — the verb is
+# directly followed by the number, allowing only connective words in between ("Review #7",
+# "Merge and land #7", "Review the PR #7"). A review word that merely appears elsewhere in a
+# feature description ("improve the code review workflow, #2 on the roadmap") does not qualify:
+# there the "#2" is a roadmap ordinal, not a reference to PR #2.
+_REVIEW_REF_RE = re.compile(
+    r"\b(?:review|reviewing|reviewed|merge|merging|merged|approve|approving|approved)\b"
+    r"(?:\s+(?:and|or|then|the|a|an|this|that|it|pr|pull|request|changes))*"
+    r"\s+#?\s*\d+\b",
+    re.I,
+)
 # Explicit PR references: "#7", "PR #7", "pull request 7"
 _PR_NUMBER = re.compile(
     r"(?:#\s*(\d+)\b|(?:pull\s+request|pr)\s+#?\s*(\d+)\b)",
@@ -167,10 +178,15 @@ def _explicit_pr_number(*texts: str) -> int | None:
 
 
 def _reads_as_pr_reference(item: dict) -> bool:
-    """True when the item's own text uses PR/review vocabulary, so a bare ``#N`` in it denotes a
-    pull request rather than an ordinal ranking numeral ("our #1 priority")."""
+    """True when a review verb in the item's text *governs* a bare ``#N``, so the ``#N`` denotes a
+    pull request rather than an ordinal ranking numeral ("our #1 priority").
+
+    The verb must be followed by the number (allowing only connective words in between), so a
+    review word that merely appears elsewhere in a feature description — e.g. "improve the code
+    review workflow, #2 on the roadmap" — does not turn an unrelated ordinal into a PR reference.
+    """
     blob = f"{item.get('title', '')} {item.get('rationale', '')}"
-    return bool(_REVIEW_MARKER_RE.search(blob))
+    return bool(_REVIEW_REF_RE.search(blob))
 
 
 def _title_contains_pr_subject(item: dict, pr: dict) -> bool:

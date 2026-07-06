@@ -8,6 +8,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -15,6 +17,7 @@ if ROOT not in sys.path:
 from benchmark.aggregate_integrity import (  # noqa: E402
     DEFAULT_TOLERANCE,
     _aggregate_slices,
+    _check_rows_list,
     _is_finite_number,
     _mean_rounded,
     check_aggregate_integrity,
@@ -204,6 +207,173 @@ def test_missing_composite_parts_fails():
     del art["composite_parts"]
     result = check_aggregate_integrity(art)
     assert "judge_mean_matches_repos" in failed_checks(result)
+
+
+# --- #790: checks row sanitization for aggregate integrity headlines -----------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "composite_mean_matches_repos"}, "not a list",
+    ({"name": "composite_mean_matches_repos", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "composite_mean_matches_repos", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "composite_mean_matches_repos", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "composite_mean_matches_repos", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "composite_mean_matches_repos", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "composite_mean_matches_repos", "passed": False},
+        {"name": "scored_repos_matches", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": 99, "passed": False},
+        {"name": "composite_mean_matches_repos", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert _check_rows_list([{"name": "composite_mean_matches_repos"}]) == []
+    assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
+
+
+def test_integrity_headline_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert integrity_headline({"checks": bad, "passed": False}) == (
+            "aggregate integrity: no checks evaluated"
+        ), bad
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_integrity_headline_survives_falsy_scalar_checks(bad):
+    assert integrity_headline({"checks": bad, "passed": False}) == (
+        "aggregate integrity: no checks evaluated"
+    )
+
+
+def test_integrity_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "composite_mean_matches_repos"}],
+        [{}],
+        [{"name": 42, "passed": True}],
+        [{"name": "composite_mean_matches_repos", "passed": 1}],
+    ):
+        assert integrity_headline({"checks": checks, "passed": False}) == (
+            "aggregate integrity: no checks evaluated"
+        )
+
+
+def test_integrity_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "composite_mean_matches_repos", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        line = integrity_headline({"checks": checks, "passed": False})
+    assert line == (
+        "aggregate integrity: INCONSISTENT (1/1 checks failed: composite_mean_matches_repos)"
+    )
+    assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "composite_mean_matches_repos"}],
+        [{}],
+        [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "composite_mean_matches_repos", "passed": "no"}],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [
+        {"name": "composite_mean_matches_repos", "passed": False},
+        42,
+        {"name": "scored_repos_matches", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.aggregate_integrity"):
+        assert failed_checks({"checks": checks}) == ["composite_mean_matches_repos"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_integrity_headline_and_failed_checks_robust():
