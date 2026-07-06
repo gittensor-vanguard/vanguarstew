@@ -114,6 +114,19 @@ def _normalize_concerns(value) -> list:
     return []
 
 
+def _normalize_files(value) -> list:
+    """Return ``pr["files"]`` as a list of non-empty path strings.
+
+    ``files`` comes straight from caller-supplied PR data with no guaranteed shape (a raw
+    GitHub API file object, ``None`` entries, or a non-list altogether are all possible) — drop
+    anything that isn't a plain string so ``', '.join(...)`` and ``.startswith(...)`` below never
+    crash on it.
+    """
+    if not isinstance(value, list):
+        return []
+    return [f for f in value if isinstance(f, str) and f]
+
+
 def _normalize_review(out: dict, stub: dict) -> dict:
     """Map an LLM review object onto the documented field types."""
     if not isinstance(out, dict):
@@ -131,7 +144,7 @@ def _normalize_review(out: dict, stub: dict) -> dict:
 
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
-    files = pr.get("files") or []
+    files = _normalize_files(pr.get("files"))
     user = (
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy else "")
         + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"

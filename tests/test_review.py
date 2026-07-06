@@ -16,6 +16,7 @@ from agent.review import (  # noqa: E402
     VALUE_LABELS,
     _normalize_bool,
     _normalize_concerns,
+    _normalize_files,
     _normalize_review_action,
     _normalize_value_label,
     review_pr,
@@ -104,6 +105,31 @@ def test_normalize_bool_and_concerns():
     assert _normalize_bool(None, default=True) is True
     assert _normalize_concerns("missing tests") == ["missing tests"]
     assert _normalize_concerns(["a", None, 7]) == ["a", "7"]
+
+
+def test_normalize_files_drops_malformed_entries():
+    assert _normalize_files(["a.py", None, "b.py"]) == ["a.py", "b.py"]
+    assert _normalize_files(["a.py", {"filename": "b.py"}, 7, ""]) == ["a.py"]
+    assert _normalize_files(None) == []
+    assert _normalize_files("a.py") == []
+    assert _normalize_files([]) == []
+
+
+def test_review_pr_tolerates_malformed_files_entries():
+    llm = LLM(api_key="offline")
+    pr = {"number": 1, "title": "t", "files": ["agent/review.py", None,
+                                                {"filename": "tests/test_review.py"}]}
+    rev = review_pr(pr, None, llm)
+    assert rev["action"] in ACTIONS
+    # only the well-formed string entry is counted -> no tests/ path recognized
+    assert rev["tests_present"] is False
+
+
+def test_review_pr_tolerates_non_list_files():
+    llm = LLM(api_key="offline")
+    rev = review_pr({"number": 1, "title": "t", "files": None}, None, llm)
+    assert rev["action"] in ACTIONS
+    assert rev["tests_present"] is False
 
 
 class _MalformedReviewLLM:
