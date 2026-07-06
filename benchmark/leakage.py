@@ -109,6 +109,8 @@ def _scrub_titles(items, key):
 
 def scrub_context(context: dict) -> dict:
     """Return a copy of the context with forward-looking references neutralized."""
+    if not isinstance(context, dict):
+        return {"_forward_signal_scrubbed": True}
     ctx = dict(context)
     ctx["readme_excerpt"] = strip_forward_refs(ctx.get("readme_excerpt", ""))
     ctx["recent_commits"] = _scrub_titles(ctx.get("recent_commits"), "subject")
