@@ -30,9 +30,17 @@ _ACTION_SYNONYMS = {
 }
 
 
+def _coerce(value) -> str:
+    """A review field comes from LLM JSON and may be a non-string; normalize to a
+    trimmed, lowercased string (``""`` for a non-string) so matching is case- and
+    whitespace-insensitive and never raises."""
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
 def _normalize_action(value) -> str:
-    """Canonical review action, mapping synonyms and falling back to ``comment``."""
-    s = str(value or "").strip().lower()
+    """Canonical review action: exact match, then a synonym, else the safe ``comment``
+    fallback — the return is always one of ``ACTIONS``."""
+    s = _coerce(value)
     if s in ACTIONS:
         return s
     for key in (s, s.replace(" ", "-"), s.replace(" ", "_"), s.replace("_", " ")):
@@ -42,9 +50,9 @@ def _normalize_action(value) -> str:
 
 
 def _normalize_value_label(value) -> str:
-    """Canonical ``mult:*`` tier, tolerating a missing prefix and falling back to
-    ``mult:maintenance`` (the neutral tier) for unknown input."""
-    s = str(value or "").strip().lower()
+    """Canonical ``mult:*`` tier: accepts a bare tier (adds the prefix), else the neutral
+    ``mult:maintenance`` fallback — the return is always one of ``VALUE_LABELS``."""
+    s = _coerce(value)
     if s and not s.startswith("mult:"):
         s = "mult:" + s
     return s if s in VALUE_LABELS else "mult:maintenance"

@@ -83,3 +83,34 @@ def test_review_normalizes_value_label_prefix_and_fallback():
     assert review_pr({}, None, _Fake({"value_label": "totally-made-up"}))["value_label"] \
         == "mult:maintenance"                            # unknown -> neutral tier
     assert review_pr({}, None, _Fake({}))["value_label"] == "mult:maintenance"  # missing
+
+
+def test_review_action_is_case_and_whitespace_insensitive():
+    for given in ("  Merge ", "MERGE", "Request Changes", "REQUEST-CHANGES", "  approve\n"):
+        rev = review_pr({}, None, _Fake({"action": given}))
+        assert rev["action"] in ACTIONS
+
+
+def test_review_every_canonical_value_and_bare_tier_round_trips():
+    for label in VALUE_LABELS:
+        assert review_pr({}, None, _Fake({"value_label": label}))["value_label"] == label
+        bare = label.split(":", 1)[1]                    # e.g. "core-correctness"
+        assert review_pr({}, None, _Fake({"value_label": bare}))["value_label"] == label
+        assert review_pr({}, None, _Fake({"value_label": label.upper()}))["value_label"] == label
+
+
+def test_review_output_is_always_in_vocabulary_for_junk_input():
+    # The contract: whatever a live model emits (near-miss, non-string, empty), the review
+    # output's action/value_label are ALWAYS canonical (never leak downstream to triage/labeling).
+    junk = [
+        {"action": ["approve"], "value_label": {"t": "x"}},   # non-string
+        {"action": 42, "value_label": 7},
+        {"action": None, "value_label": None},
+        {"action": "yolo", "value_label": "mult:not-real"},   # out of vocab
+        {"action": "  ", "value_label": ""},                  # blank
+        {},                                                    # missing entirely
+    ]
+    for payload in junk:
+        rev = review_pr({}, None, _Fake(payload))
+        assert rev["action"] in ACTIONS, payload
+        assert rev["value_label"] in VALUE_LABELS, payload
