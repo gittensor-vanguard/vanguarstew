@@ -27,6 +27,46 @@ def origin_url(repo: str) -> str:
     return _git(repo, "remote", "get-url", "origin", check=False).strip()
 
 
+def _within(dest: str, member_path: str) -> bool:
+    """True if `member_path` resolves inside `dest` (no traversal / absolute escape)."""
+    dest_real = os.path.realpath(dest)
+    target_real = os.path.realpath(os.path.join(dest, member_path))
+    return target_real == dest_real or target_real.startswith(dest_real + os.sep)
+
+
+def _safe_extractall(tf: tarfile.TarFile, dest: str) -> None:
+    """Extract a tar stream under `dest` with one policy on every supported Python version.
+
+    The stdlib ``data`` filter (`extractall(filter="data")`) is only present on py>=3.12 and
+    some 3.10/3.11 patch releases, so delegating to it makes the frozen tree depend on the
+    interpreter. This reproduces the important ``data``-filter guarantees explicitly and
+    identically across 3.10-3.12:
+
+    - reject absolute paths and ``..`` traversal for the member itself;
+    - skip device / FIFO special files (never valid source-tree content);
+    - allow symlinks / hardlinks only when their target resolves inside ``dest``.
+    """
+    # We validate every member below, so pin newer runtimes to a fully-trusted extraction
+    # filter. Without this, py>=3.12 emits a DeprecationWarning and py3.14 will default to the
+    # ``data`` filter — reintroducing the version-dependent behavior this function removes.
+    try:
+        tf.extraction_filter = lambda member, path: member
+    except (AttributeError, TypeError):
+        pass
+    for member in tf:
+        if os.path.isabs(member.name) or not _within(dest, member.name):
+            raise RuntimeError(f"unsafe path in archive: {member.name!r}")
+        if member.isdev() or member.isfifo():
+            continue  # block/char devices and FIFOs are never part of a source tree
+        if member.issym() or member.islnk():
+            # symlink targets are relative to the link's own dir; hardlink targets to `dest`.
+            anchor = os.path.dirname(member.name) if member.issym() else ""
+            if os.path.isabs(member.linkname) or not _within(dest, os.path.join(anchor, member.linkname)):
+                raise RuntimeError(
+                    f"unsafe link target: {member.name!r} -> {member.linkname!r}")
+        tf.extract(member, dest)
+
+
 def export_tree(repo: str, commit: str, dest: str) -> None:
     os.makedirs(dest, exist_ok=True)
     proc = subprocess.Popen(
@@ -34,10 +74,7 @@ def export_tree(repo: str, commit: str, dest: str) -> None:
         stdout=subprocess.PIPE,
     )
     with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
-        try:
-            tf.extractall(dest, filter="data")  # py>=3.12
-        except TypeError:
-            tf.extractall(dest)
+        _safe_extractall(tf, dest)
     proc.wait()
     if proc.returncode not in (0, None):
         raise RuntimeError(f"git archive failed for {commit}")

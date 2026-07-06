@@ -1,9 +1,11 @@
 """Tests for frozen-context construction from git history."""
 
+import io
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 import pytest
@@ -12,7 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.freeze import build_context  # noqa: E402
+from benchmark.freeze import _safe_extractall, build_context  # noqa: E402
 
 
 def _git(repo, *args, env=None):
@@ -142,3 +144,117 @@ def test_build_context_excludes_tag_created_after_freeze_point():
         )
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+# --- version-independent safe extraction (_safe_extractall) --------------------------------
+#
+# git archive can emit symlinks, and a hostile/corrupt tar could carry traversal, absolute,
+# hardlink, or special-file members. `_safe_extractall` must apply ONE policy on every Python
+# version (not delegate to the stdlib `data` filter only where it exists), so these tests build
+# tars in memory and assert identical behavior regardless of the runtime.
+
+def _reg(name, content=b"x"):
+    ti = tarfile.TarInfo(name)
+    ti.type, ti.size = tarfile.REGTYPE, len(content)
+    return ti, content
+
+
+def _link(name, target, hard=False):
+    ti = tarfile.TarInfo(name)
+    ti.type, ti.linkname = (tarfile.LNKTYPE if hard else tarfile.SYMTYPE), target
+    return ti, None
+
+
+def _special(name, typ):
+    ti = tarfile.TarInfo(name)
+    ti.type = typ
+    return ti, None
+
+
+def _extract(members, dest):
+    """Build an in-memory tar from (TarInfo, data|None) pairs and safe-extract it, streaming."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tw:
+        for ti, data in members:
+            tw.addfile(ti, io.BytesIO(data) if data is not None else None)
+    buf.seek(0)
+    with tarfile.open(fileobj=buf, mode="r|") as tr:   # streaming, exactly like export_tree
+        _safe_extractall(tr, dest)
+
+
+def test_safe_extractall_writes_regular_files_and_dirs():
+    dest = tempfile.mkdtemp()
+    try:
+        _extract([_reg("pkg/mod.py", b"print(1)\n")], dest)
+        with open(os.path.join(dest, "pkg", "mod.py"), encoding="utf-8") as f:
+            assert f.read() == "print(1)\n"
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_safe_extractall_rejects_parent_traversal():
+    dest = tempfile.mkdtemp()
+    try:
+        with pytest.raises(RuntimeError):
+            _extract([_reg("../escape.txt")], dest)
+        assert not os.path.exists(os.path.join(os.path.dirname(dest), "escape.txt"))
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_safe_extractall_rejects_absolute_path():
+    dest = tempfile.mkdtemp()
+    try:
+        with pytest.raises(RuntimeError):
+            _extract([_reg("/tmp/abs_evil.txt")], dest)
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_safe_extractall_symlink_inside_dest_is_created_as_symlink():
+    # Symlink handling must be explicit and NOT vary by Python version: an internal-target
+    # symlink is preserved as a link (not silently copied or dropped).
+    dest = tempfile.mkdtemp()
+    try:
+        _extract([_reg("data/real.txt", b"hi"), _link("data/link.txt", "real.txt")], dest)
+        link = os.path.join(dest, "data", "link.txt")
+        assert os.path.islink(link)
+        assert os.readlink(link) == "real.txt"
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_safe_extractall_rejects_symlink_escaping_dest():
+    dest = tempfile.mkdtemp()
+    try:
+        with pytest.raises(RuntimeError):
+            _extract([_link("link.txt", "../../../etc/passwd")], dest)
+        assert not os.path.lexists(os.path.join(dest, "link.txt"))
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_safe_extractall_rejects_hardlink_escaping_dest():
+    dest = tempfile.mkdtemp()
+    try:
+        with pytest.raises(RuntimeError):
+            _extract([_link("hl.txt", "../../../etc/passwd", hard=True)], dest)
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_safe_extractall_skips_special_files():
+    dest = tempfile.mkdtemp()
+    try:
+        _extract([
+            _special("dev_null", tarfile.CHRTYPE),
+            _special("a_fifo", tarfile.FIFOTYPE),
+            _reg("keep.txt", b"kept"),
+        ], dest)
+        # special files are skipped, never materialized...
+        assert not os.path.exists(os.path.join(dest, "dev_null"))
+        assert not os.path.exists(os.path.join(dest, "a_fifo"))
+        # ...while normal content in the same archive still lands.
+        assert os.path.isfile(os.path.join(dest, "keep.txt"))
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
