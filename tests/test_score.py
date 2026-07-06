@@ -276,8 +276,23 @@ def test_plan_kind_maps_to_commit_vocabulary():
     assert plan_kind("Docs") == "docs"
     assert plan_kind("dep") == "chore"
     assert plan_kind("release") == "release"
+    # Plurals map like their singular, mirroring _COMMIT_KIND ("tests" -> "test") and the
+    # sibling "dep"/"deps" pair — so a plan item labelled "tests" isn't silently dropped.
+    assert plan_kind("test") == "test"
+    assert plan_kind("tests") == "test"
     assert plan_kind("triage") is None  # not a commit kind
     assert plan_kind("") is None
+
+
+def test_kind_recall_credits_plural_tests_kind():
+    # A plan item declaring the natural plural kind "tests" must earn credit when the
+    # maintainer actually shipped test commits (regression: "tests" mapped to None).
+    revealed = [{"subject": "tests: add coverage", "files": ["tests/t.py"]}]
+    plan = [{"title": "add unit tests", "kind": "tests"}]
+    res = kind_recall(plan, revealed)
+    assert res["actual_kinds"] == ["test"]
+    assert res["matched_kinds"] == ["test"]
+    assert res["kind_recall"] == 1.0
 
 
 def test_kind_recall_matches_anticipated_kinds():
