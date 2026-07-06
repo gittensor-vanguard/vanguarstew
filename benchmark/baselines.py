@@ -13,6 +13,11 @@ The pairwise judge only means something relative to an opponent. Three are provi
                   schedules the review queue before unrelated greenfield work. On a repo with a
                   live queue it is the hardest bar; with no queue it degrades to exactly
                   ``heuristic``, so it is never a weaker opponent.
+- ``stability_first`` — a conservative maintainer that **stabilizes before shipping**: within
+                  the same backlog + recent-theme momentum, it does bugfix/refactor work before
+                  features/docs and cuts a release only after. A distinct archetype (the
+                  "stability-over-features" philosophy) that a challenger favouring greenfield
+                  work has to out-reason.
 
 Each baseline exposes the same shape as the agent's ``solve`` output (philosophy + plan +
 rationale), so it can flow through ``_submission`` and the judge unchanged. Select one by
@@ -256,10 +261,57 @@ def heuristic_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dic
     }
 
 
+# Fixed stabilization priority (lower = done sooner): stabilize (bugfix, refactor), then cut a
+# release, then dependency upkeep, then greenfield (features/docs). "triage" and any unranked
+# kind sort last. This encodes the "stability-over-features" archetype's ordering.
+_STABILITY_PRIORITY = ("bugfix", "refactor", "release", "dep", "feature", "docs")
+
+
+def _stability_rank(kind) -> int:
+    return _STABILITY_PRIORITY.index(kind) if kind in _STABILITY_PRIORITY else len(_STABILITY_PRIORITY)
+
+
+def stability_first_plan(context: dict, n: int = 5) -> list:
+    """Reorder the maintainer's candidate actions to stabilize before shipping.
+
+    Takes the same candidate actions ``heuristic_plan`` would (backlog issues + recent-theme
+    momentum + release cadence) and reorders them by a fixed stability priority so bugfix /
+    refactor work comes before features / docs, with a release only after stabilization. A
+    Python stable sort keeps the original (backlog-then-momentum, frequency) order within a
+    priority tier, so it is a pure reprioritization of the same actions, capped at ``n``.
+    """
+    # Pull the full candidate set (a generous cap) rather than the already-n-truncated plan, so
+    # a high-priority action that heuristic ordering pushed past ``n`` isn't lost before sorting.
+    candidates = heuristic_plan(context, n=len(context.get("open_issues") or []) + len(_ALLOWED) + 1)
+    ordered = sorted(candidates, key=lambda item: _stability_rank(item.get("kind")))
+    return ordered[:n]
+
+
+def stability_first_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dict:
+    """A conservative reference maintainer that stabilizes before shipping features.
+
+    Same actions as ``heuristic`` (backlog + momentum + release), reordered so stabilization
+    (bugfix/refactor) precedes greenfield work — the "stability-over-features" archetype. It is
+    a distinct opponent from ``heuristic``/``queue_first`` for a challenger that must decide
+    *what to do first*, not just *what to do*.
+    """
+    ctx = context if context is not None else load_context(repo_path)
+    return {
+        "philosophy": heuristic_philosophy(ctx),
+        "plan": stability_first_plan(ctx, n),
+        "action": "plan",
+        "rationale": (
+            "stability-first baseline: prioritize bugfix/refactor stabilization over greenfield "
+            "features, then cut a release"
+        ),
+    }
+
+
 BASELINES = {
     "empty": empty_solve,
     "heuristic": heuristic_solve,
     "queue_first": queue_first_solve,
+    "stability_first": stability_first_solve,
 }
 DEFAULT_BASELINE = "empty"
 

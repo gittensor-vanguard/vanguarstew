@@ -31,6 +31,8 @@ from benchmark.baselines import (  # noqa: E402
     heuristic_solve,
     queue_first_plan,
     queue_first_solve,
+    stability_first_plan,
+    stability_first_solve,
 )
 from benchmark.runner import run_replay  # noqa: E402
 from benchmark.score import is_release_subject  # noqa: E402
@@ -135,6 +137,77 @@ def test_pr_title_helper_guards_non_dict_and_non_string():
 def test_queue_first_tolerates_non_list_open_prs():
     # A malformed frozen context (open_prs not a list) must not crash the baseline.
     out = queue_first_solve(context={"open_prs": {"title": "oops"}, "recent_commits": []}, n=3)
+    assert isinstance(out["plan"], list)
+
+
+# --- stability_first baseline: stabilize (bugfix/refactor) before greenfield -----------------
+
+_CTX_MIXED = {
+    "recent_commits": [{"subject": "Add streaming API"}],
+    "open_issues": [
+        {"title": "Document the config format"},       # docs (low priority)
+        {"title": "Add dark mode support"},             # feature (low priority)
+        {"title": "Fix crash in the parser"},           # bugfix (highest priority)
+        {"title": "Refactor the client internals"},     # refactor (second)
+    ],
+}
+
+
+def test_registry_includes_stability_first():
+    assert get_baseline("stability_first") is stability_first_solve
+    assert "stability_first" in BASELINES
+
+
+def test_stability_first_orders_bugfix_and_refactor_before_features_and_docs():
+    plan = stability_first_solve(context=_CTX_MIXED, n=5)["plan"]
+    kinds = [item["kind"] for item in plan]
+    # Bugfix and refactor backlog items lead; feature/docs come after.
+    assert kinds.index("bugfix") < kinds.index("feature")
+    assert kinds.index("bugfix") < kinds.index("docs")
+    assert kinds.index("refactor") < kinds.index("feature")
+    assert plan[0]["title"] == "Address issue: Fix crash in the parser"
+
+
+def test_stability_first_is_a_pure_reprioritization_of_the_heuristic_actions():
+    # Same set of actions as heuristic, just reordered — no action added or dropped.
+    heuristic = heuristic_plan(_CTX_MIXED, n=20)
+    stability = stability_first_plan(_CTX_MIXED, n=20)
+    key = lambda items: sorted(item["title"] for item in items)  # noqa: E731
+    assert key(stability) == key(heuristic)
+
+
+def test_stability_first_puts_release_after_stabilization_but_before_features():
+    ctx = {
+        "recent_commits": [{"subject": "Release v1.2.0"}, {"subject": "Add feature X"}],
+        "open_issues": [{"title": "Fix a bug"}, {"title": "Add a new widget"}],
+    }
+    kinds = [item["kind"] for item in stability_first_plan(ctx, n=10)]
+    assert kinds.index("bugfix") < kinds.index("release") < kinds.index("feature")
+
+
+def test_stability_first_caps_at_the_horizon_keeping_highest_priority():
+    plan = stability_first_plan(_CTX_MIXED, n=1)
+    assert len(plan) == 1 and plan[0]["kind"] == "bugfix"     # the single highest-priority action
+
+
+def test_stability_first_well_formed_and_empty_context():
+    out = stability_first_solve(context=_CTX_MIXED, n=5)
+    assert isinstance(out["philosophy"], dict) and out["action"] == "plan"
+    assert "stability-first" in out["rationale"]
+    assert stability_first_plan({}, 5) == []                  # nothing to do, no crash
+
+
+def test_stability_first_sorts_unranked_kinds_last():
+    # A triage/other issue (no place in the stability priority) sorts after every ranked kind.
+    ctx = {"open_issues": [{"title": "misc housekeeping stuff"}, {"title": "Fix the crash"}]}
+    kinds = [item["kind"] for item in stability_first_plan(ctx, n=10)]
+    assert kinds[0] == "bugfix" and kinds[-1] == "triage"
+
+
+def test_stability_first_tolerates_malformed_context():
+    # Non-list fields and non-dict entries (the shapes this baseline is responsible for) must
+    # not crash it; it reuses the same guarded helpers as heuristic.
+    out = stability_first_solve(context={"open_issues": "nope", "recent_commits": ["x", "y"]}, n=3)
     assert isinstance(out["plan"], list)
 
 
