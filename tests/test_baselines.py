@@ -23,11 +23,14 @@ from benchmark.baselines import (  # noqa: E402
     _commit_subject,
     _infer_kind,
     _issue_title,
+    _pr_title,
     empty_solve,
     get_baseline,
     heuristic_philosophy,
     heuristic_plan,
     heuristic_solve,
+    queue_first_plan,
+    queue_first_solve,
 )
 from benchmark.runner import run_replay  # noqa: E402
 from benchmark.score import is_release_subject  # noqa: E402
@@ -51,9 +54,88 @@ CTX = {
 def test_registry_selection_and_unknown():
     assert get_baseline("empty") is empty_solve
     assert get_baseline("heuristic") is heuristic_solve
-    assert set(BASELINES) >= {"empty", "heuristic"}
+    assert get_baseline("queue_first") is queue_first_solve
+    assert set(BASELINES) >= {"empty", "heuristic", "queue_first"}
     with pytest.raises(ValueError):
         get_baseline("does-not-exist")
+
+
+# --- queue_first baseline: clear the open-PR review queue before greenfield work ------------
+
+_CTX_WITH_QUEUE = {
+    "recent_commits": [{"subject": "Add streaming API"}, {"subject": "Fix parser crash"}],
+    "open_issues": [{"title": "Memory leak under load"}],
+    "open_prs": [
+        {"number": 7, "title": "Add streaming export"},
+        {"number": 9, "title": "Fix flaky CI"},
+    ],
+}
+
+
+def test_queue_first_leads_with_the_review_queue():
+    plan = queue_first_solve(context=_CTX_WITH_QUEUE, n=5)["plan"]
+    # The first items clear the open PRs, in queue order, as concrete triage items.
+    assert plan[0]["title"] == "Review and merge PR: Add streaming export (#7)"
+    assert plan[0]["kind"] == "triage" and plan[0]["theme"] == "PR review queue"
+    assert plan[1]["title"] == "Review and merge PR: Fix flaky CI (#9)"
+    # Remaining horizon is filled by the ordinary heuristic backlog/momentum plan.
+    assert any("Memory leak" in item["title"] for item in plan[2:])
+
+
+def test_queue_first_solve_is_well_formed_and_reports_queue_size():
+    out = queue_first_solve(context=_CTX_WITH_QUEUE, n=5)
+    assert isinstance(out["philosophy"], dict) and isinstance(out["plan"], list)
+    assert out["action"] == "plan"
+    assert "clear 2 open PR(s)" in out["rationale"]
+
+
+def test_queue_first_degrades_to_heuristic_when_no_queue():
+    # With no open PRs, queue_first_plan is exactly the heuristic plan (never a weaker bar).
+    ctx = {"recent_commits": _CTX_WITH_QUEUE["recent_commits"], "open_issues": _CTX_WITH_QUEUE["open_issues"]}
+    assert queue_first_plan(ctx, 5) == heuristic_plan(ctx, 5)
+
+
+def test_queue_first_caps_review_items_at_the_horizon():
+    ctx = {"open_prs": [{"number": i, "title": f"PR {i}"} for i in range(1, 11)]}
+    plan = queue_first_plan(ctx, 3)
+    assert len(plan) == 3
+    assert all(item["theme"] == "PR review queue" for item in plan)   # queue fills the horizon
+    assert plan[0]["title"] == "Review and merge PR: PR 1 (#1)"
+
+
+def test_queue_first_skips_malformed_and_titleless_prs():
+    ctx = {"open_prs": [
+        "not-a-dict",
+        {"number": 1},                       # no title
+        {"title": "   "},                    # blank title
+        {"title": 123},                      # non-string title
+        {"number": 4, "title": "Real PR"},
+    ]}
+    plan = queue_first_plan(ctx, 5)
+    review = [p for p in plan if p["theme"] == "PR review queue"]
+    assert len(review) == 1
+    assert review[0]["title"] == "Review and merge PR: Real PR (#4)"
+
+
+def test_queue_first_omits_number_ref_when_absent_or_non_int():
+    ctx = {"open_prs": [{"title": "No number"}, {"number": True, "title": "Bool number"}]}
+    titles = [p["title"] for p in queue_first_plan(ctx, 5) if p["theme"] == "PR review queue"]
+    assert "Review and merge PR: No number" in titles          # no "(#...)"
+    assert "Review and merge PR: Bool number" in titles         # bool is not an int ref
+
+
+def test_pr_title_helper_guards_non_dict_and_non_string():
+    assert _pr_title({"title": "  hi  "}) == "hi"
+    assert _pr_title({"title": 5}) == ""
+    assert _pr_title({}) == ""
+    assert _pr_title("nope") == ""
+    assert _pr_title(None) == ""
+
+
+def test_queue_first_tolerates_non_list_open_prs():
+    # A malformed frozen context (open_prs not a list) must not crash the baseline.
+    out = queue_first_solve(context={"open_prs": {"title": "oops"}, "recent_commits": []}, n=3)
+    assert isinstance(out["plan"], list)
 
 
 def test_empty_baseline_proposes_nothing():
