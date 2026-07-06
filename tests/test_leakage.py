@@ -80,6 +80,28 @@ def test_scrub_context_scrubs_nested_fields_only():
     assert ctx.get("_forward_signal_scrubbed") is None  # original not mutated
 
 
+def test_strip_forward_refs_returns_empty_for_non_string_input():
+    for bad in (["Fix #900"], {"x": 1}, 42, None, True):
+        assert strip_forward_refs(bad) == ""
+
+
+def test_scrub_context_tolerates_non_string_text_fields():
+    ctx = {
+        "readme_excerpt": ["see #900"],
+        "recent_commits": [{"sha": "x", "subject": ["part of #200"]}],
+        "open_issues": [{"number": 1, "title": ["Fix #300"]}],
+        "open_prs": [{"number": 2, "title": 123}],
+        "releases": [{"tag": ["v2.0-fixes-#900"]}],
+    }
+    out = scrub_context(ctx)
+    assert out["readme_excerpt"] == ""
+    assert out["recent_commits"][0]["subject"] == ""
+    assert out["open_issues"][0]["title"] == ""
+    assert out["open_prs"][0]["title"] == ""
+    assert out["releases"][0]["tag"] == ""
+    assert out["_forward_signal_scrubbed"] is True
+
+
 def test_strip_forward_refs_preserves_surrounding_punctuation():
     # Trailing sentence punctuation must stay in the prose, not vanish into <link>.
     assert strip_forward_refs("see https://github.com/o/r/issues/5, next") == "see <link>, next"
