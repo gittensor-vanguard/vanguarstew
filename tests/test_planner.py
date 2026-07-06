@@ -117,6 +117,22 @@ def test_short_pr_title_matches_via_explicit_number():
     assert _matched_pr(item, prs) == prs[0]
 
 
+def test_nested_pr_title_prefers_longest_match():
+    """When one PR title is a substring of another, prefer the longer match (#104)."""
+    prs = [
+        {"number": 1, "title": "Add streaming export"},
+        {"number": 2, "title": "Add streaming export docs"},
+    ]
+    # The plan item names the full docs PR — the longer title must win even though
+    # the shorter title is listed first.
+    item = {"title": "Land the Add streaming export docs PR", "kind": "docs"}
+    assert _matched_pr(item, prs) == prs[1]
+
+    # Reverse list order: longer title still wins (list position is irrelevant).
+    prs_rev = [prs[1], prs[0]]
+    assert _matched_pr(item, prs_rev) == prs_rev[0]
+
+
 # Regression tests for #83 — an explicit `#N` referencing a PR no longer in
 # the open queue must not fall back to a different open PR via token overlap.
 

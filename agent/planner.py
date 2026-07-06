@@ -124,9 +124,18 @@ def _matched_pr(item: dict, prs: list):
     if ref is not None:
         return by_number.get(ref)  # None when stale (suppresses fallback matching)
 
+    # When multiple open PR titles nest (e.g. "Add streaming export" inside
+    # "Add streaming export docs"), prefer the longest match — list order is
+    # arbitrary and must not determine which PR the item is reconciled against.
+    best, best_len = None, 0
     for pr in prs:
         if _title_contains_pr_subject(item, pr):
-            return pr
+            title_len = len((pr.get("title") or "").strip())
+            if title_len > best_len:
+                best = pr
+                best_len = title_len
+    if best is not None:
+        return best
 
     itoks = _significant_tokens(item.get("title", "")) | _significant_tokens(item.get("theme", ""))
     if not itoks:
