@@ -4,6 +4,8 @@ import json
 import os
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -14,6 +16,7 @@ from scripts.compare_eval import (  # noqa: E402
     compare_eval_artifacts,
     comparison_headline,
     load_artifact,
+    main,
 )
 
 
@@ -84,6 +87,50 @@ def test_load_artifact_reads_json_file(tmp_path):
     path = tmp_path / "result.json"
     path.write_text(json.dumps({"composite_mean": 0.42}), encoding="utf-8")
     assert load_artifact(str(path))["composite_mean"] == 0.42
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected"),
+    [
+        ("missing.json", None, "No such file"),
+        ("invalid.json", "{", "Expecting property name"),
+        ("array.json", "[]", "artifact must be a JSON object"),
+    ],
+)
+def test_compare_eval_main_exits_cleanly_on_bad_artifact(
+    filename, content, expected, tmp_path, monkeypatch, capsys
+):
+    baseline = tmp_path / filename
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps({"composite_mean": 0.3}), encoding="utf-8")
+    if content is not None:
+        baseline.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["compare_eval", str(baseline), str(candidate)])
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 1
+    assert expected in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+def test_compare_eval_main_prints_diff_for_valid_artifacts(tmp_path, monkeypatch, capsys):
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    baseline.write_text(json.dumps({"composite_mean": 0.4}), encoding="utf-8")
+    candidate.write_text(json.dumps({"composite_mean": 0.6}), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["compare_eval", str(baseline), str(candidate)])
+
+    main()
+
+    captured = capsys.readouterr()
+    assert "compare_eval: composite_mean 0.4 -> 0.6" in captured.err
+    assert '"delta": 0.2' in captured.out
 
 
 def test_repo_key_handles_explicit_null_freeze_commit():

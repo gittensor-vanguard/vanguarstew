@@ -185,12 +185,20 @@ def load_artifact(path: str) -> dict:
     return data
 
 
+def _load_or_exit(path: str) -> dict:
+    try:
+        return load_artifact(path)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(1) from None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Compare two run_eval --out JSON artifacts")
     ap.add_argument("baseline", help="earlier or reference result JSON")
     ap.add_argument("candidate", help="newer or candidate result JSON")
     args = ap.parse_args()
-    diff = compare_eval_artifacts(load_artifact(args.baseline), load_artifact(args.candidate))
+    diff = compare_eval_artifacts(_load_or_exit(args.baseline), _load_or_exit(args.candidate))
     print(comparison_headline(diff), file=sys.stderr)
     print(json.dumps(diff, indent=2))
 
