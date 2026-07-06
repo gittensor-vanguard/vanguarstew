@@ -15,12 +15,14 @@ if ROOT not in sys.path:
 
 import benchmark.github_context as gc  # noqa: E402
 from agent.context import (  # noqa: E402
+    CONTEXT_FILE,
     README_PROBE_NAMES,
     _agent_context_list,
     _agent_issue_pr_list,
     _context_from_git,
     _mask_forward_refs,
     context_for_agent,
+    load_context,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
@@ -305,6 +307,75 @@ def _write(repo, relpath, text="x\n"):
     os.makedirs(os.path.dirname(full) or repo, exist_ok=True)
     with open(full, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+def _repo_with_commit():
+    repo = tempfile.mkdtemp()
+    _init_repo(repo)
+    _write(repo, "f.txt")
+    _git(repo, "add", "-A", date="2024-01-10T12:00:00+00:00")
+    _git(repo, "commit", "-q", "-m", "c1", date="2024-01-10T12:00:00+00:00")
+    return repo
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+@pytest.mark.parametrize("payload", [
+    b'{"open_prs": [',            # truncated JSON (interrupted write)
+    b"",                          # empty file
+    b"\xff\xfe\x00\x01\x02\x80",  # binary / non-UTF-8 content
+    b"not json at all",           # plain text
+])
+def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
+    # A present-but-unreadable context file (truncated / empty / binary / non-JSON) must not
+    # crash solve(): load_context rebuilds the knowable-at-T context from the frozen git
+    # checkout instead, and logs loudly (with the byte size) so the degrade is never silent.
+    import logging
+    repo = _repo_with_commit()
+    try:
+        with open(os.path.join(repo, CONTEXT_FILE), "wb") as f:
+            f.write(payload)
+        with caplog.at_level(logging.WARNING, logger="agent.context"):
+            ctx = load_context(repo)  # no exception
+        assert ctx["_source"] == "git"
+        assert ctx["frozen_at"]["commit"]
+        assert any("unreadable" in r.message and "bytes" in r.message for r in caplog.records)
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root bypasses file permissions",
+)
+def test_load_context_falls_back_to_git_on_permission_denied():
+    repo = _repo_with_commit()
+    path = os.path.join(repo, CONTEXT_FILE)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"open_prs": []}')
+        os.chmod(path, 0o000)  # unreadable -> PermissionError (an OSError) -> git fallback
+        ctx = load_context(repo)
+        assert ctx["_source"] == "git"
+    finally:
+        os.chmod(path, 0o644)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_reads_a_valid_file_from_the_file_not_git():
+    # Happy path: a well-formed context file is returned verbatim, and it is read from the FILE
+    # (its `_source` marker survives) rather than being rebuilt from git.
+    repo = _repo_with_commit()
+    try:
+        payload = {"_source": "github-api", "open_prs": [{"number": 1, "title": "x"}]}
+        with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        out = load_context(repo)
+        assert out == payload
+        assert out["_source"] == "github-api"  # from the file, not the git rebuild ("git")
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
