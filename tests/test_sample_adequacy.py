@@ -1,6 +1,7 @@
 """Tests for the sample-adequacy gate (deterministic, offline)."""
 
 import copy
+import logging
 import os
 import sys
 
@@ -10,6 +11,7 @@ if ROOT not in sys.path:
 
 from benchmark.sample_adequacy import (  # noqa: E402
     DEFAULT_MIN_TASKS,
+    _checks_list,
     check_sample_adequacy,
     failed_checks,
     sample_adequacy_headline,
@@ -181,6 +183,61 @@ def test_headline_handles_a_result_with_no_checks():
     assert sample_adequacy_headline({}) == "sample adequacy: no checks evaluated"
     assert sample_adequacy_headline("not a dict") == "sample adequacy: no checks evaluated"
     assert sample_adequacy_headline({"checks": []}) == "sample adequacy: no checks evaluated"
+
+
+# --- #701: non-list checks must not abort sample adequacy headlines --------------------
+
+_MALFORMED_CHECKS = [42, 3.14, True, {"name": "run_scored"}, "not a list"]
+
+
+def test_sample_adequacy_checks_list_accepts_only_real_lists():
+    rows = [{"name": "run_scored", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _checks_list(bad) == [], bad
+    assert _checks_list(rows) == rows
+    assert _checks_list(None) == []
+    assert _checks_list([]) == []
+
+
+def test_sample_adequacy_checks_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _checks_list(None) == []
+    assert not caplog.records
+
+
+def test_sample_adequacy_checks_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _checks_list([]) == []
+    assert not caplog.records
+
+
+def test_sample_adequacy_headline_survives_non_list_checks():
+    base = {"passed": False, "tasks": 0}
+    for bad in _MALFORMED_CHECKS:
+        assert sample_adequacy_headline({**base, "checks": bad}) == (
+            "sample adequacy: no checks evaluated"
+        ), bad
+
+
+def test_sample_adequacy_headline_logs_warning_for_non_list_checks(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        line = sample_adequacy_headline({"checks": 42, "passed": False})
+    assert line == "sample adequacy: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_skips_non_dict_rows():
+    checks = [
+        {"name": "run_scored", "passed": False},
+        42,
+        {"name": "enough_tasks", "passed": True},
+    ]
+    assert failed_checks({"checks": checks}) == ["run_scored"]
 
 
 def test_failed_checks_helper_is_robust():
