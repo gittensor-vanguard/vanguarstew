@@ -8,8 +8,11 @@ the right action, a patch. The `rationale` is what the decision-process judge ev
 from __future__ import annotations
 
 import json
+import logging
 
 from agent.context import context_for_agent
+
+logger = logging.getLogger(__name__)
 
 SYSTEM = (
     "You are an experienced repository maintainer making a concrete decision. Decide as the "
@@ -49,7 +52,13 @@ def _normalize_action(action) -> str:
     maintainer decision has a hard ground truth, so it must never carry arbitrary
     free-text through to the objective scorer.
     """
-    key = (action or "").strip().lower()
+    if not isinstance(action, str):
+        logger.warning(
+            "decide: LLM returned a non-string action field (%s: %r); defaulting to 'plan'",
+            type(action).__name__, action,
+        )
+        return "plan"
+    key = action.strip().lower()
     if key in VALID_ACTIONS:
         return key
     return _ACTION_SYNONYMS.get(key, "plan")

@@ -1,5 +1,6 @@
 """Tests for the maintainer decider (offline, deterministic)."""
 
+import logging
 import os
 import sys
 
@@ -43,6 +44,31 @@ def test_normalize_action_falls_back_to_plan_for_unknown_or_missing():
     assert _normalize_action("do-the-thing") == "plan"
     assert _normalize_action("") == "plan"
     assert _normalize_action(None) == "plan"
+
+
+def test_normalize_action_tolerates_empty_and_whitespace_strings():
+    assert _normalize_action("") == "plan"
+    assert _normalize_action("   ") == "plan"
+    assert _normalize_action("\t\n") == "plan"
+
+
+def test_normalize_action_tolerates_non_string_input():
+    assert _normalize_action(["merge"]) == "plan"
+    assert _normalize_action({"value": "merge"}) == "plan"
+    assert _normalize_action(42) == "plan"
+    assert _normalize_action(4.2) == "plan"
+    assert _normalize_action(True) == "plan"
+    assert _normalize_action(b"merge") == "plan"
+
+
+def test_normalize_action_logs_a_warning_for_non_string_input(caplog):
+    with caplog.at_level(logging.WARNING, logger="agent.decider"):
+        assert _normalize_action(["merge"]) == "plan"
+    assert any("non-string action" in r.message for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="agent.decider"):
+        assert _normalize_action("approve") == "merge"
+    assert not caplog.records
 
 
 def test_decide_offline_returns_a_valid_action():
@@ -111,6 +137,32 @@ def test_decide_normalizes_malformed_structured_fields():
     assert out["reviewer"] == "123"
     assert out["rationale"] == ""
     assert out["patch"] is None
+
+
+class _NonStringActionLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return {
+            "action": ["merge", "reject"],
+            "labels": ["bug", "core"],
+            "reviewer": "alice",
+            "version_bump": "minor",
+            "patch": None,
+            "rationale": "needs a regression test",
+        }
+
+
+def test_decide_survives_non_string_action_field():
+    out = decide({}, {}, "triage issue #1", _NonStringActionLLM())
+    # the malformed field degrades safely...
+    assert out["action"] == "plan"
+    # ...and every other field is still normalized correctly, unaffected by the bad action.
+    assert out["labels"] == ["bug", "core"]
+    assert out["reviewer"] == "alice"
+    assert out["version_bump"] == "minor"
+    assert out["patch"] is None
+    assert out["rationale"] == "needs a regression test"
 
 
 def test_normalize_version_bump_accepts_canonical_levels():
