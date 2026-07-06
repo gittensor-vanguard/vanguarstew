@@ -26,7 +26,10 @@ def fetch_pr(repo: str, number: int) -> dict:
     data = json.loads(_gh("pr", "view", str(number), "-R", repo, "--json",
                           "number,title,body,author,additions,deletions,files"))
     author = data.get("author")
-    author_login = author.get("login") if isinstance(author, dict) else "ghost"
+    if isinstance(author, dict):
+        author_login = author.get("login") or "ghost"
+    else:
+        author_login = "ghost"
     return {
         "number": data["number"],
         "title": data["title"],
