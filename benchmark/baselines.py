@@ -206,6 +206,8 @@ def _review_queue_items(context: dict, limit: int) -> list:
     PR with a usable title becomes one concrete triage item, capped at ``limit``. Malformed or
     titleless PR entries are skipped.
     """
+    if not isinstance(context, dict):
+        context = {}
     items = []
     for pr in _baseline_list(context.get("open_prs"), "open_prs"):
         title = _pr_title(pr)

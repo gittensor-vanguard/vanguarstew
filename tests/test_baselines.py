@@ -18,13 +18,14 @@ if ROOT not in sys.path:
 
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
-from benchmark.baselines import (  # noqa: E402
+from benchmark.baselines import (
     BASELINES,
     _baseline_list,
     _commit_subject,
     _infer_kind,
     _issue_title,
     _pr_title,
+    _review_queue_items,  # noqa: E402
     empty_solve,
     get_baseline,
     heuristic_philosophy,
@@ -347,3 +348,8 @@ def test_heuristic_functions_handle_non_dict_context():
     assert heuristic_philosophy("not a dict")["summary"]
     assert heuristic_plan(None, 3) == []
     assert heuristic_plan(42, 3) == []
+
+
+def test_review_queue_items_handles_non_dict_context():
+    assert _review_queue_items(None, 3) == []
+    assert _review_queue_items("str", 3) == []

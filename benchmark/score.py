@@ -588,10 +588,11 @@ def objective_component(objective: dict) -> float:
     prediction and (when present) bump-level correctness count only when there was actually a
     release to get right, so a window with no release isn't scored on a trivial "predicted
     nothing" match.
-
     ``backlog_recall`` and its companion diagnostics are reported by :func:`objective_score`
     but are deliberately excluded here — backlog anticipation remains diagnostic-only (#148).
     """
+    if not isinstance(objective, dict):
+        return 0.0
     obj = _objective_for_component(objective)
     recall = obj.get("weighted_module_recall")
     if recall is None:

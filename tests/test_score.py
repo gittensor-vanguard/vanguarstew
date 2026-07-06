@@ -996,3 +996,8 @@ def test_objective_score_survives_non_string_file_paths():
     score = objective_score(plan, revealed)
     assert score["module_recall"] == 1.0
     assert score["kind_recall"] == 1.0
+
+def test_objective_component_handles_non_dict():
+    from benchmark.score import objective_component
+    assert objective_component(None) == 0.0
+    assert objective_component(42) == 0.0
