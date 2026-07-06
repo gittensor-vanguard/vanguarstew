@@ -22,15 +22,92 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _checks_list(checks) -> list:
-    if isinstance(checks, list):
-        return checks
-    if checks is not None:
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
+def _is_passed(value) -> bool:
+    """Accept bool values (including subclasses) and numpy.bool_; reject int 0/1."""
+    if isinstance(value, bool):
+        return True
+    return type(value).__name__ in ("bool_", "bool8")
+
+
+def _check_row_field(key: str, value) -> bool:
+    """Return whether ``value`` is usable for a check-row ``key`` in ``_CHECK_ROW_KEYS``."""
+    if key == "name":
+        return isinstance(value, str) and bool(value.strip())
+    if key == "passed":
+        return _is_passed(value)
+    return False
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return run-clean check rows for the failed_checks helper.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers are warned and treated as empty (never coerced). A usable row is a
+    dict with every key in ``_CHECK_ROW_KEYS``: ``name`` must be a non-empty ``str`` and
+    ``passed`` must be a ``bool`` (including numpy scalar booleans); anything else is skipped
+    with a warning.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
         logger.warning(
             "run_clean: checks is %s, not a list; treating as empty",
             type(checks).__name__,
         )
-    return []
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "run_clean: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "run_clean: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        bad_key = None
+        for key in _CHECK_ROW_KEYS:
+            if not _check_row_field(key, row[key]):
+                bad_key = key
+                break
+        if bad_key is not None:
+            value = row[bad_key]
+            if bad_key == "name":
+                detail = (
+                    type(value).__name__
+                    if not isinstance(value, str)
+                    else "empty str"
+                )
+                expected = "non-empty str"
+            else:
+                detail = type(value).__name__
+                expected = "bool"
+            logger.warning(
+                "run_clean: checks[%s] %s is %s, not a usable %s; skipping",
+                idx,
+                bad_key,
+                detail,
+                expected,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "run_clean: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _partition_errors(artifact: dict) -> list[str]:
@@ -84,8 +161,8 @@ def check_run_clean(result) -> dict:
 
 def failed_checks(result: dict) -> list:
     return [
-        c["name"] for c in _checks_list(_dict(result).get("checks"))
-        if isinstance(c, dict) and not c.get("passed")
+        c["name"] for c in _check_rows_list(_dict(result).get("checks"))
+        if not c["passed"]
     ]
 
 
