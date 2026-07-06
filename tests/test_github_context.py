@@ -57,6 +57,16 @@ def test_open_at_T_filtering(monkeypatch):
     assert ctx["_source"] == "github-api"
 
 
+def test_item_open_at_gates_by_created_and_closed():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._item_open_at({"created_at": "2023-01-01T00:00:00Z", "closed_at": None}, T)
+    assert gc._item_open_at({"created_at": "2023-01-01T00:00:00Z",
+                             "closed_at": "2023-08-01T00:00:00Z"}, T)
+    assert not gc._item_open_at({"created_at": "2023-09-01T00:00:00Z", "closed_at": None}, T)
+    assert not gc._item_open_at({"created_at": "2023-01-01T00:00:00Z",
+                                 "closed_at": "2023-03-01T00:00:00Z"}, T)
+
+
 def test_milestone_state_is_as_of_T():
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     # Created before T, closed AFTER T -> was open at T (must NOT leak "closed").
@@ -192,6 +202,31 @@ def test_open_issue_labels_omitted_when_timeline_unavailable(monkeypatch):
     assert iss["labels_as_of_t"] is False
 
 
+def test_enrich_context_preserves_truncation_metadata(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_fetch(*a, **k):
+        return {
+            "repo": "foo/bar",
+            "open_issues": [],
+            "open_prs": [],
+            "labels": [],
+            "milestones": [],
+            "releases": [],
+            "_source": "github-api",
+            "_knowable_until": T.isoformat(),
+            "_issues_truncated": True,
+        }
+
+    monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    base = {"frozen_at": {"date": "2023-06-01T00:00:00Z"}, "open_issues": []}
+    out = gc.enrich_context(base, "/some/repo")
+    assert out["_issues_truncated"] is True
+    assert out["_knowable_until"] == T.isoformat()
+    assert out["_source"] == "github-api"
+
+
 def test_enrich_context_degrades_on_failure(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("offline")
@@ -244,3 +279,135 @@ def test_truncation_flag_when_page_cap_hit(monkeypatch):
     monkeypatch.setattr(gc, "_get", _pager({1: full, 2: full, 3: full}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_issue_pages=2)
     assert ctx["_issues_truncated"] is True
+
+
+# --- contract edge cases (docstring "Field stability") -----------------------------
+
+def test_item_open_at_boundary_created_or_closed_exactly_at_T():
+    # Contract: open at T iff created on/before T and not already closed by T.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    at_T = "2023-06-01T00:00:00Z"
+    # Created exactly at T -> "on or before T" -> open.
+    assert gc._item_open_at({"created_at": at_T, "closed_at": None}, T)
+    # Closed exactly at T -> "already closed by T" -> not open.
+    assert not gc._item_open_at({"created_at": "2023-01-01T00:00:00Z", "closed_at": at_T}, T)
+
+
+def test_item_open_at_missing_created_at_is_not_open():
+    # Defensive: an item with no/None created_at can't be placed in time -> excluded.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert not gc._item_open_at({}, T)
+    assert not gc._item_open_at({"created_at": None, "closed_at": None}, T)
+
+
+def test_milestone_boundary_closed_at_T_and_omits_due_on():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    at_T = "2023-06-01T00:00:00Z"
+    # Closed exactly at T -> already closed by T; note: no due_on in the frozen record.
+    closed = gc._milestone_at(
+        {"title": "m", "created_at": "2023-01-01T00:00:00Z", "closed_at": at_T,
+         "due_on": "2023-12-31T00:00:00Z"}, T)
+    assert closed == {"title": "m", "state": "closed"}
+    # Created exactly at T -> knowable (not None), open since never closed.
+    created_at_T = gc._milestone_at({"title": "m2", "created_at": at_T, "closed_at": None}, T)
+    assert created_at_T == {"title": "m2", "state": "open"}
+
+
+def test_releases_filtered_by_published_at_including_boundary_and_drafts(monkeypatch):
+    # Contract: releases filtered by published_at <= T; drafts (no published_at) excluded.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    releases = [
+        {"tag_name": "v1.0", "name": "1.0", "published_at": "2023-05-01T00:00:00Z"},  # before T
+        {"tag_name": "v1.1", "name": "1.1", "published_at": "2023-06-01T00:00:00Z"},  # exactly T
+        {"tag_name": "v2.0", "name": "2.0", "published_at": "2023-09-01T00:00:00Z"},  # after T
+        {"tag_name": "v3.0", "name": "draft", "published_at": None},                  # draft
+    ]
+
+    def fake_get(url, token, timeout=20):
+        return releases if "/releases" in url else []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert [r["tag"] for r in ctx["releases"]] == ["v1.0", "v1.1"]
+
+
+def test_issue_record_copies_number_created_at_and_live_title(monkeypatch):
+    # Contract: number/created_at are immutable; title is copied live (present-day value).
+    # Pinned so a change that tries to as-of-T these fields also revisits the documented
+    # field-stability contract. Timeline is empty here to isolate title/number copying.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 42, "title": "present-day title", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "x"}]}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return []
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["number"] == 42
+    assert iss["title"] == "present-day title"
+    assert iss["created_at"] == "2023-01-01T00:00:00Z"
+    assert iss["labels_as_of_t"] is False  # no timeline -> labels omitted, not leaked live
+
+
+def test_enrich_context_does_not_propagate_repo_labels(monkeypatch):
+    # Repo labels are intentionally omitted from frozen context; even if a fetch regression
+    # produced a live label catalog, enrichment must not surface it.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_fetch(*a, **k):
+        return {
+            "repo": "foo/bar", "open_issues": [], "open_prs": [],
+            "labels": ["bug", "enhancement"], "milestones": [], "releases": [],
+            "_source": "github-api", "_knowable_until": T.isoformat(),
+            "_issues_truncated": False,
+        }
+
+    monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    base = {"frozen_at": {"date": "2023-06-01T00:00:00Z"}, "open_issues": []}
+    out = gc.enrich_context(base, "/some/repo")
+    assert "labels" not in out
+    assert out["_github_enriched"] is True
+
+
+def _list_pager(by_endpoint):
+    """fake_get returning per-endpoint pages: {url-fragment: {page-number: [items]}}."""
+    def fake_get(url, token, timeout=20):
+        for frag, pages in by_endpoint.items():
+            if frag in url:
+                m = re.search(r"[?&]page=(\d+)", url)
+                return pages.get(int(m.group(1)) if m else 1, [])
+        return []
+    return fake_get
+
+
+def test_milestones_and_releases_paginate_beyond_first_page(monkeypatch):
+    T = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    fake = _list_pager({
+        "/milestones": {
+            1: [{"title": f"m{i}", "created_at": "2023-01-01T00:00:00Z"} for i in range(100)],
+            2: [{"title": "old-open", "created_at": "2023-02-01T00:00:00Z"}],
+        },
+        "/releases": {
+            1: [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)],
+            2: [{"tag_name": "v-old", "published_at": "2023-02-01T00:00:00Z"}],
+        },
+    })
+    monkeypatch.setattr(gc, "_get", fake)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    # the second page is reached, not silently dropped after the first 100
+    assert any(m["title"] == "old-open" for m in ctx["milestones"])
+    assert any(r["tag"] == "v-old" for r in ctx["releases"])
+
+
+def test_list_pagination_respects_page_cap(monkeypatch):
+    T = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    full = [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)]
+    monkeypatch.setattr(gc, "_get", _list_pager({"/releases": {1: full, 2: full, 3: full}}))
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
+    assert len(ctx["releases"]) == 200  # bounded at the cap, never an unbounded loop

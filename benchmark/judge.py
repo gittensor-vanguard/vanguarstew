@@ -78,7 +78,10 @@ def _item_substance(item) -> int:
     if isinstance(item, dict):
         title = (item.get("title") or item.get("theme") or "").strip().lower()
     else:
-        title = str(item).strip().lower()
+        # A JSON `null` plan item stringifies to "none" — neither blank nor a filler word —
+        # so it would slip past the guard below and score 1, letting a null-padded plan
+        # inflate its rank. Treat None as blank; genuine scalar (string) items still count.
+        title = "" if item is None else str(item).strip().lower()
     if not title or title in _FILLER_TITLES:
         return 0
     weight = 1
@@ -199,3 +202,35 @@ def summarize_judge_orders(categories) -> dict:
         round(stats["disagree"] / dual_order_tasks, 3) if dual_order_tasks else None
     )
     return stats
+
+
+def build_judge_report(tally: dict | None, stats: dict | None) -> dict | None:
+    """Compact, artifact-friendly judge summary for replay history/reporting.
+
+    Keeps the raw `judge_order_stats` as the source of truth, but adds a stable summary that
+    makes it easy to trend disagreement alongside win/loss/tie outcomes across saved results.
+    Returns ``None`` when no order stats are available (for example, a zero-task replay).
+    """
+    if not isinstance(stats, dict):
+        return None
+    tally = tally or {}
+    wins = int(tally.get("challenger", 0))
+    losses = int(tally.get("baseline", 0))
+    ties = int(tally.get("tie", 0))
+    dual_order_tasks = int(stats.get("dual_order_tasks", 0))
+    disagreements = int(stats.get("disagree", 0))
+    rate = stats.get("disagreement_rate")
+    rate_text = "n/a" if rate is None else f"{rate:.1%}"
+    summary = (
+        f"judge W-L-T {wins}-{losses}-{ties}; "
+        f"disagreement_rate={rate_text} ({disagreements}/{dual_order_tasks} dual-order tasks)"
+    )
+    return {
+        "wins": wins,
+        "losses": losses,
+        "ties": ties,
+        "dual_order_tasks": dual_order_tasks,
+        "disagreements": disagreements,
+        "disagreement_rate": rate,
+        "summary": summary,
+    }

@@ -6,7 +6,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Generalization (M3): **tuned vs held-out generalization report** — `run_generalization_report`
+  / `scripts/run_eval.py --repo-set <cfg> --generalization` replays both the tuned and held-out
+  partitions of a repo set in one call and reports a `generalization_gap` (tuned minus held-out
+  composite mean). This is the M3 acceptance signal — held-out performance should not collapse
+  relative to tuned — which the per-partition `run_multi_replay` left to manual comparison. A
+  partition the config does not define is recorded with its error, so the report never aborts
+  and the gap is reported only when both partitions scored a repo (#208).
+
 ### Fixed
+- Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
+  and `releases` were read from only the first API page, so a repo with more than 100 of
+  either silently dropped the rest — which can hide a milestone that was open at T or an
+  older release that sets the frozen base version. Both now paginate (bounded by
+  `max_list_pages`), matching how issues/PRs already walk their history (#209).
+- Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
+  `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
+  reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
+  Mirrors the reachability guard `benchmark/freeze.py::build_context` already applies (#256).
+- `agent/philosophy.py::infer_philosophy` now coerces a non-dict LLM response (e.g. a
+  top-level JSON array) back to the offline stub, mirroring the guard already used by
+  `decider.decide` and `review.review_pr`. Previously a substantive-but-list philosophy
+  silently forfeited the offline judge's `philosophy_signal` tiebreaker (#190).
 - Benchmark hygiene: `benchmark/taskgen.py::revealed_window` now parses changed-file
   lists from NUL-delimited `git show --name-only -z` output via a reusable
   `benchmark.freeze.parse_path_list` helper, instead of whitespace `.split()`. Filenames
@@ -17,6 +39,13 @@ All notable changes to this project are documented here. The format is based on
 ## [0.3.0] - 2026-07-03
 
 ### Added
+- Objective anchor: open-issue **backlog recall** (`benchmark/score.py`) — when frozen
+  `open_issues` are knowable at T, `objective_score` reports `backlog_recall`,
+  `addressed_issue_numbers`, and `matched_issue_numbers`, scoring whether a plan anticipated
+  issues the revealed window actually addressed (title ↔ commit-subject overlap). Also reports
+  `addressed_backlog_diagnostics` — the issue number, title, and matched commit subject behind
+  each addressed issue — for maintainer-facing inspection; purely additive, doesn't change
+  scoring. Git-only runs or an empty backlog degrade gracefully (#44, #135).
 - Generalization (M3): **multi-repo replay** — `run_multi_replay` / `scripts/run_eval.py --repos`
   runs several repos and averages each repo's own `composite_mean` into one cross-repo number
   (per-repo results retained; too-small repos skipped), so the agent is scored on breadth rather
@@ -49,10 +78,6 @@ All notable changes to this project are documented here. The format is based on
   anticipated the *kind* of maintainer work (feat/fix/docs/refactor/…/release) that the
   revealed window actually did, parsed deterministically from Conventional-Commit subjects
   (#41).
-- M2: open-issue **backlog recall** in the objective anchor — when frozen `open_issues` are
-  knowable at T, score whether the plan anticipated issues the revealed window actually
-  addressed (title ↔ commit-subject overlap); git-only runs with an empty backlog degrade
-  gracefully (#44).
 - Maintainer-assist mode (`agent/review.py`, `scripts/review_pr.py`): the same agent the
   benchmark scores, applied to a **live** PR — it reads the PR and outputs a maintainer review
   (recommended action, best-fit `mult:*` value tier, scope/tests checks, concerns, advice).
@@ -68,6 +93,11 @@ All notable changes to this project are documented here. The format is based on
   is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
+- Planner PR matching (`agent/planner.py`): when several open-PR titles are quoted in a
+  plan and one nests inside another (e.g. `Add streaming export` inside `Add streaming
+  export docs`), `_matched_pr` now prefers the longest matching title instead of the first
+  in queue order, so the more specific PR wins regardless of queue order. Explicit `#N`
+  references still take priority (#104).
 - Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
   `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
   `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score
@@ -82,6 +112,13 @@ All notable changes to this project are documented here. The format is based on
   version mentioned mid-subject (e.g. `chore(deps): bump lodash to v4.17.21`, `fix crash in
   v1.2.0 parser`). Release detection now requires explicit release wording or a version-tag
   subject, so dependency bumps no longer inflate the release-prediction signal (#57).
+- Task generation: `revealed_window` (`benchmark/taskgen.py`) reported **zero changed files**
+  for merge commits (a plain `git show` of a clean merge yields an empty combined diff),
+  silently depressing module-recall scoring for any repo that merges via PRs (#113). It also
+  split file lists on whitespace, corrupting attribution for paths containing spaces (#116).
+  Both are fixed by diffing merges against their first parent and splitting on lines instead.
+  Regression coverage added in `tests/test_taskgen.py` via a reusable merge-history fixture
+  (#117).
 - Leakage: frozen milestone `state` is now computed as-of-T from `closed_at` instead of copying
   the milestone's present-day state, so a milestone that existed at T but was closed *after* T
   is no longer leaked into the context as completed (#77).

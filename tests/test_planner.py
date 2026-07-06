@@ -15,6 +15,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
     _explicit_pr_number,
+    _is_review_item,
     _matched_pr,
     plan_next_actions,
     reconcile_plan_with_queue,
@@ -62,6 +63,26 @@ def test_duplicate_of_open_pr_is_downweighted_and_flagged():
     assert out[0]["kind"] == "triage"      # down-weighted from "feature"
     assert out[0]["restates_pr"] == 7      # flagged as restating PR #7
     assert "review" in out[0]["rationale"].lower()
+
+
+def test_review_markers_match_on_word_boundaries_not_substrings():
+    # Incidental substrings must NOT be read as review items: "preview" ⊃ "review",
+    # "emergency" ⊃ "merge". Real review/merge phrasing (and suffixes) still count.
+    assert _is_review_item({"title": "Add preview mode for streaming export"}) is False
+    assert _is_review_item({"title": "Plan the emergency data migration"}) is False
+    assert _is_review_item({"title": "Review and merge PR: Add streaming export"}) is True
+    assert _is_review_item({"title": "Merged the release branch"}) is True
+    assert _is_review_item({"kind": "triage", "title": "anything"}) is True
+
+
+def test_incidental_review_substring_does_not_escape_downweighting():
+    # A greenfield duplicate whose title merely contains "review" inside "preview" must
+    # still be down-weighted to a triage/restates item, not left as new feature work.
+    plan = [{"title": "Add preview mode for streaming export", "kind": "feature",
+             "rationale": "users want it"}]
+    out = reconcile_plan_with_queue(plan, CTX, 5)
+    assert out[0]["kind"] == "triage"
+    assert out[0]["restates_pr"] == 7
 
 
 def test_redundant_items_targeting_same_pr_are_collapsed():
@@ -213,3 +234,29 @@ def test_stale_reference_with_no_other_match_triggers_queue_fallback():
     # and the plan-level fallback still prepends a review item for #9
     fallback = [i for i in out if i.get("restates_pr") == 9 and i.get("theme") == "PR queue"]
     assert len(fallback) == 1
+
+
+def test_nested_pr_titles_prefer_longest_match():
+    # Nested titles: the shorter is a substring of the longer. When the plan quotes the longer,
+    # more specific phrase, that PR must win regardless of queue order (#104).
+    prs = [
+        {"number": 1, "title": "Add streaming export"},
+        {"number": 2, "title": "Add streaming export docs"},
+    ]
+    longer = {"title": "Add streaming export docs", "rationale": "finish the export docs"}
+    assert _matched_pr(longer, prs)["number"] == 2
+    assert _matched_pr(longer, list(reversed(prs)))["number"] == 2  # independent of queue order
+    # quoting only the shorter title still resolves to it (longest-match is not greedy)
+    shorter = {"title": "Add streaming export", "rationale": "ship it"}
+    assert _matched_pr(shorter, prs)["number"] == 1
+
+
+def test_nested_titles_explicit_number_outranks_longest_phrase():
+    # An explicit ``#N`` reference stays the highest-priority match, even when a longer nested
+    # title is also quoted in the plan text (#104).
+    prs = [
+        {"number": 1, "title": "Add streaming export"},
+        {"number": 2, "title": "Add streaming export docs"},
+    ]
+    item = {"title": "Merge PR #1: Add streaming export docs", "kind": "triage"}
+    assert _matched_pr(item, prs)["number"] == 1

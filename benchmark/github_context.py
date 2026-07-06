@@ -7,6 +7,30 @@ was created on or before T and was not already closed by T.
 
 Network access is optional. Any failure (offline, rate limit, private repo) is caught and
 the git-only context is returned unchanged, so the benchmark still runs without GitHub.
+
+Field stability (``fetch_context_at``)
+--------------------------------------
+Derived as-of-T (safe):
+  - Issue/PR membership: ``created_at`` / ``closed_at`` gate open-at-T selection.
+  - Issue/PR labels: reconstructed from timeline ``labeled``/``unlabeled`` events when
+    available; omitted (not copied live) when the timeline is unavailable.
+  - Milestone ``state``: derived from ``closed_at`` relative to T, not the live API field.
+  - Releases: filtered by ``published_at <= T`` (drafts, which carry no ``published_at``,
+    are excluded).
+
+Live, copied as-is (no cheap as-of-T source):
+  - Issue/PR ``number`` and ``created_at``: immutable, so the live value already equals the
+    as-of-T value.
+  - Issue/PR ``title``: the present-day title, which can be edited after T. Consumers must not
+    treat it as historically exact; accepted as a residual limitation (title edits are rare and
+    there is no cheap as-of-T source).
+
+Omitted (no created-at or editable after T, so not reconstructable as-of-T — dropped rather
+than leaked as a present-day value):
+  - Repo ``labels`` catalog: the labels endpoint carries no created-at, so its live list
+    would leak today's set; not fetched at all (``fetch_context_at`` returns no ``labels``).
+  - Milestone ``due_on``: the REST value is today's editable due date, so a post-T edit would
+    leak; dropped rather than carried as a possibly-future value.
 """
 
 from __future__ import annotations
@@ -18,6 +42,10 @@ from datetime import datetime
 
 API = "https://api.github.com"
 DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/page)
+DEFAULT_MAX_LIST_PAGES = 10   # bound on pages walked for milestones / releases
+
+# Metadata keys copied from ``fetch_context_at`` into an enriched git-only context.
+_ENRICH_META_KEYS = ("_issues_truncated", "_knowable_until", "_source")
 
 
 def parse_owner_repo(remote_url: str):
@@ -43,14 +71,42 @@ def _parse_dt(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _milestone_at(milestone: dict, until: datetime):
-    """A milestone as knowable at `until`, or None if it didn't exist yet.
+def _item_open_at(item: dict, until: datetime) -> bool:
+    """True when an issue/PR was open at ``until`` (created on/before T, not closed by T)."""
+    created = _parse_dt(item.get("created_at"))
+    if created is None or created > until:
+        return False
+    closed = _parse_dt(item.get("closed_at"))
+    return closed is None or closed > until
 
-    Returns None when the milestone was created after T. Otherwise `state` is derived from
-    `closed_at` *as of T* — `"closed"` only when it was already closed by T — rather than the
-    milestone's present-day state, so a milestone closed after T isn't leaked as completed.
 
-    `due_on` is intentionally omitted: the REST snapshot is today's editable due date, and we
+def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int) -> dict:
+    """Minimal issue/PR fields for the frozen context.
+
+    ``number``/``created_at`` are immutable and ``labels`` are reconstructed as-of ``until``.
+    ``title`` is copied live (present-day value): it may have been edited after T — an accepted
+    residual limitation noted in the module's field-stability contract.
+    """
+    as_of_t = _labels_at(
+        _issue_timeline(base, item.get("number"), token, timeout), until
+    )
+    return {
+        "number": item.get("number"),
+        "title": item.get("title"),
+        "labels": as_of_t if as_of_t is not None else [],
+        "labels_as_of_t": as_of_t is not None,
+        "created_at": item.get("created_at"),
+    }
+
+
+def _milestone_at(milestone: dict, until: datetime) -> dict | None:
+    """A milestone as knowable at ``until``, or None if it did not exist yet.
+
+    Returns None when the milestone was created after T. Otherwise ``state`` is derived from
+    ``closed_at`` *as of T* — ``"closed"`` only when it was already closed by T — rather than
+    the milestone's present-day state, so a milestone closed after T isn't leaked as completed.
+
+    ``due_on`` is intentionally omitted: the REST snapshot is today's editable due date, and we
     do not have a cheap historical edit stream to reconstruct it reliably as-of-T.
     """
     created = _parse_dt(milestone.get("created_at"))
@@ -70,6 +126,27 @@ def _get(url: str, token, timeout: int = 20):
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100):
+    """Collect items across a paginated GitHub list response.
+
+    `url` already carries its query string (including `per_page`); a `page=` parameter is
+    appended per request. Pagination stops on the first empty or short (< `per_page`) page or
+    when `max_pages` is reached. Request errors propagate, so a hard failure still fails the
+    whole enrichment closed to git-only context — the same posture as before, only now the
+    result is complete instead of silently capped at the first 100 items.
+    """
+    sep = "&" if "?" in url else "?"
+    items = []
+    for page in range(1, max_pages + 1):
+        batch = _get(f"{url}{sep}page={page}", token, timeout)
+        if not batch:
+            break
+        items.extend(batch)
+        if len(batch) < per_page:
+            break
+    return items
 
 
 def _labels_at(events, until: datetime):
@@ -140,26 +217,9 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
         if not batch:
             break
         for it in batch:
-            created = _parse_dt(it.get("created_at"))
-            if created is None or created > until:
-                continue          # created after T — future, skip
-            closed = _parse_dt(it.get("closed_at"))
-            if closed is not None and closed <= until:
-                continue          # already closed by T — not open
-            # Labels are mutable and the live list leaks today's state, so
-            # reconstruct membership as-of-T from the item's timeline instead of
-            # copying it.get("labels"). When the timeline can't be read (offline,
-            # rate-limited, or no label events), omit labels rather than leak.
-            as_of_t = _labels_at(
-                _issue_timeline(base, it.get("number"), token, timeout), until
-            )
-            rec = {
-                "number": it.get("number"),
-                "title": it.get("title"),
-                "labels": as_of_t if as_of_t is not None else [],
-                "labels_as_of_t": as_of_t is not None,
-                "created_at": it.get("created_at"),
-            }
+            if not _item_open_at(it, until):
+                continue
+            rec = _issue_record_at(base, it, until, token, timeout)
             (open_prs if it.get("pull_request") else open_issues).append(rec)
         if len(batch) < 100:
             break                 # exhausted all issues — complete
@@ -170,12 +230,18 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
 
 def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
                      per_page: int = 100, timeout: int = 20,
-                     max_issue_pages: int = DEFAULT_MAX_ISSUE_PAGES) -> dict:
+                     max_issue_pages: int = DEFAULT_MAX_ISSUE_PAGES,
+                     max_list_pages: int = DEFAULT_MAX_LIST_PAGES) -> dict:
     """GitHub-derived context knowable at `until` (a timezone-aware UTC datetime).
 
     Issues/PRs are paginated (created desc) back toward T so open-at-T reconstruction is
     complete regardless of how old T is, bounded by `max_issue_pages`; `_issues_truncated`
     flags when the cap was hit before exhausting history.
+
+    Milestones and releases are likewise paginated (bounded by `max_list_pages`) instead of
+    reading only the first page — a repo with more than `per_page` of either would otherwise
+    silently drop the rest, which can hide a milestone that was open at T or an older release
+    that sets the frozen base version.
     """
     token = token or os.environ.get("GITHUB_TOKEN") or None
     base = f"{API}/repos/{owner}/{repo}"
@@ -184,13 +250,15 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
                                                         max_issue_pages)
 
     milestones = []
-    for m in _get(f"{base}/milestones?state=all&per_page={per_page}", token, timeout):
+    for m in _get_all(f"{base}/milestones?state=all&per_page={per_page}", token, timeout,
+                      max_list_pages, per_page):
         rec = _milestone_at(m, until)
         if rec is not None:
             milestones.append(rec)
 
     releases = []
-    for r in _get(f"{base}/releases?per_page={per_page}", token, timeout):
+    for r in _get_all(f"{base}/releases?per_page={per_page}", token, timeout, max_list_pages,
+                      per_page):
         published = _parse_dt(r.get("published_at"))
         if published is not None and published <= until:
             releases.append({"tag": r.get("tag_name"), "name": r.get("name"),
@@ -222,8 +290,13 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
             return context
         gh = fetch_context_at(owner, repo, until, token=token)
         merged = dict(context)
-        for key in ("repo", "open_issues", "open_prs", "labels", "milestones", "releases"):
+        # No ``labels`` here: the repo label catalog is intentionally omitted from the frozen
+        # context (see module docstring), so ``fetch_context_at`` never produces that key.
+        for key in ("repo", "open_issues", "open_prs", "milestones", "releases"):
             if gh.get(key):
+                merged[key] = gh[key]
+        for key in _ENRICH_META_KEYS:
+            if key in gh:
                 merged[key] = gh[key]
         merged["_github_enriched"] = True
         return merged

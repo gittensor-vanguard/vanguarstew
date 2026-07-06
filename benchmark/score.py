@@ -107,6 +107,11 @@ def _plan_tokens(plan) -> set:
         if isinstance(item, dict):
             toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", "")) \
                 | _tokens(item.get("kind", ""))
+            # Structured `files` are part of a concrete plan item (the judge counts them
+            # toward substance); tokenize path segments so module recall can match on the
+            # top-level module even when the title omits it.
+            for path in item.get("files") or []:
+                toks |= _tokens((path or "").replace("/", " "))
         else:
             toks |= _tokens(str(item))
     return toks
@@ -120,7 +125,14 @@ def changed_modules(revealed) -> set:
             parts = [p for p in path.split("/") if p]
             if not parts:
                 continue
-            top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+            if len(parts) > 1:
+                top = parts[0]
+            else:
+                # Strip a single extension (README.md -> readme). A top-level dotfile
+                # (.gitignore, .flake8) has no extension to strip, so rsplit leaves an
+                # empty string here — fall back to the bare filename (sans leading
+                # dots) instead of silently dropping it from the ground truth.
+                top = parts[0].rsplit(".", 1)[0] or parts[0].lstrip(".")
             if top:
                 mods.add(top.lower())
     return mods
@@ -176,7 +188,7 @@ _PLAN_KIND = {
     "docs": "docs", "doc": "docs",
     "refactor": "refactor",
     "perf": "perf",
-    "test": "test",
+    "test": "test", "tests": "test",
     "release": "release",
     "dep": "chore", "deps": "chore", "chore": "chore",
     "build": "build",
@@ -205,9 +217,16 @@ def commit_kind(subject: str):
     return None
 
 
-def plan_kind(kind: str):
-    """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind."""
-    return _PLAN_KIND.get((kind or "").strip().lower())
+def plan_kind(kind):
+    """Normalized kind for a plan item's `kind` field, or None if it maps to no commit kind.
+
+    Tolerant of the varied shapes an LLM-emitted plan `kind` can take: surrounding whitespace
+    and case are ignored, and a non-string value (a number/list/object the model might emit) is
+    treated as "no recognizable kind" rather than raising on ``.strip()``.
+    """
+    if not isinstance(kind, str):
+        return None
+    return _PLAN_KIND.get(kind.strip().lower())
 
 
 def kind_recall(plan, revealed) -> dict:
@@ -234,7 +253,11 @@ def release_signaled(revealed) -> bool:
 def release_predicted(plan) -> bool:
     for item in plan or []:
         if isinstance(item, dict):
-            if item.get("kind") == "release" or is_release_subject(item.get("title", "") or ""):
+            # Resolve the release *kind* through the shared, case/whitespace-insensitive
+            # vocabulary (as kind_recall does) instead of an exact "release" string, so a plan
+            # item labelled "Release" / " release " still counts as predicting a release.
+            if plan_kind(item.get("kind")) == "release" \
+                    or is_release_subject(item.get("title", "") or ""):
                 return True
     return False
 
@@ -247,44 +270,66 @@ def _meaningful_overlap(a: set, b: set) -> bool:
     return len(shared) >= max(2, min(len(a), len(b)) // 2)
 
 
-def addressed_issues(revealed, open_issues) -> list:
-    """Open issues at T whose themes show up in the revealed commit subjects."""
-    addressed = []
+def _addressed_with_evidence(revealed, open_issues) -> list:
+    """Open issues at T whose themes show up in the revealed commit subjects, paired with
+    the commit subject that triggered the match (the diagnostic evidence for that match)."""
+    out = []
     for issue in open_issues or []:
         title_toks = _tokens(issue.get("title", ""))
         if not title_toks:
             continue
         for row in revealed or []:
-            if _meaningful_overlap(title_toks, _tokens(row.get("subject", ""))):
-                addressed.append(issue)
+            subject = row.get("subject", "") or ""
+            if _meaningful_overlap(title_toks, _tokens(subject)):
+                out.append((issue, subject))
                 break
-    return addressed
+    return out
+
+
+def addressed_issues(revealed, open_issues) -> list:
+    """Open issues at T whose themes show up in the revealed commit subjects."""
+    return [issue for issue, _subject in _addressed_with_evidence(revealed, open_issues)]
 
 
 def backlog_recall(plan, revealed, open_issues=None) -> dict:
-    """Fraction of addressed backlog issues the plan anticipated."""
-    addressed = addressed_issues(revealed, open_issues)
-    if not addressed:
+    """Fraction of addressed backlog issues the plan anticipated, plus match diagnostics.
+
+    `addressed_backlog_diagnostics` is human-readable evidence (issue number, issue title, the
+    commit subject that caused it to count as addressed) for maintainer-facing inspection; it
+    is purely additive and does not affect `backlog_recall`, `addressed_issue_numbers`, or
+    `matched_issue_numbers`.
+    """
+    evidence = _addressed_with_evidence(revealed, open_issues)
+    if not evidence:
         return {
             "backlog_recall": 0.0,
             "addressed_issue_numbers": [],
             "matched_issue_numbers": [],
+            "addressed_backlog_diagnostics": [],
         }
     plan_toks = _plan_tokens(plan)
     matched = []
-    for issue in addressed:
+    diagnostics = []
+    for issue, subject in evidence:
+        diagnostics.append({
+            "number": issue.get("number"),
+            "title": issue.get("title", ""),
+            "matched_subject": subject,
+        })
         if _meaningful_overlap(_tokens(issue.get("title", "")), plan_toks):
             matched.append(issue.get("number"))
     return {
-        "backlog_recall": round(len(matched) / len(addressed), 3),
-        "addressed_issue_numbers": [i.get("number") for i in addressed],
+        "backlog_recall": round(len(matched) / len(evidence), 3),
+        "addressed_issue_numbers": [issue.get("number") for issue, _subject in evidence],
         "matched_issue_numbers": matched,
+        "addressed_backlog_diagnostics": diagnostics,
     }
 
 
 def objective_score(plan, revealed, version_bump=None, base_version=None,
                     open_issues=None, **_) -> dict:
-    """The deterministic anchor: module recall + commit-kind recall + release/bump match.
+    """The deterministic anchor: module recall + commit-kind recall + release/bump match
+    + open-issue backlog recall.
 
     When a release appears in the revealed window, the actual bump level (major/minor/patch)
     is derived from the semver delta between `base_version` (the version at freeze T, e.g.
@@ -294,6 +339,9 @@ def objective_score(plan, revealed, version_bump=None, base_version=None,
     `bump_actual` is None when no release is revealed or the base is unknown; `bump_match` is
     True exactly when the agent's normalized prediction equals `bump_actual` (so predicting
     no bump when none happened also counts as a match).
+
+    `open_issues` is optional; git-only runs (or an empty backlog) degrade gracefully to a
+    neutral `backlog_recall` of 0.0 with no addressed issues, and don't affect any other field.
     """
     result = module_recall(plan, revealed)
     result.update(kind_recall(plan, revealed))

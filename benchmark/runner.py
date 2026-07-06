@@ -21,7 +21,7 @@ from agent.llm import LLM
 from benchmark.baselines import DEFAULT_BASELINE, empty_solve, get_baseline
 from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
-from benchmark.judge import judge_verbose, summarize_judge_orders
+from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
 from benchmark.repo_set import RepoSetError, load_repo_set
 from benchmark.score import (
@@ -151,6 +151,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
     composites = [r["composite"] for r in rows]
     judge_parts = [_JUDGE_COMPONENT[r["winner"]] for r in rows]
     objective_parts = [objective_component(r["objective"]) for r in rows]
+    judge_order_stats = summarize_judge_orders(r.get("judge_order") for r in rows)
     return {
         "tasks": len(tasks),
         "baseline": baseline,
@@ -165,14 +166,16 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         },
         "weights": {"judge": w_judge, "objective": w_objective},
         "rows": rows,
-        "judge_order_stats": summarize_judge_orders(r.get("judge_order") for r in rows),
+        "judge_order_stats": judge_order_stats,
+        "judge_report": build_judge_report(tally, judge_order_stats),
         "offline": llm.offline,
         "github_enriched": enrich_github,
         "judge_dual_order": dual_order_judge,
     }
 
 
-def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dict:
+def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partition=None,
+                     **kwargs) -> dict:
     """Replay several repos and aggregate their composites (proposal §4 / M3 generalization).
 
     Runs `run_replay` once per repo — preserving every per-repo result — and averages each
@@ -195,14 +198,21 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
     checkout_root = None
     if repo_set is not None:
         rs = load_repo_set(repo_set)
-        entries = rs.held_out() if held_out else rs.tuned()
+        if repo_set_partition:
+            entries = rs.partition(repo_set_partition)
+            selection = repo_set_partition
+        elif held_out:
+            entries = rs.held_out()
+            selection = "held_out"
+        else:
+            entries = rs.tuned()
+            selection = "tuned"
         if not entries:
-            label = "held-out" if held_out else "tuned"
-            raise RepoSetError(f"repo set {repo_set!r} has no {label} repos to replay")
+            raise RepoSetError(f"repo set {repo_set!r} has no {selection} repos to replay")
         repo_set_meta = {
             "path": repo_set,
             "name": rs.name,
-            "selection": "held_out" if held_out else "tuned",
+            "selection": selection,
         }
         checkout_root = tempfile.mkdtemp(prefix="vanguarstew_repo_set_")
         for entry in entries:
@@ -224,6 +234,7 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
     judge_parts = []
     objective_parts = []
     judge_orders = []
+    tally = {"challenger": 0, "baseline": 0, "tie": 0}
     try:
         for repo in selected:
             repo_kwargs = dict(kwargs)
@@ -232,6 +243,8 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
             res = run_replay(repo["repo_path"], **repo_kwargs)
             meta = {k: v for k, v in repo.items() if k not in ("repo_path", "cleanup")}
             per_repo.append({**meta, **res})
+            for outcome in tally:
+                tally[outcome] += int((res.get("tally") or {}).get(outcome, 0))
             if res.get("tasks", 0) > 0:
                 composites.append(res["composite_mean"])
                 parts = res.get("composite_parts", {})
@@ -245,6 +258,7 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
     def _mean(xs):
         return round(sum(xs) / len(xs), 3) if xs else 0.0
 
+    judge_order_stats = summarize_judge_orders(judge_orders)
     result = {
         "repos": len(per_repo),
         "scored_repos": len(composites),
@@ -254,9 +268,45 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
             "judge_mean": _mean(judge_parts),
             "objective_mean": _mean(objective_parts),
         },
-        "judge_order_stats": summarize_judge_orders(judge_orders),
+        "judge_order_stats": judge_order_stats,
+        "judge_report": build_judge_report(tally, judge_order_stats),
         "per_repo": per_repo,
     }
     if repo_set_meta is not None:
         result["repo_set"] = repo_set_meta
     return result
+
+
+def run_generalization_report(repo_set, **kwargs) -> dict:
+    """Replay a repo set's tuned and held-out slices and report the generalization gap (M3).
+
+    `run_multi_replay` scores one partition at a time; this runs both the `tuned` and
+    `held_out` partitions and contrasts them in a single call. `generalization_gap` is the
+    tuned composite mean minus the held-out composite mean — positive means the agent does
+    worse on repos it was never tuned against. That gap is the M3 acceptance signal: held-out
+    performance should not collapse relative to tuned. It is None unless BOTH partitions
+    actually scored a repo, so it is never reported from a single side; a partition the config
+    does not define (no tuned, or no held-out, repos) is recorded with its error rather than
+    aborting the whole report.
+
+    Deterministic given a fixed `seed` (threaded through both partition runs).
+    """
+    def _partition(which):
+        try:
+            return run_multi_replay(repo_set=repo_set, repo_set_partition=which, **kwargs)
+        except RepoSetError as exc:
+            return {"error": str(exc), "scored_repos": 0, "composite_mean": 0.0}
+
+    tuned = _partition("tuned")
+    held_out = _partition("held_out")
+
+    gap = None
+    if tuned.get("scored_repos") and held_out.get("scored_repos"):
+        gap = round(tuned["composite_mean"] - held_out["composite_mean"], 3)
+
+    return {
+        "repo_set": repo_set,
+        "tuned": tuned,
+        "held_out": held_out,
+        "generalization_gap": gap,
+    }

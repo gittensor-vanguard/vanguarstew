@@ -86,6 +86,9 @@ python -m scripts.run_eval --repo /path/to/repo --tasks 5 --horizon 5 \
 # multi-repo: replay several repos and aggregate a cross-repo composite (generalization)
 VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repos /path/to/a /path/to/b --tasks 2 --horizon 5
 
+# repo-set: replay a checked-in curated config (clone listed repos locally first)
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo-set benchmark/repo_sets/curated.json --tasks 2 --horizon 5
+
 # smoke test (no network, no git needed)
 VANGUARSTEW_OFFLINE=1 python -m pytest -q
 ```
@@ -136,7 +139,7 @@ agentic loop (M4). See [ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 
-Contributions are welcome — the surface is open. Start with [CONTRIBUTING.md](CONTRIBUTING.md)
+Contributions are welcome — the surface is open. **Open PRs against the `test` branch, not `main`** — `main` is maintainer-promoted from `test` (see [CONTRIBUTING → Branches](CONTRIBUTING.md#branches)). Start with [CONTRIBUTING.md](CONTRIBUTING.md)
 for setup, and [REVIEW.md](REVIEW.md) for exactly how contributions are gated, reviewed, and
 scored (the process is designed to be predictable and reproducible). Browse open
 [issues](https://github.com/gittensor-vanguard/vanguarstew/issues) — especially

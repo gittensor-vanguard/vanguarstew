@@ -20,6 +20,98 @@ ACTIONS = ["merge", "request-changes", "reject", "comment"]
 VALUE_LABELS = ["mult:core-correctness", "mult:leakage-integrity", "mult:capability",
                 "mult:enhancement", "mult:maintenance", "mult:docs"]
 
+# Near-miss review verbs an LLM might answer with, mapped onto the canonical vocabulary.
+_ACTION_SYNONYMS = {
+    "approve": "merge",
+    "approved": "merge",
+    "lgtm": "merge",
+    "request changes": "request-changes",
+    "request_changes": "request-changes",
+    "requested-changes": "request-changes",
+    "decline": "reject",
+    "deny": "reject",
+    "closed": "reject",
+}
+
+
+def _normalize_review_action(action) -> str:
+    """Map ``action`` onto ``ACTIONS``; unknown values fall back to ``comment``."""
+    key = (action or "").strip().lower()
+    if key in ACTIONS:
+        return key
+    return _ACTION_SYNONYMS.get(key, "comment")
+
+
+def _normalize_value_label(label) -> str:
+    """Map ``value_label`` onto ``VALUE_LABELS``; unknown values fall back to maintenance."""
+    default = "mult:maintenance"
+    if not isinstance(label, str):
+        return default
+    raw = label.strip()
+    if not raw:
+        return default
+    lowered = raw.lower()
+    candidates = {lowered}
+    if not lowered.startswith("mult:"):
+        candidates.add(f"mult:{lowered}")
+    for tier in VALUE_LABELS:
+        if tier.lower() in candidates:
+            return tier
+        if lowered == tier.split(":", 1)[-1].lower():
+            return tier
+    return default
+
+
+def _normalize_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "1")
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _normalize_text(value, default: str = "") -> str:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _normalize_concerns(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        item = value.strip()
+        return [item] if item else []
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            if item is None:
+                continue
+            text = str(item).strip()
+            if text:
+                out.append(text)
+        return out
+    return []
+
+
+def _normalize_review(out: dict, stub: dict) -> dict:
+    """Map an LLM review object onto the documented field types."""
+    if not isinstance(out, dict):
+        return dict(stub)
+    return {
+        "action": _normalize_review_action(out.get("action")),
+        "value_label": _normalize_value_label(out.get("value_label")),
+        "scope_ok": _normalize_bool(out.get("scope_ok"), stub["scope_ok"]),
+        "tests_present": _normalize_bool(out.get("tests_present"), stub["tests_present"]),
+        "summary": _normalize_text(out.get("summary"), ""),
+        "concerns": _normalize_concerns(out.get("concerns")),
+        "recommendation": _normalize_text(out.get("recommendation"), ""),
+    }
+
 
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
@@ -50,7 +142,4 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         "recommendation": "offline",
     }
     out = llm.chat_json(SYSTEM, user, stub=stub)
-    if not isinstance(out, dict):
-        out = dict(stub)
-    out.setdefault("action", "comment")
-    return out
+    return _normalize_review(out, stub)
