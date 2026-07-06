@@ -7,7 +7,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.score import composite_score, objective_component  # noqa: E402
+from benchmark.score import composite_score, objective_component, objective_score  # noqa: E402
 
 
 def test_objective_component_module_recall_only():
@@ -72,3 +72,39 @@ def test_composite_weights_are_normalized():
     assert composite_score("B", obj, w_judge=1.0, w_objective=0.0) == 0.0
     # weights that don't sum to 1 are normalized
     assert composite_score("A", obj, w_judge=3.0, w_objective=1.0) == 1.0
+
+
+def test_backlog_recall_is_diagnostic_only_in_objective_component():
+    """#148: backlog anticipation is inspectable but must not move the objective anchor."""
+    base = {"module_recall": 0.4, "backlog_recall": 0.0, "release_signaled": False}
+    matched = {
+        **base,
+        "backlog_recall": 1.0,
+        "addressed_issue_numbers": [12],
+        "matched_issue_numbers": [12],
+    }
+    assert objective_component(base) == objective_component(matched) == 0.4
+
+
+def test_backlog_recall_is_diagnostic_only_in_composite_score():
+    """#148: composite ranking ignores backlog_recall even when it differs sharply."""
+    base = {"module_recall": 0.5, "backlog_recall": 0.0}
+    matched = {**base, "backlog_recall": 1.0, "matched_issue_numbers": [1, 2, 3]}
+    for winner in ("A", "B", "tie"):
+        assert composite_score(winner, base) == composite_score(winner, matched)
+
+
+def test_objective_score_reports_backlog_but_leaves_component_unchanged():
+    """End-to-end #148: matched vs missed backlog changes the metric, not the anchor."""
+    open_issues = [
+        {"number": 12, "title": "Memory leak under load"},
+        {"number": 99, "title": "Unrelated roadmap item"},
+    ]
+    revealed = [{"subject": "fix: memory leak under heavy load", "files": ["core/leak.py"]}]
+    plan_match = [{"title": "Fix memory leak under load", "kind": "bugfix", "theme": "core"}]
+    plan_miss = [{"title": "Refactor core internals", "kind": "refactor", "theme": "core"}]
+    score_match = objective_score(plan_match, revealed, open_issues=open_issues)
+    score_miss = objective_score(plan_miss, revealed, open_issues=open_issues)
+    assert score_match["backlog_recall"] == 1.0
+    assert score_miss["backlog_recall"] == 0.0
+    assert objective_component(score_match) == objective_component(score_miss)

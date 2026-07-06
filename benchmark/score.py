@@ -404,6 +404,9 @@ def addressed_issues(revealed, open_issues) -> list:
 def backlog_recall(plan, revealed, open_issues=None) -> dict:
     """Fraction of addressed backlog issues the plan anticipated, plus match diagnostics.
 
+    Diagnostic-only: reported by :func:`objective_score` for inspection but deliberately
+    excluded from :func:`objective_component` and :func:`composite_score` (#148).
+
     `addressed_backlog_diagnostics` is human-readable evidence (issue number, issue title, the
     commit subject that caused it to count as addressed) for maintainer-facing inspection; it
     is purely additive and does not affect `backlog_recall`, `addressed_issue_numbers`, or
@@ -486,6 +489,9 @@ def objective_component(objective: dict) -> float:
     falls back to plain ``module_recall`` otherwise. Release-prediction and (when present)
     bump-level correctness count only when there was actually a release to get right, so a
     window with no release isn't scored on a trivial "predicted nothing" match.
+
+    ``backlog_recall`` is reported by :func:`objective_score` for inspection but is
+    deliberately excluded here — backlog anticipation remains diagnostic-only (#148).
     """
     recall = objective.get("weighted_module_recall")
     if recall is None:
