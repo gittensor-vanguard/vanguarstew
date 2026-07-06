@@ -28,11 +28,10 @@ _REVIEW_MARKER_RE = re.compile(
     r"\b(?:review|merge|approve|request\s+changes|pull\s+request|pr\s*#)",
     re.I,
 )
-# Explicit PR references: "#7", "PR #7", "pull request 7"
-_PR_NUMBER = re.compile(
-    r"(?:#\s*(\d+)\b|(?:pull\s+request|pr)\s+#?\s*(\d+)\b)",
-    re.I,
-)
+# Qualified PR references — checked before bare ``#N`` so ordinals like "#1 priority"
+# do not shadow a later "PR #7" in the same text.
+_QUALIFIED_PR_NUMBER = re.compile(r"(?:pull\s+request|pr)\s+#?\s*(\d+)\b", re.I)
+_BARE_PR_NUMBER = re.compile(r"#\s*(\d+)\b")
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
 _MIN_SUBJECT_PHRASE = 8
 
@@ -96,14 +95,22 @@ def _significant_tokens(text: str) -> set:
 
 
 def _explicit_pr_number(*texts: str) -> int | None:
-    """Return an explicit PR number referenced in plan text, if any."""
+    """Return an explicit PR number referenced in plan text, if any.
+
+    Qualified forms (``PR #N``, ``pull request N``) win over a bare ``#N`` found
+  earlier in the same text, so ordinals like "our #1 priority" do not shadow
+    "review PR #7".
+    """
     for text in texts:
         if not text:
             continue
-        for match in _PR_NUMBER.finditer(text):
-            raw = match.group(1) or match.group(2)
-            if raw:
-                return int(raw)
+        for match in _QUALIFIED_PR_NUMBER.finditer(text):
+            return int(match.group(1))
+    for text in texts:
+        if not text:
+            continue
+        for match in _BARE_PR_NUMBER.finditer(text):
+            return int(match.group(1))
     return None
 
 

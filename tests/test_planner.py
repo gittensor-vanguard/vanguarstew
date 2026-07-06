@@ -191,6 +191,21 @@ def test_valid_explicit_pr_reference_still_wins():
     assert _matched_pr(item, prs) == prs[0]
 
 
+def test_qualified_pr_reference_wins_over_earlier_bare_ordinal():
+    # Bare "#1" appears before "PR #7" — qualified reference must win (#385).
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    item = {
+        "title": "Address our #1 priority: review PR #7 before release",
+        "kind": "triage",
+        "rationale": "top item in the queue",
+    }
+    assert _matched_pr(item, prs) == prs[0]
+    out = reconcile_plan_with_queue([item], {"open_prs": prs}, 5)
+    assert len(out) == 1
+    assert out[0]["title"] == item["title"]
+    assert "restates_pr" not in out[0]
+
+
 def test_stale_reference_falls_through_to_other_queue_items():
     """A stale explicit reference on one item does not poison the rest of the plan.
 
