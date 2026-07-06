@@ -108,31 +108,27 @@ def _significant_tokens(text: str) -> set:
 
 
 def _pr_reference(*texts: str):
-    """Return ``(pr_number, qualified)`` for the most authoritative PR reference across ``texts``.
+    """Return ``(pr_number, qualified)`` for the most authoritative PR reference in the texts.
 
-    Each argument is scanned in call order (typically title, then rationale), left-to-right
-    within the string. A qualified ``"PR #N"`` / ``"pull request N"`` match anywhere in the
-    call beats any bare ``"#N"`` token, regardless of which argument or position it appeared
-    in — bare ordinals ("our #1 priority") must not shadow a genuine ``"PR #7"`` later in the
-    same item (#385). When no qualified reference exists, the first bare ``"#N"`` is returned
-    for callers to content-validate. Returns ``(None, False)`` when no reference is present.
+    ``qualified`` is True for an unambiguous ``"PR #N"`` / ``"pull request N"`` phrasing, and
+    False for a bare ``"#N"`` — which is frequently an ordinal ("the #1 requested feature",
+    "our #7 priority") rather than a pull-request reference, so callers must content-validate a
+    bare match before trusting it. A qualified match anywhere in the texts always wins, even if
+    a bare match appears earlier — otherwise an incidental ordinal ("our #1 priority") ahead of
+    a genuine "PR #7" reference in the same sentence would shadow it. Only when no qualified
+    match exists anywhere does the first bare match apply. Returns ``(None, False)`` when no
+    reference is present.
     """
-    qualified = None
     bare = None
     for text in texts:
         if not text:
             continue
         for match in _PR_NUMBER.finditer(text):
-            if match.group(2) is not None:
-                if qualified is None:
-                    qualified = int(match.group(2))
-            elif match.group(1) is not None and bare is None:
+            if match.group(2):        # "PR #N" / "pull request N" — unambiguous, always wins
+                return int(match.group(2)), True
+            if bare is None and match.group(1):  # bare "#N" — could be an ordinal
                 bare = int(match.group(1))
-    if qualified is not None:
-        return qualified, True
-    if bare is not None:
-        return bare, False
-    return None, False
+    return (bare, False) if bare is not None else (None, False)
 
 
 def _explicit_pr_number(*texts: str) -> int | None:
