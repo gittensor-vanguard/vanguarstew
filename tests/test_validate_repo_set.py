@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -29,3 +30,22 @@ def test_validate_repo_set_path_reports_repo_set_error(tmp_path):
     }), encoding="utf-8")
     with pytest.raises(RepoSetError, match="min_history must be >= 1"):
         validate_repo_set_path(str(bad))
+
+
+def test_validate_repo_set_path_reports_a_directory_path():
+    # load_repo_set's OSError guard must flow all the way through this CLI helper too --
+    # proving the fix is actually consumed downstream, not just correct in isolation.
+    with pytest.raises(RepoSetError, match="cannot read"):
+        validate_repo_set_path(ROOT)
+
+
+def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
+    a_dir = tmp_path / "looks-like-a-config"
+    a_dir.mkdir()
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.validate_repo_set", str(a_dir)],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "cannot read" in result.stderr

@@ -166,6 +166,30 @@ def test_load_reports_missing_file_and_bad_json(tmp_path):
         load_repo_set(str(bad))
 
 
+def test_load_reports_a_directory_path_distinctly_from_not_found_or_bad_json(tmp_path):
+    # os.path.exists is true for directories too, so a directory reaches open() and must
+    # raise its own real OSError message wrapped in RepoSetError -- not "not found" (the
+    # path DOES exist) and not "invalid JSON" (it's not even readable as text).
+    a_dir = tmp_path / "looks-like-a-config"
+    a_dir.mkdir()
+    with pytest.raises(RepoSetError, match="cannot read") as exc:
+        load_repo_set(str(a_dir))
+    assert "Is a directory" in str(exc.value)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_load_reports_an_unreadable_file(tmp_path):
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text(json.dumps({"repos": []}), encoding="utf-8")
+    unreadable.chmod(0o000)
+    try:
+        with pytest.raises(RepoSetError, match="cannot read") as exc:
+            load_repo_set(str(unreadable))
+    finally:
+        unreadable.chmod(0o644)
+    assert "Permission denied" in str(exc.value)
+
+
 def test_example_json_is_parseable_directly():
     # sanity: the shipped file is literally valid JSON
     with open(EXAMPLE_REPO_SET, "r", encoding="utf-8") as f:

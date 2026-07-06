@@ -243,6 +243,11 @@ def load_repo_set(path) -> RepoSet:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+    except OSError as exc:
+        # os.path.exists is true for directories too, so a path pointing at a directory (or
+        # one that exists but isn't readable) reaches open() and fails here, distinctly from
+        # the not-found case above and from a JSON parse failure below.
+        raise RepoSetError(f"cannot read {path}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise RepoSetError(f"invalid JSON in {path}: {exc}") from exc
     return validate_repo_set(data)
