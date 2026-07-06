@@ -37,7 +37,18 @@ def _margin(artifact: dict) -> int | None:
         return margin
     tally = artifact.get("tally")
     if isinstance(tally, dict):
-        return _margin_from_tally(tally)
+        from_tally = _margin_from_tally(tally)
+        if from_tally is not None:
+            return from_tally
+    # run_multi_replay / generalization artifacts carry no top-level `decisive_margin` or
+    # `tally`; their aggregate win/loss counts live under `judge_report` (built from the same
+    # tally). Fall back to it so the margin isn't reported "unavailable" for every multi-repo
+    # run — mirroring promotion._decisive_margin, which reads the same block.
+    report = artifact.get("judge_report")
+    if isinstance(report, dict):
+        wins, losses = report.get("wins"), report.get("losses")
+        if _is_int(wins) and _is_int(losses):
+            return wins - losses
     return None
 
 

@@ -39,6 +39,19 @@ def test_falls_back_to_tally():
     assert out["outlook"] == "ahead"
 
 
+def test_falls_back_to_judge_report_for_multi_repo():
+    # A run_multi_replay / generalization artifact has no top-level decisive_margin or tally;
+    # the aggregate win/loss counts live under judge_report. The margin must come from there
+    # instead of reporting "unavailable" for every multi-repo run (mirrors promotion #931).
+    out = summarize_margin_outlook({
+        "per_repo": [],
+        "composite_mean": 0.62,
+        "judge_report": {"wins": 5, "losses": 2, "ties": 1},
+    })
+    assert out["decisive_margin"] == 3
+    assert out["outlook"] == "ahead"
+
+
 def test_missing_data_yields_none():
     out = summarize_margin_outlook({"composite_mean": 0.5})
     assert out["outlook"] is None
