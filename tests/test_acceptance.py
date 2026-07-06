@@ -191,3 +191,17 @@ def test_check_acceptance_does_not_mutate_the_report():
     snapshot = copy.deepcopy(report)
     check_acceptance(report)
     assert report == snapshot
+
+
+def test_acceptance_headline_survives_non_list_checks():
+    for bad in (42, True, {"name": "gap_within_bound"}):
+        assert acceptance_headline({"checks": bad, "passed": False}) == "acceptance: no checks evaluated", bad
+
+
+def test_acceptance_headline_logs_warning_for_non_list_checks(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.acceptance"):
+        line = acceptance_headline({"checks": 42, "passed": False})
+    assert line == "acceptance: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)

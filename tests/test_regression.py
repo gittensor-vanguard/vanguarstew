@@ -130,3 +130,17 @@ def test_check_regression_does_not_mutate_inputs():
     snap_b, snap_c = copy.deepcopy(baseline), copy.deepcopy(candidate)
     check_regression(candidate, baseline)
     assert baseline == snap_b and candidate == snap_c
+
+
+def test_regression_headline_survives_non_list_checks():
+    for bad in (42, True, {"name": "no_composite_regression"}):
+        assert regression_headline({"checks": bad, "passed": False}) == "regression: no checks evaluated", bad
+
+
+def test_regression_headline_logs_warning_for_non_list_checks(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        line = regression_headline({"checks": 42, "passed": False})
+    assert line == "regression: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)

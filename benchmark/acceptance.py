@@ -27,6 +27,10 @@ the relevant checks rather than raising.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_MAX_GAP = 0.15
 DEFAULT_MIN_SCORED_REPOS = 1
 
@@ -37,6 +41,18 @@ def _is_number(value) -> bool:
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+def _checks_list(checks) -> list:
+    """Return ``checks`` when it is a list; otherwise treat as no gate checks."""
+    if isinstance(checks, list):
+        return checks
+    if checks is not None:
+        logger.warning(
+            "acceptance: checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
+    return []
 
 
 def check_acceptance(report, max_gap: float = DEFAULT_MAX_GAP,
@@ -102,13 +118,16 @@ def check_acceptance(report, max_gap: float = DEFAULT_MAX_GAP,
 
 def failed_checks(result: dict) -> list:
     """The names of the checks that failed in a :func:`check_acceptance` result."""
-    return [c["name"] for c in _dict(result).get("checks", []) if not c.get("passed")]
+    return [
+        c["name"] for c in _checks_list(_dict(result).get("checks"))
+        if isinstance(c, dict) and not c.get("passed")
+    ]
 
 
 def acceptance_headline(result: dict) -> str:
     """A one-line human summary of a :func:`check_acceptance` result."""
     result = _dict(result)
-    checks = result.get("checks") or []
+    checks = _checks_list(result.get("checks"))
     if not checks:
         return "acceptance: no checks evaluated"
     if result.get("passed"):

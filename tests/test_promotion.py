@@ -12,6 +12,7 @@ if ROOT not in sys.path:
 
 from benchmark.promotion import (  # noqa: E402
     DEFAULT_MIN_COMPOSITE,
+    _checks_list,
     check_promotion,
     failed_checks,
     promotion_headline,
@@ -174,3 +175,31 @@ def test_cli_still_reports_promote_for_a_well_formed_artifact(tmp_path):
     assert result.returncode == 0
     assert "PROMOTE" in result.stderr
     assert json.loads(result.stdout)["passed"] is True
+
+
+# --- #578: non-list checks must not abort promotion headline formatting ---------------
+
+_MALFORMED_CHECKS = [42, 3.14, True, {"name": "run_completed"}, "not a list"]
+
+
+def test_promotion_checks_list_accepts_only_real_lists():
+    rows = [{"name": "run_completed", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _checks_list(bad) == [], bad
+    assert _checks_list(rows) == rows
+    assert _checks_list(None) == []
+
+
+def test_promotion_headline_survives_non_list_checks():
+    base = {"passed": False, "composite_mean": 0.5}
+    for bad in _MALFORMED_CHECKS:
+        assert promotion_headline({**base, "checks": bad}) == "promotion: no checks evaluated", bad
+
+
+def test_promotion_headline_logs_warning_for_non_list_checks(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.promotion"):
+        line = promotion_headline({"checks": 42, "passed": False})
+    assert line == "promotion: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)
