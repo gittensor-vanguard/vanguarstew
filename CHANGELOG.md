@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Generalization (M3): **tuned vs held-out generalization report** — `run_generalization_report`
+  / `scripts/run_eval.py --repo-set <cfg> --generalization` replays both the tuned and held-out
+  partitions of a repo set in one call and reports a `generalization_gap` (tuned minus held-out
+  composite mean). This is the M3 acceptance signal — held-out performance should not collapse
+  relative to tuned — which the per-partition `run_multi_replay` left to manual comparison. A
+  partition the config does not define is recorded with its error, so the report never aborts
+  and the gap is reported only when both partitions scored a repo (#208).
+
 ### Fixed
 - `agent/planner.py::_matched_pr` treated any bare `#N` in a plan item's title/rationale as
   an authoritative open-PR reference, bypassing the title/token-overlap sanity checks the
