@@ -520,6 +520,15 @@ def test_labels_at_reconstructs_when_malformed_event_follows_valid_one():
     assert gc._labels_at(events, T) == ["bug"]
 
 
+def test_labels_at_skips_non_dict_timeline_events():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        "not-an-event",
+        {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}},
+    ]
+    assert gc._labels_at(events, T) == ["bug"]
+
+
 def test_fetch_context_at_survives_malformed_timeline_label_event(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",

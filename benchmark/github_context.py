@@ -168,6 +168,8 @@ def _labels_at(events, until: datetime):
     """
     relevant = []
     for ev in events or []:
+        if not isinstance(ev, dict):
+            continue
         if ev.get("event") not in ("labeled", "unlabeled"):
             continue
         ts = _parse_dt(ev.get("created_at"))
