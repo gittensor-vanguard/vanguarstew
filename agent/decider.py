@@ -22,6 +22,35 @@ VALID_ACTIONS = (
     "release", "plan", "patch", "close", "label",
 )
 
+# Common near-misses an LLM might answer with, mapped onto the canonical verb.
+_ACTION_SYNONYMS = {
+    "approve": "merge",
+    "approved": "merge",
+    "lgtm": "merge",
+    "request changes": "request-changes",
+    "request_changes": "request-changes",
+    "requested-changes": "request-changes",
+    "assign_reviewer": "assign-reviewer",
+    "assign reviewer": "assign-reviewer",
+    "closed": "close",
+    "triaged": "triage",
+    "labeled": "label",
+    "labelled": "label",
+}
+
+
+def _normalize_action(action) -> str:
+    """Map `action` onto `VALID_ACTIONS`, via a known synonym or a plain match.
+
+    Anything still outside the declared vocabulary falls back to "plan" — a concrete
+    maintainer decision has a hard ground truth, so it must never carry arbitrary
+    free-text through to the objective scorer.
+    """
+    key = (action or "").strip().lower()
+    if key in VALID_ACTIONS:
+        return key
+    return _ACTION_SYNONYMS.get(key, "plan")
+
 
 def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     user = (
@@ -47,7 +76,7 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out = llm.chat_json(SYSTEM, user, stub=stub)
     if not isinstance(out, dict):
         out = dict(stub)
-    out.setdefault("action", "plan")
+    out["action"] = _normalize_action(out.get("action"))
     return out
 
 
