@@ -131,7 +131,12 @@ def _normalize_review(out: dict, stub: dict) -> dict:
 
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
-    files = pr.get("files") or []
+    raw_files = pr.get("files")
+    files = []
+    if isinstance(raw_files, list):
+        for path in raw_files:
+            if isinstance(path, str) and path.strip():
+                files.append(path.strip())
     user = (
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy else "")
         + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"

@@ -175,3 +175,32 @@ def test_review_pr_maps_near_miss_action_and_value_label_to_canonical_vocab():
     assert rev["action"] == "merge"
     assert rev["value_label"] in VALUE_LABELS
     assert rev["value_label"] == "mult:maintenance"
+
+
+# --- #414: non-list / non-string PR file paths must not abort review_pr --------------------
+
+_MALFORMED_FILES = [42, 3.14, True, "agent/foo.py", {"path": "tests/x.py"}, None]
+
+
+def test_review_pr_tolerates_non_list_files_field():
+    llm = LLM(api_key="offline")
+    for bad in _MALFORMED_FILES:
+        rev = review_pr({"number": 1, "title": "Fix bug", "author": "alice", "files": bad},
+                        None, llm)
+        assert rev["action"] in ACTIONS
+        assert rev["tests_present"] is False
+
+
+def test_review_pr_keeps_only_string_paths_from_files_list():
+    llm = LLM(api_key="offline")
+    pr = {"number": 1, "title": "Fix bug", "author": "alice",
+          "files": [None, 42, "", "  ", "tests/test_x.py", {"path": "ignored"}]}
+    assert review_pr(pr, None, llm)["tests_present"] is True
+
+
+def test_review_pr_files_list_unchanged_for_well_formed_paths():
+    llm = LLM(api_key="offline")
+    pr = {"number": 30, "title": "Semver-aware bump scoring", "author": "x",
+          "additions": 175, "deletions": 4, "body": "Fixes #10", "diff": "",
+          "files": ["benchmark/score.py", "tests/test_score.py"]}
+    assert review_pr(pr, None, llm)["tests_present"] is True
