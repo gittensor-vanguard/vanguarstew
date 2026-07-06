@@ -1,6 +1,7 @@
 """Tests for the sample-adequacy gate (deterministic, offline)."""
 
 import copy
+import logging
 import os
 import sys
 
@@ -10,6 +11,7 @@ if ROOT not in sys.path:
 
 from benchmark.sample_adequacy import (  # noqa: E402
     DEFAULT_MIN_TASKS,
+    _check_rows_list,
     check_sample_adequacy,
     failed_checks,
     sample_adequacy_headline,
@@ -181,6 +183,91 @@ def test_headline_handles_a_result_with_no_checks():
     assert sample_adequacy_headline({}) == "sample adequacy: no checks evaluated"
     assert sample_adequacy_headline("not a dict") == "sample adequacy: no checks evaluated"
     assert sample_adequacy_headline({"checks": []}) == "sample adequacy: no checks evaluated"
+
+
+# --- #701: checks hardening (resubmit of #703) ---------------------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "run_scored"}, "not a list",
+    ({"name": "run_scored", "passed": False},),  # tuple, not list
+    range(2),  # iterable but not a list
+]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "run_scored", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "run_scored", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "run_scored", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_sample_adequacy_headline_survives_non_list_checks():
+    base = {"passed": False, "tasks": 0}
+    for bad in _MALFORMED_CHECKS:
+        assert sample_adequacy_headline({**base, "checks": bad}) == (
+            "sample adequacy: no checks evaluated"
+        ), bad
+
+
+def test_sample_adequacy_headline_logs_warning_for_non_list_checks(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        line = sample_adequacy_headline({"checks": 42, "passed": False})
+    assert line == "sample adequacy: no checks evaluated"
+    assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [
+        {"name": "run_scored", "passed": False},
+        42,
+        {"name": "enough_tasks", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert failed_checks({"checks": checks}) == ["run_scored"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_failed_checks_helper_is_robust():
