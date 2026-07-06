@@ -97,6 +97,9 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q
 
 # CI gate: exit non-zero when composite_mean drops below a floor
 VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo /path/to/repo --tasks 2 --horizon 5 --fail-under 0.5
+
+# compare two saved --out artifacts (JSON on stdout, headline on stderr)
+python -m scripts.compare_eval baseline.json candidate.json
 ```
 
 > **Dev-only backend:** [`tools/codex_llm.py`](tools/codex_llm.py) can drive the benchmark and
