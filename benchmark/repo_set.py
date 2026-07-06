@@ -37,6 +37,15 @@ _FREEZE_KEYS = {
 EXAMPLE_REPO_SET = os.path.join(os.path.dirname(__file__), "repo_sets", "example.json")
 CURATED_REPO_SET = os.path.join(os.path.dirname(__file__), "repo_sets", "curated.json")
 
+# Starter configs use this exact GitHub owner placeholder — not a substring search, so real
+# repos whose names happen to contain "OWNER" are not misclassified.
+PLACEHOLDER_SOURCE_PREFIX = "https://github.com/OWNER/"
+
+
+def is_placeholder_source(source: str) -> bool:
+    """Return True when ``source`` is the shipped starter's ``OWNER/...`` placeholder URL."""
+    return isinstance(source, str) and source.startswith(PLACEHOLDER_SOURCE_PREFIX)
+
 
 class RepoSetError(ValueError):
     """Raised when a repo-set config is malformed."""
