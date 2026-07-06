@@ -181,7 +181,7 @@ _PLAN_KIND = {
     "docs": "docs", "doc": "docs",
     "refactor": "refactor",
     "perf": "perf",
-    "test": "test",
+    "test": "test", "tests": "test",
     "release": "release",
     "dep": "chore", "deps": "chore", "chore": "chore",
     "build": "build",
