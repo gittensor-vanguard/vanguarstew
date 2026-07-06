@@ -16,6 +16,12 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Agent robustness: `agent/llm.py::extract_json` no longer trusts only the *first* fenced
+  code block in an LLM response. A verbose/chain-of-thought response can restate a schema
+  example in an earlier fence before its real answer in a later one; the parser now
+  collects every fenced block that parses as valid JSON and applies the same "object over
+  array, longest wins" preference already used by the unfenced bracket-scan fallback, so
+  the real, more complete answer wins over a throwaway earlier example (#290).
 - Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
   and `releases` were read from only the first API page, so a repo with more than 100 of
   either silently dropped the rest — which can hide a milestone that was open at T or an

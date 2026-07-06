@@ -108,22 +108,32 @@ def _iter_top_level_spans(text: str):
 def extract_json(text: str):
     """Best-effort JSON extraction from an LLM response.
 
-    Tries, in order: a fenced code block, the raw response verbatim, then
-    balanced top-level `{...}`/`[...]` spans scanned across the text. Among
-    those spans, object spans are preferred over array spans and, within a
-    type, the longest span wins — this keeps a stray bracket-shaped aside
-    (e.g. a `[1]` citation ahead of the real payload) from being mistaken
-    for the answer while still supporting genuine array responses.
+    Tries, in order: fenced code blocks, the raw response verbatim, then
+    balanced top-level `{...}`/`[...]` spans scanned across the text. When
+    multiple fenced blocks (or, failing that, multiple spans) parse as valid
+    JSON — a verbose/chain-of-thought response can restate a schema example
+    in an earlier fence before its real answer in a later one — object
+    candidates are preferred over array candidates and, within a type, the
+    longest candidate wins. This keeps a stray bracket-shaped aside (e.g. a
+    `[1]` citation) or a throwaway earlier example from being mistaken for
+    the real, more complete answer, while still supporting genuine array
+    responses.
     """
     if text is None:
         raise ValueError("empty LLM response")
 
-    fence_match = _FENCE.search(text)
-    if fence_match:
+    fence_candidates = []
+    for fence_match in _FENCE.finditer(text):
+        block = fence_match.group(1)
         try:
-            return json.loads(fence_match.group(1))
+            value = json.loads(block)
         except (ValueError, TypeError):
-            pass
+            continue
+        opener = "{" if isinstance(value, dict) else "["
+        fence_candidates.append((opener, block, value))
+    if fence_candidates:
+        fence_candidates.sort(key=lambda c: (c[0] != "{", -len(c[1])))
+        return fence_candidates[0][2]
 
     try:
         return json.loads(text)

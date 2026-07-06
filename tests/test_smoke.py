@@ -57,6 +57,32 @@ def test_extract_json_raises_when_no_valid_candidate():
         extract_json('no json here at all, just [Doe, 2020] prose')
 
 
+def test_extract_json_prefers_the_more_complete_of_two_fenced_objects():
+    # A verbose/chain-of-thought response can restate a schema example in an earlier
+    # fenced block before its real answer in a later one. `_FENCE.search` (singular)
+    # used to return only the FIRST fence unconditionally, so the throwaway example
+    # was returned instead of the real, more complete decision.
+    text = (
+        'Sure, I will respond in this format:\n'
+        '```json\n{"action": "merge", "rationale": "example"}\n```\n\n'
+        'Given the repo state, my actual decision:\n'
+        '```json\n{"action": "reject", "rationale": "missing tests, high risk change"}\n```\n'
+    )
+    assert extract_json(text) == {"action": "reject", "rationale": "missing tests, high risk change"}
+
+
+def test_extract_json_single_fence_still_wins_over_later_bracket_noise():
+    # A single fenced block is still preferred over any unfenced bracket noise that
+    # follows it in the response.
+    text = '```json\n{"a": 1, "b": 2}\n```\n\nfootnote: [1]'
+    assert extract_json(text) == {"a": 1, "b": 2}
+
+
+def test_extract_json_fenced_array_used_when_no_fenced_object_present():
+    text = 'plan:\n```json\n[{"title": "a"}, {"title": "b"}]\n```\n'
+    assert extract_json(text) == [{"title": "a"}, {"title": "b"}]
+
+
 def test_solve_offline_returns_decision():
     d = tempfile.mkdtemp()
     try:
