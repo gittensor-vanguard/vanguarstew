@@ -119,6 +119,8 @@ def _plan_substance(plan) -> int:
 
 def _offline_rank(submission: dict) -> tuple:
     """Deterministic stand-in ordering: reward a substantive plan plus real reasoning."""
+    if not isinstance(submission, dict):
+        return (0, 0, 0)  # non-dict submission (LLM emitted a list/string/number) — no substance
     philosophy = submission.get("philosophy") or {}
     plan = _plan_list(submission.get("plan"))
     rationale = _text(submission.get("rationale"))
