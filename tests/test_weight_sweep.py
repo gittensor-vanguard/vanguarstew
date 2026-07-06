@@ -159,3 +159,36 @@ def test_freeze_window_dict_warns_for_non_dict_value(caplog):
         }
     assert merged == {}
     assert any("freeze_window is int" in r.message for r in caplog.records)
+
+
+# --- non-dict entries inside a rows list must not abort weight_sweep -------------------
+
+_MALFORMED_ROW_ENTRIES = [42, 3.14, True, "not a dict", None]
+
+
+def test_weight_sweep_survives_non_dict_row_entries():
+    rows = [
+        {"winner": "challenger", "objective": {"plan": 0.5, "decision": 0.0, "trajectory": 0.0}},
+        42,
+        {"winner": "baseline", "objective": {"plan": 0.0, "decision": 0.0, "trajectory": 0.0}},
+    ]
+    sweep = weight_sweep(rows)
+    assert len(sweep) == len(WEIGHT_SWEEP_GRID)
+    # Two valid rows averaged at production weights (0.6 judge + 0.4 objective).
+    default = next(r for r in sweep if r["w_judge"] == 0.6 and r["w_objective"] == 0.4)
+    assert default["composite_mean"] == 0.3
+
+
+def test_weight_sweep_logs_warning_for_non_dict_row_entry(caplog):
+    import logging
+
+    rows = [{"winner": "challenger", "objective": {}}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        weight_sweep(rows)
+    assert any("skipping a non-dict row" in r.message and "int" in r.message for r in caplog.records)
+
+
+def test_weight_sweep_all_non_dict_rows_degrades_to_zero():
+    for bad in _MALFORMED_ROW_ENTRIES:
+        sweep = weight_sweep([bad, bad])
+        assert all(row["composite_mean"] == 0.0 for row in sweep), bad

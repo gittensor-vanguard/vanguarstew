@@ -29,6 +29,10 @@ the relevant checks rather than raising.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_MIN_TASKS = 3
 
 
@@ -38,6 +42,39 @@ def _is_number(value) -> bool:
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return gate-check rows from a ``checks`` list for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Tuples and other non-list iterables are warned and treated as empty (never coerced).
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
+        logger.warning(
+            "sample_adequacy: checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "sample_adequacy: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "sample_adequacy: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _partition_entries(result: dict) -> list:
@@ -132,14 +169,26 @@ def check_sample_adequacy(result, min_tasks: int = DEFAULT_MIN_TASKS) -> dict:
 
 
 def failed_checks(result: dict) -> list:
-    """The names of the checks that failed in a :func:`check_sample_adequacy` result."""
-    return [c["name"] for c in _dict(result).get("checks", []) if not c.get("passed")]
+    """The names of the checks that failed in a :func:`check_sample_adequacy` result.
+
+    Malformed ``checks`` containers (non-lists, including tuples) and non-object rows are
+    skipped after logging a warning; they never raise.
+    """
+    return [
+        c["name"]
+        for c in _check_rows_list(_dict(result).get("checks"))
+        if not c.get("passed")
+    ]
 
 
 def sample_adequacy_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_sample_adequacy` result."""
+    """A one-line human summary of a :func:`check_sample_adequacy` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"sample adequacy: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = result.get("checks") or []
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "sample adequacy: no checks evaluated"
     tasks = result.get("tasks")

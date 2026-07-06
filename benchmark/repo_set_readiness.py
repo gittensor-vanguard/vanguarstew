@@ -21,10 +21,47 @@ Pure evaluation: no I/O, never mutates the config; a malformed/non-dict config f
 
 from __future__ import annotations
 
+import logging
+
 from benchmark.repo_set import TIERS, RepoSetError, is_placeholder_source, validate_repo_set
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_TUNED = 2
 DEFAULT_MIN_HELD_OUT = 1
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return readiness-check rows from a ``checks`` list for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Tuples and other non-list iterables are warned and treated as empty (never coerced).
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
+        logger.warning(
+            "repo_set_readiness: checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "repo_set_readiness: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "repo_set_readiness: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def check_readiness(config, min_tuned: int = DEFAULT_MIN_TUNED,
@@ -85,24 +122,31 @@ def _result(checks: list[dict], min_tuned: int, min_held_out: int, **extra) -> d
 
 
 def failed_checks(result) -> list[str]:
-    """The names of the checks that failed in a :func:`check_readiness` result."""
+    """The names of the checks that failed in a :func:`check_readiness` result.
+
+    When ``result`` is not a dict, returns ``["result"]``. Malformed ``checks`` containers
+    (non-lists, including tuples) and non-object rows are skipped after logging a warning.
+    """
     if not isinstance(result, dict):
         return ["result"]
-    checks = result.get("checks")
-    if not isinstance(checks, list):
-        return ["checks"]
     return [
-        check["name"] for check in checks
-        if isinstance(check, dict) and not check.get("passed")
+        check["name"]
+        for check in _check_rows_list(result.get("checks"))
+        if not check.get("passed")
     ]
 
 
 def readiness_headline(result) -> str:
-    """A one-line human summary of a :func:`check_readiness` result."""
+    """A one-line human summary of a :func:`check_readiness` result.
+
+    When ``result`` is not a dict, returns ``"readiness: invalid result"``. When ``checks`` is
+    missing, empty, a non-list container, or contains only unusable rows, returns
+    ``"readiness: no checks evaluated"`` after logging any warnings.
+    """
     if not isinstance(result, dict):
         return "readiness: invalid result"
-    checks = result.get("checks")
-    if not isinstance(checks, list) or not checks:
+    checks = _check_rows_list(result.get("checks"))
+    if not checks:
         return "readiness: no checks evaluated"
     if result.get("passed"):
         return (f"readiness: READY ({result.get('repos_tuned', '?')} tuned, "

@@ -1,6 +1,7 @@
 """Tests for the repo-set acceptance-readiness gate (deterministic, offline)."""
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from benchmark.repo_set import (  # noqa: E402
 from benchmark.repo_set_readiness import (  # noqa: E402
     DEFAULT_MIN_HELD_OUT,
     DEFAULT_MIN_TUNED,
+    _check_rows_list,
     check_readiness,
     failed_checks,
     readiness_headline,
@@ -170,7 +172,65 @@ def test_readiness_headline_reports_ready_and_not_ready():
 
 def test_failed_checks_reports_malformed_result():
     assert failed_checks(None) == ["result"]
-    assert failed_checks({"checks": 42}) == ["checks"]
+    assert failed_checks({"checks": 42}) == []
+
+
+# --- #712: checks hardening for readiness headline / failed_checks --------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "min_tuned"}, "not a list",
+    ({"name": "min_tuned", "passed": False},),
+    range(2),
+]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "min_tuned", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "min_tuned", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "min_tuned", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+
+
+def test_readiness_headline_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert readiness_headline({"checks": bad, "passed": False}) == (
+            "readiness: no checks evaluated"
+        ), bad
+
+
+def test_failed_checks_logs_warning_for_malformed_container(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert failed_checks({"checks": 42}) == []
+    assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [{"name": "min_tuned", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert failed_checks({"checks": checks}) == ["min_tuned"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_check_readiness_does_not_mutate_the_config():
