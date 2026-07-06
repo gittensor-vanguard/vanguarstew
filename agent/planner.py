@@ -377,7 +377,8 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     stub = _offline_plan_stub(context, n)
     plan = llm.chat_json(SYSTEM, user, stub=stub)
     if isinstance(plan, dict):  # tolerate {"plan": [...]}
-        plan = plan.get("plan") or plan.get("actions") or []
+        wrapped = _plan_list(plan.get("plan"), "plan")
+        plan = wrapped or _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
     return reconcile_plan_with_queue(plan, context, n)
 
