@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Fixed
+- Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
+  `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
+  reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
+  Mirrors the reachability guard `benchmark/freeze.py::build_context` already applies (#256).
 - `agent/philosophy.py::infer_philosophy` now coerces a non-dict LLM response (e.g. a
   top-level JSON array) back to the offline stub, mirroring the guard already used by
   `decider.decide` and `review.review_pr`. Previously a substantive-but-list philosophy
