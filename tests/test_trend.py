@@ -41,6 +41,21 @@ def test_headline_score_reads_top_level_and_generalization_tuned():
     assert headline_score({"composite_mean": "bad"}) is None                # non-numeric
 
 
+def test_headline_score_rejects_non_finite_composite_mean():
+    assert headline_score({"composite_mean": float("nan")}) is None
+    assert headline_score({"composite_mean": float("inf")}) is None
+    assert headline_score({"composite_mean": float("-inf")}) is None
+
+
+def test_trend_skips_non_finite_scores():
+    out = trend([("a", {"composite_mean": float("nan")}), ("b", {"composite_mean": 0.5})])
+    assert [p["composite_mean"] for p in out["points"]] == [None, 0.5]
+    assert out["scored"] == 1
+    assert out["first"] == 0.5
+    assert out["last"] == 0.5
+    assert out["change"] == 0.0
+
+
 def test_headline_score_treats_unscored_tuned_partition_as_unscored():
     # A tuned partition that scored nothing (scored_repos: 0) reports a placeholder
     # composite_mean of 0.0 — a transient/infra outcome, not a real zero. It must read as None,

@@ -15,6 +15,7 @@ math) so a partial series still produces a trend instead of raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,12 @@ DEFAULT_REGRESSION_THRESHOLD = 0.02
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except (TypeError, OverflowError):
+        return False
 
 
 def headline_score(artifact) -> float | None:

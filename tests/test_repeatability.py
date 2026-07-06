@@ -91,6 +91,12 @@ def test_unscored_runs_are_skipped_not_counted():
     assert result["scores"] == [0.6, 0.62]
 
 
+def test_non_finite_scores_are_skipped_not_counted():
+    result = assess_repeatability([_run(float("nan")), _run(0.6), _run(0.62)])
+    assert result["runs"] == 2
+    assert result["scores"] == [0.6, 0.62]
+
+
 def test_unscored_multi_repo_run_is_skipped_not_folded_into_spread():
     # A repeat where every repo was too small reports scored_repos: 0 with a placeholder 0.0;
     # folding it into the spread would fabricate a false UNSTABLE verdict, so it must be skipped.
