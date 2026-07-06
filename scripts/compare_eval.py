@@ -64,8 +64,39 @@ def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
     return out
 
 
+def _compare_generalization(baseline: dict, candidate: dict) -> dict:
+    """Diff two generalization artifacts (``run_eval --generalization --out``)."""
+    result: dict = {}
+    for partition in ("tuned", "held_out"):
+        base_part = baseline.get(partition) or {}
+        cand_part = candidate.get(partition) or {}
+        part_result: dict = {
+            "composite_mean": _metric_triplet(base_part, cand_part, "composite_mean"),
+        }
+        base_parts = base_part.get("composite_parts") or {}
+        cand_parts = cand_part.get("composite_parts") or {}
+        parts: dict = {}
+        for key in ("judge_mean", "objective_mean"):
+            if key in base_parts or key in cand_parts:
+                parts[key] = _metric_triplet(base_parts, cand_parts, key)
+        if parts:
+            part_result["composite_parts"] = parts
+        result[partition] = part_result
+    result["generalization_gap"] = _metric_triplet(baseline, candidate, "generalization_gap")
+    if "repo_set" in baseline or "repo_set" in candidate:
+        result["repo_set"] = {
+            "baseline": baseline.get("repo_set"),
+            "candidate": candidate.get("repo_set"),
+        }
+    return result
+
+
 def compare_eval_artifacts(baseline: dict, candidate: dict) -> dict:
     """Return a stable JSON summary of how ``candidate`` differs from ``baseline``."""
+    # Generalization artifacts carry scores under tuned/held_out partitions (#382).
+    if "tuned" in baseline or "tuned" in candidate:
+        return _compare_generalization(baseline, candidate)
+
     parts = {}
     base_parts = baseline.get("composite_parts") or {}
     cand_parts = candidate.get("composite_parts") or {}
@@ -96,6 +127,18 @@ def compare_eval_artifacts(baseline: dict, candidate: dict) -> dict:
 
 def comparison_headline(diff: dict) -> str:
     """One-line human summary for stderr."""
+    # Generalization artifacts: report the gap delta.
+    if "generalization_gap" in diff:
+        gap = diff["generalization_gap"]
+        delta = gap.get("delta")
+        if delta is not None:
+            direction = "wider" if delta > 0 else "narrower" if delta < 0 else "unchanged"
+            return (
+                f"compare_eval: generalization_gap {gap.get('baseline')} -> "
+                f"{gap.get('candidate')} ({direction} {delta:+.3f})"
+            )
+        return "compare_eval: generalization_gap delta unavailable"
+
     mean = diff.get("composite_mean") or {}
     delta = mean.get("delta")
     if delta is None:

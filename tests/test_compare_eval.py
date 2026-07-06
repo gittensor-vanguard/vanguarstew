@@ -103,3 +103,46 @@ def test_compare_eval_artifacts_matches_rows_with_null_freeze_commit():
     row = diff["per_repo"][0]
     assert row["repo"] == repr(sorted(["composite_mean", "freeze_commit", "tasks"]))
     assert row["composite_mean"]["delta"] == 0.1
+
+
+def test_compare_eval_artifacts_diffs_generalization_artifacts():
+    """Generalization artifacts have tuned/held_out partitions, no top-level composite_mean."""
+    baseline = {
+        "repo_set": "curated.json",
+        "tuned": {"composite_mean": 0.5, "scored_repos": 2,
+                  "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4}},
+        "held_out": {"composite_mean": 0.3, "scored_repos": 1},
+        "generalization_gap": 0.2,
+    }
+    candidate = {
+        "repo_set": "curated.json",
+        "tuned": {"composite_mean": 0.6, "scored_repos": 2,
+                  "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5}},
+        "held_out": {"composite_mean": 0.35, "scored_repos": 1},
+        "generalization_gap": 0.25,
+    }
+    diff = compare_eval_artifacts(baseline, candidate)
+
+    # Each partition has its own composite_mean delta.
+    assert diff["tuned"]["composite_mean"]["delta"] == 0.1
+    assert diff["held_out"]["composite_mean"]["delta"] == 0.05
+    # Generalization gap is diffed directly.
+    assert diff["generalization_gap"]["delta"] == 0.05
+    # Repo set name is preserved.
+    assert diff["repo_set"]["baseline"] == "curated.json"
+
+
+def test_comparison_headline_for_generalization():
+    """Headline reports generalization_gap delta for generalization artifacts."""
+    diff = {
+        "generalization_gap": {"baseline": 0.2, "candidate": 0.25, "delta": 0.05},
+    }
+    headline = comparison_headline(diff)
+    assert "generalization_gap 0.2 -> 0.25" in headline
+    assert "+0.050" in headline
+
+
+def test_comparison_headline_for_generalization_missing_delta():
+    """Headline handles missing generalization_gap delta gracefully."""
+    diff = {"generalization_gap": {"baseline": 0.2, "candidate": None, "delta": None}}
+    assert "delta unavailable" in comparison_headline(diff)
