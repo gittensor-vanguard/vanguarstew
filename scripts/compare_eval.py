@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+
+logger = logging.getLogger(__name__)
 
 
 def _numeric(value) -> float | None:
@@ -45,10 +48,43 @@ def _repo_key(entry: dict) -> str:
     return repr(sorted(entry.keys()))
 
 
+def _per_repo_list(artifact: dict, which: str) -> list:
+    """Return ``per_repo`` when it is a list; otherwise treat as no per-repo rows.
+
+    A truthy non-list must not reach ``for row in per_repo`` or a malformed saved
+    artifact aborts ``compare_eval`` (#464). Logs a warning so corrupt CLI input is
+    visible rather than silently dropped.
+    """
+    rows = (artifact or {}).get("per_repo")
+    if isinstance(rows, list):
+        return rows
+    if rows is not None:
+        logger.warning(
+            "compare_eval: %s per_repo is %s, not a list; treating as empty",
+            which,
+            type(rows).__name__,
+        )
+    return []
+
+
+def _iter_per_repo_rows(artifact: dict, which: str):
+    """Yield dict rows from ``artifact['per_repo']``, logging and skipping junk entries."""
+    for row in _per_repo_list(artifact, which):
+        if not isinstance(row, dict):
+            logger.warning(
+                "compare_eval: skipping a non-dict %s per_repo entry (%s: %r)",
+                which,
+                type(row).__name__,
+                row,
+            )
+            continue
+        yield row
+
+
 def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
-    base_by_key = {_repo_key(row): row for row in baseline.get("per_repo") or []}
+    base_by_key = {_repo_key(row): row for row in _iter_per_repo_rows(baseline, "baseline")}
     out = []
-    for row in candidate.get("per_repo") or []:
+    for row in _iter_per_repo_rows(candidate, "candidate"):
         key = _repo_key(row)
         base_row = base_by_key.get(key)
         if base_row is None:
