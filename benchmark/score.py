@@ -294,7 +294,14 @@ def _meaningful_overlap(a: set, b: set) -> bool:
     if not a or not b:
         return False
     shared = a & b
-    return len(shared) >= max(2, min(len(a), len(b)) // 2)
+    smaller = min(len(a), len(b))
+    # "At least half, but never fewer than 2" guards against a single common word (e.g.
+    # "fix") passing as a theme match in larger title/subject sets. But that floor of 2
+    # exceeds the max possible overlap when either set has only 1 token (a single-word
+    # issue title like "Flaky"), making even a perfect match unreachable. Cap the
+    # threshold at `smaller` so a full match of a small set is never impossible.
+    threshold = min(smaller, max(2, smaller // 2))
+    return len(shared) >= threshold
 
 
 def addressed_issues(revealed, open_issues) -> list:

@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format is based on
   or a git-only run (#135).
 
 ### Fixed
+- Backlog scoring: `benchmark/score.py::_meaningful_overlap`'s "at least half, floor 2"
+  threshold was unreachable whenever either token set had only 1 token — a single-word
+  issue title (e.g. "Flaky") could never count as addressed or anticipated, even for an
+  exact match, so every such issue was silently dropped from `backlog_recall` on both
+  sides. The threshold is now capped at the smaller set's size, so a full match of a
+  small set is never impossible; larger-set behavior is unchanged (#308).
 - Agent robustness: `agent/llm.py::extract_json` no longer trusts only the *first* fenced
   code block in an LLM response. A verbose/chain-of-thought response can restate a schema
   example in an earlier fence before its real answer in a later one; fences are now tried

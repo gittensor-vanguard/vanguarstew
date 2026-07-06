@@ -192,6 +192,27 @@ def test_backlog_recall_matches_addressed_issues():
     assert score["backlog_recall"] == 1.0
 
 
+def test_backlog_recall_matches_single_word_issue_titles():
+    # _meaningful_overlap's "at least half, floor 2" threshold used to be unreachable
+    # when either token set had only 1 token (a single-word issue title), so even an
+    # exact, perfect match never counted as addressed.
+    open_issues = [{"number": 1, "title": "Flaky"}]
+    revealed = [{"subject": "Fix flaky test in CI", "files": []}]
+    assert [i["number"] for i in addressed_issues(revealed, open_issues)] == [1]
+    plan = [{"title": "Fix the flaky test", "kind": "bugfix", "theme": "flaky"}]
+    res = backlog_recall(plan, revealed, open_issues)
+    assert res["matched_issue_numbers"] == [1]
+    assert res["backlog_recall"] == 1.0
+
+
+def test_backlog_recall_single_word_title_still_requires_a_real_match():
+    # The fix must not make single-word titles match indiscriminately -- an unrelated
+    # single-word title is still not addressed.
+    open_issues = [{"number": 1, "title": "Flaky"}]
+    revealed = [{"subject": "Add structured logging", "files": []}]
+    assert addressed_issues(revealed, open_issues) == []
+
+
 def test_backlog_diagnostics_report_issue_and_matching_subject():
     open_issues = [
         {"number": 12, "title": "Memory leak under load"},
