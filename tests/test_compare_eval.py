@@ -54,6 +54,37 @@ def test_compare_eval_artifacts_handles_missing_optional_fields():
     assert "per_repo" not in diff
 
 
+def test_compare_eval_artifacts_treats_non_finite_scores_as_unavailable():
+    nan = float("nan")
+    inf = float("inf")
+    diff = compare_eval_artifacts({"composite_mean": 0.5}, {"composite_mean": nan})
+    assert diff["composite_mean"] == {"baseline": 0.5, "candidate": None, "delta": None}
+    assert comparison_headline(diff) == "compare_eval: composite_mean delta unavailable"
+
+    diff = compare_eval_artifacts({"composite_mean": nan}, {"composite_mean": 0.5})
+    assert diff["composite_mean"]["baseline"] is None
+    assert diff["composite_mean"]["candidate"] == 0.5
+    assert diff["composite_mean"]["delta"] is None
+
+    diff = compare_eval_artifacts({"composite_mean": inf}, {"composite_mean": -inf})
+    assert diff["composite_mean"] == {"baseline": None, "candidate": None, "delta": None}
+
+    diff = compare_eval_artifacts(
+        {"composite_mean": 0.5, "judge_report": {"disagreement_rate": nan}},
+        {"composite_mean": 0.6, "judge_report": {"disagreement_rate": 0.25}},
+    )
+    assert diff["judge_report"]["disagreement_rate"]["candidate"] == 0.25
+    assert diff["judge_report"]["disagreement_rate"]["baseline"] is None
+    assert diff["judge_report"]["disagreement_rate"]["delta"] is None
+
+
+def test_compare_eval_json_output_stays_finite():
+    diff = compare_eval_artifacts({"composite_mean": 0.5}, {"composite_mean": float("nan")})
+    encoded = json.dumps(diff)
+    assert "NaN" not in encoded
+    assert json.loads(encoded) == diff
+
+
 def test_compare_eval_artifacts_reports_per_repo_deltas():
     baseline = {
         "composite_mean": 0.5,

@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 
 
 def _numeric(value) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
+        number = float(value)
+        if math.isfinite(number):
+            return number
     return None
 
 
@@ -43,11 +46,11 @@ def _delta(candidate, baseline) -> float | None:
 
 def _metric_triplet(baseline: dict, candidate: dict, key: str) -> dict:
     if key == "composite_mean":
-        base = _effective_composite_mean(baseline)
-        cand = _effective_composite_mean(candidate)
+        base = _numeric(_effective_composite_mean(baseline))
+        cand = _numeric(_effective_composite_mean(candidate))
     else:
-        base = baseline.get(key) if isinstance(baseline, dict) else None
-        cand = candidate.get(key) if isinstance(candidate, dict) else None
+        base = _numeric(baseline.get(key)) if isinstance(baseline, dict) else None
+        cand = _numeric(candidate.get(key)) if isinstance(candidate, dict) else None
     return {
         "baseline": base,
         "candidate": cand,
