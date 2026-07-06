@@ -19,6 +19,16 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Scoring correctness (`benchmark/score.py`): the objective anchor now recognizes the
+  version-cut commit that release tooling authors under a chore/build Conventional-Commit type,
+  such as `chore(release): 1.4.0` (standard-version), `chore(main): release 1.2.3`
+  (release-please), and `build(release): 2.0.0`. The #431 "CC prefix is authoritative" rule
+  had dropped these as plain chores, so `is_release_subject` returned False, `commit_kind`
+  returned `chore`, and `released_version` returned None on a real release: a challenger that
+  correctly anticipated the release, its bump level, and the `release` kind earned zero credit
+  on all three axes of `objective_component`. Recognition is body-gated (the text after the
+  prefix must itself be a release-tag subject), so `ci(release): update pipeline` and
+  `docs: changelog` edits remain non-releases and the #431 posture is preserved (#753).
 - Leakage: ``agent/context.py::_mask_forward_refs`` (the git-only fallback used when
   ``.vanguarstew_context.json`` is absent) now masks GitHub deep-links and raw commit SHAs
   in README/commit text, matching ``benchmark/leakage.strip_forward_refs`` — completing the

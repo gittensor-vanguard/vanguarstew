@@ -60,6 +60,21 @@ def _pr_title(pr: dict) -> str:
     return title.strip() if isinstance(title, str) else ""
 
 
+def _pr_dedup_key(pr: dict):
+    """Return a stable dedup key for an open PR in queue reconciliation.
+
+    Numbered PRs key on ``number``; numberless PRs key on title so two distinct
+    queue entries without a ``number`` do not collapse onto a shared ``None``.
+    """
+    if not isinstance(pr, dict):
+        return None
+    number = pr.get("number")
+    if number is not None:
+        return ("number", number)
+    title = _pr_title(pr)
+    return ("title", title) if title else None
+
+
 def _open_prs_list(context: dict) -> list:
     """Return ``open_prs`` when it is a list; otherwise treat as no PR queue.
 
@@ -355,9 +370,11 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
         pr = _matched_pr(item, prs)
         if pr is not None:
             number = pr.get("number")
-            if number in seen_prs:
+            dedup_key = _pr_dedup_key(pr)
+            if dedup_key is not None and dedup_key in seen_prs:
                 continue
-            seen_prs.add(number)
+            if dedup_key is not None:
+                seen_prs.add(dedup_key)
             addressed = True
             if not _is_review_item(item):
                 item = {

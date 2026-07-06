@@ -414,6 +414,70 @@ def test_objective_component_not_penalized_by_incidental_release_word():
     assert objective_component(obj) == 1.0
 
 
+def test_is_release_subject_accepts_chore_build_release_cuts():
+    # Release tooling authors the version-cut commit under a chore/build type: standard-version
+    # (`chore(release): X.Y.Z`), release-please (`chore(main): release X.Y.Z`), and the plain
+    # `chore: release vX.Y.Z`. Each is a genuine version cut and must be scored as a release.
+    for subj in (
+        "chore(release): 1.4.0",
+        "build(release): 2.0.0",
+        "chore(main): release 1.2.3",
+        "chore: release v3.1.0",
+        "chore(release)!: 4.0.0",
+    ):
+        assert is_release_subject(subj), subj
+        assert commit_kind(subj) == "release", subj
+
+
+def test_release_scoped_non_cuts_stay_non_release():
+    # The chore/build carve-out is body-gated: a release-scoped or release-mentioning commit
+    # whose body is prose (not a version-cut announcement) is release infrastructure, not a
+    # version cut, so the #431 posture holds and it must not score the release axis.
+    for subj in (
+        "ci(release): update the release pipeline",
+        "chore(release): tidy the release script",
+        "refactor: release the lock at 3.0",
+        "chore(deps): bump lodash to 4.17.21",
+        "test(release): cover the release-notes generator",
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+
+
+def test_released_version_from_chore_build_release_cut():
+    assert released_version(
+        [{"subject": "chore(release): 1.4.0", "files": ["CHANGELOG.md"]}]) == (1, 4, 0)
+    assert released_version([{"subject": "build(release): 2.0.0", "files": []}]) == (2, 0, 0)
+    assert released_version([{"subject": "chore(main): release 1.2.3", "files": []}]) == (1, 2, 3)
+
+
+def test_objective_anchor_credits_chore_release_cut():
+    # A plan that correctly anticipates a standard-version release cut (release kind + minor bump)
+    # must earn the release, bump, and kind axes. Before the fix `chore(release): 1.4.0` read as a
+    # plain chore, so all three axes silently dropped and a correct plan scored the same as one
+    # that ignored the release entirely.
+    from benchmark.score import objective_component
+    revealed = [
+        {"subject": "feat: add widget api", "files": ["widget/api.py"]},
+        {"subject": "chore(release): 1.4.0", "files": ["CHANGELOG.md"]},
+    ]
+    anticipated = [
+        {"title": "ship widget api", "kind": "feature"},
+        {"title": "cut the 1.4 release", "kind": "release"},
+    ]
+    obj = objective_score(anticipated, revealed, version_bump="minor", base_version="1.3.0")
+    assert obj["release_signaled"] is True
+    assert obj["bump_actual"] == "minor" and obj["bump_match"] is True
+    assert "release" in obj["actual_kinds"] and obj["kind_recall"] == 1.0
+
+    # A plan that ignored the release scores strictly lower on the same window, so the anchor
+    # actually discriminates on release anticipation instead of collapsing both to one value.
+    ignored = [{"title": "ship widget api", "kind": "feature"}]
+    ignored_obj = objective_score(ignored, revealed, version_bump=None, base_version="1.3.0")
+    assert ignored_obj["release_signaled"] is True and ignored_obj["release_predicted"] is False
+    assert objective_component(obj) > objective_component(ignored_obj)
+
+
 def test_release_predicted_ignores_inline_version_but_honors_kind():
     assert release_predicted([{"title": "bump pytest to 8.0.0", "kind": "dep"}]) is False
     assert release_predicted([{"title": "prepare v1.2.0", "kind": "release"}]) is True   # kind

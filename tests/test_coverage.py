@@ -1,8 +1,11 @@
 """Tests for the multi-repo coverage breadth gate (deterministic, offline)."""
 
 import copy
+import logging
 import os
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -11,7 +14,7 @@ if ROOT not in sys.path:
 from benchmark.coverage import (  # noqa: E402
     DEFAULT_MIN_REPOS,
     DEFAULT_MIN_TASKS,
-    _checks_list,
+    _check_rows_list,
     _collect_per_repo_entries,
     _per_repo_list,
     check_coverage,
@@ -174,28 +177,145 @@ def test_collect_per_repo_entries_helpers():
     assert _per_repo_list("bad") == []
 
 
-# --- #583: non-list checks must not abort coverage headline formatting ---------------
+# --- #760: checks row sanitization for coverage headlines ---------------------------
 
-_MALFORMED_CHECKS = [42, 3.14, True, {"name": "is_multi_repo"}, "not a list"]
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "is_multi_repo"}, "not a list",
+    ({"name": "is_multi_repo", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
 
 
-def test_coverage_checks_list_accepts_only_real_lists():
+def test_check_rows_list_accepts_only_real_lists():
     rows = [{"name": "is_multi_repo", "passed": True}]
     for bad in _MALFORMED_CHECKS:
-        assert _checks_list(bad) == [], bad
-    assert _checks_list(rows) == rows
-    assert _checks_list(None) == []
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "is_multi_repo", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "is_multi_repo", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "is_multi_repo", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "is_multi_repo", "passed": False},
+        {"name": "min_repos_scored", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": 99, "passed": False},
+        {"name": "is_multi_repo", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert _check_rows_list([{"name": "is_multi_repo"}]) == []
+    assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
 
 
 def test_coverage_headline_survives_non_list_checks():
     base = {"passed": False, "repos_scored": 0, "total_tasks": 0}
     for bad in _MALFORMED_CHECKS:
-        assert coverage_headline({**base, "checks": bad}) == "coverage: no checks evaluated", bad
+        assert coverage_headline({**base, "checks": bad}) == (
+            "coverage: no checks evaluated"
+        ), bad
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_coverage_headline_survives_falsy_scalar_checks(bad):
+    assert coverage_headline({"checks": bad, "passed": False}) == (
+        "coverage: no checks evaluated"
+    )
+
+
+def test_coverage_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "is_multi_repo"}],
+        [{}],
+        [{"name": 42, "passed": True}],
+        [{"name": "is_multi_repo", "passed": 1}],
+    ):
+        assert coverage_headline({"checks": checks, "passed": False}) == (
+            "coverage: no checks evaluated"
+        )
+
+
+def test_coverage_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "is_multi_repo", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        line = coverage_headline({"checks": checks, "passed": False})
+    assert line == "coverage: INSUFFICIENT (1/1 checks failed: is_multi_repo)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_coverage_headline_logs_warning_for_non_list_checks(caplog):
-    import logging
-
     with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
         line = coverage_headline({"checks": 42, "passed": False})
     assert line == "coverage: no checks evaluated"
@@ -205,3 +325,26 @@ def test_coverage_headline_logs_warning_for_non_list_checks(caplog):
 def test_failed_checks_survives_non_list_checks():
     for bad in _MALFORMED_CHECKS:
         assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "is_multi_repo"}],
+        [{}],
+        [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "is_multi_repo", "passed": "no"}],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [
+        {"name": "is_multi_repo", "passed": False},
+        42,
+        {"name": "min_repos_scored", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
+        assert failed_checks({"checks": checks}) == ["is_multi_repo"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)

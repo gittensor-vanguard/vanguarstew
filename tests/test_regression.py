@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -14,6 +15,7 @@ if ROOT not in sys.path:
 
 from benchmark.regression import (  # noqa: E402
     DEFAULT_MAX_COMPOSITE_DROP,
+    _check_rows_list,
     check_regression,
     failed_checks,
     regression_headline,
@@ -136,18 +138,176 @@ def test_check_regression_does_not_mutate_inputs():
     assert baseline == snap_b and candidate == snap_c
 
 
+# --- #755: checks row sanitization for regression headlines --------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "both_scored"}, "not a list",
+    ({"name": "both_scored", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "both_scored", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "both_scored", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "both_scored", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "both_scored", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "both_scored", "passed": False},
+        {"name": "no_composite_regression", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": 99, "passed": False},
+        {"name": "both_scored", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list([{"name": "both_scored"}]) == []
+    assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
+
+
 def test_regression_headline_survives_non_list_checks():
-    for bad in (42, True, {"name": "no_composite_regression"}):
-        assert regression_headline({"checks": bad, "passed": False}) == "regression: no checks evaluated", bad
+    for bad in _MALFORMED_CHECKS:
+        assert regression_headline({"checks": bad, "passed": False}) == (
+            "regression: no checks evaluated"
+        ), bad
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_regression_headline_survives_falsy_scalar_checks(bad):
+    assert regression_headline({"checks": bad, "passed": False}) == (
+        "regression: no checks evaluated"
+    )
+
+
+def test_regression_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "both_scored"}],
+        [{}],
+        [{"name": 42, "passed": True}],
+        [{"name": "both_scored", "passed": 1}],
+    ):
+        assert regression_headline({"checks": checks, "passed": False}) == (
+            "regression: no checks evaluated"
+        )
+
+
+def test_regression_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "both_scored", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        line = regression_headline({"checks": checks, "passed": False})
+    assert line == "regression: BLOCKED (1/1 checks failed: both_scored)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_regression_headline_logs_warning_for_non_list_checks(caplog):
-    import logging
-
     with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
         line = regression_headline({"checks": 42, "passed": False})
     assert line == "regression: no checks evaluated"
     assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "both_scored"}],
+        [{}],
+        [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "both_scored", "passed": "no"}],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [
+        {"name": "both_scored", "passed": False},
+        42,
+        {"name": "no_composite_regression", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert failed_checks({"checks": checks}) == ["both_scored"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def _run_cli(*args):
