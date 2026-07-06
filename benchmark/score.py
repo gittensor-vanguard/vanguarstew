@@ -127,6 +127,21 @@ def changed_modules(revealed) -> set:
     return mods
 
 
+def _module_file_counts(revealed) -> dict:
+    """How many changed files fall in each top-level module."""
+    counts: dict[str, int] = {}
+    for r in revealed or []:
+        for path in r.get("files", []):
+            parts = [p for p in path.split("/") if p]
+            if not parts:
+                continue
+            top = parts[0] if len(parts) > 1 else parts[0].rsplit(".", 1)[0]
+            if top:
+                key = top.lower()
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def module_recall(plan, revealed) -> dict:
     """Fraction of actually-changed modules the plan anticipated (by name). Deterministic."""
     actual = changed_modules(revealed)
@@ -134,11 +149,23 @@ def module_recall(plan, revealed) -> dict:
         return {"module_recall": 0.0, "actual_modules": [], "matched_modules": []}
     ptoks = _plan_tokens(plan)
     matched = sorted(m for m in actual if _tokens(m) & ptoks)
-    return {
+    result = {
         "module_recall": round(len(matched) / len(actual), 3),
         "actual_modules": sorted(actual),
         "matched_modules": matched,
     }
+    # File-weighted recall: weight each module by how many changed files fell in it,
+    # so a plan that names the module where effort concentrated scores higher than
+    # one naming a single-file module (#215).  The matching is identical to plain
+    # module_recall — the two differ only in weighting.
+    file_counts = _module_file_counts(revealed)
+    if file_counts:
+        total = sum(file_counts.values())
+        result["weighted_module_recall"] = round(
+            sum(file_counts.get(m, 0) for m in matched) / total, 3,
+        )
+        result["module_weights"] = dict(sorted(file_counts.items()))
+    return result
 
 
 def is_release_subject(text: str) -> bool:

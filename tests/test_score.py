@@ -48,6 +48,55 @@ def test_module_recall_matches_by_name():
     assert res["module_recall"] == round(2 / 4, 3)  # core, changelog not anticipated
 
 
+def test_module_recall_includes_weighted_recall():
+    """When file counts differ, weighted_module_recall weights each module by file count."""
+    plan = [{"title": "fix core engine", "kind": "bugfix"}]
+    res = module_recall(plan, REVEALED)
+    assert "weighted_module_recall" in res
+    assert res["weighted_module_recall"] == 0.25  # core = 1/4 files
+    assert res["module_recall"] == 0.25              # 1/4 modules
+    assert "module_weights" in res
+    assert res["module_weights"]["core"] == 1
+    assert res["module_weights"]["plugins"] == 1
+
+
+def test_weighted_module_recall_differs_when_concentration_differs():
+    """A module with more changed files carries more weight."""
+    revealed = [
+        {"files": ["core/a.py", "core/b.py", "core/c.py", "core/d.py"]},
+        {"files": ["readme/readme.md"]},
+    ]
+    plan = [{"title": "update readme", "kind": "docs"}]
+    res = module_recall(plan, revealed)
+    assert res["module_recall"] == 0.5
+    assert res["weighted_module_recall"] == 0.2  # 1/5 files
+    # Reverse: name the heavy module
+    plan2 = [{"title": "rewrite core", "kind": "refactor"}]
+    res2 = module_recall(plan2, revealed)
+    assert res2["module_recall"] == 0.5
+    assert res2["weighted_module_recall"] == 0.8  # 4/5 files
+
+
+def test_weighted_module_recall_with_full_match():
+    """When all modules are matched, weighted recall is 1.0 regardless of distribution."""
+    revealed = [{"files": ["core/a.py", "plugins/b.py"]}]
+    plan = [{"title": "fix core and plugins", "theme": "core plugins", "kind": "bugfix"}]
+    res = module_recall(plan, revealed)
+    assert res["module_recall"] == 1.0
+    assert res["weighted_module_recall"] == 1.0
+
+
+def test_objective_score_propagates_weighted_recall():
+    """objective_score must include weighted_module_recall from module_recall."""
+    score = objective_score(
+        [{"title": "fix plugins", "kind": "bugfix"}],
+        REVEALED,
+    )
+    assert "weighted_module_recall" in score
+    assert "module_weights" in score
+    assert score["weighted_module_recall"] == score["module_recall"]
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True
