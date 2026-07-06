@@ -16,7 +16,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.review import review_pr  # noqa: E402
-from scripts.review_pr import _gh, _pr_author, fetch_pr, main  # noqa: E402
+from scripts.review_pr import _gh, _pr_author, _pr_files_list, fetch_pr, main  # noqa: E402
 
 
 def _fake_run(returncode=0, stdout="", stderr=""):
@@ -102,6 +102,41 @@ def test_fetch_pr_survives_a_null_author():
     assert pr["author"] == "ghost"
     assert pr["number"] == 42
     assert pr["files"] == ["core/scheduler.py"]
+
+
+# --- #605: non-list gh files must not abort fetch_pr ---------------------------------
+
+_MALFORMED_GH_FILES = [42, 3.14, True, "agent/foo.py", None]
+
+
+def test_pr_files_list_accepts_only_real_lists():
+    rows = [{"path": "agent/export.py"}, {"path": "tests/test_x.py"}]
+    for bad in _MALFORMED_GH_FILES:
+        assert _pr_files_list(bad, 1) == [], bad
+    assert _pr_files_list(rows, 1) == ["agent/export.py", "tests/test_x.py"]
+    assert _pr_files_list(None, 1) == []
+
+
+def test_pr_files_list_skips_non_dict_and_non_string_paths():
+    rows = [None, 42, {"path": ""}, {"path": "  "}, {"nope": "x"}, {"path": "tests/a.py"}]
+    assert _pr_files_list(rows, 7) == ["tests/a.py"]
+
+
+def test_fetch_pr_survives_non_list_files_from_gh(caplog):
+    payload = {
+        "number": 9,
+        "title": "Fix parser",
+        "body": "",
+        "author": {"login": "alice"},
+        "additions": 1,
+        "deletions": 0,
+        "files": 42,
+    }
+    with caplog.at_level(logging.WARNING, logger="scripts.review_pr"):
+        with patch("scripts.review_pr._gh", side_effect=_gh_json(payload)):
+            pr = fetch_pr("some/repo", 9)
+    assert pr["files"] == []
+    assert any("files is int" in r.message for r in caplog.records)
 
 
 def test_review_pr_prompt_includes_ghost_author():

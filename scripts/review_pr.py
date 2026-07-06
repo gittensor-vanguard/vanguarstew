@@ -64,6 +64,26 @@ def _pr_author(data: dict, number: int) -> str:
     return login.strip()
 
 
+def _pr_files_list(files, number: int) -> list[str]:
+    """Normalize gh's ``files`` array to string paths for maintainer-assist review."""
+    if not isinstance(files, list):
+        if files is not None:
+            logger.warning(
+                "review_pr: PR #%s files is %s, not a list; treating as empty",
+                number,
+                type(files).__name__,
+            )
+        return []
+    paths = []
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path")
+        if isinstance(path, str) and path.strip():
+            paths.append(path.strip())
+    return paths
+
+
 def fetch_pr(repo: str, number: int) -> dict:
     raw = _gh("pr", "view", str(number), "-R", repo, "--json",
               "number,title,body,author,additions,deletions,files")
@@ -77,7 +97,7 @@ def fetch_pr(repo: str, number: int) -> dict:
         "author": _pr_author(data, number),
         "additions": data["additions"],
         "deletions": data["deletions"],
-        "files": [f["path"] for f in data.get("files", [])],
+        "files": _pr_files_list(data.get("files"), data["number"]),
         "diff": _gh("pr", "diff", str(number), "-R", repo),
     }
 
