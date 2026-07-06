@@ -41,3 +41,16 @@ def test_infer_philosophy_offline_has_expected_keys():
     llm = LLM(api_key="offline")
     out = infer_philosophy({"recent_commits": [{"subject": "init"}]}, llm)
     assert EXPECTED_KEYS <= set(out)
+
+
+class _ListLLM:
+    """A model that answers with a top-level JSON array instead of an object."""
+
+    def chat_json(self, system, user, stub=None):
+        return ["conservative", "stability-over-features"]
+
+
+def test_infer_philosophy_coerces_non_dict_response_to_stub():
+    out = infer_philosophy({"recent_commits": [{"subject": "init"}]}, _ListLLM())
+    assert isinstance(out, dict)
+    assert EXPECTED_KEYS <= set(out)

@@ -75,7 +75,10 @@ def infer_philosophy(context: dict, llm) -> dict:
         "direction": "unknown (offline)",
         "evidence": [],
     }
-    return llm.chat_json(SYSTEM, user, stub=stub)
+    out = llm.chat_json(SYSTEM, user, stub=stub)
+    if not isinstance(out, dict):
+        out = dict(stub)
+    return out
 
 
 def _render(context: dict) -> str:
