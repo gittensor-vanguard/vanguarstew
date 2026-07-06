@@ -11,6 +11,10 @@ All notable changes to this project are documented here. The format is based on
   `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
   reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
   Mirrors the reachability guard `benchmark/freeze.py::build_context` already applies (#256).
+- `agent/philosophy.py::infer_philosophy` now coerces a non-dict LLM response (e.g. a
+  top-level JSON array) back to the offline stub, mirroring the guard already used by
+  `decider.decide` and `review.review_pr`. Previously a substantive-but-list philosophy
+  silently forfeited the offline judge's `philosophy_signal` tiebreaker (#190).
 - `benchmark/score.py::_tokens` and `is_release_subject` now treat a non-string plan-item
   field (`title`/`theme`/`kind`) as carrying no signal instead of raising, and
   `_plan_tokens` applies the same guard to individual `files` entries. All three used the
