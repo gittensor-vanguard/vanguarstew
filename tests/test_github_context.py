@@ -174,6 +174,39 @@ def test_labels_at_none_when_nothing_reconstructable():
     ) is None
 
 
+def test_labels_at_skips_malformed_label_payloads():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        {"event": "labeled", "created_at": "2023-01-02T00:00:00Z", "label": 42},
+        {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}},
+        {"event": "labeled", "created_at": "2023-01-04T00:00:00Z", "label": {"name": 123}},
+        "not-an-event",
+    ]
+    assert gc._labels_at(events, T) == ["bug"]
+
+
+def test_fetch_context_at_survives_malformed_timeline_label(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": []}]
+    timeline = [
+        {"event": "labeled", "created_at": "2023-01-02T00:00:00Z", "label": 42},
+        {"event": "labeled", "created_at": "2023-01-03T00:00:00Z", "label": {"name": "bug"}},
+    ]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return timeline
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == ["bug"]
+    assert iss["labels_as_of_t"] is True
+
+
 def test_open_issue_labels_reconstructed_as_of_T(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     # Live label list says "shipped" — that must NOT leak; only the as-of-T set from

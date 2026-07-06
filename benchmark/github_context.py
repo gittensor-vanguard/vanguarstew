@@ -157,6 +157,14 @@ def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100)
     return items
 
 
+def _timeline_label_name(label) -> str | None:
+    """Return a label name from a timeline event payload, or None when unusable."""
+    if not isinstance(label, dict):
+        return None
+    name = label.get("name")
+    return name if isinstance(name, str) and name else None
+
+
 def _labels_at(events, until: datetime):
     """Reconstruct an issue/PR's label set *as of `until`* from its timeline.
 
@@ -168,12 +176,14 @@ def _labels_at(events, until: datetime):
     """
     relevant = []
     for ev in events or []:
+        if not isinstance(ev, dict):
+            continue
         if ev.get("event") not in ("labeled", "unlabeled"):
             continue
         ts = _parse_dt(ev.get("created_at"))
         if ts is None or ts > until:
             continue
-        name = (ev.get("label") or {}).get("name")
+        name = _timeline_label_name(ev.get("label"))
         if name:
             relevant.append((ts, ev.get("event"), name))
     if not relevant:
