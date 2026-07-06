@@ -1,0 +1,60 @@
+{
+  "id": "refactor-momentum-context",
+  "description": "Refactor-heavy history context with structured plan",
+  "tags": [
+    "context",
+    "refactor"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "cafebabe01"
+    },
+    "recent_commits": [
+      {
+        "subject": "Refactor parser"
+      },
+      {
+        "subject": "Cleanup imports"
+      },
+      {
+        "subject": "Simplify client API"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "direction": "continue refactor momentum"
+    },
+    "plan": [
+      {
+        "title": "Continue refactor work",
+        "kind": "refactor",
+        "files": [
+          "parser.py"
+        ]
+      }
+    ],
+    "rationale": "momentum"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "misc"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

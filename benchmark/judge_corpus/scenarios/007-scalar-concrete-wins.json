@@ -1,0 +1,52 @@
+{
+  "id": "scalar-concrete-wins",
+  "description": "Scalar non-filler string counts as one substantive item",
+  "tags": [
+    "scalar"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      "Implement streaming export API"
+    ],
+    "rationale": "feature"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

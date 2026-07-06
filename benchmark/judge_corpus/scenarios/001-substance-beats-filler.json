@@ -1,0 +1,70 @@
+{
+  "id": "substance-beats-filler",
+  "description": "Concrete bugfix plan outranks generic filler titles",
+  "tags": [
+    "substance",
+    "filler"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Fix loader race",
+        "kind": "bugfix",
+        "rationale": "prevents crash"
+      }
+    ],
+    "rationale": "stability first"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "misc"
+      },
+      {
+        "title": "updates"
+      },
+      {
+        "title": "cleanup"
+      },
+      {
+        "title": "various"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

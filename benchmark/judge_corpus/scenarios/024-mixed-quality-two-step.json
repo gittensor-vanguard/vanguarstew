@@ -1,0 +1,76 @@
+{
+  "id": "mixed-quality-two-step",
+  "description": "Two concrete items beat one concrete plus filler padding",
+  "tags": [
+    "substance"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Fix loader race",
+        "kind": "bugfix"
+      },
+      {
+        "title": "Add loader test",
+        "kind": "test"
+      }
+    ],
+    "rationale": "quality"
+  },
+  "submission_b": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Fix loader race",
+        "kind": "bugfix"
+      },
+      {
+        "title": "misc"
+      },
+      {
+        "title": "updates"
+      }
+    ],
+    "rationale": "quality"
+  },
+  "expected_winner": "A"
+}
