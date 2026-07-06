@@ -19,11 +19,13 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.baselines import (  # noqa: E402
     BASELINES,
+    _infer_kind,
     empty_solve,
     get_baseline,
     heuristic_solve,
 )
 from benchmark.runner import run_replay  # noqa: E402
+from benchmark.score import is_release_subject  # noqa: E402
 
 CTX = {
     "frozen_at": {"commit": "abc0123456"},
@@ -73,6 +75,33 @@ def test_heuristic_baseline_derives_a_real_plan():
 def test_heuristic_is_stronger_than_empty_offline():
     # Given the same context, the heuristic proposes more than the empty floor.
     assert len(heuristic_solve(context=CTX, n=5)["plan"]) > len(empty_solve(context=CTX)["plan"])
+
+
+def test_infer_kind_does_not_misclassify_incidental_versions_as_release():
+    # A version mention that isn't a genuine release cut (bugfix mentioning a version,
+    # a dependency bump) must not be swept into "release" by a crude substring match.
+    assert _infer_kind("fix crash in v1.2.0 parser") == "bugfix"
+    assert _infer_kind("bump lodash to v4.17.21") == "dep"
+
+
+def test_infer_kind_recognizes_genuine_release_subjects():
+    assert _infer_kind("Release v1.2.0") == "release"
+    assert _infer_kind("Bump version to 1.2.0; update changelog") == "release"
+
+
+def test_infer_kind_matches_scoring_release_detection():
+    """Regression guard: would fail if baseline and scoring release detection diverge."""
+    subjects = [
+        "fix crash in v1.2.0 parser",
+        "bump lodash to v4.17.21",
+        "Release v1.2.0",
+        "Bump version to 1.2.0; update changelog",
+        "v2.0.0",
+        "add streaming API",
+        "docs: document v1 config format",
+    ]
+    for subject in subjects:
+        assert (_infer_kind(subject) == "release") == is_release_subject(subject), subject
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
