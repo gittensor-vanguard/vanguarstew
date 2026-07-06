@@ -20,6 +20,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.baselines import (  # noqa: E402
     BASELINES,
+    _baseline_list,
     _commit_subject,
     _infer_kind,
     _issue_title,
@@ -298,6 +299,47 @@ def test_replay_selects_baseline_and_tallies():
         assert res["tasks"] >= 1
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+# --- #515: truthy non-list context containers must not abort baselines -----------
+
+_MALFORMED_LIST_FIELDS = [42, 3.14, True, {"title": "Fix bug"}, "not a list"]
+
+
+def test_baseline_list_accepts_only_real_lists():
+    rows = [{"subject": "Fix bug"}]
+    for bad in _MALFORMED_LIST_FIELDS:
+        assert _baseline_list(bad, "recent_commits") == [], bad
+    assert _baseline_list(rows, "recent_commits") == rows
+    assert _baseline_list(None, "open_issues") == []
+
+
+def test_heuristic_plan_survives_non_list_recent_commits_and_open_issues():
+    for field, bad in (("recent_commits", 42), ("open_issues", 42)):
+        ctx = {"recent_commits": [], "open_issues": [], field: bad}
+        assert heuristic_plan(ctx, 5) == [], field
+        assert heuristic_philosophy(ctx)["evidence"] == [], field
+
+
+def test_heuristic_plan_honors_valid_rows_when_one_list_field_is_malformed():
+    ctx = {
+        "recent_commits": [{"subject": "Fix crash in parser"}],
+        "open_issues": 42,
+    }
+    plan = heuristic_plan(ctx, 5)
+    assert any(item["kind"] == "bugfix" for item in plan)
+    assert heuristic_philosophy(ctx)["evidence"] == ["Fix crash in parser"]
+
+
+def test_queue_first_plan_survives_non_list_open_prs():
+    ctx = {"open_prs": 42, "recent_commits": [], "open_issues": []}
+    assert queue_first_plan(ctx, 3) == []
+
+
+def test_baseline_list_logs_warning_for_non_list_field(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.baselines"):
+        assert _baseline_list(42, "open_issues") == []
+    assert any("open_issues is int" in r.message for r in caplog.records)
+
 
 def test_heuristic_functions_handle_non_dict_context():
     """heuristic_philosophy and heuristic_plan must not crash on non-dict context."""

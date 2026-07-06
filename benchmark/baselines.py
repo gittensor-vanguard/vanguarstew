@@ -69,6 +69,23 @@ def _issue_title(issue) -> str:
     return title.strip() if isinstance(title, str) else ""
 
 
+def _baseline_list(items, field: str) -> list:
+    """Return ``items`` when it is a list; otherwise treat as no entries.
+
+    A truthy non-list must not reach ``for item in items`` or malformed frozen context
+    aborts the heuristic baseline replay path (#515).
+    """
+    if isinstance(items, list):
+        return items
+    if items is not None:
+        logger.warning(
+            "heuristic baseline: %s is %s, not a list; treating as empty",
+            field,
+            type(items).__name__,
+        )
+    return []
+
+
 def _commit_subject(commit) -> str:
     """Return a commit's ``subject`` when the entry is a dict; else empty.
 
@@ -101,7 +118,10 @@ def _infer_kind(text: str) -> str:
 
 
 def _commit_kinds(context: dict) -> Counter:
-    return Counter(_infer_kind(_commit_subject(c)) for c in context.get("recent_commits") or [])
+    return Counter(
+        _infer_kind(_commit_subject(c))
+        for c in _baseline_list(context.get("recent_commits"), "recent_commits")
+    )
 
 
 def heuristic_philosophy(context: dict) -> dict:
@@ -109,14 +129,17 @@ def heuristic_philosophy(context: dict) -> dict:
         context = {}
     kinds = _commit_kinds(context)
     dominant = kinds.most_common(1)[0][0] if kinds else "triage"
-    n_issues = len(context.get("open_issues") or [])
+    n_issues = len(_baseline_list(context.get("open_issues"), "open_issues"))
     return {
         "summary": f"Recent activity is dominated by {dominant} work; "
                    f"{n_issues} open issue(s) await triage.",
         "values": [k for k, _ in kinds.most_common(3)] or ["triage"],
         "merge_bar": "inferred from recent commit patterns (no explicit signal)",
         "direction": f"continue {dominant}-oriented work and clear the issue backlog",
-        "evidence": [_commit_subject(c) for c in (context.get("recent_commits") or [])[:5]],
+        "evidence": [
+            _commit_subject(c)
+            for c in _baseline_list(context.get("recent_commits"), "recent_commits")[:5]
+        ],
     }
 
 
@@ -127,7 +150,7 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
     items = []
 
     # 1. The backlog the maintainer can see right now.
-    for issue in context.get("open_issues") or []:
+    for issue in _baseline_list(context.get("open_issues"), "open_issues"):
         title = _issue_title(issue)
         if not title:
             continue
@@ -148,8 +171,10 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
         })
 
     # 3. If the repo has been cutting releases, expect another.
-    if any(_infer_kind(_commit_subject(c)) == "release"
-           for c in context.get("recent_commits") or []):
+    if any(
+        _infer_kind(_commit_subject(c)) == "release"
+        for c in _baseline_list(context.get("recent_commits"), "recent_commits")
+    ):
         items.append({
             "title": "Prepare the next release",
             "kind": "release",
@@ -182,7 +207,7 @@ def _review_queue_items(context: dict, limit: int) -> list:
     titleless PR entries are skipped.
     """
     items = []
-    for pr in context.get("open_prs") or []:
+    for pr in _baseline_list(context.get("open_prs"), "open_prs"):
         title = _pr_title(pr)
         if not title:
             continue
@@ -228,7 +253,9 @@ def queue_first_solve(repo_path=None, request="", context=None, n=5, **_kw) -> d
     """
     ctx = context if context is not None else load_context(repo_path)
     plan = queue_first_plan(ctx, n)
-    n_prs = sum(1 for pr in (ctx.get("open_prs") or []) if _pr_title(pr))
+    n_prs = sum(
+        1 for pr in _baseline_list(ctx.get("open_prs"), "open_prs") if _pr_title(pr)
+    )
     return {
         "philosophy": heuristic_philosophy(ctx),
         "plan": plan,
@@ -244,7 +271,7 @@ def heuristic_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dic
     """Deterministic reference maintainer derived from the repo's own recent patterns."""
     ctx = context if context is not None else load_context(repo_path)
     plan = heuristic_plan(ctx, n)
-    n_issues = len(ctx.get("open_issues") or [])
+    n_issues = len(_baseline_list(ctx.get("open_issues"), "open_issues"))
     return {
         "philosophy": heuristic_philosophy(ctx),
         "plan": plan,
