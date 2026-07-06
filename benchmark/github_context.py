@@ -229,8 +229,10 @@ def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
     Returns ``(events, truncated)``. ``truncated`` is True when the page cap is hit with a
     full final page — more events may exist before T than were fetched, so a label
     reconstruction from ``events`` could be *confidently wrong* (a later ``unlabeled`` beyond
-    the cap never gets applied) and the caller must not trust it. Returns ``([], False)`` on
-    any error or missing number, so reconstruction degrades to the safe omit-labels fallback.
+    the cap never gets applied) and the caller must not trust it — or when a later page fails
+    after partial events were already collected. Returns ``([], False)`` on error before any
+    events are fetched, or when ``number`` is missing, so reconstruction degrades to the safe
+    omit-labels fallback.
     """
     if number is None:
         return [], False
@@ -241,6 +243,8 @@ def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
             batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
                          token, timeout)
         except Exception:
+            if events:
+                truncated = True
             break
         if not batch:
             break
