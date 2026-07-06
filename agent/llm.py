@@ -108,8 +108,11 @@ def _iter_top_level_spans(text: str):
 def _pick_best_json(candidates):
     """Prefer object payloads over arrays, then the longest serialization.
 
-    Mirrors the preference logic used for unfenced bracket spans so a throwaway
-    earlier example does not beat a later, more complete answer.
+    When two candidates have equal rank (same type, same serialized length),
+    the *last* one wins — in an LLM response a schema example or chain-of-thought
+    aside typically appears before the real answer, so the later candidate is the
+    more reliable signal.  ``max`` returns the first equal-rank element, so we
+    reverse the list to pick the last.
     """
     if not candidates:
         return None
@@ -118,7 +121,7 @@ def _pick_best_json(candidates):
         serialized = json.dumps(value, separators=(",", ":"))
         return (isinstance(value, dict), len(serialized))
 
-    return max(candidates, key=_rank)
+    return max(reversed(candidates), key=_rank)
 
 
 def extract_json(text: str):
