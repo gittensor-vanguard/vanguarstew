@@ -161,6 +161,30 @@ def test_multi_repo_weights_from_per_repo():
     assert check_score_integrity(art)["passed"] is True
 
 
+def test_non_list_per_repo_falls_back_to_default_weights():
+    # Truthy non-list per_repo must not crash _weights; defaults apply (#635).
+    art = {
+        "per_repo": 42,
+        "composite_mean": 0.62,
+        "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5},
+    }
+    result = check_score_integrity(art)
+    assert result["passed"] is True
+
+
+def test_malformed_per_repo_rows_are_skipped():
+    # Junk rows inside per_repo are skipped; a well-formed nested weights dict still wins.
+    art = {
+        "composite_mean": 0.5,
+        "composite_parts": {"judge_mean": 0.5, "objective_mean": 0.5},
+        "per_repo": [
+            "junk",
+            {"weights": {"judge": 0.8, "objective": 0.2}},
+        ],
+    }
+    assert check_score_integrity(art)["passed"] is True
+
+
 def test_integrity_headline_reports_consistent_and_inconsistent():
     assert "CONSISTENT" in integrity_headline(check_score_integrity(_artifact()))
     assert "INCONSISTENT" in integrity_headline(check_score_integrity(_artifact(composite=0.1)))

@@ -42,6 +42,18 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _per_repo_list(items) -> list:
+    """Return ``items`` when it is a list; otherwise treat as no per-repo detail."""
+    if isinstance(items, list):
+        return items
+    if items is not None:
+        logger.warning(
+            "score_integrity: per_repo is %s, not a list; treating as empty",
+            type(items).__name__,
+        )
+    return []
+
+
 def _checks_list(checks) -> list:
     """Return ``checks`` when it is a list; otherwise treat as no gate checks."""
     if isinstance(checks, list):
@@ -65,8 +77,13 @@ def _weights(slice_: dict) -> tuple[float, float]:
         wj, wo = weights.get("judge"), weights.get("objective")
         if _is_number(wj) and _is_number(wo):
             return float(wj), float(wo)
-    for entry in slice_.get("per_repo") or []:
+    for i, entry in enumerate(_per_repo_list(slice_.get("per_repo"))):
         if not isinstance(entry, dict):
+            logger.warning(
+                "score_integrity: per_repo[%d] is %s, not a dict; skipping",
+                i,
+                type(entry).__name__,
+            )
             continue
         nested = entry.get("weights")
         if isinstance(nested, dict):
