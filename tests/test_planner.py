@@ -77,6 +77,24 @@ def test_review_markers_match_on_word_boundaries_not_substrings():
     assert _is_review_item({"kind": "triage", "title": "anything"}) is True
 
 
+def test_bare_pr_number_not_a_review_item():
+    """Mentioning 'PR #N' without a review verb is a reference, not a review marker."""
+    assert _is_review_item({"title": "Land PR #1 and fix the memory leak"}) is False
+    assert _is_review_item({"title": "Implement PR #5 feature"}) is False
+    assert _is_review_item({"title": "Ship PR #9 before release"}) is False
+    # With a review verb it is still a review marker.
+    assert _is_review_item({"title": "Review PR #7 before release"}) is True
+
+
+def test_pr_mention_is_still_flagged_as_restating():
+    """An item that names a PR is flagged as restating it, not left as new work."""
+    prs = [{"number": 1, "title": "Add streaming export"}]
+    plan = [{"title": "Land PR #1 and fix the export feature", "kind": "feature"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": prs}, 5)
+    assert out[0]["kind"] == "triage"
+    assert out[0]["restates_pr"] == 1
+
+
 def test_incidental_review_substring_does_not_escape_downweighting():
     # A greenfield duplicate whose title merely contains "review" inside "preview" must
     # still be down-weighted to a triage/restates item, not left as new feature work.

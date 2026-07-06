@@ -25,7 +25,7 @@ _STOPWORDS = frozenset({
 # "merge") doesn't misclassify greenfield work as an existing review item. Anchored only
 # at the start, so real suffixes ("reviews", "merged", "approved") still count.
 _REVIEW_MARKER_RE = re.compile(
-    r"\b(?:review|merge|approve|request\s+changes|pull\s+request|pr\s*#)",
+    r"\b(?:review|merge|approve|request\s+changes|pull\s+request)",
     re.I,
 )
 # Explicit PR references: "#7", "PR #7", "pull request 7"
