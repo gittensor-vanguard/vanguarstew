@@ -1,6 +1,7 @@
 """Tests for the offline pairwise-judge golden corpus and calibration harness."""
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -14,6 +15,8 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.judge_calibration import (  # noqa: E402
+    _failed_ids_list,
+    _symmetry_checks_list,
     calibration_headline,
     check_calibration,
     check_symmetry,
@@ -107,6 +110,76 @@ def test_calibration_headline_pass_and_fail():
     assert "FAIL" in calibration_headline(bad)
     assert "sample" in calibration_headline(bad)
     assert calibration_headline({}) == "calibration: no scenarios evaluated"
+
+
+# --- #625: malformed failed / symmetry_checks must not abort calibration headlines ----
+
+_MALFORMED_CONTAINERS = [42, 3.14, True, {"id": "x"}, "not a list"]
+
+
+def test_failed_ids_list_accepts_only_real_lists():
+    rows = ["sample", "other"]
+    for bad in _MALFORMED_CONTAINERS:
+        assert _failed_ids_list(bad) == [], bad
+    assert _failed_ids_list(rows) == rows
+    assert _failed_ids_list(None) == []
+
+
+def test_failed_ids_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _failed_ids_list(None) == []
+    assert not caplog.records
+
+
+def test_failed_ids_list_warns_for_each_skipped_entry(caplog):
+    rows = [42, "", "  ", "good-id"]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _failed_ids_list(rows) == ["good-id"]
+    messages = [r.message for r in caplog.records]
+    assert any("failed[0]" in m for m in messages)
+    assert any("failed[1]" in m for m in messages)
+    assert not any("no usable scenario ids" in m for m in messages)
+
+
+def test_failed_ids_list_warns_when_every_entry_is_unusable(caplog):
+    rows = [42, None, ""]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _failed_ids_list(rows) == []
+    messages = [r.message for r in caplog.records]
+    assert any("failed[0]" in m for m in messages)
+    assert any("no usable scenario ids" in m for m in messages)
+
+
+def test_symmetry_checks_list_warns_for_non_list_container(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list(42) == []
+    assert any("symmetry_checks is int" in r.message for r in caplog.records)
+
+
+def test_symmetry_checks_list_warns_for_skipped_rows_and_all_junk(caplog):
+    rows = [42, {"passed": True, "id": "sym-a", "detail": "ok"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        kept = _symmetry_checks_list(rows)
+    assert len(kept) == 1
+    assert any("symmetry_checks[0] is int" in r.message for r in caplog.records)
+
+    caplog.clear()
+    junk = [42, "bad"]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("symmetry_checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_failed_scenarios_and_headline_survive_malformed_fields():
+    assert failed_scenarios({"failed": 42}) == []
+    assert "PASS" in calibration_headline(
+        {"passed": True, "scenario_count": 3, "symmetry_checks": 42},
+    )
+    assert "FAIL" in calibration_headline(
+        {"passed": False, "scenario_count": 3, "failed": 42},
+    )
 
 
 def test_load_corpus_rejects_duplicate_ids(tmp_path):
