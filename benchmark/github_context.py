@@ -48,7 +48,13 @@ DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/p
 DEFAULT_MAX_LIST_PAGES = 10   # bound on pages walked for milestones / releases
 
 # Metadata keys copied from ``fetch_context_at`` into an enriched git-only context.
-_ENRICH_META_KEYS = ("_issues_truncated", "_knowable_until", "_source")
+_ENRICH_META_KEYS = (
+    "_issues_truncated",
+    "_milestones_truncated",
+    "_releases_truncated",
+    "_knowable_until",
+    "_source",
+)
 
 
 def parse_owner_repo(remote_url: str):
@@ -148,12 +154,13 @@ def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100)
 
     `url` already carries its query string (including `per_page`); a `page=` parameter is
     appended per request. Pagination stops on the first empty or short (< `per_page`) page or
-    when `max_pages` is reached. Request errors propagate, so a hard failure still fails the
-    whole enrichment closed to git-only context — the same posture as before, only now the
-    result is complete instead of silently capped at the first 100 items.
+    when `max_pages` is reached. Returns ``(items, truncated)``; ``truncated`` is True when the
+    page cap is hit with a full final page — more items may remain. Request errors propagate,
+    so a hard failure still fails the whole enrichment closed to git-only context.
     """
     sep = "&" if "?" in url else "?"
     items = []
+    truncated = False
     for page in range(1, max_pages + 1):
         batch = _get(f"{url}{sep}page={page}", token, timeout)
         if not batch:
@@ -161,7 +168,9 @@ def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100)
         items.extend(batch)
         if len(batch) < per_page:
             break
-    return items
+        if page == max_pages:
+            truncated = True
+    return items, truncated
 
 
 def _timeline_events(events) -> list:
@@ -316,20 +325,27 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         # violate the knowable-at-T contract (specs/003-leakage-integrity, #670).
         open_issues, open_prs = [], []
 
+    raw_milestones, milestones_truncated = _get_all(
+        f"{base}/milestones?state=all&per_page={per_page}", token, timeout,
+        max_list_pages, per_page,
+    )
     milestones = []
-    for m in _get_all(f"{base}/milestones?state=all&per_page={per_page}", token, timeout,
-                      max_list_pages, per_page):
-        rec = _milestone_at(m, until)
-        if rec is not None:
-            milestones.append(rec)
+    if not milestones_truncated:
+        for m in raw_milestones:
+            rec = _milestone_at(m, until)
+            if rec is not None:
+                milestones.append(rec)
 
+    raw_releases, releases_truncated = _get_all(
+        f"{base}/releases?per_page={per_page}", token, timeout, max_list_pages, per_page,
+    )
     releases = []
-    for r in _get_all(f"{base}/releases?per_page={per_page}", token, timeout, max_list_pages,
-                      per_page):
-        published = _parse_dt(r.get("published_at"))
-        if published is not None and published <= until:
-            releases.append({"tag": r.get("tag_name"), "name": r.get("name"),
-                             "published_at": r.get("published_at")})
+    if not releases_truncated:
+        for r in raw_releases:
+            published = _parse_dt(r.get("published_at"))
+            if published is not None and published <= until:
+                releases.append({"tag": r.get("tag_name"), "name": r.get("name"),
+                                 "published_at": r.get("published_at")})
 
     return {
         "repo": f"{owner}/{repo}",
@@ -340,6 +356,8 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "_source": "github-api",
         "_knowable_until": until.isoformat(),
         "_issues_truncated": truncated,
+        "_milestones_truncated": milestones_truncated,
+        "_releases_truncated": releases_truncated,
     }
 
 

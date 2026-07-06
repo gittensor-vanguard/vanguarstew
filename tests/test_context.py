@@ -216,6 +216,18 @@ def test_context_for_agent_clears_backlog_when_issues_truncated():
     assert out["open_prs"] == []
 
 
+def test_context_for_agent_clears_milestones_and_releases_when_truncated():
+    ctx = {
+        "_milestones_truncated": True,
+        "_releases_truncated": True,
+        "milestones": [{"title": "partial milestone", "state": "open"}],
+        "releases": [{"tag": "v9.9.9", "name": "partial release"}],
+    }
+    out = context_for_agent(ctx)
+    assert out["milestones"] == []
+    assert out["releases"] == []
+
+
 def test_prompt_renderers_do_not_serialize_unknown_labels_as_empty_history():
     ctx = {
         "frozen_at": {"commit": "abc"},

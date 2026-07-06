@@ -620,7 +620,26 @@ def test_list_pagination_respects_page_cap(monkeypatch):
     full = [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)]
     monkeypatch.setattr(gc, "_get", _list_pager({"/releases": {1: full, 2: full, 3: full}}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
-    assert len(ctx["releases"]) == 200  # bounded at the cap, never an unbounded loop
+    assert ctx["_releases_truncated"] is True
+    assert ctx["releases"] == []
+
+
+def test_releases_fail_closed_when_list_pagination_cap_hit(monkeypatch):
+    T = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    full = [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)]
+    monkeypatch.setattr(gc, "_get", _list_pager({"/releases": {1: full, 2: full, 3: full}}))
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
+    assert ctx["_releases_truncated"] is True
+    assert ctx["releases"] == []
+
+
+def test_milestones_fail_closed_when_list_pagination_cap_hit(monkeypatch):
+    T = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    full = [{"title": f"m{i}", "created_at": "2023-01-01T00:00:00Z"} for i in range(100)]
+    monkeypatch.setattr(gc, "_get", _list_pager({"/milestones": {1: full, 2: full, 3: full}}))
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
+    assert ctx["_milestones_truncated"] is True
+    assert ctx["milestones"] == []
 
 
 # --- #345: a truncated timeline must fail closed, not report a partial (wrong) label set ----

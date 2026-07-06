@@ -153,6 +153,10 @@ def context_for_agent(context: dict) -> dict:
         # Defense in depth for older frozen artifacts that still carry a partial backlog.
         out["open_issues"] = []
         out["open_prs"] = []
+    if out.get("_milestones_truncated"):
+        out["milestones"] = []
+    if out.get("_releases_truncated"):
+        out["releases"] = []
     return out
 
 
