@@ -20,9 +20,11 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from benchmark.baselines import (  # noqa: E402
     BASELINES,
     _infer_kind,
+    _issue_title,
     empty_solve,
     get_baseline,
     heuristic_philosophy,
+    heuristic_plan,
     heuristic_solve,
 )
 from benchmark.runner import run_replay  # noqa: E402
@@ -118,6 +120,26 @@ def test_infer_kind_maps_ci_and_test_commits_to_refactor_not_triage():
     }
     assert "triage work" not in heuristic_philosophy(ctx)["summary"].lower()
     assert "refactor work" in heuristic_philosophy(ctx)["summary"].lower()
+
+
+def test_issue_title_tolerates_non_string_fields():
+    assert _issue_title({"title": "Fix loader"}) == "Fix loader"
+    assert _issue_title({"title": ["Fix", "loader"]}) == ""
+    assert _issue_title({"title": 42}) == ""
+    assert _issue_title({"title": None}) == ""
+    assert _issue_title({"title": "   "}) == ""
+
+
+def test_heuristic_plan_skips_issues_with_non_string_title():
+    plan = heuristic_plan({
+        "open_issues": [
+            {"title": ["Fix", "loader"]},
+            {"title": "Support YAML config"},
+        ],
+        "recent_commits": [],
+    })
+    assert any("YAML config" in item["title"] for item in plan)
+    assert not any("loader" in item["title"] for item in plan)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")

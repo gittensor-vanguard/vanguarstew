@@ -53,6 +53,14 @@ _KIND_KEYWORDS = (
 _ALLOWED = {"feature", "bugfix", "refactor", "docs", "release", "dep", "triage"}
 
 
+def _issue_title(issue) -> str:
+    """Return a stripped issue title when it is a string; else empty."""
+    if not isinstance(issue, dict):
+        return ""
+    title = issue.get("title")
+    return title.strip() if isinstance(title, str) else ""
+
+
 def _infer_kind(text: str) -> str:
     if is_release_subject(text):
         return "release"
@@ -93,7 +101,7 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
 
     # 1. The backlog the maintainer can see right now.
     for issue in context.get("open_issues") or []:
-        title = (issue.get("title") or "").strip()
+        title = _issue_title(issue)
         if not title:
             continue
         items.append({
