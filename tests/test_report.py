@@ -101,6 +101,33 @@ def test_render_generalization_includes_gap_and_partitions():
     assert "| held-b | 0.650 | 2 |" in md
 
 
+def test_render_treats_unscored_partition_composite_as_unavailable():
+    # A tuned partition that scored 0 repos (empty/unusable repo set for that run) carries a
+    # placeholder composite_mean: 0.0 from run_multi_replay's own _mean([]) fallback -- that must
+    # render as n/a, not a fabricated perfect zero, while a genuinely-scored partition alongside
+    # it (held-out) still shows its real score.
+    art = _generalization()
+    art["tuned"] = {
+        "repos": 2,
+        "scored_repos": 0,
+        "skipped": 2,
+        "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        "per_repo": [
+            {"repo_name": "tuned-a", "error": "no usable tasks", "tasks": 0},
+            {"repo_name": "tuned-b", "error": "no usable tasks", "tasks": 0},
+        ],
+    }
+    md = render_report(art)
+    tuned_section = md.split("### Held-out")[0]
+    assert "Composite mean: n/a" in tuned_section
+    assert "Judge mean: n/a" in tuned_section
+    assert "Objective mean: n/a" in tuned_section
+    assert "Scored repos: 0, 2 skipped" in tuned_section
+    # the held-out partition, which did score, is unaffected
+    assert "Composite mean: 0.650" in md.split("### Held-out")[1]
+
+
 def test_generalization_inspect_verdict_when_gap_exceeds_threshold():
     art = _generalization()
     art["generalization_gap"] = 0.15

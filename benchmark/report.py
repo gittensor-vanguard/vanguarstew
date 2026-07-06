@@ -74,9 +74,18 @@ def _judge_lines(artifact: dict) -> list[str]:
 def _composite_lines(artifact: dict) -> list[str]:
     parts = artifact.get("composite_parts")
     parts = parts if isinstance(parts, dict) else {}
-    lines = [f"- Composite mean: {_fmt_score(artifact.get('composite_mean'))}"]
-    lines.append(f"- Judge mean: {_fmt_score(parts.get('judge_mean'))}")
-    lines.append(f"- Objective mean: {_fmt_score(parts.get('objective_mean'))}")
+    # scored_repos is only ever set by the aggregate layer (run_multi_replay / generalization
+    # partitions); when it's present and zero, composite_mean is a placeholder 0.0 (nothing was
+    # actually scored), not a real score -- render n/a instead of a fabricated perfect zero,
+    # mirroring the same scored_repos guard in benchmark/trend.py's headline_score.
+    scored = artifact.get("scored_repos")
+    unscored = _is_number(scored) and not scored
+    composite = None if unscored else artifact.get("composite_mean")
+    judge = None if unscored else parts.get("judge_mean")
+    objective = None if unscored else parts.get("objective_mean")
+    lines = [f"- Composite mean: {_fmt_score(composite)}"]
+    lines.append(f"- Judge mean: {_fmt_score(judge)}")
+    lines.append(f"- Objective mean: {_fmt_score(objective)}")
     weights = artifact.get("weights")
     if isinstance(weights, dict):
         lines.append(
