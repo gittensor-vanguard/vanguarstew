@@ -118,10 +118,22 @@ def test_freeze_window_validation():
     ({"min_history": -3}, "min_history must be >= 1"),
     ({"after": ""}, "after must be non-empty"),
     ({"before": "   "}, "before must be non-empty"),
+    # Non-empty but unparseable date bounds pass the string check yet crash task generation
+    # with an opaque ValueError; reject them at load time with a clear message instead.
+    ({"after": "not-a-date"}, "after must be an ISO date"),
+    ({"before": "2023-13-01"}, "before must be an ISO date"),   # month 13 -> invalid
+    ({"after": "01/02/2023"}, "after must be an ISO date"),      # non-ISO format
 ])
 def test_freeze_window_value_validation(bad_fw, match):
     with pytest.raises(RepoSetError, match=match):
         validate_repo_set(_mutate(freeze_window=bad_fw))
+
+
+def test_freeze_window_accepts_valid_iso_date_bounds():
+    # A well-formed ISO date (optionally with a time suffix taskgen truncates) still loads.
+    rs = validate_repo_set(_mutate(freeze_window={"after": "2023-01-01", "before": "2024-12-31"}))
+    assert rs.entries[0].freeze_window["after"] == "2023-01-01"
+    assert validate_repo_set(_mutate(freeze_window={"after": "2023-06-15T00:00:00Z"}))
 
 
 def test_unknown_entry_key_rejected():

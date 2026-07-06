@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import date
 
 TIERS = ("recent", "obscure")
 
@@ -125,6 +126,20 @@ def _validate_freeze_window(fw, where):
         if expected == "str":
             _require(isinstance(value, str), f"{where}: freeze_window.{key} must be a string")
             _require(value.strip(), f"{where}: freeze_window.{key} must be non-empty")
+            # `after`/`before` bound freeze-point selection and are parsed with
+            # `date.fromisoformat(value[:10])` in taskgen. A non-empty-but-unparseable value
+            # (a typo like "2023-13-01", a non-ISO format) passes the string check but then
+            # crashes task generation with an opaque ValueError mid-run, so validate that it
+            # parses as an ISO date here — fail-fast at config load, like every other field.
+            if key in ("after", "before"):
+                try:
+                    date.fromisoformat(value[:10])
+                except ValueError:
+                    _require(
+                        False,
+                        f"{where}: freeze_window.{key} must be an ISO date (YYYY-MM-DD), "
+                        f"got {value!r}",
+                    )
         elif expected == "bool":
             _require(isinstance(value, bool), f"{where}: freeze_window.{key} must be a boolean")
         elif expected == "int":
