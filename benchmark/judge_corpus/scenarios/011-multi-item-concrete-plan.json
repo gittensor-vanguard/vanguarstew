@@ -1,0 +1,74 @@
+{
+  "id": "multi-item-concrete-plan",
+  "description": "More concrete items accumulate substance",
+  "tags": [
+    "substance"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Fix loader race",
+        "kind": "bugfix"
+      },
+      {
+        "title": "Add regression test",
+        "kind": "test"
+      },
+      {
+        "title": "Document config format",
+        "kind": "docs"
+      }
+    ],
+    "rationale": "stability sprint"
+  },
+  "submission_b": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Fix loader race",
+        "kind": "bugfix"
+      }
+    ],
+    "rationale": "stability sprint"
+  },
+  "expected_winner": "A"
+}

@@ -1,0 +1,60 @@
+{
+  "id": "symmetric-strong-b",
+  "description": "Strong submission B wins when listed second in scenario file",
+  "tags": [
+    "symmetry"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "todo"
+      }
+    ],
+    "rationale": ""
+  },
+  "submission_b": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Add streaming API",
+        "kind": "feature",
+        "rationale": "user request"
+      }
+    ],
+    "rationale": "ship value"
+  },
+  "expected_winner": "B"
+}

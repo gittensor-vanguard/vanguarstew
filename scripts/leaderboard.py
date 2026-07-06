@@ -38,7 +38,12 @@ def main() -> None:
     ap.add_argument("artifacts", nargs="+", help="artifact paths, each optionally 'label=path'")
     args = ap.parse_args()
 
-    entries = [(label, load_artifact(path)) for label, path in map(_split_label, args.artifacts)]
+    try:
+        entries = [(label, load_artifact(path)) for label, path in map(_split_label, args.artifacts)]
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
     summary = rank(entries)
 
     def _c(value):

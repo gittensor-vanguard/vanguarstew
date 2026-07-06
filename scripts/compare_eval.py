@@ -237,7 +237,15 @@ def main() -> None:
     ap.add_argument("baseline", help="earlier or reference result JSON")
     ap.add_argument("candidate", help="newer or candidate result JSON")
     args = ap.parse_args()
-    diff = compare_eval_artifacts(load_artifact(args.baseline), load_artifact(args.candidate))
+
+    try:
+        baseline = load_artifact(args.baseline)
+        candidate = load_artifact(args.candidate)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+    diff = compare_eval_artifacts(baseline, candidate)
     print(comparison_headline(diff), file=sys.stderr)
     print(json.dumps(diff, indent=2))
 

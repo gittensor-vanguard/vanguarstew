@@ -19,10 +19,14 @@ mirroring ninja's judge.
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
+from collections.abc import Iterable
 
 from benchmark.score import _plan_list
+
+logger = logging.getLogger(__name__)
 
 _WINNER = re.compile(r'"?winner"?\s*[:=]\s*"?(A|B|tie)\b', re.I)
 
@@ -203,6 +207,37 @@ def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng
     return winner
 
 
+def _order_categories_list(categories) -> list:
+    """Return judge-order category strings when ``categories`` is a proper container.
+
+    ``run_replay`` passes a generator of per-task ``judge_order`` values, so real iterables
+    (generators, tuples) are accepted. Scalars and strings must not be iterated — a bare
+    ``"agree"`` would count characters, and ``42`` raises ``TypeError``.
+    """
+    if isinstance(categories, list):
+        return categories
+    if isinstance(categories, tuple):
+        return list(categories)
+    if categories is None:
+        return []
+    if isinstance(categories, (str, bytes, dict, int, float, bool)):
+        logger.warning(
+            "judge: judge_order categories is %s, not a list; treating as empty",
+            type(categories).__name__,
+        )
+        return []
+    if isinstance(categories, Iterable):
+        try:
+            return list(categories)
+        except TypeError:
+            pass
+    logger.warning(
+        "judge: judge_order categories is %s, not a list; treating as empty",
+        type(categories).__name__,
+    )
+    return []
+
+
 def summarize_judge_orders(categories) -> dict:
     """Aggregate order-sensitivity telemetry for replay artifacts.
 
@@ -211,7 +246,7 @@ def summarize_judge_orders(categories) -> dict:
     not as evidence that challenger and baseline are closer in quality.
     """
     stats = {key: 0 for key in ("agree", "disagree", "tie", "single", "offline")}
-    for category in categories:
+    for category in _order_categories_list(categories):
         if category in stats:
             stats[category] += 1
     dual_order_tasks = stats["agree"] + stats["disagree"] + stats["tie"]

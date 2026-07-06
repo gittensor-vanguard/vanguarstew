@@ -1,0 +1,56 @@
+{
+  "id": "files-field-bonus",
+  "description": "files field alone adds substance beyond bare title",
+  "tags": [
+    "structured",
+    "files"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "Fix loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ],
+    "rationale": ""
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "Fix loader"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

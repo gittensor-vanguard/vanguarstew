@@ -1,0 +1,71 @@
+{
+  "id": "issue-backlog-context",
+  "description": "Rich frozen context does not change offline ranking",
+  "tags": [
+    "context"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "deadbeef01"
+    },
+    "open_issues": [
+      {
+        "title": "Segfault on startup"
+      },
+      {
+        "title": "Support YAML config"
+      }
+    ],
+    "open_prs": [
+      {
+        "number": 12,
+        "title": "Fix flaky CI"
+      }
+    ],
+    "recent_commits": [
+      {
+        "subject": "Refactor client internals"
+      },
+      {
+        "subject": "Docs: config guide"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix segfault",
+        "files": [
+          "src/main.c"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Address segfault issue",
+        "kind": "bugfix"
+      }
+    ],
+    "rationale": "backlog"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "general improvements"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

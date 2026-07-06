@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -110,6 +111,57 @@ def test_load_artifact_reads_json_file(tmp_path):
     path = tmp_path / "result.json"
     path.write_text(json.dumps({"composite_mean": 0.42}), encoding="utf-8")
     assert load_artifact(str(path))["composite_mean"] == 0.42
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.compare_eval", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(good), str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(good), str(bad))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(good), str(invalid))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_still_compares_well_formed_artifacts(tmp_path):
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    candidate = tmp_path / "candidate.json"
+    candidate.write_text(json.dumps({"composite_mean": 0.6}), encoding="utf-8")
+    result = _run_cli(str(baseline), str(candidate))
+    assert result.returncode == 0
+    assert "compare_eval" in result.stderr
+    diff = json.loads(result.stdout)
+    assert diff["composite_mean"]["baseline"] == 0.5
+    assert diff["composite_mean"]["candidate"] == 0.6
 
 
 def test_repo_key_handles_explicit_null_freeze_commit():

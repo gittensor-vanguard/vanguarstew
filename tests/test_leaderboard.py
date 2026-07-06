@@ -1,7 +1,9 @@
 """Tests for the agent/run leaderboard ranking (deterministic, offline)."""
 
 import copy
+import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -195,3 +197,51 @@ def test_rank_does_not_mutate_inputs():
     snapshot = copy.deepcopy(entries)
     rank(entries)
     assert entries == snapshot
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.leaderboard", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_single(0.5)), encoding="utf-8")
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(f"a={good}", f"b={missing}")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_single(0.5)), encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(f"a={good}", f"b={bad}")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_still_ranks_well_formed_artifacts(tmp_path):
+    a = tmp_path / "a.json"
+    a.write_text(json.dumps(_single(0.5)), encoding="utf-8")
+    b = tmp_path / "b.json"
+    b.write_text(json.dumps(_single(0.7)), encoding="utf-8")
+    result = _run_cli(f"agentA={a}", f"agentB={b}")
+    assert result.returncode == 0
+    assert "leaderboard" in result.stderr.lower()
+    summary = json.loads(result.stdout)
+    assert summary["ranking"][0]["label"] == "agentB"

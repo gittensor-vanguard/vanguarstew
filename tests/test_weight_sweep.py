@@ -7,7 +7,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.runner import WEIGHT_SWEEP_GRID, _sweep_rows, weight_sweep  # noqa: E402
+from benchmark.runner import WEIGHT_SWEEP_GRID, _rows_list, _sweep_rows, weight_sweep  # noqa: E402
 from benchmark.score import composite_score  # noqa: E402
 
 # A tiny per-task shape mirroring run_replay's `rows`: a judge `winner` plus an `objective`
@@ -98,3 +98,25 @@ def test_weight_sweep_logs_warning_for_non_list_rows(caplog):
         sweep = weight_sweep(42)
     assert all(row["composite_mean"] == 0.0 for row in sweep)
     assert any("rows is int" in r.message for r in caplog.records)
+
+
+# --- #597: non-list replay rows must not abort multi-repo judge aggregation -----------
+
+def test_rows_list_accepts_only_real_lists():
+    for bad in _MALFORMED_ROWS:
+        assert _rows_list(bad, "replay rows") == [], bad
+    assert _rows_list(ROWS, "replay rows") == ROWS
+    assert _rows_list(None, "replay rows") == []
+
+
+def test_multi_repo_judge_order_collection_survives_non_list_rows(caplog):
+    import logging
+
+    res = {"rows": 42, "tasks": 1, "composite_mean": 0.5}
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        orders = [
+            row.get("judge_order")
+            for row in _rows_list(res.get("rows"), "replay rows")
+        ]
+    assert orders == []
+    assert any("replay rows is int" in r.message for r in caplog.records)

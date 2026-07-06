@@ -4,6 +4,7 @@ Covers the M2 addition: the judge weighs the decision process (philosophy + reas
 not just plan direction — so when plans are equal, sounder reasoning breaks the tie.
 """
 
+import logging
 import os
 import random
 import sys
@@ -18,6 +19,7 @@ from agent.llm import LLM  # noqa: E402
 from benchmark.judge import (  # noqa: E402
     _item_substance,
     _offline_rank,
+    _order_categories_list,
     _parse_winner,
     _plan_substance,
     _render,
@@ -242,6 +244,42 @@ def test_summarize_judge_orders_reports_disagreement_rate():
         "disagreement_rate": 0.333,
     }
     assert summarize_judge_orders(["offline", "single"])["disagreement_rate"] is None
+
+
+# --- #592: invalid judge_order category containers must not abort telemetry ------------
+
+_MALFORMED_CATEGORIES = [42, 3.14, True, {"agree": 1}, "agree", b"agree"]
+_EMPTY_STATS = {
+    "agree": 0,
+    "disagree": 0,
+    "tie": 0,
+    "single": 0,
+    "offline": 0,
+    "dual_order_tasks": 0,
+    "disagreement_rate": None,
+}
+
+
+def test_order_categories_list_accepts_only_real_containers():
+    rows = ["agree", "disagree", "tie"]
+    for bad in _MALFORMED_CATEGORIES:
+        assert _order_categories_list(bad) == [], bad
+    assert _order_categories_list(rows) == rows
+    assert _order_categories_list(tuple(rows)) == rows
+    assert _order_categories_list(None) == []
+    assert _order_categories_list((r for r in rows)) == rows
+
+
+def test_summarize_judge_orders_survives_non_list_categories():
+    for bad in _MALFORMED_CATEGORIES:
+        assert summarize_judge_orders(bad) == _EMPTY_STATS, bad
+
+
+def test_summarize_judge_orders_logs_warning_for_non_list_categories(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge"):
+        stats = summarize_judge_orders(42)
+    assert stats == _EMPTY_STATS
+    assert any("categories is int" in r.message for r in caplog.records)
 
 
 def test_build_judge_report_summarizes_outcomes_and_disagreement():
