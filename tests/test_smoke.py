@@ -143,3 +143,27 @@ def test_submission_handles_non_dict():
     from benchmark.runner import _submission
     assert _submission(None) == {"philosophy": None, "plan": None, "rationale": None}
     assert _submission("str") == {"philosophy": None, "plan": None, "rationale": None}
+
+
+def test_run_replay_survives_non_dict_agent_output():
+    # A miner agent is untrusted: its solve() may return a non-dict. run_replay must degrade
+    # that task to empty (challenger.get(...) is used directly, not just via _submission) and
+    # keep the batch alive rather than aborting with AttributeError.
+    d = tempfile.mkdtemp()
+    try:
+        subprocess.run(["git", "init", "-q", d], check=True)
+        subprocess.run(["git", "-C", d, "config", "user.email", "t@t"], check=True)
+        subprocess.run(["git", "-C", d, "config", "user.name", "t"], check=True)
+        for i in range(20):
+            with open(os.path.join(d, f"f{i}.py"), "w", encoding="utf-8") as f:
+                f.write(f"x = {i}\n")
+            subprocess.run(["git", "-C", d, "add", "-A"], check=True)
+            subprocess.run(["git", "-C", d, "commit", "-q", "-m", f"commit {i}"], check=True)
+        agent = os.path.join(d, "bad_agent.py")
+        with open(agent, "w", encoding="utf-8") as f:
+            f.write("def solve(*args, **kwargs):\n    return ['not', 'a', 'dict']\n")
+        res = run_replay(d, agent_file=agent, n_tasks=2, horizon=3)
+        assert res.get("tasks", 0) >= 1        # the run completed instead of crashing
+        assert "tally" in res
+    finally:
+        shutil.rmtree(d, ignore_errors=True)

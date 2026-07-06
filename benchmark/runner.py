@@ -121,6 +121,8 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 model=model or "validator-managed-model",
                 api_base=api_base or "", api_key=api_key or "offline", n=horizon,
             )
+            if not isinstance(challenger, dict):
+                challenger = {}  # a miner agent may return a non-dict; degrade to empty, don't crash
             baseline_out = opponent(dest, request, context=ctx, n=horizon)
             winner, judge_order = judge_verbose(
                 ctx, _submission(challenger), _submission(baseline_out),
