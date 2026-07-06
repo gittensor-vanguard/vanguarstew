@@ -107,6 +107,17 @@ def test_infer_kind_matches_scoring_release_detection():
         assert (_infer_kind(subject) == "release") == is_release_subject(subject), subject
 
 
+def test_infer_kind_uses_shared_release_detection_not_substring_needles():
+    """Regression (#129): baseline release classification must follow is_release_subject."""
+    assert _infer_kind("Bump dependency to v10.0") == "dep"
+    assert not is_release_subject("Bump dependency to v10.0")
+    assert _infer_kind("Add v2 endpoint") == "feature"
+    assert not is_release_subject("Add v2 endpoint")
+    for subject in ("v1.2.0", "Release v2.0"):
+        assert is_release_subject(subject)
+        assert _infer_kind(subject) == "release"
+
+
 def test_infer_kind_maps_ci_and_test_commits_to_refactor_not_triage():
     # Regression (#270): the dead "test" keyword bucket used to collapse into "triage".
     assert _infer_kind("ci: pin runner os version") == "refactor"
