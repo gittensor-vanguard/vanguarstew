@@ -1,6 +1,7 @@
 """Tests for run-clean gate and CLI (deterministic, offline)."""
 
 import json
+import logging
 import os
 import sys
 
@@ -10,7 +11,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.run_clean import check_run_clean, failed_checks, run_clean_headline  # noqa: E402
+from benchmark.run_clean import (  # noqa: E402
+    _check_rows_list,
+    check_run_clean,
+    failed_checks,
+    run_clean_headline,
+)
 from scripts import run_clean as cli  # noqa: E402
 
 
@@ -76,3 +82,135 @@ def test_cli_strict(tmp_artifact, capsys):
 def test_cli_without_strict_exits_zero_on_error(tmp_artifact):
     path = tmp_artifact("dirty.json", {"error": "fail"})
     assert cli.run([path]) == 0
+
+
+# --- #846: checks row sanitization for failed_checks helper -------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "no_errors"}, "not a list",
+    ({"name": "no_errors", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "no_errors", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "no_errors", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "no_errors", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "no_errors", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "no_errors", "passed": False},
+        {"name": "other", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": 99, "passed": False},
+        {"name": "no_errors", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_accepts_native_bool_values():
+    rows = [
+        {"name": "no_errors", "passed": True},
+        {"name": "other", "passed": False},
+    ]
+    assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_int_as_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _check_rows_list([{"name": "no_errors", "passed": 1}]) == []
+    assert any("passed is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "no_errors"}],
+        [{}],
+        [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "no_errors", "passed": "no"}],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_integration_with_check_rows_list(caplog):
+    checks = [
+        {"name": "no_errors", "passed": False},
+        42,
+        {"name": "other", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert failed_checks({"checks": checks}) == ["no_errors"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
