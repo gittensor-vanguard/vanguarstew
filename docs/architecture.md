@@ -135,8 +135,8 @@ Because the reference is public GitHub history, the benchmark actively resists l
   commit subject or README can't cross-reference the future.
 - **As-of-T field guards** (`benchmark/github_context.py`) — mutable API fields such as
   milestone `state` are derived from timestamps (`closed_at` vs. T), not copied from the live
-  response. Fields the REST API cannot time-filter (issue label sets, repo label lists) are
-  documented inline as live-only best-effort snapshots.
+  response. Fields the REST API cannot time-filter (the repo label catalog, milestone
+  `due_on`) are omitted from the frozen context rather than carried as present-day snapshots.
 - **Recent-window + rotation** freeze-point selection (`benchmark/taskgen.py`) — prefer recent
   points (past a model's training cutoff) and rotate deterministically so answers aren't reused.
 - **Repo diversity / held-out repos** (M3) — generalization is scored on unseen repos.

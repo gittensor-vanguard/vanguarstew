@@ -15,12 +15,13 @@ Derived as-of-T (safe):
   - Issue/PR labels: reconstructed from timeline ``labeled``/``unlabeled`` events when
     available; omitted (not copied live) when the timeline is unavailable.
   - Milestone ``state``: derived from ``closed_at`` relative to T, not the live API field.
-  - Releases: filtered by ``published_at <= T``.
+  - Releases: filtered by ``published_at <= T`` (drafts, which carry no ``published_at``,
+    are excluded).
 
-Live-only (present-day REST snapshot — documented, not reconstructable without Events API):
-  - Repo ``labels`` list: no created-at on the labels endpoint; kept as the live snapshot.
-
-Omitted (would leak future edits, not reconstructable as-of-T):
+Omitted (no created-at or editable after T, so not reconstructable as-of-T — dropped rather
+than leaked as a present-day value):
+  - Repo ``labels`` catalog: the labels endpoint carries no created-at, so its live list
+    would leak today's set; not fetched at all (``fetch_context_at`` returns no ``labels``).
   - Milestone ``due_on``: the REST value is today's editable due date, so a post-T edit would
     leak; dropped rather than carried as a possibly-future value.
 """
@@ -247,7 +248,9 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
             return context
         gh = fetch_context_at(owner, repo, until, token=token)
         merged = dict(context)
-        for key in ("repo", "open_issues", "open_prs", "labels", "milestones", "releases"):
+        # No ``labels`` here: the repo label catalog is intentionally omitted from the frozen
+        # context (see module docstring), so ``fetch_context_at`` never produces that key.
+        for key in ("repo", "open_issues", "open_prs", "milestones", "releases"):
             if gh.get(key):
                 merged[key] = gh[key]
         for key in _ENRICH_META_KEYS:
