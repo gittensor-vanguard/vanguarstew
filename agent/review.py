@@ -27,13 +27,20 @@ VALUE_LABELS = ["mult:core-correctness", "mult:leakage-integrity", "mult:capabil
 _ACTION_SYNONYMS = {
     "approve": "merge",
     "approved": "merge",
+    "accept": "merge",
+    "accepted": "merge",
     "lgtm": "merge",
     "request changes": "request-changes",
     "request_changes": "request-changes",
     "requested-changes": "request-changes",
+    "changes requested": "request-changes",
+    "changes_requested": "request-changes",
     "decline": "reject",
     "deny": "reject",
     "closed": "reject",
+    "close": "reject",
+    "abstain": "comment",
+    "hold": "comment",
 }
 
 
@@ -60,13 +67,13 @@ def _normalize_value_label(label) -> str:
     if not raw:
         return default
     lowered = raw.lower()
-    candidates = {lowered}
+    slug = lowered.removeprefix("mult:").replace("_", "-").replace(" ", "-")
+    candidates = {lowered, slug, f"mult:{slug}"}
     if not lowered.startswith("mult:"):
         candidates.add(f"mult:{lowered}")
     for tier in VALUE_LABELS:
-        if tier.lower() in candidates:
-            return tier
-        if lowered == tier.split(":", 1)[-1].lower():
+        tier_slug = tier.split(":", 1)[-1].lower()
+        if tier.lower() in candidates or tier_slug in candidates:
             return tier
     return default
 

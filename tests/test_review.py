@@ -50,8 +50,13 @@ def test_review_tolerates_missing_fields():
 
 def test_normalize_review_action_maps_synonyms():
     assert _normalize_review_action("approve") == "merge"
+    assert _normalize_review_action("accept") == "merge"
     assert _normalize_review_action("request changes") == "request-changes"
+    assert _normalize_review_action("changes requested") == "request-changes"
     assert _normalize_review_action("decline") == "reject"
+    assert _normalize_review_action("close") == "reject"
+    assert _normalize_review_action("abstain") == "comment"
+    assert _normalize_review_action("hold") == "comment"
     assert _normalize_review_action("unknown") == "comment"
 
 
@@ -84,7 +89,11 @@ def test_normalize_review_action_logs_a_warning_for_non_string_input(caplog):
 def test_normalize_value_label_repairs_prefix_and_case():
     assert _normalize_value_label("mult:core-correctness") == "mult:core-correctness"
     assert _normalize_value_label("core-correctness") == "mult:core-correctness"
+    assert _normalize_value_label("core correctness") == "mult:core-correctness"
+    assert _normalize_value_label("core_correctness") == "mult:core-correctness"
+    assert _normalize_value_label("leakage integrity") == "mult:leakage-integrity"
     assert _normalize_value_label("MULT:LEAKAGE-INTEGRITY") == "mult:leakage-integrity"
+    assert _normalize_value_label("maintenance") == "mult:maintenance"
     assert _normalize_value_label("bogus") == "mult:maintenance"
     assert _normalize_value_label(None) == "mult:maintenance"
 
@@ -151,3 +160,18 @@ def test_review_pr_survives_non_string_action_field():
     assert rev["summary"] == "adds a missing guard"
     assert rev["concerns"] == ["needs a regression test"]
     assert rev["recommendation"] == "request changes until tests land"
+
+
+class _NearMissReviewLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return {"action": "approve", "value_label": "maintenance"}
+
+
+def test_review_pr_maps_near_miss_action_and_value_label_to_canonical_vocab():
+    rev = review_pr({"files": []}, None, _NearMissReviewLLM())
+    assert rev["action"] in ACTIONS
+    assert rev["action"] == "merge"
+    assert rev["value_label"] in VALUE_LABELS
+    assert rev["value_label"] == "mult:maintenance"
