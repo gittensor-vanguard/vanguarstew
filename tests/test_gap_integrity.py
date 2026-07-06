@@ -13,6 +13,7 @@ if ROOT not in sys.path:
 
 from benchmark.gap_integrity import (  # noqa: E402
     DEFAULT_TOLERANCE,
+    _check_rows_list,
     _expected_gap,
     check_gap_integrity,
     failed_checks,
@@ -157,6 +158,46 @@ def test_integrity_headline_survives_non_list_checks(caplog):
         line = integrity_headline({"checks": 42, "passed": False})
     assert line == "gap integrity: no checks evaluated"
     assert any("checks is int" in r.message for r in caplog.records)
+
+
+# --- #717: checks row sanitization for gap integrity headlines ------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "gap_matches_partitions"}, "not a list",
+    ({"name": "gap_matches_partitions", "passed": False},),
+    range(2),
+]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "gap_matches_partitions", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "gap_matches_partitions", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.gap_integrity"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+
+
+def test_integrity_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "gap_matches_partitions", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.gap_integrity"):
+        line = integrity_headline({"checks": checks, "passed": False})
+    assert line == "gap integrity: INCONSISTENT (1/1 checks failed: gap_matches_partitions)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [{"name": "gap_matches_partitions", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.gap_integrity"):
+        assert failed_checks({"checks": checks}) == ["gap_matches_partitions"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_check_gap_integrity_does_not_mutate_the_report():
