@@ -79,6 +79,11 @@ All notable changes to this project are documented here. The format is based on
   is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
+- Planner PR matching (`agent/planner.py`): when several open-PR titles are quoted in a
+  plan and one nests inside another (e.g. `Add streaming export` inside `Add streaming
+  export docs`), `_matched_pr` now prefers the longest matching title instead of the first
+  in queue order, so the more specific PR wins regardless of queue order. Explicit `#N`
+  references still take priority (#104).
 - Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
   `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
   `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score
