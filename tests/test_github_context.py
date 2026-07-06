@@ -373,3 +373,41 @@ def test_enrich_context_does_not_propagate_repo_labels(monkeypatch):
     out = gc.enrich_context(base, "/some/repo")
     assert "labels" not in out
     assert out["_github_enriched"] is True
+
+
+def _list_pager(by_endpoint):
+    """fake_get returning per-endpoint pages: {url-fragment: {page-number: [items]}}."""
+    def fake_get(url, token, timeout=20):
+        for frag, pages in by_endpoint.items():
+            if frag in url:
+                m = re.search(r"[?&]page=(\d+)", url)
+                return pages.get(int(m.group(1)) if m else 1, [])
+        return []
+    return fake_get
+
+
+def test_milestones_and_releases_paginate_beyond_first_page(monkeypatch):
+    T = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    fake = _list_pager({
+        "/milestones": {
+            1: [{"title": f"m{i}", "created_at": "2023-01-01T00:00:00Z"} for i in range(100)],
+            2: [{"title": "old-open", "created_at": "2023-02-01T00:00:00Z"}],
+        },
+        "/releases": {
+            1: [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)],
+            2: [{"tag_name": "v-old", "published_at": "2023-02-01T00:00:00Z"}],
+        },
+    })
+    monkeypatch.setattr(gc, "_get", fake)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    # the second page is reached, not silently dropped after the first 100
+    assert any(m["title"] == "old-open" for m in ctx["milestones"])
+    assert any(r["tag"] == "v-old" for r in ctx["releases"])
+
+
+def test_list_pagination_respects_page_cap(monkeypatch):
+    T = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    full = [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)]
+    monkeypatch.setattr(gc, "_get", _list_pager({"/releases": {1: full, 2: full, 3: full}}))
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
+    assert len(ctx["releases"]) == 200  # bounded at the cap, never an unbounded loop
