@@ -8,6 +8,7 @@ report.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,17 @@ DEFAULT_GAP_INSPECT_THRESHOLD = 0.10
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats survive a save/load round trip (json.dump writes NaN/Infinity and
+    # json.load parses them back), but int() raises on them and a NaN/Infinity count or score
+    # is not renderable anyway -- treat them as malformed, like a missing or wrong-typed field
+    # (#616). math.isfinite also raises OverflowError for ints too large for a float, which
+    # would otherwise crash the f-string float formatting in _fmt_score/_fmt_rate.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _fmt_score(value) -> str:
@@ -156,7 +167,7 @@ def _composite_lines(artifact: dict) -> list[str]:
 
 
 def _per_repo_table(rows: list) -> list[str]:
-    if not isinstance(rows, list) or not rows:
+    if not rows:
         return []
     header = "| Repo | Composite | Tasks |"
     sep = "| --- | ---: | ---: |"

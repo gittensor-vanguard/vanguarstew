@@ -1,0 +1,15 @@
+{
+  "id": "scalar-plan-files",
+  "description": "Scalar string plan files earns module recall (common LLM shape)",
+  "tags": ["module_recall", "files", "scalar"],
+  "plan": [
+    {"title": "unrelated", "kind": "bugfix", "files": "core/loader.py"}
+  ],
+  "revealed": [
+    {"subject": "fix: race in loader", "files": ["core/loader.py"]}
+  ],
+  "expected": {
+    "module_recall": 1.0,
+    "objective_component": 1.0
+  }
+}

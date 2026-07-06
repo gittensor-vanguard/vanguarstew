@@ -13,6 +13,8 @@ if ROOT not in sys.path:
 
 from benchmark.report import (  # noqa: E402
     _composite_parts_dict,
+    _fmt_rate,
+    _fmt_score,
     _is_multi_repo,
     _per_repo_rows,
     render_report,
@@ -283,6 +285,130 @@ def test_render_does_not_mutate_artifact():
     assert art == snapshot
 
 
+# --- non-finite (NaN/Infinity) numeric fields render n/a instead of raising (#616) --------
+
+
+def test_fmt_score_and_fmt_rate_render_non_finite_as_na():
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert _fmt_score(bad) == "n/a"
+        assert _fmt_rate(bad) == "n/a"
+    # finite values still format normally
+    assert _fmt_score(0.65) == "0.650"
+    assert _fmt_rate(0.25) == "25.0%"
+
+
+def test_render_single_repo_renders_na_for_non_finite_fields():
+    art = _single_repo()
+    art["composite_mean"] = float("nan")
+    art["composite_parts"] = {"judge_mean": float("inf"), "objective_mean": float("-inf")}
+    art["weights"] = {"judge": float("nan"), "objective": 0.4}
+    art["judge_report"] = {
+        "wins": float("nan"),
+        "losses": 1,
+        "ties": 0,
+        "disagreement_rate": float("inf"),
+    }
+    art["tasks"] = float("nan")
+    md = render_report(art)
+    assert "# Benchmark report (single-repo)" in md
+    assert "Composite mean: n/a" in md
+    assert "Judge mean: n/a" in md
+    assert "Objective mean: n/a" in md
+    assert "Weights: judge n/a, objective 0.400" in md
+    assert "Judge W-L-T: n/a" in md
+    assert "Order disagreement rate: n/a" in md
+    # a non-finite tasks count is omitted, exactly like a wrong-typed one
+    assert "Tasks:" not in md
+
+
+def test_render_single_repo_survives_issue_repro():
+    # the exact repro from #616: previously ValueError from int(float("nan"))
+    md = render_report({"composite_mean": 0.5, "tasks": float("nan")})
+    assert "Composite mean: 0.500" in md
+    assert "Tasks:" not in md
+
+
+def test_render_multi_repo_survives_non_finite_counts():
+    # non-finite aggregate counts are not a trusted multi-repo shape (#667); render as
+    # single-repo without crashing (#616).
+    md = render_report(
+        {"composite_mean": 0.5, "per_repo": [],
+         "scored_repos": float("inf"), "repos": float("inf")}
+    )
+    assert "# Benchmark report (single-repo)" in md
+    assert "Composite mean: 0.500" in md
+    assert "Repos:" not in md
+
+
+def test_render_multi_repo_skips_non_finite_scored_and_skipped_details():
+    art = _multi_repo()
+    art["skipped"] = float("inf")
+    md = render_report(art)
+    # repos and scored_repos are finite; only the malformed skipped count is omitted
+    repo_lines = [line for line in md.splitlines() if line.startswith("- Repos:")]
+    assert repo_lines == ["- Repos: 2/2 scored"]
+
+
+def test_render_multi_repo_rejects_non_finite_scored_repos_shape():
+    art = _multi_repo()
+    art["scored_repos"] = float("nan")
+    art["skipped"] = float("inf")
+    md = render_report(art)
+    # non-finite scored_repos is not a trusted multi-repo aggregate (#667)
+    assert "# Benchmark report (single-repo)" in md
+    assert "Repos:" not in md
+
+
+def test_per_repo_table_renders_na_for_non_finite_cells():
+    art = _multi_repo()
+    art["per_repo"][0]["composite_mean"] = float("nan")
+    art["per_repo"][0]["tasks"] = float("inf")
+    md = render_report(art)
+    assert "| /a | n/a | n/a |" in md
+    # the well-formed sibling row is unaffected
+    assert "| /b | 0.650 | 3 |" in md
+
+
+def test_generalization_verdict_is_na_for_non_finite_gap():
+    # float("inf") > threshold is True and float("-inf") > threshold is False, so an
+    # unguarded comparison would fabricate an "inspect"/"pass" verdict from garbage.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        art = _generalization()
+        art["generalization_gap"] = bad
+        md = render_report(art)
+        assert "Generalization gap (tuned − held-out): n/a" in md
+        assert "Verdict: n/a" in md
+        assert "Verdict: inspect" not in md
+        assert "Verdict: pass" not in md
+
+
+def test_render_partition_renders_na_for_non_finite_fields():
+    art = _generalization()
+    art["tuned"]["composite_mean"] = float("nan")
+    art["tuned"]["scored_repos"] = float("inf")
+    md = render_report(art)
+    tuned_section = md.split("### Held-out")[0]
+    assert "Composite mean: n/a" in tuned_section
+    assert "Scored repos:" not in tuned_section
+    # the well-formed held-out partition still renders its real values
+    assert "Composite mean: 0.650" in md.split("### Held-out")[1]
+
+
+def test_render_error_shape_omits_non_finite_tasks():
+    md = render_report({"error": "boom", "tasks": float("nan")})
+    assert "# Benchmark report (error)" in md
+    assert "Tasks:" not in md
+
+
+def test_render_tolerates_int_counts_too_large_for_float():
+    # json.load happily parses arbitrarily large integer literals; float-formatting one
+    # raises OverflowError, so it is treated as malformed like a non-finite float.
+    art = _single_repo()
+    art["judge_report"]["wins"] = 10**400
+    md = render_report(art)
+    assert "Judge W-L-T: n/a" in md
+
+
 def test_load_artifact_round_trip(tmp_path):
     path = tmp_path / "result.json"
     payload = _single_repo()
@@ -328,3 +454,19 @@ def test_cli_still_renders_a_well_formed_artifact(tmp_path):
     result = _run_cli(str(path))
     assert result.returncode == 0
     assert "# Benchmark report (single-repo)" in result.stdout
+
+
+def test_cli_renders_a_non_finite_artifact_without_traceback(tmp_path):
+    # end-to-end reachability for #616: run_eval --out serializes NaN/Infinity via
+    # json.dump, json.load parses them back, and the report CLI must render the reloaded
+    # artifact instead of aborting.
+    payload = _single_repo()
+    payload["tasks"] = float("nan")
+    payload["judge_report"]["disagreement_rate"] = float("inf")
+    path = tmp_path / "nonfinite.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 0
+    assert "Traceback" not in result.stderr
+    assert "# Benchmark report (single-repo)" in result.stdout
+    assert "Order disagreement rate: n/a" in result.stdout
