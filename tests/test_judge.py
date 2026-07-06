@@ -15,7 +15,12 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
-from benchmark.judge import _parse_winner, _plan_substance, pairwise_judge  # noqa: E402
+from benchmark.judge import (  # noqa: E402
+    _item_substance,
+    _parse_winner,
+    _plan_substance,
+    pairwise_judge,
+)
 
 
 class _FakeLLM:
@@ -116,6 +121,18 @@ def test_plan_substance_normalizes_scalar_items_through_filler_check():
     }
     assert pairwise_judge({}, substance, fluff, [], llm) == "A"
     assert pairwise_judge({}, fluff, substance, [], llm) == "B"
+
+
+def test_item_substance_tolerates_non_string_title_kind_rationale():
+    # An LLM can plausibly emit a list/dict for a field instead of a string; none of
+    # these should raise, and a non-string kind/rationale just doesn't add weight.
+    assert _item_substance({"title": "Fix bug", "kind": ["fix", "bugfix"],
+                             "rationale": "because"}) == 2  # title + rationale, not kind
+    assert _item_substance({"title": "Fix bug", "rationale": ["because", "also"]}) == 1
+    # A non-string title falls back to theme instead of crashing.
+    assert _item_substance({"title": ["Fix", "bug"], "theme": "reliability"}) == 1
+    # A non-string title with no usable theme scores 0 (blank), not a crash.
+    assert _item_substance({"title": {"text": "Fix bug"}}) == 0
 
 
 def test_generic_filler_titles_do_not_outrank_concrete_plan():

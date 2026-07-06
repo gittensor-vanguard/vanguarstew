@@ -65,6 +65,16 @@ _FILLER_TITLES = frozenset({
 })
 
 
+def _text(value: object) -> str:
+    """Return `value` only when it is already a string; otherwise treat it as empty text.
+
+    LLM-produced plan items can hand back a non-string but truthy value for a text field
+    (a list, a dict) — the ubiquitous `(x or "").strip()` idiom only guards *falsy* values,
+    so a truthy non-string skips the fallback and raises `AttributeError`.
+    """
+    return value if isinstance(value, str) else ""
+
+
 def _item_substance(item) -> int:
     """Substance weight of a single plan item.
 
@@ -76,18 +86,18 @@ def _item_substance(item) -> int:
     rewarding substance over the mere presence of a title.
     """
     if isinstance(item, dict):
-        title = (item.get("title") or item.get("theme") or "").strip().lower()
+        title = (_text(item.get("title")) or _text(item.get("theme"))).strip().lower()
     else:
         title = str(item).strip().lower()
     if not title or title in _FILLER_TITLES:
         return 0
     weight = 1
     if isinstance(item, dict):
-        if (item.get("kind") or "").strip():
+        if _text(item.get("kind")).strip():
             weight += 1
         if item.get("files"):
             weight += 1
-        if (item.get("rationale") or "").strip():
+        if _text(item.get("rationale")).strip():
             weight += 1
     return weight
 
