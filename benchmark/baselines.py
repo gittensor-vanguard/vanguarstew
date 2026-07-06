@@ -33,8 +33,11 @@ _KIND_KEYWORDS = (
     ("feature", ("add", "feature", "support", "implement", "introduce", "enable", "new")),
     ("test", ("test", "coverage", "ci")),
 )
-# planner's allowed kinds; anything else collapses to "triage"
-_ALLOWED = {"feature", "bugfix", "refactor", "docs", "release", "dep", "triage"}
+# planner's allowed kinds; anything else collapses to "triage". Must cover every bucket in
+# _KIND_KEYWORDS above ("test" included) or that bucket's matches silently collapse to
+# "triage" regardless of what they actually are — score.py's plan_kind vocabulary already
+# recognizes "test", so it belongs here too.
+_ALLOWED = {"feature", "bugfix", "refactor", "docs", "release", "dep", "test", "triage"}
 
 
 def _infer_kind(text: str) -> str:
