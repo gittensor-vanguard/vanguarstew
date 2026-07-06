@@ -164,6 +164,29 @@ def test_explicit_pr_number_in_title_or_rationale():
     assert _matched_pr(item, prs) == prs[0]
 
 
+def test_review_governed_bare_number_beats_leading_ordinal():
+    # A review verb governs `#7`, but an unrelated ordinal `#1` appears first. The item must
+    # match the review-governed PR #7, not the first bare `#N` scanned (#1). Otherwise
+    # reconcile marks #1 addressed and silently drops #7 — the PR the maintainer asked to review.
+    prs = [{"number": 1, "title": "Add dark mode"}, {"number": 7, "title": "Add streaming export"}]
+    item = {"title": "Deliver our #1 priority, then review #7", "rationale": ""}
+    assert _matched_pr(item, prs)["number"] == 7
+    # Control: review reference first already worked and still does.
+    assert _matched_pr({"title": "Review #7, our #1 priority"}, prs)["number"] == 7
+    # A review-governed number no longer in the queue is stale -> no match (suppresses fallback).
+    assert _matched_pr({"title": "review #99, our #1 priority"}, prs) is None
+
+
+def test_review_governed_number_reconciles_the_right_pr():
+    # End-to-end: the reviewed PR #7 is the one flagged addressed; #1 still gets a queue
+    # fallback prepended because nothing actually addressed it.
+    prs = [{"number": 1, "title": "Add dark mode"}, {"number": 7, "title": "Add streaming export"}]
+    plan = [{"title": "Deliver our #1 priority, then review #7", "kind": "triage"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": prs}, 5)
+    assert any(i.get("restates_pr") == 1 or "#1" in i.get("title", "") for i in out)  # #1 fallback
+    assert not any(i.get("restates_pr") == 7 for i in out)  # #7 was a review item, not restated
+
+
 def test_one_token_pr_title_does_not_match_on_weak_overlap():
     prs = [{"number": 3, "title": "loader"}]
     # Incidental mention of the same word must not count as restating the PR.
