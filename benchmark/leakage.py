@@ -34,7 +34,7 @@ _URL_STOP = "<>()[]{}\"'`"
 # repo/owner URL (no item path, e.g. github.com/owner/repo) is deliberately left intact so
 # legitimate references survive.
 _GH_LINK = re.compile(
-    r"https?://github\.com"
+    r"https?://(?:www\.)?github\.com"                        # github.com or www.github.com
     r"/[^\s" + re.escape(_URL_STOP) + r"]+/"                  # owner/repo/
     r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|"
     r"milestone|milestones|discussions)/"           # a forward-referencing link type

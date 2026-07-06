@@ -110,6 +110,16 @@ def test_strip_forward_refs_preserves_surrounding_punctuation():
     assert strip_forward_refs("see https://github.com/o/r/pull/9!") == "see <link>!"
 
 
+def test_strip_forward_refs_masks_www_github_deep_links():
+    # github.com is also served at www.github.com; a www-prefixed deep link must be masked too,
+    # or a forward PR/issue/release reference leaks past the filter.
+    assert strip_forward_refs("see https://www.github.com/o/r/pull/500 next") == "see <link> next"
+    assert strip_forward_refs("http://www.github.com/o/r/releases/tag/v9.9.9") == "<link>"
+    assert strip_forward_refs("(https://www.github.com/o/r/issues/3)") == "(<link>)"
+    # A bare www owner/repo URL (no forward-referencing path) stays intact, like the non-www case.
+    assert strip_forward_refs("https://www.github.com/o/r") == "https://www.github.com/o/r"
+
+
 def test_strip_forward_refs_preserves_markdown_and_bracket_delimiters():
     # Parentheses, square brackets, and angle brackets around a link survive.
     assert strip_forward_refs("(https://github.com/o/r/issues/3)") == "(<link>)"
