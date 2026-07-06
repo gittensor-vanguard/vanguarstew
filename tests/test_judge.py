@@ -148,6 +148,21 @@ def test_generic_filler_titles_do_not_outrank_concrete_plan():
     assert pairwise_judge({}, filler, concrete, [], llm) == "B"
 
 
+def test_null_plan_items_score_zero_substance():
+    # A JSON `null` in the plan array stringifies to "none" — not blank, not a filler word —
+    # so it must be treated as blank, else a null-padded plan inflates its substance rank.
+    assert _plan_substance([None]) == 0
+    assert _plan_substance([None, None, None, None]) == 0
+    # Nulls mixed with a real item contribute nothing beyond the real item.
+    assert _plan_substance([None, {"title": "add retry to loader"}, None]) == 1
+
+    llm = LLM(api_key="offline")
+    real = {"plan": [{"title": "fix loader race", "kind": "bugfix"}]}
+    nulls = {"plan": [None, None, None, None]}
+    assert pairwise_judge({}, real, nulls, [], llm) == "A"
+    assert pairwise_judge({}, nulls, real, [], llm) == "B"
+
+
 def test_verbose_fluff_plan_does_not_beat_concise_substance():
     # A long plan padded with empty-of-substance items must NOT beat a shorter plan
     # of real maintainer actions. Guards the length-over-substance failure (#54);

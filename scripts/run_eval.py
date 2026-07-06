@@ -38,7 +38,10 @@ def main() -> None:
     src.add_argument("--repos", nargs="+",
                      help="two or more git repos to replay and aggregate into a composite_mean")
     src.add_argument("--repo-set",
-                     help="validated repo-set JSON config to replay instead of ad-hoc repos")
+                     help="validated repo-set JSON config to replay (see benchmark/repo_sets/)")
+    ap.add_argument("--repo-set-partition", default="tuned",
+                    choices=["tuned", "held_out", "all"],
+                    help="which repos from --repo-set to replay (default: tuned)")
     ap.add_argument("--agent", default="agent.py", help="agent entrypoint file")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, choices=sorted(BASELINES),
                     help="reference opponent the challenger is judged against")
@@ -78,7 +81,8 @@ def main() -> None:
         dual_order_judge=not args.single_order_judge,
     )
     if args.repo_set:
-        result = run_multi_replay(repo_set=args.repo_set, held_out=args.held_out, **common)
+        partition = "held_out" if args.held_out and args.repo_set_partition == "tuned" else args.repo_set_partition
+        result = run_multi_replay(repo_set=args.repo_set, repo_set_partition=partition, **common)
     elif args.repos:
         result = run_multi_replay(args.repos, **common)
     else:
