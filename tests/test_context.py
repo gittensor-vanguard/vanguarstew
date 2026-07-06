@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import benchmark.github_context as gc  # noqa: E402
 from agent.context import (  # noqa: E402
     _agent_context_list,
     _agent_issue_pr_list,
@@ -24,7 +25,6 @@ from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
 from agent.planner import _render as render_planner_context  # noqa: E402
 from benchmark.freeze import build_context  # noqa: E402
-import benchmark.github_context as gc  # noqa: E402
 
 
 def test_context_for_agent_omits_unknown_issue_labels():
