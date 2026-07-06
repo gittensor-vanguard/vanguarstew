@@ -50,6 +50,8 @@ _ENRICH_META_KEYS = ("_issues_truncated", "_knowable_until", "_source")
 
 def parse_owner_repo(remote_url: str):
     """Extract (owner, repo) from an ssh or https GitHub remote URL."""
+    if not isinstance(remote_url, str):
+        return None, None
     s = (remote_url or "").strip()
     if s.endswith(".git"):
         s = s[:-4]
