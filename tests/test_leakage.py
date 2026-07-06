@@ -80,6 +80,52 @@ def test_scrub_context_scrubs_nested_fields_only():
     assert ctx.get("_forward_signal_scrubbed") is None  # original not mutated
 
 
+def test_strip_forward_refs_preserves_surrounding_punctuation():
+    # Trailing sentence punctuation must stay in the prose, not vanish into <link>.
+    assert strip_forward_refs("see https://github.com/o/r/issues/5, next") == "see <link>, next"
+    assert strip_forward_refs("see https://github.com/o/r/issues/5.") == "see <link>."
+    assert strip_forward_refs("see https://github.com/o/r/pull/9; done") == "see <link>; done"
+    assert strip_forward_refs("see https://github.com/o/r/pull/9!") == "see <link>!"
+
+
+def test_strip_forward_refs_preserves_markdown_and_bracket_delimiters():
+    # Parentheses, square brackets, and angle brackets around a link survive.
+    assert strip_forward_refs("(https://github.com/o/r/issues/3)") == "(<link>)"
+    assert strip_forward_refs("[x](https://github.com/o/r/pull/7)") == "[x](<link>)"
+    # An inline #N backref inside the label is scrubbed too, independently.
+    assert strip_forward_refs("[see #1](https://github.com/o/r/commit/abc1234)") == (
+        "[see #ref](<link>)"
+    )
+    # Angle-bracketed: the enclosing brackets are preserved as a pair around the mask.
+    assert strip_forward_refs("<https://github.com/o/r/issues/5>") == "<<link>>"
+
+
+def test_strip_forward_refs_masks_query_strings_and_fragments():
+    # Query strings and fragments are part of the URL and must be masked with it.
+    for url in (
+        "https://github.com/o/r/issues/5?foo=bar",
+        "https://github.com/o/r/pull/9#discussion_r123",
+        "https://github.com/o/r/commit/abc1234?diff=split",
+        "https://github.com/o/r/compare/v1.0...v2.0",
+    ):
+        out = strip_forward_refs(f"see {url} now")
+        assert "github.com" not in out
+        assert "<link>" in out
+        assert out.startswith("see ") and out.endswith(" now")  # prose intact
+
+
+def test_strip_forward_refs_keeps_bare_owner_and_repo_urls():
+    # A bare owner/repo URL carries no specific forward reference and must survive.
+    for url in (
+        "https://github.com/o/r",
+        "https://github.com/o",
+        "https://github.com/o/r/tree-sitter",   # a repo literally named tree-sitter
+        "https://github.com/o/r/graphs",         # an insights tab, not a deep-link
+        "https://github.com/o/r/issues",         # the issue list, not a specific issue
+    ):
+        assert strip_forward_refs(url) == url, url
+
+
 def _fake_history(n):
     return [f"sha{i:03d}" for i in range(n)]
 
@@ -101,3 +147,14 @@ def test_rotation_seed_is_deterministic(monkeypatch):
     c = taskgen.generate_tasks("x", num_tasks=4, horizon=5, rotation_seed=99)
     assert [t["freeze_index"] for t in a] == [t["freeze_index"] for t in b]
     assert [t["freeze_index"] for t in a] != [t["freeze_index"] for t in c]
+
+
+def test_generate_tasks_respects_after_before_bounds(monkeypatch):
+    monkeypatch.setattr(taskgen, "linear_history", lambda repo: _fake_history(20))
+    monkeypatch.setattr(taskgen, "revealed_window", lambda *a, **k: [])
+    monkeypatch.setattr(taskgen, "_commit_dates", lambda repo: {
+        f"sha{i:03d}": f"2026-01-{i + 1:02d}T00:00:00+00:00" for i in range(20)
+    })
+    tasks = taskgen.generate_tasks(
+        "x", num_tasks=10, horizon=2, min_history=2, after="2026-01-05", before="2026-01-08")
+    assert [t["freeze_index"] for t in tasks] == [4, 5, 6, 7]
