@@ -19,7 +19,11 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.repo_set import RepoSetError  # noqa: E402
-from benchmark.runner import run_multi_replay, run_replay  # noqa: E402
+from benchmark.runner import (  # noqa: E402
+    run_generalization_report,
+    run_multi_replay,
+    run_replay,
+)
 
 AGENT = os.path.join(ROOT, "agent.py")
 
@@ -120,6 +124,64 @@ def test_multi_repo_skips_zero_task_repo_without_diluting():
     finally:
         shutil.rmtree(good, ignore_errors=True)
         shutil.rmtree(tiny, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_multi_repo_survives_unusable_repo_without_aborting():
+    good = _tiny_repo(tempfile.mkdtemp())
+    unusable = tempfile.mkdtemp()  # a real directory that is NOT a git repo
+    try:
+        kw = dict(agent_file=AGENT, n_tasks=2, horizon=5, seed=0)
+        res = run_multi_replay([good, unusable], **kw)
+
+        # the whole batch completes; one unusable repo does not abort it or drop the good repo
+        assert res["repos"] == 2
+        assert res["scored_repos"] == 1 and res["skipped"] == 1
+
+        # the unusable repo is recorded like a zero-task repo: an error plus tasks == 0
+        bad_row = next(r for r in res["per_repo"] if r["repo"] == unusable)
+        assert bad_row.get("tasks") == 0 and bad_row.get("error")
+
+        # and it does not dilute the aggregate: the mean equals the good repo's alone
+        good_alone = run_multi_replay([good], **kw)
+        assert res["composite_mean"] == good_alone["composite_mean"]
+        assert res["composite_parts"] == good_alone["composite_parts"]
+    finally:
+        shutil.rmtree(good, ignore_errors=True)
+        shutil.rmtree(unusable, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_generalization_report_survives_non_git_repo_set_source():
+    tuned_ok = _tiny_repo(tempfile.mkdtemp(), prefix="tuned")
+    tuned_bad = tempfile.mkdtemp()  # materializes as a plain dir, then fails inside run_replay
+    held = _tiny_repo(tempfile.mkdtemp(), prefix="held")
+    cfg_dir = tempfile.mkdtemp()
+    cfg = os.path.join(cfg_dir, "repos.json")
+    _write_repo_set(cfg, [
+        {"name": "tuned-ok", "source": tuned_ok, "tier": "recent",
+         "freeze_window": {"min_history": 3}},
+        {"name": "tuned-bad", "source": tuned_bad, "tier": "recent",
+         "freeze_window": {"min_history": 3}},
+        {"name": "held-b", "source": held, "tier": "obscure", "held_out": True,
+         "freeze_window": {"min_history": 3}},
+    ])
+    try:
+        # _partition guards only RepoSetError, so a non-git source used to crash the whole
+        # report; the per-repo guard now records it and the report still completes with a gap
+        report = run_generalization_report(cfg, agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
+
+        tuned = report["tuned"]
+        assert tuned["repos"] == 2 and tuned["scored_repos"] == 1 and tuned["skipped"] == 1
+        bad_row = next(r for r in tuned["per_repo"] if r["repo_name"] == "tuned-bad")
+        assert bad_row.get("tasks") == 0 and bad_row.get("error")
+
+        # both partitions still scored a repo, so the generalization gap is reported
+        assert report["held_out"]["scored_repos"] == 1
+        assert report["generalization_gap"] is not None
+    finally:
+        for d in (tuned_ok, tuned_bad, held, cfg_dir):
+            shutil.rmtree(d, ignore_errors=True)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
