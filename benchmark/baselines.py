@@ -19,7 +19,23 @@ from __future__ import annotations
 from collections import Counter
 
 from agent.context import load_context
-from benchmark.score import is_release_subject
+from benchmark.score import commit_kind, is_release_subject
+
+# Map normalized commit_kind values onto the planner's baseline vocabulary.
+_COMMIT_KIND_TO_BASELINE = {
+    "feat": "feature",
+    "fix": "bugfix",
+    "docs": "docs",
+    "refactor": "refactor",
+    "perf": "refactor",
+    "release": "release",
+    "chore": "dep",
+    "ci": "refactor",
+    "test": "refactor",
+    "build": "refactor",
+    "style": "refactor",
+    "revert": "bugfix",
+}
 
 # Map a free-text title/subject to one of the planner's kinds. Order matters: earlier
 # entries win, so dep is checked before the broader "feature" verbs. Release detection
@@ -40,9 +56,15 @@ _ALLOWED = {"feature", "bugfix", "refactor", "docs", "release", "dep", "triage"}
 def _infer_kind(text: str) -> str:
     if is_release_subject(text):
         return "release"
+    ck = commit_kind(text)
+    if ck:
+        return _COMMIT_KIND_TO_BASELINE.get(ck, "triage")
     low = (text or "").lower()
     for kind, needles in _KIND_KEYWORDS:
         if any(n in low for n in needles):
+            # The planner has no "test" kind; CI/test hardening is infra momentum, not triage.
+            if kind == "test":
+                return "refactor"
             return kind if kind in _ALLOWED else "triage"
     return "triage"
 

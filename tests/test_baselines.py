@@ -22,6 +22,7 @@ from benchmark.baselines import (  # noqa: E402
     _infer_kind,
     empty_solve,
     get_baseline,
+    heuristic_philosophy,
     heuristic_solve,
 )
 from benchmark.runner import run_replay  # noqa: E402
@@ -102,6 +103,21 @@ def test_infer_kind_matches_scoring_release_detection():
     ]
     for subject in subjects:
         assert (_infer_kind(subject) == "release") == is_release_subject(subject), subject
+
+
+def test_infer_kind_maps_ci_and_test_commits_to_refactor_not_triage():
+    # Regression (#270): the dead "test" keyword bucket used to collapse into "triage".
+    assert _infer_kind("ci: pin runner os version") == "refactor"
+    assert _infer_kind("test: add fixture for loader") == "refactor"
+    ctx = {
+        "recent_commits": [
+            {"subject": "ci: add windows runner"},
+            {"subject": "test: add fixture for loader"},
+        ],
+        "open_issues": [],
+    }
+    assert "triage work" not in heuristic_philosophy(ctx)["summary"].lower()
+    assert "refactor work" in heuristic_philosophy(ctx)["summary"].lower()
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
