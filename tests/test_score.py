@@ -8,6 +8,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.score import (  # noqa: E402
+    _tokens,
     addressed_issues,
     backlog_recall,
     base_from_releases,
@@ -467,3 +468,70 @@ def test_objective_score_release_match_honors_cased_kind():
     assert score["release_signaled"] is True
     assert score["release_predicted"] is True
     assert score["release_match"] is True
+
+
+# --- scoring text helpers must tolerate non-string LLM fields (#313) ----------------
+
+# Non-string shapes an LLM might emit for a text field; none of these is valid signal.
+_NON_STRINGS = [["a", "b"], {"k": 1}, 123, 12.5, True, b"bytes", None]
+
+
+def test_tokens_tolerates_non_string_input():
+    # Plan/commit fields come from LLM JSON; a non-string must yield no tokens, not crash.
+    for bad in _NON_STRINGS:
+        assert _tokens(bad) == set(), f"{bad!r}"
+    assert _tokens("") == set()                                         # falsy string unchanged
+    assert _tokens("Add the Foo Loader") == {"add", "the", "foo", "loader"}
+
+
+def test_is_release_subject_tolerates_non_string_input():
+    for bad in _NON_STRINGS:
+        assert is_release_subject(bad) is False, f"{bad!r}"
+    assert is_release_subject("Release v1.2.0") is True                 # strings unchanged
+    assert is_release_subject("fix crash in v1.2.0 parser") is False
+
+
+def test_commit_kind_tolerates_non_string_input():
+    for bad in _NON_STRINGS:
+        assert commit_kind(bad) is None, f"{bad!r}"
+    assert commit_kind("feat: add loader") == "feat"                    # strings unchanged
+
+
+def test_parse_semver_tolerates_non_string_input():
+    for bad in _NON_STRINGS:
+        assert parse_semver(bad) is None, f"{bad!r}"
+    assert parse_semver("v1.2.3") == (1, 2, 3)                          # strings unchanged
+
+
+def test_recall_helpers_survive_non_string_plan_fields():
+    # Every consumer of the guarded helpers must survive a malformed field, contributing no
+    # signal rather than raising.
+    revealed = [{"subject": "add loader", "files": ["agent/foo.py"]}]
+    assert module_recall([{"title": ["Add foo"], "theme": {"k": 1}}], revealed)["module_recall"] == 0.0
+    assert kind_recall([{"kind": ["feature"]}], revealed)["kind_recall"] == 0.0
+    assert release_predicted([{"title": ["Release v2.0"], "kind": ["feature"]}]) is False
+    open_issues = [{"number": 7, "title": "docs overhaul"}]
+    rev = [{"subject": "docs: overhaul the guide", "files": []}]
+    assert backlog_recall([{"title": {"weird": 1}}], rev, open_issues)["backlog_recall"] == 0.0
+
+
+def test_objective_score_survives_all_malformed_fields_end_to_end():
+    # A single malformed title/theme/kind/subject would otherwise crash the whole replay-run
+    # scoring loop; objective_score must return a well-formed score instead.
+    revealed = [
+        {"subject": "add loader", "files": ["agent/foo.py"]},
+        {"subject": ["not", "a", "string"], "files": ["core/x.py"]},   # malformed revealed too
+    ]
+    score = objective_score(
+        [{"title": ["x"], "theme": {"k": 1}, "kind": ["feat"]}],
+        revealed,
+        base_version=["v1.0.0"],                                       # malformed base version
+        open_issues=[{"number": 1, "title": ["y"]}],
+    )
+    for key in ("module_recall", "kind_recall", "release_signaled", "release_predicted",
+                "release_match", "bump_actual", "bump_match", "backlog_recall"):
+        assert key in score
+    # A well-formed plan (naming the changed 'agent'/'core' modules) is scored exactly as
+    # before, so the guards add no regression.
+    good = objective_score([{"title": "harden the agent core loader", "kind": "feat"}], revealed)
+    assert good["module_recall"] == 1.0

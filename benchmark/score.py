@@ -26,17 +26,24 @@ _SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
 _BUMP_LEVELS = ("major", "minor", "patch")
 
 
-def _tokens(text: str) -> set:
-    return set(_TOK.findall((text or "").lower()))
+def _tokens(text) -> set:
+    # Plan/commit fields come from LLM JSON; a non-string (list/dict/number) means no signal,
+    # not a crash on `.lower()`.
+    if not isinstance(text, str):
+        return set()
+    return set(_TOK.findall(text.lower()))
 
 
-def parse_semver(text: str):
+def parse_semver(text):
     """Parse the first semver core in `text` -> (major, minor, patch), or None.
 
     Tolerant of a leading `v` and of a missing patch (`1.2` -> (1, 2, 0)), and ignores any
-    pre-release/build suffix. Returns None when no version-looking token is present.
+    pre-release/build suffix. Returns None when no version-looking token is present, or when
+    `text` is not a string (an LLM may emit a non-string base version).
     """
-    m = _SEMVER.search(text or "")
+    if not isinstance(text, str):
+        return None
+    m = _SEMVER.search(text)
     if not m:
         return None
     return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
@@ -167,9 +174,12 @@ def is_release_subject(text: str) -> bool:
     Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
     that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
     in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
+
+    A non-string value (an LLM may emit one for a plan title) is not a release.
     """
-    s = text or ""
-    return bool(_RELEASE_KW.search(s) or _RELEASE_TAG_SUBJECT.match(s))
+    if not isinstance(text, str):
+        return False
+    return bool(_RELEASE_KW.search(text) or _RELEASE_TAG_SUBJECT.match(text))
 
 
 _CC_PREFIX = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
@@ -213,9 +223,11 @@ def commit_kind(subject: str):
 
     Prefers a Conventional-Commit prefix (`feat:`, `fix(scope):`, `docs!:`), then falls
     back to release subjects (`Release v1.2.0`, `bump version`). Merge commits and
-    prefix-less subjects carry no reliable kind and return None.
+    prefix-less subjects carry no reliable kind and return None, as does a non-string
+    subject.
     """
-    subject = subject or ""
+    if not isinstance(subject, str):
+        return None
     m = _CC_PREFIX.match(subject)
     if m:
         kind = _COMMIT_KIND.get(m.group(1).lower())
