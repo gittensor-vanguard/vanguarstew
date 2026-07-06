@@ -126,6 +126,18 @@ def test_strip_forward_refs_keeps_bare_owner_and_repo_urls():
         assert strip_forward_refs(url) == url, url
 
 
+def test_scrub_context_handles_non_string_free_text_fields():
+    out = scrub_context({"open_issues": [{"title": ["Fix #900"]}]})
+    assert out["open_issues"][0]["title"] == ""
+    assert out["_forward_signal_scrubbed"] is True
+
+
+def test_strip_forward_refs_returns_empty_for_non_string():
+    assert strip_forward_refs(["Fix #900"]) == ""
+    assert strip_forward_refs(None) == ""
+    assert strip_forward_refs(42) == ""
+
+
 def _fake_history(n):
     return [f"sha{i:03d}" for i in range(n)]
 
