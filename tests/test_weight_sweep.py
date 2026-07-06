@@ -7,7 +7,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.runner import WEIGHT_SWEEP_GRID, _rows_list, _sweep_rows, weight_sweep  # noqa: E402
+from benchmark.runner import (  # noqa: E402
+    WEIGHT_SWEEP_GRID,
+    _freeze_window_dict,
+    _rows_list,
+    _sweep_rows,
+    weight_sweep,
+)
 from benchmark.score import composite_score  # noqa: E402
 
 # A tiny per-task shape mirroring run_replay's `rows`: a judge `winner` plus an `objective`
@@ -120,3 +126,36 @@ def test_multi_repo_judge_order_collection_survives_non_list_rows(caplog):
         ]
     assert orders == []
     assert any("replay rows is int" in r.message for r in caplog.records)
+
+
+# --- #643: truthy non-dict freeze_window must not abort multi-repo replay --------------
+
+_MALFORMED_FREEZE_WINDOWS = [42, 3.14, True, ["after"], "not a dict"]
+
+
+def test_freeze_window_dict_accepts_only_real_dicts():
+    good = {"min_history": 3, "rotation_seed": 5}
+    for bad in _MALFORMED_FREEZE_WINDOWS:
+        assert _freeze_window_dict(bad) == {}, bad
+    assert _freeze_window_dict(good) == good
+    assert _freeze_window_dict(None) == {}
+
+
+def test_freeze_window_dict_missing_key_emits_no_warning(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        assert _freeze_window_dict(None) == {}
+    assert not caplog.records
+
+
+def test_freeze_window_dict_warns_for_non_dict_value(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.runner"):
+        merged = {
+            key: value
+            for key, value in _freeze_window_dict(42).items()
+        }
+    assert merged == {}
+    assert any("freeze_window is int" in r.message for r in caplog.records)

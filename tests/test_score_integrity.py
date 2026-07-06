@@ -1,6 +1,7 @@
 """Tests for the composite-score integrity gate (deterministic, offline)."""
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -13,6 +14,8 @@ from benchmark.score_integrity import (  # noqa: E402
     DEFAULT_W_JUDGE,
     DEFAULT_W_OBJECTIVE,
     _expected_composite,
+    _per_repo_weight_rows,
+    _weights,
     check_score_integrity,
     failed_checks,
     integrity_headline,
@@ -159,6 +162,125 @@ def test_multi_repo_weights_from_per_repo():
         ],
     }
     assert check_score_integrity(art)["passed"] is True
+
+
+# --- #635: malformed per_repo must not abort score integrity (resubmit #637) ---------
+
+_MALFORMED_PER_REPO = [42, 3.14, True, {"name": "a"}, "not a list", b"per_repo"]
+
+
+def test_per_repo_weight_rows_accepts_only_real_lists():
+    rows = [{"weights": {"judge": 0.6, "objective": 0.4}}]
+    for bad in _MALFORMED_PER_REPO:
+        assert _per_repo_weight_rows(bad) == [], bad
+    assert _per_repo_weight_rows(rows) == rows
+    assert _per_repo_weight_rows(None) == []
+    assert _per_repo_weight_rows([]) == []
+
+
+def test_per_repo_weight_rows_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _per_repo_weight_rows(None) == []
+    assert not caplog.records
+
+
+def test_per_repo_weight_rows_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _per_repo_weight_rows([]) == []
+    assert not caplog.records
+
+
+def test_per_repo_weight_rows_warns_for_skipped_rows(caplog):
+    mixed = [42, {"weights": {"judge": 0.6, "objective": 0.4}}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert len(_per_repo_weight_rows(mixed)) == 1
+    assert any("per_repo[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_per_repo_weight_rows_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _per_repo_weight_rows(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("per_repo[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_weights_uses_top_level_when_per_repo_is_non_list(caplog):
+    slice_ = {
+        "weights": {"judge": 0.8, "objective": 0.2},
+        "per_repo": 42,
+    }
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _weights(slice_) == (0.8, 0.2)
+    assert not caplog.records
+
+
+def test_weights_warns_for_non_list_per_repo_without_top_level_weights(caplog):
+    for bad in _MALFORMED_PER_REPO:
+        slice_ = {
+            "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5},
+            "per_repo": bad,
+        }
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+            assert _weights(slice_) == (DEFAULT_W_JUDGE, DEFAULT_W_OBJECTIVE), bad
+        messages = [r.message for r in caplog.records]
+        assert any("not a list" in m for m in messages), bad
+        assert any("default blend weights" in m for m in messages), bad
+
+
+def test_weights_warns_when_all_junk_per_repo_and_no_top_level_weights(caplog):
+    slice_ = {
+        "composite_mean": 0.62,
+        "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5},
+        "per_repo": [42, {"name": "a"}, "bad"],
+    }
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _weights(slice_) == (DEFAULT_W_JUDGE, DEFAULT_W_OBJECTIVE)
+    messages = [r.message for r in caplog.records]
+    assert any("per_repo[0] is int" in m for m in messages)
+    assert any("no usable nested weights" in m for m in messages)
+    assert any("default blend weights" in m for m in messages)
+
+    caplog.clear()
+    slice_all_junk = {**slice_, "per_repo": [42, "bad", None]}
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _weights(slice_all_junk) == (DEFAULT_W_JUDGE, DEFAULT_W_OBJECTIVE)
+    messages = [r.message for r in caplog.records]
+    assert any("no usable rows" in m for m in messages)
+    assert any("default blend weights" in m for m in messages)
+
+
+def test_weights_warns_for_empty_per_repo_without_top_level_weights(caplog):
+    slice_ = {
+        "composite_mean": 0.62,
+        "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5},
+        "per_repo": [],
+    }
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _weights(slice_) == (DEFAULT_W_JUDGE, DEFAULT_W_OBJECTIVE)
+    assert any("per_repo is empty" in r.message for r in caplog.records)
+
+
+def test_weights_warns_for_malformed_top_level_weights(caplog):
+    slice_ = {"weights": {"judge": "high", "objective": 0.4}}
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert _weights(slice_) == (DEFAULT_W_JUDGE, DEFAULT_W_OBJECTIVE)
+    assert any("top-level weights are missing or malformed" in r.message for r in caplog.records)
+
+
+def test_check_score_integrity_survives_non_list_per_repo(caplog):
+    art = {
+        "composite_mean": 0.62,
+        "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5},
+        "per_repo": 42,
+    }
+    with caplog.at_level(logging.WARNING, logger="benchmark.score_integrity"):
+        assert check_score_integrity(art)["passed"] is True
+    assert any("per_repo is int" in r.message for r in caplog.records)
+    assert any("default blend weights" in r.message for r in caplog.records)
 
 
 def test_integrity_headline_reports_consistent_and_inconsistent():

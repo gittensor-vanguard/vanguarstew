@@ -58,21 +58,110 @@ def _round3(value):
     return round(float(value), 3) if _is_number(value) else None
 
 
+def _top_level_weights(slice_: dict) -> tuple[float, float] | None:
+    """Return explicit top-level blend weights when both components are numeric."""
+    weights = slice_.get("weights")
+    if not isinstance(weights, dict):
+        return None
+    wj, wo = weights.get("judge"), weights.get("objective")
+    if _is_number(wj) and _is_number(wo):
+        return float(wj), float(wo)
+    return None
+
+
+def _per_repo_weight_rows(per_repo, field: str = "per_repo") -> list[dict]:
+    """Return dict rows from a multi-repo ``per_repo`` list for nested weight lookup.
+
+    ``None`` means the key is absent (no per-repo detail). An empty list means the artifact
+    explicitly recorded zero repos. Both yield no rows without a container warning.
+    """
+    if per_repo is None:
+        return []
+    if not isinstance(per_repo, list):
+        logger.warning(
+            "score_integrity: %s is %s, not a list; treating as no per-repo rows",
+            field,
+            type(per_repo).__name__,
+        )
+        return []
+    rows = []
+    for idx, entry in enumerate(per_repo):
+        if not isinstance(entry, dict):
+            logger.warning(
+                "score_integrity: %s[%s] is %s, not an object; skipping",
+                field,
+                idx,
+                type(entry).__name__,
+            )
+            continue
+        rows.append(entry)
+    if per_repo and not rows:
+        logger.warning(
+            "score_integrity: %s had %d entr%s but no usable rows",
+            field,
+            len(per_repo),
+            "y" if len(per_repo) == 1 else "ies",
+        )
+    return rows
+
+
+def _nested_weights(entry: dict) -> tuple[float, float] | None:
+    nested = entry.get("weights")
+    if not isinstance(nested, dict):
+        return None
+    wj, wo = nested.get("judge"), nested.get("objective")
+    if _is_number(wj) and _is_number(wo):
+        return float(wj), float(wo)
+    return None
+
+
+def _warn_default_weights(slice_: dict, per_repo_rows: list[dict]) -> None:
+    """Log why default blend weights are being used instead of artifact-declared values."""
+    per_repo = slice_.get("per_repo")
+    if "weights" in slice_ and _top_level_weights(slice_) is None:
+        logger.warning(
+            "score_integrity: top-level weights are missing or malformed; "
+            "using default blend weights (%.1f/%.1f)",
+            DEFAULT_W_JUDGE,
+            DEFAULT_W_OBJECTIVE,
+        )
+        return
+    if isinstance(per_repo, list) and per_repo and per_repo_rows and all(
+        _nested_weights(entry) is None for entry in per_repo_rows
+    ):
+        logger.warning(
+            "score_integrity: per_repo rows contain no usable nested weights; "
+            "using default blend weights (%.1f/%.1f)",
+            DEFAULT_W_JUDGE,
+            DEFAULT_W_OBJECTIVE,
+        )
+        return
+    if isinstance(per_repo, list) and not per_repo and "weights" not in slice_:
+        logger.warning(
+            "score_integrity: per_repo is empty and no top-level weights were declared; "
+            "using default blend weights (%.1f/%.1f)",
+            DEFAULT_W_JUDGE,
+            DEFAULT_W_OBJECTIVE,
+        )
+        return
+    logger.warning(
+        "score_integrity: no usable weights in artifact; using default blend weights (%.1f/%.1f)",
+        DEFAULT_W_JUDGE,
+        DEFAULT_W_OBJECTIVE,
+    )
+
+
 def _weights(slice_: dict) -> tuple[float, float]:
     """Return ``(w_judge, w_objective)`` from a scoring slice, defaulting to 0.6/0.4."""
-    weights = slice_.get("weights")
-    if isinstance(weights, dict):
-        wj, wo = weights.get("judge"), weights.get("objective")
-        if _is_number(wj) and _is_number(wo):
-            return float(wj), float(wo)
-    for entry in slice_.get("per_repo") or []:
-        if not isinstance(entry, dict):
-            continue
-        nested = entry.get("weights")
-        if isinstance(nested, dict):
-            wj, wo = nested.get("judge"), nested.get("objective")
-            if _is_number(wj) and _is_number(wo):
-                return float(wj), float(wo)
+    top = _top_level_weights(slice_)
+    if top is not None:
+        return top
+    rows = _per_repo_weight_rows(slice_.get("per_repo"))
+    for entry in rows:
+        nested = _nested_weights(entry)
+        if nested is not None:
+            return nested
+    _warn_default_weights(slice_, rows)
     return DEFAULT_W_JUDGE, DEFAULT_W_OBJECTIVE
 
 
