@@ -177,6 +177,14 @@ def test_strip_forward_refs_preserves_bare_repo_url():
         assert url in out and "<link>" not in out
 
 
+def test_scrub_context_scrubs_release_tag_on_git_freeze_shape():
+    # The default git-freeze path emits releases as {"tag": t} with no "name" key, so a
+    # forward-reference in the tag is a release's only identifier and must still be scrubbed.
+    out = scrub_context({"releases": [{"tag": "v2.0-fixes-#900"}]})
+    assert out["releases"][0]["tag"] == "v2.0-fixes-#ref"
+    assert "#900" not in out["releases"][0]["tag"]
+
+
 def test_generate_tasks_respects_after_before_bounds(monkeypatch):
     monkeypatch.setattr(taskgen, "linear_history", lambda repo: _fake_history(20))
     monkeypatch.setattr(taskgen, "revealed_window", lambda *a, **k: [])
