@@ -103,6 +103,73 @@ def test_an_error_run_fails_run_completed():
     assert "run_completed" in failed_checks(result)
 
 
+# --- #610: an unscored multi-repo run must not be read as a real 0.0 score --------------
+# `run_multi_replay` reports `scored_repos: 0` with a placeholder `composite_mean: 0.0`
+# (an average over an empty list). The gate drops that placeholder to None (the same
+# `scored_repos` guard `benchmark/report.py` and `scripts/compare_eval.py` already apply), so the
+# unscored run fails `run_completed` and can never satisfy `composite_floor` — while a *genuinely*
+# scored run whose composite is really 0.0 is preserved.
+
+
+def test_unscored_multi_repo_placeholder_fails_run_completed():
+    # scored_repos: 0 carries composite_mean: 0.0 as a placeholder, not a real score.
+    empty_run = {"repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0}
+    result = check_promotion(empty_run)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+    assert result["composite_mean"] is None
+
+
+def test_unscored_placeholder_is_not_promoted_even_at_permissive_thresholds():
+    # Without the guard the placeholder 0.0 would clear a zero floor and a zero-margin bar, so a
+    # no-op run that scored nothing could be "promoted". It must stay held: with no real score,
+    # BOTH run_completed and composite_floor fail even at min_composite=0.0.
+    empty_run = {
+        "repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
+        "tally": {"challenger": 0, "baseline": 0, "tie": 0},
+    }
+    result = check_promotion(empty_run, min_composite=0.0, min_decisive_margin=0)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+    assert "composite_floor" in failed_checks(result)
+
+
+def test_genuine_zero_scored_run_is_a_real_score():
+    # Control isolating the cause: same composite_mean 0.0, but scored_repos > 0 means the run
+    # really scored 0.0. It must keep its real score (run_completed passes; only the floor fails),
+    # proving scored_repos — not the numeric 0.0 — is what marks the placeholder unscored.
+    scored_run = {
+        "repos": 2, "scored_repos": 2, "skipped": 0, "composite_mean": 0.0,
+        "decisive_margin": 2, "judge_report": {"disagreement_rate": 0.1},
+    }
+    result = check_promotion(scored_run)
+    assert "run_completed" not in failed_checks(result)
+    assert result["composite_mean"] == 0.0
+    assert "composite_floor" in failed_checks(result)  # a real 0.0 is below the default floor
+
+
+def test_single_repo_zero_composite_is_unaffected():
+    # A single-repo run carries no scored_repos key, so its real 0.0 stays a real score — the
+    # guard only reinterprets the multi-repo unscored placeholder, not ordinary single-repo runs.
+    single = _result(composite=0.0, margin=2, disagreement=0.1)
+    result = check_promotion(single)
+    assert "run_completed" not in failed_checks(result)
+    assert result["composite_mean"] == 0.0
+
+
+def test_bool_scored_repos_is_not_treated_as_an_unscored_placeholder():
+    # scored_repos must be a real int/float count; a bool (isinstance(False, int) is True in
+    # Python) is malformed, not the zero placeholder, so the run keeps its real composite and is
+    # gated on it rather than silently reinterpreted as unscored.
+    run = {
+        "repos": 1, "scored_repos": False, "composite_mean": 0.7,
+        "decisive_margin": 2, "judge_report": {"disagreement_rate": 0.1},
+    }
+    result = check_promotion(run)
+    assert result["composite_mean"] == 0.7
+    assert "run_completed" not in failed_checks(result)
+
+
 def test_thresholds_are_configurable():
     run = _result(composite=0.55, margin=1, disagreement=0.3)
     assert check_promotion(run, min_composite=0.5, min_decisive_margin=1, max_disagreement=0.5)["passed"] is True

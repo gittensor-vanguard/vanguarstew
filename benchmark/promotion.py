@@ -114,6 +114,26 @@ def _decisive_margin(result: dict):
     return None
 
 
+def _scored_composite(result: dict):
+    """The run's real headline composite, or ``None`` when there is no real score.
+
+    A multi-repo run that scored no repos reports ``scored_repos == 0`` with a placeholder
+    ``composite_mean`` of ``0.0`` (an average over an empty list) — an infra/transient outcome,
+    not the agent scoring zero. That placeholder yields ``None`` here, so the gate never reads it
+    as a real score. This mirrors the ``scored_repos`` guard ``benchmark/report.py`` and
+    ``scripts/compare_eval.py`` already apply to the same placeholder. A single-repo run carries
+    no ``scored_repos`` key and keeps its real composite (including a genuine ``0.0`` from a run
+    that actually scored). A missing or non-numeric ``composite_mean`` is also ``None``.
+    """
+    composite = result.get("composite_mean")
+    if not _is_number(composite):
+        return None
+    scored = result.get("scored_repos")
+    if _is_number(scored) and not scored:
+        return None
+    return composite
+
+
 def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
                     min_decisive_margin: int = DEFAULT_MIN_DECISIVE_MARGIN,
                     max_disagreement: float = DEFAULT_MAX_DISAGREEMENT) -> dict:
@@ -122,9 +142,18 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     Returns ``{"passed": bool, "checks": [{"name", "passed", "detail"}], "composite_mean",
     "decisive_margin", "disagreement_rate", ...thresholds}``. ``passed`` is True only when every
     check passes; all checks are always reported.
+
+    The headline composite is read through :func:`_scored_composite`, which drops the unscored
+    multi-repo placeholder so it is not mistaken for a real 0.0 score. A ``run_multi_replay`` that
+    scored no repos reports ``scored_repos == 0`` with a placeholder ``composite_mean`` of ``0.0``
+    (an average over an empty list); for such a run ``composite_mean`` in the returned dict is
+    ``None``, ``run_completed`` fails, and the placeholder can never satisfy ``composite_floor``. A
+    *genuinely* scored run whose composite happens to be ``0.0`` (``scored_repos > 0``, or a
+    single-repo run with no ``scored_repos`` key) keeps its real ``0.0`` and is evaluated on its
+    merits.
     """
     result = _dict(result)
-    composite = result.get("composite_mean")
+    composite = _scored_composite(result)
     margin = _decisive_margin(result)
     disagreement = _dict(result.get("judge_report")).get("disagreement_rate")
     checks = []
@@ -132,15 +161,15 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    completed = not result.get("error") and _is_number(composite)
+    completed = not result.get("error") and composite is not None
     add("run_completed", completed,
         "run produced a scored composite" if completed
         else f"no scored composite (error={result.get('error')!r}, composite={composite!r})")
 
-    floor_ok = _is_number(composite) and composite >= min_composite
+    floor_ok = composite is not None and composite >= min_composite
     add("composite_floor", floor_ok,
-        f"composite_mean {composite} >= {min_composite}" if _is_number(composite)
-        else f"composite_mean not numeric ({composite!r})")
+        f"composite_mean {composite} >= {min_composite}" if composite is not None
+        else f"composite_mean unavailable ({composite!r})")
 
     beats = _is_number(margin) and margin >= min_decisive_margin
     add("beats_baseline", beats,
@@ -158,7 +187,7 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     return {
         "passed": all(c["passed"] for c in checks),
         "checks": checks,
-        "composite_mean": composite if _is_number(composite) else None,
+        "composite_mean": composite,
         "decisive_margin": margin,
         "disagreement_rate": disagreement,
         "min_composite": min_composite,

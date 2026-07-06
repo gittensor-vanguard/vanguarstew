@@ -106,6 +106,47 @@ def test_check_score_floor_skips_unscored_generalization_partition():
     ) is None
 
 
+# --- #610: an unscored multi-repo run must not be gated as a real 0.0 below the floor -----
+
+
+def test_check_score_floor_skips_unscored_multi_repo_placeholder():
+    # A multi-repo run that scored nothing reports scored_repos: 0 with a placeholder 0.0. It has
+    # no real score to gate, so the floor is skipped (None), not reported as "below threshold".
+    assert check_score_floor(
+        {"repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0}, 0.5,
+    ) is None
+
+
+def test_check_score_floor_float_zero_scored_repos_is_a_placeholder():
+    # scored_repos may arrive as a float; a float 0.0 count is still the unscored placeholder.
+    assert check_score_floor(
+        {"repos": 2, "scored_repos": 0.0, "skipped": 2, "composite_mean": 0.0}, 0.5,
+    ) is None
+
+
+def test_check_score_floor_flags_genuine_zero_multi_repo():
+    # Control isolating the cause: same composite_mean 0.0, but scored_repos > 0 means the run
+    # really scored 0.0, so it IS gated as below the floor — proving scored_repos, not the numeric
+    # 0.0, is what marks the placeholder unscored.
+    msg = check_score_floor(
+        {"repos": 2, "scored_repos": 2, "skipped": 0, "composite_mean": 0.0}, 0.5,
+    )
+    assert msg is not None and "below threshold" in msg and "0.000" in msg
+
+
+def test_check_score_floor_bool_scored_repos_is_not_a_placeholder():
+    # A bool scored_repos (isinstance(False, int) is True in Python) is malformed, not the zero
+    # placeholder, so a missing composite must still be reported as an error, not silently skipped.
+    msg = check_score_floor({"repos": 1, "scored_repos": False}, 0.5)
+    assert msg is not None and "missing or non-numeric" in msg
+
+
+def test_check_score_floor_single_repo_zero_below_floor_unchanged():
+    # A single-repo run carries no scored_repos key, so its real 0.0 is still gated normally.
+    msg = check_score_floor({"tasks": 3, "composite_mean": 0.0}, 0.5)
+    assert msg is not None and "below threshold" in msg
+
+
 # --- #573: non-list weight_sweep must not abort stderr reporting --------------------
 
 _MALFORMED_WEIGHT_SWEEP = [42, 3.14, True, {"w_judge": 0.6}, "not a list"]

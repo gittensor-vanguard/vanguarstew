@@ -45,8 +45,29 @@ def _numeric_score(value) -> float | None:
     return None
 
 
+def _is_unscored_placeholder(result: dict) -> bool:
+    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder.
+
+    A ``run_multi_replay`` that scored no repos reports ``scored_repos == 0`` with a placeholder
+    ``composite_mean`` of ``0.0`` (an average over an empty list) — an infra/transient outcome,
+    not the agent scoring zero. Mirrors the guard ``benchmark/report.py`` and
+    ``scripts/compare_eval.py`` already apply. A ``bool`` ``scored_repos`` is not a real count
+    (``isinstance(False, int)`` is True in Python) and is rejected, and a single-repo run carries
+    no ``scored_repos`` key at all, so both keep their real ``composite_mean``.
+    """
+    scored = result.get("scored_repos")
+    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
+
+
 def check_score_floor(result: dict, fail_under: float | None) -> str | None:
-    """Return an error message when ``composite_mean`` is below ``fail_under``, else None."""
+    """Return an error message when ``composite_mean`` is below ``fail_under``, else None.
+
+    An unscored multi-repo run (``scored_repos == 0`` with a placeholder ``composite_mean`` of
+    ``0.0``) has no real score to gate, so it is skipped (returns ``None``) instead of being
+    reported as "0.000 below threshold". A genuinely scored run whose composite is really ``0.0``
+    (``scored_repos > 0``, or a single-repo run with no ``scored_repos`` key) is still gated
+    normally.
+    """
     if fail_under is None:
         return None
     # Generalization reports nest composite_mean under tuned/held_out — no top-level field.
@@ -63,6 +84,8 @@ def check_score_floor(result: dict, fail_under: float | None) -> str | None:
                 return (f"score floor {fail_under}: {label} composite_mean "
                         f"{score:.3f} below threshold")
         return None
+    if _is_unscored_placeholder(result):
+        return None  # nothing was scored — no real composite to gate against the floor
     score = _numeric_score(result.get("composite_mean"))
     if score is None:
         return f"score floor {fail_under}: composite_mean missing or non-numeric"
