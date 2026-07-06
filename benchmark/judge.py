@@ -22,6 +22,8 @@ import json
 import random
 import re
 
+from benchmark.score import _plan_list
+
 _WINNER = re.compile(r'"?winner"?\s*[:=]\s*"?(A|B|tie)\b', re.I)
 
 SYSTEM = (
@@ -112,13 +114,13 @@ def _plan_substance(plan) -> int:
     structured items are rewarded — so a shorter plan of real actions outranks a longer
     plan of generic filler.
     """
-    return sum(_item_substance(item) for item in plan or [])
+    return sum(_item_substance(item) for item in _plan_list(plan))
 
 
 def _offline_rank(submission: dict) -> tuple:
     """Deterministic stand-in ordering: reward a substantive plan plus real reasoning."""
     philosophy = submission.get("philosophy") or {}
-    plan = submission.get("plan") or []
+    plan = _plan_list(submission.get("plan"))
     rationale = (submission.get("rationale") or "").strip()
     philosophy_signal = 1 if isinstance(philosophy, dict) and any(
         philosophy.get(k) for k in ("summary", "direction", "values")) else 0

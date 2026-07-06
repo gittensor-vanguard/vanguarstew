@@ -28,6 +28,15 @@ _SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
 _BUMP_LEVELS = ("major", "minor", "patch")
 
 
+def _plan_list(plan) -> list:
+    """Return ``plan`` when it is a list; otherwise treat as no plan.
+
+    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for item in plan``
+    or a malformed miner submission aborts the whole replay run.
+    """
+    return plan if isinstance(plan, list) else []
+
+
 def _tokens(text) -> set:
     # Plan and commit text fields originate in LLM-emitted JSON, where a `title`/`theme`/
     # `subject` can arrive as a list, dict, number, or null. Such a value carries no lexical
@@ -130,7 +139,7 @@ def _plan_tokens(plan) -> set:
     module, so they stay.
     """
     toks = set()
-    for item in plan or []:
+    for item in _plan_list(plan):
         if isinstance(item, dict):
             toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", ""))
             # Structured `files` are part of a concrete plan item (the judge counts them
@@ -267,7 +276,7 @@ def kind_recall(plan, revealed) -> dict:
     if not actual:
         return {"kind_recall": 0.0, "actual_kinds": [], "matched_kinds": []}
     planned = {
-        plan_kind(item.get("kind", "")) for item in plan or [] if isinstance(item, dict)
+        plan_kind(item.get("kind", "")) for item in _plan_list(plan) if isinstance(item, dict)
     }
     planned.discard(None)
     matched = sorted(actual & planned)
@@ -283,7 +292,7 @@ def release_signaled(revealed) -> bool:
 
 
 def release_predicted(plan) -> bool:
-    for item in plan or []:
+    for item in _plan_list(plan):
         if isinstance(item, dict):
             # Resolve the release *kind* through the shared, case/whitespace-insensitive
             # vocabulary (as kind_recall does) instead of an exact "release" string, so a plan
@@ -441,7 +450,7 @@ def composite_score(winner: str, objective: dict, w_judge: float = 0.6,
 def trajectory_overlap(plan, revealed) -> float:
     """Jaccard overlap of plan tokens vs. revealed-commit-subject tokens. Diagnostic only."""
     plan_toks = set()
-    for item in plan or []:
+    for item in _plan_list(plan):
         if isinstance(item, dict):
             plan_toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", ""))
         else:

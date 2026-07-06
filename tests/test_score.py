@@ -9,6 +9,7 @@ if ROOT not in sys.path:
 
 from benchmark.score import (  # noqa: E402
     _meaningful_overlap,
+    _plan_list,
     _tokens,
     addressed_issues,
     backlog_recall,
@@ -616,3 +617,17 @@ def test_objective_score_unchanged_for_well_formed_plan_after_guards():
     score = objective_score(plan, revealed)
     assert score["module_recall"] == 1.0
     assert score["kind_recall"] == 1.0
+
+
+def test_plan_list_accepts_only_real_lists():
+    assert _plan_list([{"title": "work"}]) == [{"title": "work"}]
+    for bad in (42, True, {"plan": []}, "not a list", None, ""):
+        assert _plan_list(bad) == []
+
+
+def test_objective_score_tolerates_non_list_plan_container():
+    for bad in (42, True, {"title": "oops"}):
+        score = objective_score(bad, REVEALED)
+        assert score["module_recall"] == 0.0
+        assert score["kind_recall"] == 0.0
+        assert score["release_predicted"] is False

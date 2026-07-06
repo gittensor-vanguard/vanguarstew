@@ -17,6 +17,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from agent.llm import LLM  # noqa: E402
 from benchmark.judge import (  # noqa: E402
     _item_substance,
+    _offline_rank,
     _parse_winner,
     _plan_substance,
     build_judge_report,
@@ -291,3 +292,19 @@ def test_offline_judge_ranks_plan_with_non_string_field_without_crashing():
     malformed = {"plan": [{"title": ["x"], "kind": ["y"], "rationale": 3}], "philosophy": {}}
     llm = LLM(api_key="offline")
     assert pairwise_judge({}, strong, malformed, [], llm, random.Random(0)) == "A"
+
+
+def test_plan_substance_tolerates_non_list_plan_container():
+    for bad in (42, True, {"title": "oops"}):
+        assert _plan_substance(bad) == 0
+
+
+def test_offline_rank_tolerates_non_list_plan_container():
+    ranked = _offline_rank({"plan": 42, "philosophy": {}, "rationale": "x"})
+    assert ranked[0] == 0
+    good = _offline_rank({
+        "plan": [{"title": "add retry to loader", "kind": "fix"}],
+        "philosophy": {"summary": "ship fixes"},
+        "rationale": "because",
+    })
+    assert good[0] > 0
