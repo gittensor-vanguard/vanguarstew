@@ -299,6 +299,18 @@ def test_plan_substance_tolerates_non_list_plan_container():
         assert _plan_substance(bad) == 0
 
 
+def test_offline_rank_tolerates_non_string_top_level_rationale():
+    # A non-string top-level `rationale` (a list/dict/number the LLM might emit) must not crash
+    # _offline_rank on `.strip()`; it simply contributes no reasoning signal (#350).
+    for bad in (["done"], {"why": "x"}, 42, 3.14, True, None):
+        ranked = _offline_rank({"plan": [{"title": "real work", "kind": "fix"}],
+                                "philosophy": {"summary": "ship"}, "rationale": bad})
+        assert ranked[2] == 0, f"rationale={bad!r}"
+    # A real string rationale still counts as reasoning signal.
+    assert _offline_rank({"plan": [], "rationale": "weighed the risk"})[2] == 1
+    assert _offline_rank({"plan": [], "rationale": "   "})[2] == 0   # whitespace-only -> no signal
+
+
 def test_offline_rank_tolerates_non_list_plan_container():
     ranked = _offline_rank({"plan": 42, "philosophy": {}, "rationale": "x"})
     assert ranked[0] == 0
