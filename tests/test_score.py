@@ -9,6 +9,7 @@ if ROOT not in sys.path:
 
 from benchmark.score import (  # noqa: E402
     _meaningful_overlap,
+    _tokens,
     addressed_issues,
     backlog_recall,
     base_from_releases,
@@ -543,3 +544,75 @@ def test_two_component_release_flows_through_downstream():
     assert release_signaled(revealed) is True
     assert released_version(revealed) == (2, 0, 0)
     assert commit_kind("v2.0") == "release"
+
+
+# --- text helpers must treat a non-string LLM field as "no signal", never crash (#313) ---
+
+# The shapes a model can emit for a field the scorer expects to be a string. A plan `title`,
+# `theme`, or `kind`, a revealed `subject`, or a passed-in `base_version` can be any of these
+# when the LLM's JSON doesn't match the documented contract.
+_MALFORMED = [["release", "v2.0"], {"tag": "v2.0"}, 42, 3.14, True, b"v2.0", None]
+
+
+def test_tokens_returns_empty_for_non_string_fields():
+    for bad in _MALFORMED:
+        assert _tokens(bad) == set(), f"_tokens({bad!r}) should be empty"
+    # Real strings still tokenize normally (lowercased word set); "" is unchanged.
+    assert _tokens("") == set()
+    assert _tokens("Harden the Core Loader") == {"harden", "the", "core", "loader"}
+
+
+def test_parse_semver_returns_none_for_non_string_base_version():
+    for bad in _MALFORMED:
+        assert parse_semver(bad) is None, f"parse_semver({bad!r}) should be None"
+    assert parse_semver("v1.4.0") == (1, 4, 0)
+    assert parse_semver("no version here") is None
+
+
+def test_is_release_subject_is_false_for_non_string_subject():
+    for bad in _MALFORMED:
+        assert is_release_subject(bad) is False, f"is_release_subject({bad!r}) should be False"
+    assert is_release_subject("Release v1.2.0") is True
+    assert is_release_subject("bump lodash to v4.17.21") is False
+
+
+def test_commit_kind_is_none_for_non_string_subject():
+    for bad in _MALFORMED:
+        assert commit_kind(bad) is None, f"commit_kind({bad!r}) should be None"
+    assert commit_kind("feat(core): add loader") == "feat"
+    assert commit_kind("Release v2.0.0") == "release"
+
+
+def test_objective_score_survives_a_fully_malformed_plan_and_revealed_window():
+    # Every field the scorer reads as text is malformed at once. Before the guards, the first
+    # `_tokens`/`re` call would raise and abort scoring for the whole replay task; now the
+    # score is well-formed and the malformed fields simply contribute nothing.
+    plan = [
+        {"title": ["Add", "loader"], "theme": {"area": "core"}, "kind": ["feat"]},
+        {"title": 123, "kind": None},
+    ]
+    revealed = [
+        {"subject": ["not", "a", "string"], "files": ["agent/loader.py"]},
+        {"subject": 999, "files": ["benchmark/score.py"]},
+    ]
+    score = objective_score(
+        plan, revealed,
+        version_bump=["major"], base_version={"tag": "v1.0.0"},
+        open_issues=[{"number": 3, "title": ["broken", "thing"]}],
+    )
+    for key in ("module_recall", "kind_recall", "release_signaled", "release_predicted",
+                "release_match", "bump_actual", "bump_match", "backlog_recall"):
+        assert key in score, key
+    # No text signal survives, so structural recall is zero rather than raising.
+    assert score["module_recall"] == 0.0
+    assert score["kind_recall"] == 0.0
+
+
+def test_objective_score_unchanged_for_well_formed_plan_after_guards():
+    # The guards must be inert on valid input: a plan naming the changed modules still scores
+    # a perfect structural recall, proving no regression was introduced.
+    revealed = [{"subject": "feat: add loader", "files": ["agent/loader.py", "core/x.py"]}]
+    plan = [{"title": "add the agent loader and core module", "kind": "feat"}]
+    score = objective_score(plan, revealed)
+    assert score["module_recall"] == 1.0
+    assert score["kind_recall"] == 1.0
