@@ -19,7 +19,6 @@ from agent.planner import (  # noqa: E402
     _matched_pr,
     _normalize_files,
     _normalize_plan,
-    _normalize_files,
     _normalize_plan_item,
     _open_prs_list,
     _plan_list,
