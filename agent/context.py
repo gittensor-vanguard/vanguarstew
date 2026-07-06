@@ -61,7 +61,14 @@ def _context_from_git(repo_path: str) -> dict:
         if "\t" in line:
             h, subj = line.split("\t", 1)
             commits.append({"sha": h[:10], "subject": subj})
-    tags = [t for t in _git(repo_path, "tag", "--sort=-creatordate").splitlines() if t]
+    # `--merged head` restricts to tags reachable from T -- without it, a tag that only
+    # exists on an unmerged branch (or otherwise isn't an ancestor of T) would leak into
+    # "releases" even though it was never knowable at T. Mirrors the same reachability
+    # guard `benchmark/freeze.py::build_context` applies for the harness-driven path.
+    tags = [
+        t for t in _git(repo_path, "tag", "--sort=-creatordate", "--merged", head).splitlines()
+        if t
+    ]
     readme = ""
     for name in ("README.md", "README.rst", "README.txt", "README"):
         p = os.path.join(repo_path, name)
