@@ -348,3 +348,40 @@ def test_failed_checks_logs_warning_for_skipped_rows(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.coverage"):
         assert failed_checks({"checks": checks}) == ["is_multi_repo"]
     assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+# --- non-finite (NaN/Infinity) numeric fields must fail checks, not raise (#927) ----------
+
+
+def test_non_finite_per_repo_tasks_fail_coverage_instead_of_raising():
+    # the exact repro from #927: previously ValueError from int(float("nan"))
+    result = check_coverage({"per_repo": [{"tasks": float("nan")}], "composite_mean": 0.5})
+    assert result["passed"] is False
+
+    # a NaN-task repo reads as unscored/taskless, exactly like a wrong-typed tasks field:
+    # it drops out of the scored count and the task total instead of crashing the gate
+    art = _multi(_repo(name="a"), _repo(name="b", tasks=4))
+    art["per_repo"][0]["tasks"] = float("nan")
+    art["scored_repos"] = 2
+    result = check_coverage(art)
+    assert result["total_tasks"] == 4
+    assert "min_repos_scored" in [c["name"] for c in result["checks"] if not c["passed"]]
+
+
+def test_non_finite_per_repo_tasks_never_raise_for_any_variant():
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        art = _multi(_repo(name="a"), _repo(name="b"))
+        art["per_repo"][0]["tasks"] = bad
+        result = check_coverage(art)   # must not raise
+        assert isinstance(result["passed"], bool), bad
+
+
+def test_non_finite_top_level_counts_fall_back_to_derived_values():
+    # a non-finite scored_repos/skipped is malformed and ignored, exactly like a
+    # wrong-typed one -- the gate falls back to counts derived from per_repo
+    art = _multi(_repo(name="a"), _repo(name="b"))
+    art["scored_repos"] = float("inf")
+    art["skipped"] = float("nan")
+    result = check_coverage(art)       # must not raise
+    assert result["repos_scored"] == 2
+    assert result["passed"] is True

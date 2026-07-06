@@ -28,6 +28,7 @@ checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.score import composite_score, objective_component
 
@@ -42,7 +43,17 @@ _JUDGE_COMPONENT = {"challenger": 1.0, "tie": 0.5, "baseline": 0.0}
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats survive a save/load round trip (json.dump writes NaN/Infinity and
+    # json.load parses them back), but int() raises on them and a NaN/Infinity count is not
+    # a usable value anyway -- treat them as malformed, like a missing or wrong-typed field,
+    # matching benchmark/report.py (#616/#927). math.isfinite also raises OverflowError for
+    # ints too large for a float, which would crash float formatting the same way.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:

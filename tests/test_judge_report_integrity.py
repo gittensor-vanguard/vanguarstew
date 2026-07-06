@@ -449,3 +449,65 @@ def test_failed_checks_integration_with_check_rows_list(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.judge_report_integrity"):
         assert failed_checks({"checks": checks}) == ["report_present"]
     assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+# --- non-finite (NaN/Infinity) numeric fields must fail checks, not raise (#927) ----------
+
+
+def _failed(result):
+    return [c["name"] for c in result["checks"] if not c["passed"]]
+
+
+def test_non_finite_order_stats_fail_comparisons_instead_of_raising():
+    # the exact repros from #927: previously ValueError / OverflowError from int(...)
+    nan_tally = check_judge_report_integrity(
+        {"judge_report": {"wins": 2, "losses": 1, "ties": 0},
+         "judge_order_stats": {"agree": float("nan"), "disagree": 1, "tie": 0}}
+    )
+    assert nan_tally["passed"] is False
+    assert "dual_order_tasks_match" in _failed(nan_tally)
+
+    inf_dual = check_judge_report_integrity(
+        {"judge_report": {"wins": 2, "losses": 1, "ties": 0},
+         "judge_order_stats": {"dual_order_tasks": float("inf"), "disagree": 1}}
+    )
+    assert inf_dual["passed"] is False
+    assert "dual_order_tasks_match" in _failed(inf_dual)
+
+
+def test_non_finite_slice_tasks_fail_instead_of_raising():
+    # a NaN tasks count must not crash telemetry detection; the slice still evaluates
+    result = check_judge_report_integrity(
+        {"tasks": float("nan"), "judge_report": {"wins": 1, "losses": 0, "ties": 0}}
+    )
+    assert result["passed"] is False
+    assert "stats_present" in _failed(result)
+
+
+def test_non_finite_report_counts_never_raise_for_any_variant():
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        art = _artifact()
+        art["judge_report"]["wins"] = bad
+        result = check_judge_report_integrity(art)     # must not raise
+        assert isinstance(result["passed"], bool), bad
+
+        art = _artifact()
+        art["judge_order_stats"]["disagreement_rate"] = bad
+        result = check_judge_report_integrity(art)     # must not raise
+        assert isinstance(result["passed"], bool), bad
+
+
+def test_cli_survives_a_non_finite_artifact_without_traceback(tmp_path):
+    # end-to-end reachability: json.dump writes NaN, json.load parses it back, and the
+    # CLI must gate the artifact instead of aborting with a traceback.
+    art = {"judge_report": {"wins": 2, "losses": 1, "ties": 0},
+           "judge_order_stats": {"agree": float("nan"), "disagree": 1, "tie": 0}}
+    bad = tmp_path / "nonfinite.json"
+    bad.write_text(json.dumps(art), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.judge_report_integrity", str(bad), "--strict"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 1              # gate fails -- via --strict, not a crash
+    assert "Traceback" not in proc.stderr
+    assert "[FAIL]" in proc.stderr
