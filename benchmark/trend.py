@@ -15,6 +15,7 @@ math) so a partial series still produces a trend instead of raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,10 @@ DEFAULT_REGRESSION_THRESHOLD = 0.02
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Finiteness is required (like benchmark/report.py since #683): a non-finite composite_mean
+    # (NaN/Infinity survives a JSON save/load round trip) reads as absent so it is skipped in
+    # trend/repeatability math instead of counting as a real scored value or crashing stddev (#951).
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def headline_score(artifact) -> float | None:

@@ -379,3 +379,29 @@ def test_cli_without_gating_flag_exits_zero_despite_regressions(tmp_path):
     result = _run_cli(a, b)
     assert result.returncode == 0
     assert "REGRESSION a.json -> b.json" in result.stderr
+
+
+# --- non-finite composite_mean (regression for #951) ---------------------------------------------
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_headline_reads_as_absent(bad):
+    # A non-finite composite_mean (NaN/Infinity survives a JSON round trip) must read as absent, not
+    # as a real scored value (regression for #951).
+    assert headline_score({"composite_mean": bad}) is None
+
+
+def test_trend_skips_non_finite_scored_points():
+    result = trend([("a", {"composite_mean": float("nan")}), ("b", {"composite_mean": 0.5})])
+    assert result["scored"] == 1          # NaN point is not counted as scored
+    assert result["total"] == 2
+    assert result["first"] == 0.5 and result["last"] == 0.5
+    # The NaN artifact keeps its slot in points but carries a None composite_mean.
+    assert result["points"][0]["composite_mean"] is None
+    assert result["points"][1]["composite_mean"] == 0.5
+
+
+def test_non_finite_survives_json_round_trip_and_is_skipped(tmp_path):
+    # Exercises the actual save/load path the bug rides in: json.dump writes NaN, json.load parses it.
+    path = tmp_path / "nan.json"
+    path.write_text(json.dumps({"composite_mean": float("nan")}))
+    assert headline_score(json.loads(path.read_text())) is None

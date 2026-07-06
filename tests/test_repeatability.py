@@ -233,3 +233,10 @@ def test_cli_still_reports_stable_for_well_formed_artifacts(tmp_path):
     assert result.returncode == 0
     assert "STABLE" in result.stderr
     assert json.loads(result.stdout)["stable"] is True
+
+
+def test_non_finite_scores_skipped_not_crashing(tmp_path):
+    # A degenerate NaN composite_mean must be skipped, not fed into stdev where it crashes
+    # (regression for #951).
+    result = assess_repeatability([_run(float("nan")), _run(0.5), _run(0.5)])
+    assert result["runs"] == 2            # the NaN artifact is dropped, not counted or crashed on
