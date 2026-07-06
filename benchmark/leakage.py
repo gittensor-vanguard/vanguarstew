@@ -75,6 +75,8 @@ def _looks_like_sha(token: str) -> bool:
 
 def strip_forward_refs(text: str) -> str:
     """Mask issue/PR back-references, GitHub links, and raw SHAs in free text."""
+    if not isinstance(text, str):
+        return ""
     if not text:
         return text
     text = _GH_LINK.sub(_mask_link, text)
