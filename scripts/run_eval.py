@@ -10,7 +10,12 @@ import json
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
-from benchmark.runner import run_generalization_report, run_multi_replay, run_replay
+from benchmark.runner import (
+    run_generalization_report,
+    run_multi_replay,
+    run_replay,
+    weight_sweep,
+)
 
 
 def write_result_artifact(path: str, result: dict) -> None:
@@ -85,6 +90,10 @@ def main() -> None:
     ap.add_argument("--generalization", action="store_true",
                     help="with --repo-set, replay BOTH the tuned and held-out partitions and "
                          "report the generalization gap (tuned minus held-out composite mean)")
+    ap.add_argument("--sweep-weights", action="store_true",
+                    help="after a single-repo replay, re-blend the same tasks over a small "
+                         "judge/objective weight grid and print (weights -> composite_mean); "
+                         "helps tune --w-judge/--w-objective without re-running the replay")
     args = ap.parse_args()
     if args.held_out and not args.repo_set:
         ap.error("--held-out requires --repo-set")
@@ -110,10 +119,20 @@ def main() -> None:
         result = run_multi_replay(args.repos, **common)
     else:
         result = run_replay(repo_path=args.repo, **common)
+    if args.sweep_weights:
+        rows = result.get("rows")
+        if rows:
+            result["weight_sweep"] = weight_sweep(rows)
+        else:
+            print("--sweep-weights needs a single-repo run (--repo); no per-task rows to sweep",
+                  file=sys.stderr)
     if args.out:
         write_result_artifact(args.out, result)
     for line in result_summary_lines(result):
         print(line, file=sys.stderr)
+    for row in result.get("weight_sweep") or []:
+        print(f"  weights judge={row['w_judge']} objective={row['w_objective']} "
+              f"-> composite_mean={row['composite_mean']}", file=sys.stderr)
     print(json.dumps(result, indent=2))
     floor_err = check_score_floor(result, args.fail_under)
     if floor_err:
