@@ -364,7 +364,12 @@ def kind_recall(plan, revealed) -> dict:
 
 
 def release_signaled(revealed) -> bool:
-    return any(is_release_subject(r.get("subject", "") or "") for r in revealed or [])
+    # A revealed commit signals a release only when its normalized kind IS a release. Deferring
+    # to commit_kind (where a Conventional-Commit prefix is authoritative) keeps this in step
+    # with kind_recall and prevents an ordinary `ci:` / `docs:` / `test:` / `refactor:` commit
+    # that merely mentions "release"/"changelog" — with no version cut — from spuriously firing
+    # the scored release axis and dragging down an otherwise-correct plan.
+    return any(commit_kind(r.get("subject", "") or "") == "release" for r in revealed or [])
 
 
 def release_predicted(plan) -> bool:
