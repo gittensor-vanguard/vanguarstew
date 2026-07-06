@@ -43,7 +43,13 @@ def main() -> None:
                     help="exit 1 when the promotion gate fails (for CI gating)")
     args = ap.parse_args()
 
-    result = check_promotion(load_artifact(args.artifact),
+    try:
+        artifact = load_artifact(args.artifact)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+    result = check_promotion(artifact,
                              min_composite=args.min_composite,
                              min_decisive_margin=args.min_decisive_margin,
                              max_disagreement=args.max_disagreement)

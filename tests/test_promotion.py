@@ -1,7 +1,9 @@
 """Tests for the challenger-promotion gate (deterministic, offline)."""
 
 import copy
+import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -131,3 +133,44 @@ def test_check_promotion_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_promotion(run)
     assert run == snapshot
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.promotion", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_still_reports_promote_for_a_well_formed_artifact(tmp_path):
+    path = tmp_path / "good.json"
+    path.write_text(json.dumps(_result(composite=0.7, margin=2, disagreement=0.1)), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 0
+    assert "PROMOTE" in result.stderr
+    assert json.loads(result.stdout)["passed"] is True
