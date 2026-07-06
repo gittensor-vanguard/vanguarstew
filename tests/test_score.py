@@ -1001,3 +1001,8 @@ def test_objective_component_handles_non_dict():
     from benchmark.score import objective_component
     assert objective_component(None) == 0.0
     assert objective_component(42) == 0.0
+
+def test_objective_component_handles_non_numeric_recall():
+    from benchmark.score import objective_component
+    assert objective_component({"module_recall": "not-a-number"}) == 0.0
+    assert objective_component({"weighted_module_recall": [1,2,3]}) == 0.0
