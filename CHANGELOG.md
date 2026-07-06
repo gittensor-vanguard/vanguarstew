@@ -63,7 +63,9 @@ All notable changes to this project are documented here. The format is based on
 - Agent contract: `decider.decide()` now normalizes `version_bump` to the documented
   `major`/`minor`/`patch`/`null` before returning, via `normalize_version_bump()`. A near-miss
   level from the model (`"MINOR"`, `" patch "`, `"bump major"`) is canonicalized instead of
-  passing through verbatim and silently scoring as "no bump" downstream (#164).
+  passing through verbatim and silently scoring as "no bump" downstream, while a negated
+  (`"no major changes"`) or ambiguous (`"major or minor?"`) phrase resolves to `null` rather
+  than a spurious level (#164).
 - Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
   `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
   `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score

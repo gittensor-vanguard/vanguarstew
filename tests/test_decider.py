@@ -36,6 +36,15 @@ def test_normalize_version_bump_rejects_non_levels():
         assert normalize_version_bump(value) is None
 
 
+def test_normalize_version_bump_rejects_negated_and_ambiguous():
+    # A level word inside a negated phrase must not be mistaken for the bump itself...
+    for value in ("no major version change needed", "not a patch release", "n/a - minor"):
+        assert normalize_version_bump(value) is None
+    # ...and a phrase naming more than one level is ambiguous, so it's no bump.
+    for value in ("major or minor?", "patch or minor"):
+        assert normalize_version_bump(value) is None
+
+
 def test_decide_normalizes_version_bump_from_model():
     # The issue's repro: a near-miss level must be canonicalized in the returned decision.
     out = decide({}, {}, "cut a release?", _FakeLLM({"version_bump": "MINOR"}))
