@@ -19,6 +19,10 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Leakage: ``agent/context.py::_mask_forward_refs`` (the git-only fallback used when
+  ``.vanguarstew_context.json`` is absent) now masks GitHub deep-links and raw commit SHAs
+  in README/commit text, matching ``benchmark/leakage.strip_forward_refs`` — completing the
+  remaining scope of #283 after #312 added ``#N`` masking only.
 - Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
   and `releases` were read from only the first API page, so a repo with more than 100 of
   either silently dropped the rest — which can hide a milestone that was open at T or an

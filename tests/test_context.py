@@ -220,6 +220,46 @@ def test_mask_forward_refs_tolerates_non_string_input():
     assert _mask_forward_refs({"title": "Fix #900"}) == ""
 
 
+def test_mask_forward_refs_masks_github_links_and_shas():
+    text = ("Fixes #512; see https://github.com/o/r/pull/900 at commit 1a2b3c4d5e6f7a8b")
+    out = _mask_forward_refs(text)
+    assert "#512" not in out and "#ref" in out
+    assert "github.com" not in out and "<link>" in out
+    assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
+
+
+def test_mask_forward_refs_preserves_plain_numbers():
+    text = "supports 2500000 requests per second, up from 1200000 last year"
+    out = _mask_forward_refs(text)
+    assert out == text
+    assert "<sha>" not in out
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_masks_github_links_in_subjects_and_readme():
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        _write(
+            repo,
+            "README.md",
+            "Roadmap: see https://github.com/o/r/pull/900 for the plan.\n",
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "Fix parser (part of #150, commit deadBEEF1234)")
+
+        ctx = _context_from_git(repo)
+        subject = ctx["recent_commits"][0]["subject"]
+        assert "#150" not in subject and "#ref" in subject
+        assert "deadBEEF1234" not in subject and "<sha>" in subject
+        readme = ctx["readme_excerpt"]
+        assert "#900" not in readme and "github.com/o/r/pull/900" not in readme
+        assert "<link>" in readme
+        assert "Roadmap" in readme
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_masks_forward_refs_in_subjects_and_readme():
     # The scored path scrubs #N back-references from subjects/README before the agent sees
