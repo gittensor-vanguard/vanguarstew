@@ -14,6 +14,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from agent.context import (  # noqa: E402
+    _agent_context_list,
     _agent_issue_pr_list,
     _context_from_git,
     _mask_forward_refs,
@@ -60,6 +61,14 @@ def test_agent_issue_pr_list_accepts_only_real_lists():
     assert _agent_issue_pr_list(None, "open_prs") == []
 
 
+def test_agent_context_list_coerces_other_list_fields():
+    rows = [{"sha": "abc", "subject": "init"}]
+    for bad in _MALFORMED_ISSUE_PR_LISTS:
+        assert _agent_context_list(bad, "recent_commits") == [], bad
+    assert _agent_context_list(rows, "recent_commits") == rows
+    assert _agent_context_list(None, "labels") == []
+
+
 def test_context_for_agent_survives_non_dict_context():
     for bad in _MALFORMED_CONTEXTS:
         assert context_for_agent(bad) == {}, bad
@@ -70,6 +79,52 @@ def test_context_for_agent_survives_non_list_issue_pr_fields():
         out = context_for_agent({"open_issues": bad, "open_prs": bad})
         assert out["open_issues"] == [], bad
         assert out["open_prs"] == [], bad
+
+
+def test_context_for_agent_coerces_other_malformed_list_fields():
+    for bad in _MALFORMED_ISSUE_PR_LISTS:
+        out = context_for_agent({
+            "recent_commits": bad,
+            "releases": bad,
+            "milestones": bad,
+            "labels": bad,
+        })
+        assert out["recent_commits"] == [], bad
+        assert out["releases"] == [], bad
+        assert out["milestones"] == [], bad
+        assert out["labels"] == [], bad
+
+
+def test_context_for_agent_keeps_valid_other_list_fields():
+    out = context_for_agent({
+        "recent_commits": [{"sha": "1", "subject": "init"}],
+        "releases": [{"tag": "v1.0"}],
+        "milestones": [{"title": "v2"}],
+        "labels": ["bug", "enhancement"],
+    })
+    assert out["recent_commits"][0]["sha"] == "1"
+    assert out["releases"][0]["tag"] == "v1.0"
+    assert out["milestones"][0]["title"] == "v2"
+    assert out["labels"] == ["bug", "enhancement"]
+
+
+def test_prompt_renderers_coerce_malformed_list_fields_to_empty():
+    ctx = {
+        "frozen_at": {"commit": "abc"},
+        "recent_commits": 42,
+        "open_issues": [],
+        "open_prs": [],
+        "labels": True,
+        "milestones": {"title": "oops"},
+        "releases": 3.14,
+        "readme_excerpt": "",
+    }
+    for render in (render_philosophy_context, render_planner_context, render_decider_context):
+        payload = json.loads(render(ctx))
+        assert payload["recent_commits"] == []
+        assert payload["releases"] == []
+        assert payload["milestones"] == []
+        assert payload["labels"] == []
 
 
 def test_context_for_agent_passes_through_falsy_non_dict_rows():

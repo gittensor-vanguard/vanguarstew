@@ -89,12 +89,12 @@ def load_context(repo_path: str) -> dict:
     return _context_from_git(repo_path)
 
 
-def _agent_issue_pr_list(items, field: str) -> list:
-    """Return ``items`` when it is a list; otherwise treat as no issues/PRs.
+def _agent_context_list(items, field: str) -> list:
+    """Return ``items`` when it is a list; otherwise treat as empty.
 
     A truthy non-list must not reach ``for item in items`` or malformed frozen context
     aborts the agent prompt path (#493). An empty list is returned so the caller still
-    surfaces ``open_issues`` / ``open_prs`` keys with ``[]`` rather than omitting them.
+    surfaces list-shaped keys with ``[]`` rather than omitting them.
     """
     if isinstance(items, list):
         return items
@@ -105,6 +105,10 @@ def _agent_issue_pr_list(items, field: str) -> list:
             type(items).__name__,
         )
     return []
+
+
+# Backward-compatible alias for callers/tests that still import the old name.
+_agent_issue_pr_list = _agent_context_list
 
 
 def context_for_agent(context: dict) -> dict:
@@ -126,7 +130,7 @@ def context_for_agent(context: dict) -> dict:
     out = dict(context)
     for key in ("open_issues", "open_prs"):
         items = []
-        for idx, item in enumerate(_agent_issue_pr_list(out.get(key), key)):
+        for idx, item in enumerate(_agent_context_list(out.get(key), key)):
             if not isinstance(item, dict):
                 logger.warning(
                     "context_for_agent: non-dict %s entry at index %d (%s: %r); passing through",
@@ -142,6 +146,8 @@ def context_for_agent(context: dict) -> dict:
                 clean.pop("labels", None)
             items.append(clean)
         out[key] = items
+    for key in ("recent_commits", "releases", "milestones", "labels"):
+        out[key] = _agent_context_list(out.get(key), key)
     if out.get("_issues_truncated"):
         # Defense in depth for older frozen artifacts that still carry a partial backlog.
         out["open_issues"] = []
