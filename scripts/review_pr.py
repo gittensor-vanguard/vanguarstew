@@ -65,8 +65,11 @@ def _pr_author(data: dict, number: int) -> str:
 
 
 def fetch_pr(repo: str, number: int) -> dict:
-    data = json.loads(_gh("pr", "view", str(number), "-R", repo, "--json",
-                          "number,title,body,author,additions,deletions,files"))
+    raw = _gh("pr", "view", str(number), "-R", repo, "--json",
+              "number,title,body,author,additions,deletions,files")
+    if not raw.strip():
+        raise ValueError(f"PR #{number} not found in {repo}")
+    data = json.loads(raw)
     return {
         "number": data["number"],
         "title": data["title"],
