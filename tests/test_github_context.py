@@ -17,6 +17,12 @@ def test_parse_owner_repo():
     assert gc.parse_owner_repo("https://github.com/foo/bar.git") == ("foo", "bar")
 
 
+def test_parse_owner_repo_tolerates_non_string_remote_url():
+    assert gc.parse_owner_repo(123) == (None, None)
+    assert gc.parse_owner_repo(["https://github.com/foo/bar"]) == (None, None)
+    assert gc.parse_owner_repo(None) == (None, None)
+
+
 def test_open_at_T_filtering(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     issues = [
