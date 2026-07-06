@@ -242,6 +242,39 @@ def test_enrich_context_preserves_truncation_metadata(monkeypatch):
     assert out["_source"] == "github-api"
 
 
+def test_enrich_context_empty_github_lists_overwrite_stale_base(monkeypatch):
+    """Empty GitHub backlog lists must replace stale partial values in the base context (#831)."""
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_fetch(*a, **k):
+        return {
+            "repo": "foo/bar",
+            "open_issues": [],
+            "open_prs": [],
+            "milestones": [],
+            "releases": [],
+            "_source": "github-api",
+            "_knowable_until": T.isoformat(),
+            "_issues_truncated": True,
+        }
+
+    monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    base = {
+        "frozen_at": {"date": "2023-06-01T00:00:00Z"},
+        "open_issues": [{"number": 1, "title": "stale partial backlog"}],
+        "open_prs": [{"number": 2, "title": "stale partial pr"}],
+        "milestones": [{"title": "stale milestone"}],
+        "releases": [{"tag_name": "v0.9.0"}],
+    }
+    out = gc.enrich_context(base, "/some/repo")
+    assert out["open_issues"] == []
+    assert out["open_prs"] == []
+    assert out["milestones"] == []
+    assert out["releases"] == []
+    assert out["_issues_truncated"] is True
+
+
 def test_enrich_context_degrades_on_failure(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("offline")
