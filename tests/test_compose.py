@@ -54,6 +54,24 @@ def test_objective_component_counts_release_only_when_signaled():
                                 "release_predicted": False}) == 0.5
 
 
+def test_objective_component_includes_kind_recall_when_kinds_present():
+    # When the revealed window carries commit kinds, kind_recall feeds the anchor — mirroring
+    # #215/#347 for weighted module recall.
+    assert objective_component({
+        "module_recall": 0.0,
+        "kind_recall": 1.0,
+        "actual_kinds": ["feat", "fix"],
+    }) == 0.5
+    assert objective_component({
+        "module_recall": 1.0,
+        "kind_recall": 0.0,
+        "actual_kinds": ["feat"],
+    }) == 0.5
+    # No recognizable kinds in the window -> kind_recall must not affect the average.
+    assert objective_component({"module_recall": 0.4, "kind_recall": 0.0,
+                                "actual_kinds": []}) == 0.4
+
+
 def test_objective_component_includes_bump_when_present():
     obj = {"module_recall": 1.0, "release_signaled": True, "release_predicted": True,
            "bump_actual": "minor", "bump_match": True}
@@ -128,9 +146,9 @@ def test_objective_component_uses_only_ranking_fields_from_full_objective_dict()
     )
     assert matched["backlog_recall"] == 0.0
     assert inflated["backlog_recall"] == 1.0
-    # weighted recall + release predicted + bump match
+    # weighted recall + kind recall + release predicted + bump match
     expected = round(
-        (matched["weighted_module_recall"] + 1.0 + 1.0) / 3,
+        (matched["weighted_module_recall"] + matched["kind_recall"] + 1.0 + 1.0) / 4,
         3,
     )
     assert objective_component(missed) == expected
@@ -168,4 +186,23 @@ def test_objective_score_backlog_change_does_not_move_component_when_modules_mat
     assert score_match["backlog_recall"] == 1.0
     assert score_miss["backlog_recall"] == 0.0
     assert score_match["module_recall"] == score_miss["module_recall"] == 1.0
-    assert objective_component(score_match) == objective_component(score_miss) == 1.0
+    assert score_match["kind_recall"] == 1.0
+    assert score_miss["kind_recall"] == 0.0
+    assert objective_component(score_match) == 1.0
+    assert objective_component(score_miss) == 0.5
+
+
+def test_composite_reflects_kind_recall_end_to_end():
+    revealed = [
+        {"subject": "feat: add widgets", "files": ["widgets/a.py"]},
+        {"subject": "fix: crash on load", "files": ["core/x.py"]},
+    ]
+    good = objective_score(
+        [{"title": "ship features", "kind": "feature"}, {"title": "fix bugs", "kind": "bugfix"}],
+        revealed,
+    )
+    bad = objective_score([{"title": "write docs", "kind": "docs"}], revealed)
+    assert good["kind_recall"] == 1.0
+    assert bad["kind_recall"] == 0.0
+    assert objective_component(good) > objective_component(bad)
+    assert composite_score("tie", good) > composite_score("tie", bad)
