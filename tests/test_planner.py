@@ -17,6 +17,7 @@ from agent.planner import (  # noqa: E402
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
+    _normalize_plan_item,
     plan_next_actions,
     reconcile_plan_with_queue,
 )
@@ -260,3 +261,44 @@ def test_nested_titles_explicit_number_outranks_longest_phrase():
     ]
     item = {"title": "Merge PR #1: Add streaming export docs", "kind": "triage"}
     assert _matched_pr(item, prs)["number"] == 1
+
+
+def test_normalize_plan_item_coerces_non_string_fields():
+    item = _normalize_plan_item({
+        "title": 123,
+        "kind": "FEATURE",
+        "rationale": None,
+        "theme": 7,
+    })
+    assert item == {
+        "title": "123",
+        "kind": "feature",
+        "theme": "7",
+    }
+    assert _normalize_plan_item({"title": "  ", "kind": "docs"}) is None
+    assert _normalize_plan_item({"title": "work", "kind": "mystery"})["kind"] == "triage"
+
+
+def test_reconcile_plan_with_queue_tolerates_numeric_titles():
+    plan = [{"title": 123, "kind": "feature", "rationale": "fix it"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": []}, 5)
+    assert out == [{"title": "123", "kind": "feature", "rationale": "fix it"}]
+
+
+class _MalformedPlanLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return [
+            {"title": 42, "kind": "BUGFIX", "rationale": None, "theme": "stability"},
+            {"title": "", "kind": "docs"},
+        ]
+
+
+def test_plan_next_actions_normalizes_malformed_items():
+    out = plan_next_actions({"open_prs": []}, {}, 5, _MalformedPlanLLM())
+    assert out == [{
+        "title": "42",
+        "kind": "bugfix",
+        "theme": "stability",
+    }]

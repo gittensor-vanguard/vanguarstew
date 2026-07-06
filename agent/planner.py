@@ -36,6 +36,10 @@ _PR_NUMBER = re.compile(
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
 _MIN_SUBJECT_PHRASE = 8
 
+_PLAN_KINDS = frozenset({
+    "feature", "bugfix", "refactor", "docs", "release", "dep", "triage",
+})
+
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
     "maintainer philosophy, plan the next concrete maintainer actions / PRs that should "
@@ -168,6 +172,53 @@ def _is_review_item(item: dict) -> bool:
     return bool(_REVIEW_MARKER_RE.search(item.get("title") or ""))
 
 
+def _normalize_text_field(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _normalize_plan_item(item) -> dict | None:
+    """Coerce one LLM plan item onto the documented shape, or drop it."""
+    if not isinstance(item, dict):
+        return None
+    title = _normalize_text_field(item.get("title"))
+    if not title:
+        return None
+    kind = item.get("kind")
+    if isinstance(kind, str):
+        kind = kind.strip().lower()
+    else:
+        kind = ""
+    if kind not in _PLAN_KINDS:
+        kind = "triage"
+    normalized = {
+        "title": title,
+        "kind": kind,
+    }
+    rationale = _normalize_text_field(item.get("rationale"))
+    theme = _normalize_text_field(item.get("theme"))
+    if rationale:
+        normalized["rationale"] = rationale
+    if theme:
+        normalized["theme"] = theme
+    for key in ("restates_pr", "files"):
+        if key in item:
+            normalized[key] = item[key]
+    return normalized
+
+
+def _normalize_plan(plan) -> list:
+    out = []
+    for item in plan or []:
+        normalized = _normalize_plan_item(item)
+        if normalized is not None:
+            out.append(normalized)
+    return out
+
+
 def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     """Make the plan honor the open-PR queue, deterministically and independent of the LLM.
 
@@ -181,7 +232,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     With no open PRs (or none matched) the plan passes through unchanged, capped to `n`.
     """
     prs = _pr_queue(context)
-    plan = [i for i in (plan or []) if isinstance(i, dict) and (i.get("title") or "").strip()]
+    plan = _normalize_plan(plan)
     if not prs:
         return plan[:n]
 
@@ -236,7 +287,8 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     plan = llm.chat_json(SYSTEM, user, stub=stub)
     if isinstance(plan, dict):  # tolerate {"plan": [...]}
         plan = plan.get("plan") or plan.get("actions") or []
-    return reconcile_plan_with_queue(plan if isinstance(plan, list) else [], context, n)
+    plan = _normalize_plan(plan if isinstance(plan, list) else [])
+    return reconcile_plan_with_queue(plan, context, n)
 
 
 def _render(context: dict) -> str:
