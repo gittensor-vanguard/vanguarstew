@@ -94,10 +94,17 @@ def base_from_releases(releases) -> str | None:
     """
     best_tag, best_ver = None, None
     for rel in releases or []:
-        tag = rel.get("tag") if isinstance(rel, dict) else rel
-        ver = parse_semver(tag or "")
-        if ver is not None and (best_ver is None or ver > best_ver):
-            best_tag, best_ver = tag, ver
+        if isinstance(rel, dict):
+            candidates = (rel.get("tag"), rel.get("name"))
+        else:
+            candidates = (rel,)
+        for raw in candidates:
+            if not raw:
+                continue
+            ver = parse_semver(str(raw))
+            if ver is not None and (best_ver is None or ver > best_ver):
+                best_tag, best_ver = raw, ver
+                break
     return best_tag
 
 

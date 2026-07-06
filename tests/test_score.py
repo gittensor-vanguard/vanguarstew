@@ -344,6 +344,15 @@ def test_base_from_releases_picks_highest_tag():
     assert base_from_releases([]) is None
 
 
+def test_base_from_releases_falls_back_to_release_name():
+    # GitHub API releases carry tag_name and name; tag can be missing or non-semver.
+    assert base_from_releases([{"tag": None, "name": "v1.2.0"}]) == "v1.2.0"
+    assert base_from_releases([{"name": "v2.0.0"}]) == "v2.0.0"
+    # Prefer a parseable tag; only consult name when tag is absent or not semver-shaped.
+    assert base_from_releases([{"tag": "v1.5.0", "name": "v9.9.9"}]) == "v1.5.0"
+    assert base_from_releases([{"tag": "latest", "name": "v1.5.0"}]) == "v1.5.0"
+
+
 def test_bump_actual_ignores_version_in_non_release_commit():
     # Reviewer case: a non-release commit that merely names a version (e.g. a dep bump)
     # must not produce a spurious bump_actual, even when its version is the highest around.
