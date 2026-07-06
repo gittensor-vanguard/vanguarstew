@@ -114,6 +114,26 @@ def _normalize_concerns(value) -> list:
     return []
 
 
+def _normalize_pr_files(value) -> list:
+    """Coerce a PR ``files`` field to ``list[str]`` paths for the review prompt."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        path = value.strip()
+        return [path] if path else []
+    if isinstance(value, list):
+        out = []
+        for path in value:
+            if isinstance(path, str) and path.strip():
+                out.append(path.strip())
+        return out
+    logger.warning(
+        "review_pr: files is %s, not a list; treating as empty",
+        type(value).__name__,
+    )
+    return []
+
+
 def _normalize_review(out: dict, stub: dict) -> dict:
     """Map an LLM review object onto the documented field types."""
     if not isinstance(out, dict):
@@ -142,11 +162,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
             "recommendation": "pr payload was not a dict — cannot review",
         }
     raw_files = pr.get("files")
-    files = []
-    if isinstance(raw_files, list):
-        for path in raw_files:
-            if isinstance(path, str) and path.strip():
-                files.append(path.strip())
+    files = _normalize_pr_files(raw_files)
     user = (
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy else "")
         + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"

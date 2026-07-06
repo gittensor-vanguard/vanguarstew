@@ -16,6 +16,7 @@ from agent.review import (  # noqa: E402
     VALUE_LABELS,
     _normalize_bool,
     _normalize_concerns,
+    _normalize_pr_files,
     _normalize_review_action,
     _normalize_value_label,
     review_pr,
@@ -196,6 +197,18 @@ def test_review_pr_keeps_only_string_paths_from_files_list():
     pr = {"number": 1, "title": "Fix bug", "author": "alice",
           "files": [None, 42, "", "  ", "tests/test_x.py", {"path": "ignored"}]}
     assert review_pr(pr, None, llm)["tests_present"] is True
+
+
+def test_review_pr_coerces_scalar_files_string():
+    llm = LLM(api_key="offline")
+    pr = {"number": 1, "title": "Fix bug", "author": "alice", "files": "tests/test_x.py"}
+    assert review_pr(pr, None, llm)["tests_present"] is True
+
+
+def test_normalize_pr_files_coerces_scalar_and_list_shapes():
+    assert _normalize_pr_files("tests/foo.py") == ["tests/foo.py"]
+    assert _normalize_pr_files(["a.py", "", None, 42]) == ["a.py"]
+    assert _normalize_pr_files(42) == []
 
 
 def test_review_pr_files_list_unchanged_for_well_formed_paths():
