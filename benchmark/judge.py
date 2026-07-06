@@ -52,6 +52,8 @@ def _parse_winner(text: str) -> str:
 
 
 def _render(submission: dict) -> str:
+    if not isinstance(submission, dict):
+        return json.dumps({"error": "non-dict submission"})
     return json.dumps({
         "philosophy": submission.get("philosophy"),
         "plan": submission.get("plan"),

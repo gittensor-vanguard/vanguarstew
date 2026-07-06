@@ -20,6 +20,7 @@ from benchmark.judge import (  # noqa: E402
     _offline_rank,
     _parse_winner,
     _plan_substance,
+    _render,
     build_judge_report,
     judge_verbose,
     pairwise_judge,
@@ -336,3 +337,8 @@ def test_offline_rank_handles_non_dict_submissions():
     assert _offline_rank([]) == (0, 0, 0)
     # Normal submissions are unaffected.
     assert _offline_rank({"philosophy": {"summary": "good"}, "plan": [{"title": "fix"}], "rationale": "yes"})
+
+def test_render_handles_non_dict_submission():
+    """_render must not crash on non-dict submissions."""
+    assert "error" in _render(None)
+    assert "error" in _render("not a dict")
