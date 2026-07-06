@@ -153,6 +153,20 @@ def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100)
     return items
 
 
+def _timeline_label_name(label) -> str | None:
+    """Return a stripped label name from a timeline event payload, or None when unusable."""
+    if isinstance(label, dict):
+        name = label.get("name")
+    elif isinstance(label, str):
+        name = label
+    else:
+        return None
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    return name or None
+
+
 def _labels_at(events, until: datetime):
     """Reconstruct an issue/PR's label set *as of `until`* from its timeline.
 
@@ -160,7 +174,8 @@ def _labels_at(events, until: datetime):
     event after T, so the result reflects membership at the freeze time rather than
     today's live labels. Returns a sorted list of label names, or ``None`` when the
     timeline carries no usable label event at/or before T — the caller then falls
-    back to omitting labels rather than leaking the present-day set.
+    back to omitting labels rather than leaking the present-day set. Events whose
+    ``label`` payload is not a dict/string name are skipped (#405).
     """
     relevant = []
     for ev in events or []:
@@ -169,9 +184,10 @@ def _labels_at(events, until: datetime):
         ts = _parse_dt(ev.get("created_at"))
         if ts is None or ts > until:
             continue
-        name = (ev.get("label") or {}).get("name")
-        if name:
-            relevant.append((ts, ev.get("event"), name))
+        name = _timeline_label_name(ev.get("label"))
+        if not name:
+            continue
+        relevant.append((ts, ev.get("event"), name))
     if not relevant:
         return None
     relevant.sort(key=lambda x: x[0])
