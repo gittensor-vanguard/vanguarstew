@@ -21,7 +21,7 @@ from agent.llm import LLM
 from benchmark.baselines import DEFAULT_BASELINE, empty_solve, get_baseline
 from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
-from benchmark.judge import judge_verbose, summarize_judge_orders
+from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
 from benchmark.repo_set import RepoSetError, load_repo_set
 from benchmark.score import (
@@ -151,6 +151,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
     composites = [r["composite"] for r in rows]
     judge_parts = [_JUDGE_COMPONENT[r["winner"]] for r in rows]
     objective_parts = [objective_component(r["objective"]) for r in rows]
+    judge_order_stats = summarize_judge_orders(r.get("judge_order") for r in rows)
     return {
         "tasks": len(tasks),
         "baseline": baseline,
@@ -165,7 +166,8 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         },
         "weights": {"judge": w_judge, "objective": w_objective},
         "rows": rows,
-        "judge_order_stats": summarize_judge_orders(r.get("judge_order") for r in rows),
+        "judge_order_stats": judge_order_stats,
+        "judge_report": build_judge_report(tally, judge_order_stats),
         "offline": llm.offline,
         "github_enriched": enrich_github,
         "judge_dual_order": dual_order_judge,
@@ -224,6 +226,7 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
     judge_parts = []
     objective_parts = []
     judge_orders = []
+    tally = {"challenger": 0, "baseline": 0, "tie": 0}
     try:
         for repo in selected:
             repo_kwargs = dict(kwargs)
@@ -232,6 +235,8 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
             res = run_replay(repo["repo_path"], **repo_kwargs)
             meta = {k: v for k, v in repo.items() if k not in ("repo_path", "cleanup")}
             per_repo.append({**meta, **res})
+            for outcome in tally:
+                tally[outcome] += int((res.get("tally") or {}).get(outcome, 0))
             if res.get("tasks", 0) > 0:
                 composites.append(res["composite_mean"])
                 parts = res.get("composite_parts", {})
@@ -245,6 +250,7 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
     def _mean(xs):
         return round(sum(xs) / len(xs), 3) if xs else 0.0
 
+    judge_order_stats = summarize_judge_orders(judge_orders)
     result = {
         "repos": len(per_repo),
         "scored_repos": len(composites),
@@ -254,7 +260,8 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, **kwargs) -> dic
             "judge_mean": _mean(judge_parts),
             "objective_mean": _mean(objective_parts),
         },
-        "judge_order_stats": summarize_judge_orders(judge_orders),
+        "judge_order_stats": judge_order_stats,
+        "judge_report": build_judge_report(tally, judge_order_stats),
         "per_repo": per_repo,
     }
     if repo_set_meta is not None:
