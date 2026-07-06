@@ -88,6 +88,17 @@ def test_unscored_runs_are_skipped_not_counted():
     assert result["scores"] == [0.6, 0.62]
 
 
+def test_unscored_multi_repo_run_is_skipped_not_folded_into_spread():
+    # A repeat where every repo was too small reports scored_repos: 0 with a placeholder 0.0;
+    # folding it into the spread would fabricate a false UNSTABLE verdict, so it must be skipped.
+    empty_run = {"repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
+                 "per_repo": [{"repo": "a", "error": "bad path", "tasks": 0}]}
+    result = assess_repeatability([_run(0.60), empty_run, _run(0.61)])
+    assert result["runs"] == 2                       # only the two scored repeats count
+    assert result["scores"] == [0.6, 0.61]
+    assert result["stable"] is True
+
+
 def test_repeatability_reads_generalization_tuned_score():
     result = assess_repeatability([_gen(0.70), _gen(0.71), _gen(0.69)])
     assert result["scores"] == [0.7, 0.71, 0.69]
