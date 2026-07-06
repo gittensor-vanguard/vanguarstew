@@ -245,7 +245,7 @@ def _meaningful_overlap(a: set, b: set) -> bool:
     if not a or not b:
         return False
     shared = a & b
-    return len(shared) >= max(2, min(len(a), len(b)) // 2)
+    return len(shared) >= max(1, min(len(a), len(b)) // 2)
 
 
 def addressed_issues(revealed, open_issues) -> list:
