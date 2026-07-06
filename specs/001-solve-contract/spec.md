@@ -79,7 +79,7 @@ reviewable, testable, and safe to build a launch on.
 
 ## Verification
 
-This contract is already exercised: `agent.py`'s `__main__` runs `solve()` offline, and the
-existing suite (`tests/`) covers the pieces (`philosophy`, `planner`, `decider`, `review`) it
-composes. A future task MAY add a `tests/test_solve_contract.py` asserting the output-shape and
-offline-determinism criteria directly; this spec adds no code and does not require it.
+- `tests/test_spec_001_solve.py` (this PR) exercises the entrypoint signature, offline
+  output shape, and determinism criteria directly.
+- Broader smoke coverage remains in `tests/test_smoke.py`; step-level contracts live in specs
+  006–010.
