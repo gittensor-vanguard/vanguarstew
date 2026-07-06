@@ -23,6 +23,15 @@ def test_parse_owner_repo_tolerates_non_string_remote_url():
     assert gc.parse_owner_repo(None) == (None, None)
 
 
+def test_parse_dt_tolerates_unusable_timestamps():
+    assert gc._parse_dt(123) is None
+    assert gc._parse_dt(None) is None
+    assert gc._parse_dt("") is None
+    assert gc._parse_dt("not-a-date") is None
+    parsed = gc._parse_dt("2023-01-01T00:00:00Z")
+    assert parsed is not None and parsed.year == 2023
+
+
 def test_open_at_T_filtering(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     issues = [

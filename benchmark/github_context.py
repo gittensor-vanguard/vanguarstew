@@ -68,9 +68,13 @@ def parse_owner_repo(remote_url: str):
 
 
 def _parse_dt(value):
-    if not value:
+    """Parse an ISO-8601 timestamp string, or None when the input is unusable."""
+    if not isinstance(value, str) or not value:
         return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _item_open_at(item: dict, until: datetime) -> bool:
