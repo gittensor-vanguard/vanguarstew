@@ -184,20 +184,26 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
 WEIGHT_SWEEP_GRID = ((0.2, 0.8), (0.4, 0.6), (0.5, 0.5), (0.6, 0.4), (0.8, 0.2))
 
 
+def _rows_list(rows, field: str = "rows") -> list:
+    """Return ``rows`` when it is a list; otherwise treat as no per-task replay rows."""
+    if isinstance(rows, list):
+        return rows
+    if rows is not None:
+        logger.warning(
+            "runner: %s is %s, not a list; treating as empty",
+            field,
+            type(rows).__name__,
+        )
+    return []
+
+
 def _sweep_rows(rows) -> list:
     """Return ``rows`` when it is a list; otherwise treat as no scored tasks.
 
     A truthy non-list must not reach ``for r in rows`` or malformed replay output aborts
     the weight-sweep helper (#561).
     """
-    if isinstance(rows, list):
-        return rows
-    if rows is not None:
-        logger.warning(
-            "runner: weight_sweep rows is %s, not a list; treating as empty",
-            type(rows).__name__,
-        )
-    return []
+    return _rows_list(rows, "weight_sweep rows")
 
 
 def weight_sweep(rows, grid=WEIGHT_SWEEP_GRID) -> list:
@@ -304,7 +310,10 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
                 parts = res.get("composite_parts", {})
                 judge_parts.append(parts.get("judge_mean", 0.0))
                 objective_parts.append(parts.get("objective_mean", 0.0))
-                judge_orders.extend(r.get("judge_order") for r in res.get("rows", []))
+                judge_orders.extend(
+                    r.get("judge_order")
+                    for r in _rows_list(res.get("rows"), "replay rows")
+                )
     finally:
         if checkout_root:
             shutil.rmtree(checkout_root, ignore_errors=True)
