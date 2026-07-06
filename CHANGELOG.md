@@ -6,7 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Generalization (M3): **tuned vs held-out generalization report** — `run_generalization_report`
+  / `scripts/run_eval.py --repo-set <cfg> --generalization` replays both the tuned and held-out
+  partitions of a repo set in one call and reports a `generalization_gap` (tuned minus held-out
+  composite mean). This is the M3 acceptance signal — held-out performance should not collapse
+  relative to tuned — which the per-partition `run_multi_replay` left to manual comparison. A
+  partition the config does not define is recorded with its error, so the report never aborts
+  and the gap is reported only when both partitions scored a repo (#208).
+
 ### Fixed
+- Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
+  and `releases` were read from only the first API page, so a repo with more than 100 of
+  either silently dropped the rest — which can hide a milestone that was open at T or an
+  older release that sets the frozen base version. Both now paginate (bounded by
+  `max_list_pages`), matching how issues/PRs already walk their history (#209).
 - Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
   `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
   reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
