@@ -327,3 +327,12 @@ def test_judge_verbose_tolerates_non_string_top_level_rationale():
     winner, judge_order = judge_verbose({}, good, bad, [], llm)
     assert winner == "A"
     assert judge_order == "offline"
+
+def test_offline_rank_handles_non_dict_submissions():
+    """Non-dict submissions from a miner must not crash the judge (#472)."""
+    assert _offline_rank("not a dict") == (0, 0, 0)
+    assert _offline_rank(None) == (0, 0, 0)
+    assert _offline_rank(42) == (0, 0, 0)
+    assert _offline_rank([]) == (0, 0, 0)
+    # Normal submissions are unaffected.
+    assert _offline_rank({"philosophy": {"summary": "good"}, "plan": [{"title": "fix"}], "rationale": "yes"})
