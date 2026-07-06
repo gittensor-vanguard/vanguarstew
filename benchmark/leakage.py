@@ -85,9 +85,18 @@ def strip_forward_refs(text: str) -> str:
     return text
 
 
+def _scrub_list(items) -> list:
+    """Return ``items`` when it is a list; otherwise treat as no entries.
+
+    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for item in items``
+    or malformed frozen context aborts leakage scrubbing (#467).
+    """
+    return items if isinstance(items, list) else []
+
+
 def _scrub_titles(items, key):
     out = []
-    for item in items or []:
+    for item in _scrub_list(items):
         if isinstance(item, dict):
             item = dict(item)
             if key in item:

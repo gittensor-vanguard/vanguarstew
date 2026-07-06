@@ -8,7 +8,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import benchmark.taskgen as taskgen  # noqa: E402
-from benchmark.leakage import scrub_context, strip_forward_refs  # noqa: E402
+from benchmark.leakage import _scrub_list, scrub_context, strip_forward_refs  # noqa: E402
 
 
 def test_strip_forward_refs_masks_refs_links_and_shas():
@@ -78,6 +78,45 @@ def test_scrub_context_scrubs_nested_fields_only():
     assert out["releases"][1]["tag"] == "v1.1"
     assert out["_forward_signal_scrubbed"] is True
     assert ctx.get("_forward_signal_scrubbed") is None  # original not mutated
+
+
+# --- #467: a non-list context list field must not abort scrub_context ----------------------
+
+_MALFORMED_LIST_FIELDS = [42, 3.14, True, {"title": "Fix bug"}, "not a list", None]
+
+
+def test_scrub_list_accepts_only_real_lists():
+    items = [{"title": "Fix bug"}]
+    assert _scrub_list(items) == items
+    assert _scrub_list(None) == []
+    for bad in _MALFORMED_LIST_FIELDS:
+        assert _scrub_list(bad) == [], bad
+
+
+def test_scrub_context_tolerates_non_list_list_fields():
+    base = {
+        "readme_excerpt": "roadmap",
+        "recent_commits": [{"subject": "work on loader"}],
+    }
+    for field in ("recent_commits", "open_issues", "open_prs", "milestones", "releases"):
+        ctx = dict(base, **{field: 42})
+        out = scrub_context(ctx)
+        assert out[field] == [], field
+        assert out["_forward_signal_scrubbed"] is True
+
+
+def test_scrub_context_honors_valid_rows_when_list_contains_junk_entries():
+    ctx = {
+        "open_issues": [
+            42,
+            {"title": "Fix crash in #900"},
+            None,
+        ],
+    }
+    out = scrub_context(ctx)
+    assert len(out["open_issues"]) == 3
+    assert "#900" not in out["open_issues"][1]["title"]
+    assert "#ref" in out["open_issues"][1]["title"]
 
 
 def test_strip_forward_refs_returns_empty_for_non_string_input():
