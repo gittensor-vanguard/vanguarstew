@@ -18,6 +18,7 @@ from agent.planner import (  # noqa: E402
     _is_review_item,
     _matched_pr,
     _normalize_plan_item,
+    _pr_title,
     plan_next_actions,
     reconcile_plan_with_queue,
 )
@@ -283,6 +284,35 @@ def test_reconcile_plan_with_queue_tolerates_numeric_titles():
     plan = [{"title": 123, "kind": "feature", "rationale": "fix it"}]
     out = reconcile_plan_with_queue(plan, {"open_prs": []}, 5)
     assert out == [{"title": "123", "kind": "feature", "rationale": "fix it"}]
+
+
+def test_pr_title_tolerates_non_string_fields():
+    assert _pr_title({"title": "Add config"}) == "Add config"
+    assert _pr_title({"title": ["Add", "config"]}) == ""
+    assert _pr_title({"title": 42}) == ""
+    assert _pr_title({"title": None}) == ""
+
+
+def test_reconcile_plan_with_queue_skips_non_string_open_pr_title():
+    plan = [{"title": "ship dark mode", "kind": "feature", "rationale": "users asked"}]
+    ctx = {
+        "open_prs": [
+            {"number": 1, "title": ["Add config"]},
+            {"number": 2, "title": "Support YAML config"},
+        ],
+    }
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    assert out[0]["title"].startswith("Review pull request #2:")
+    assert all("restates_pr" not in item or item.get("restates_pr") != 1 for item in out)
+
+
+def test_matched_pr_ignores_open_pr_with_non_string_title():
+    prs = [
+        {"number": 1, "title": ["broken"]},
+        {"number": 2, "title": "Add streaming export docs"},
+    ]
+    item = {"title": "Land the streaming export docs work", "kind": "feature"}
+    assert _matched_pr(item, prs)["number"] == 2
 
 
 class _MalformedPlanLLM:

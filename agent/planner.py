@@ -49,11 +49,19 @@ SYSTEM = (
 )
 
 
+def _pr_title(pr: dict) -> str:
+    """Return a stripped PR title when it is a string; else empty."""
+    if not isinstance(pr, dict):
+        return ""
+    title = pr.get("title")
+    return title.strip() if isinstance(title, str) else ""
+
+
 def _pr_queue_note(context: dict) -> str:
-    prs = [p for p in (context.get("open_prs") or []) if (p.get("title") or "").strip()]
+    prs = [p for p in (context.get("open_prs") or []) if _pr_title(p)]
     if not prs:
         return ""
-    lines = [f"- #{p.get('number', '?')}: {p['title'].strip()}" for p in prs]
+    lines = [f"- #{p.get('number', '?')}: {_pr_title(p)}" for p in prs]
     return (
         f"\nOpen pull requests awaiting review ({len(lines)}):\n"
         + "\n".join(lines)
@@ -66,7 +74,7 @@ def _offline_plan_stub(context: dict, n: int) -> list:
     """Deterministic offline plan: prioritize the visible PR queue when present."""
     items = []
     for pr in context.get("open_prs") or []:
-        title = (pr.get("title") or "").strip()
+        title = _pr_title(pr)
         if not title:
             continue
         items.append({
@@ -88,7 +96,7 @@ def _offline_plan_stub(context: dict, n: int) -> list:
 def _pr_queue(context: dict) -> list:
     return [
         p for p in (context.get("open_prs") or [])
-        if isinstance(p, dict) and (p.get("title") or "").strip()
+        if isinstance(p, dict) and _pr_title(p)
     ]
 
 
@@ -132,7 +140,7 @@ def _reads_as_pr_reference(item: dict) -> bool:
 
 def _title_contains_pr_subject(item: dict, pr: dict) -> bool:
     """True when the plan item quotes the PR's subject as a phrase (not a lone token)."""
-    subject = (pr.get("title") or "").strip().lower()
+    subject = _pr_title(pr).lower()
     if len(subject) < _MIN_SUBJECT_PHRASE:
         return False
     blob = f"{item.get('title', '')} {item.get('rationale', '')}".lower()
@@ -152,7 +160,7 @@ def _pr_content_matches(item: dict, pr: dict) -> bool:
     if _title_contains_pr_subject(item, pr):
         return True
     itoks = _significant_tokens(item.get("title", "")) | _significant_tokens(item.get("theme", ""))
-    ptoks = _significant_tokens(pr.get("title", ""))
+    ptoks = _significant_tokens(_pr_title(pr))
     if len(ptoks) < 2:
         return False  # single-token PR titles: overlap-only matching disabled
     return len(itoks & ptoks) >= 2
@@ -186,7 +194,7 @@ def _matched_pr(item: dict, prs: list):
     # order.
     subject_matches = [pr for pr in prs if _title_contains_pr_subject(item, pr)]
     if subject_matches:
-        return max(subject_matches, key=lambda pr: len((pr.get("title") or "").strip()))
+        return max(subject_matches, key=lambda pr: len(_pr_title(pr)))
 
     itoks = _significant_tokens(item.get("title", "")) | _significant_tokens(item.get("theme", ""))
     if not itoks:
@@ -194,7 +202,7 @@ def _matched_pr(item: dict, prs: list):
 
     best, best_overlap = None, 0
     for pr in prs:
-        ptoks = _significant_tokens(pr.get("title", ""))
+        ptoks = _significant_tokens(_pr_title(pr))
         if not ptoks:
             continue
         overlap = len(itoks & ptoks)
@@ -304,7 +312,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     if not addressed:
         top = prs[0]
         out.insert(0, {
-            "title": f"Review pull request #{top.get('number', '?')}: {top['title'].strip()}",
+            "title": f"Review pull request #{top.get('number', '?')}: {_pr_title(top)}",
             "kind": "triage",
             "restates_pr": top.get("number"),
             "rationale": (
