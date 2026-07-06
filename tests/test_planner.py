@@ -302,3 +302,46 @@ def test_plan_next_actions_normalizes_malformed_items():
         "kind": "bugfix",
         "theme": "stability",
     }]
+
+
+# --- #271: a bare "#N" ordinal in prose must not be trusted as an open-PR reference. -----
+# "#N" is ordinary English for a ranking ("the #1 feature", "our #7 priority"). When such an
+# ordinal collides with a real open PR's number it must NOT hijack that PR: unlike a genuine
+# "PR #N" / "review #N", a bare ordinal has to pass a review-context or content check first.
+
+def test_bare_ordinal_hash_is_not_treated_as_a_pr_reference():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    # Item is about dark mode; "#7" is an ordinal, not a reference to PR #7.
+    ordinal = {"title": "Ship the #7 requested feature: dark mode", "kind": "feature",
+               "rationale": "users have wanted dark mode for months"}
+    assert _matched_pr(ordinal, prs) is None
+
+
+def test_bare_ordinal_does_not_hijack_queue_reconciliation():
+    plan = [{"title": "Deliver our #7 priority: dark mode", "kind": "feature",
+             "rationale": "top user request, unrelated to the export work"}]
+    out = reconcile_plan_with_queue(plan, CTX, 5)
+    ship = [i for i in out if "dark mode" in i["title"]][0]
+    assert ship["kind"] == "feature"                  # not downgraded to a triage/review item
+    assert "restates_pr" not in ship                  # not flagged as restating PR #7
+
+
+def test_bare_hash_still_matches_when_item_reads_as_review():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    assert _matched_pr({"title": "Review #7 before the release", "kind": "triage"}, prs) == prs[0]
+    assert _matched_pr({"title": "Merge #7 once CI is green", "kind": "triage"}, prs) == prs[0]
+
+
+def test_bare_hash_still_matches_when_content_overlaps_the_pr():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    # No review vocabulary, but the item's own content names the PR's subject -> genuine ref.
+    item = {"title": "Finish the streaming export work (#7)", "kind": "feature"}
+    assert _matched_pr(item, prs) == prs[0]
+
+
+def test_qualified_pr_reference_is_still_authoritative_even_when_stale():
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    # "PR #9" is qualified and stale (no PR 9) -> matches None, suppressing fallback matching.
+    stale = {"title": "PR #9: something unrelated", "kind": "triage",
+             "rationale": "streaming export export export"}
+    assert _matched_pr(stale, prs) is None
