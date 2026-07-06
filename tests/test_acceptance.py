@@ -1,7 +1,9 @@
 """Tests for the M3/M4 generalization acceptance gate (deterministic, offline)."""
 
 import copy
+import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -115,6 +117,47 @@ def test_min_scored_repos_boundary_is_inclusive():
     # scored_repos == min passes; one fewer fails.
     assert check_acceptance(_report(tuned_scored=2, held_scored=2), min_scored_repos=2)["passed"] is True
     assert check_acceptance(_report(tuned_scored=2, held_scored=1), min_scored_repos=2)["passed"] is False
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.acceptance", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_still_reports_pass_for_a_well_formed_artifact(tmp_path):
+    path = tmp_path / "good.json"
+    path.write_text(json.dumps(_report(gap=0.05)), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 0
+    assert "PASS" in result.stderr
+    assert json.loads(result.stdout)["passed"] is True
 
 
 def test_a_negative_gap_passes_the_bound_check():

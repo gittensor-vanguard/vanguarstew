@@ -40,7 +40,13 @@ def main() -> None:
                     help="exit 1 when the acceptance checks fail (for CI gating)")
     args = ap.parse_args()
 
-    result = check_acceptance(load_artifact(args.artifact),
+    try:
+        artifact = load_artifact(args.artifact)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+    result = check_acceptance(artifact,
                               max_gap=args.max_gap, min_scored_repos=args.min_scored_repos)
     print(acceptance_headline(result), file=sys.stderr)
     for check in result["checks"]:
