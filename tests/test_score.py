@@ -116,6 +116,59 @@ def test_module_recall_tokenizes_non_dict_plan_items():
     assert res["module_recall"] == 1.0
 
 
+# --- file-weighted module recall must actually be produced (#215, #43) -----------------
+
+def test_module_recall_produces_weighted_recall_and_weights():
+    # objective_component prefers weighted_module_recall, so module_recall must emit it.
+    revealed = [{"subject": "work", "files": ["core/a.py", "plugins/b.py"]}]
+    plan = [{"title": "touch the plugins module", "kind": "feature"}]
+    res = module_recall(plan, revealed)
+    assert res["module_weights"] == {"core": 1, "plugins": 1}
+    # One of two equally-weighted modules matched -> 1/2 either way.
+    assert res["module_recall"] == 0.5
+    assert res["weighted_module_recall"] == 0.5
+
+
+def test_weighted_recall_rewards_the_module_where_change_concentrated():
+    # core absorbs 4 of 5 changed files; plugins 1. Naming the heavy module must outscore
+    # naming the light one under weighting, while plain recall stays 0.5 for both.
+    revealed = [
+        {"subject": "big core refactor", "files": ["core/a.py", "core/b.py", "core/c.py", "core/d.py"]},
+        {"subject": "tiny plugin tweak", "files": ["plugins/x.py"]},
+    ]
+    heavy = module_recall([{"title": "rewrite the core engine", "kind": "refactor"}], revealed)
+    light = module_recall([{"title": "tweak the plugins module", "kind": "feature"}], revealed)
+    assert heavy["module_recall"] == light["module_recall"] == 0.5
+    assert heavy["weighted_module_recall"] == 0.8   # 4/5 files
+    assert light["weighted_module_recall"] == 0.2   # 1/5 files
+
+
+def test_weighted_recall_is_one_on_full_match_and_absent_on_empty_window():
+    full = module_recall(
+        [{"title": "core and plugins", "theme": "core plugins", "kind": "feature"}],
+        [{"files": ["core/a.py", "core/b.py", "plugins/c.py"]}],
+    )
+    assert full["module_recall"] == 1.0
+    assert full["weighted_module_recall"] == 1.0
+    # No files at all -> no weighting to report; the key is simply absent (graceful fallback
+    # to plain module_recall in objective_component, which tolerates a missing key).
+    empty = module_recall([{"title": "anything"}], [{"subject": "merge", "files": []}])
+    assert "weighted_module_recall" not in empty
+
+
+def test_objective_score_and_component_use_the_weighted_recall():
+    revealed = [
+        {"subject": "core work", "files": ["core/a.py", "core/b.py", "core/c.py"]},
+        {"subject": "docs", "files": ["readme/readme.md"]},
+    ]
+    score = objective_score([{"title": "rewrite the core", "kind": "refactor"}], revealed)
+    assert score["weighted_module_recall"] == 0.75   # 3/4 files under core
+    assert score["module_weights"] == {"core": 3, "readme": 1}
+    from benchmark.score import objective_component
+    # The composite anchor now reflects the weighted value (0.75), not plain recall (0.5).
+    assert objective_component(score) == 0.75
+
+
 def test_kind_recall_unaffected_by_module_recall_kind_exclusion():
     # Dropping kind from module recall must not touch kind_recall, which still reads kind.
     revealed = [

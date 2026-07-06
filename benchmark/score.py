@@ -179,39 +179,77 @@ def _plan_tokens(plan) -> set:
     return toks
 
 
+def _top_module(path: str):
+    """The normalized top-level module a changed path belongs to, or None.
+
+    A nested path takes its first segment (`agent/foo.py` -> `agent`). A top-level file
+    strips a single extension (`README.md` -> `readme`); a top-level dotfile has no extension
+    to strip (`.gitignore`), so it falls back to the bare filename sans leading dots rather
+    than being silently dropped from the ground truth.
+    """
+    parts = [p for p in path.split("/") if p]
+    if not parts:
+        return None
+    if len(parts) > 1:
+        top = parts[0]
+    else:
+        top = parts[0].rsplit(".", 1)[0] or parts[0].lstrip(".")
+    return top.lower() if top else None
+
+
 def changed_modules(revealed) -> set:
     """Top-level modules touched across the revealed window (structural ground truth)."""
     mods = set()
     for r in revealed or []:
         for path in r.get("files", []):
-            parts = [p for p in path.split("/") if p]
-            if not parts:
-                continue
-            if len(parts) > 1:
-                top = parts[0]
-            else:
-                # Strip a single extension (README.md -> readme). A top-level dotfile
-                # (.gitignore, .flake8) has no extension to strip, so rsplit leaves an
-                # empty string here — fall back to the bare filename (sans leading
-                # dots) instead of silently dropping it from the ground truth.
-                top = parts[0].rsplit(".", 1)[0] or parts[0].lstrip(".")
+            top = _top_module(path)
             if top:
-                mods.add(top.lower())
+                mods.add(top)
     return mods
 
 
+def _module_file_counts(revealed) -> dict:
+    """Number of changed files under each top-level module across the revealed window.
+
+    Keys are the same normalized module names as :func:`changed_modules`, so the weighted
+    recall below scores over exactly the modules the plan is matched against.
+    """
+    counts: dict = {}
+    for r in revealed or []:
+        for path in r.get("files", []):
+            top = _top_module(path)
+            if top:
+                counts[top] = counts.get(top, 0) + 1
+    return counts
+
+
 def module_recall(plan, revealed) -> dict:
-    """Fraction of actually-changed modules the plan anticipated (by name). Deterministic."""
+    """Fraction of actually-changed modules the plan anticipated (by name). Deterministic.
+
+    Reports both the plain (per-module) recall and a file-weighted recall: each module is
+    weighted by how many revealed-window file changes landed in it, so a plan that names the
+    module where the maintainer's effort actually concentrated scores higher than one naming a
+    single-file module. The match set is identical for both — they differ only in weighting
+    (#215, #43). `module_weights` is reported alongside for inspectability.
+    """
     actual = changed_modules(revealed)
     if not actual:
         return {"module_recall": 0.0, "actual_modules": [], "matched_modules": []}
     ptoks = _plan_tokens(plan)
     matched = sorted(m for m in actual if _tokens(m) & ptoks)
-    return {
+    result = {
         "module_recall": round(len(matched) / len(actual), 3),
         "actual_modules": sorted(actual),
         "matched_modules": matched,
     }
+    file_counts = _module_file_counts(revealed)
+    total = sum(file_counts.values())
+    if total:
+        result["weighted_module_recall"] = round(
+            sum(file_counts.get(m, 0) for m in matched) / total, 3
+        )
+        result["module_weights"] = dict(sorted(file_counts.items()))
+    return result
 
 
 def is_release_subject(text: str) -> bool:
