@@ -39,7 +39,7 @@ _REVIEW_MARKER_RE = re.compile(
 _REVIEW_REF_RE = re.compile(
     r"\b(?:review|reviewing|reviewed|merge|merging|merged|approve|approving|approved)\b"
     r"(?:\s+(?:and|or|then|the|a|an|this|that|it|pr|pull|request|changes))*"
-    r"\s+#?\s*\d+\b",
+    r"\s+#?\s*(\d+)\b",
     re.I,
 )
 # Explicit PR references: "#7", "PR #7", "pull request 7"
@@ -196,16 +196,24 @@ def _explicit_pr_number(*texts: str) -> int | None:
     return _pr_reference(*texts)[0]
 
 
-def _reads_as_pr_reference(item: dict) -> bool:
-    """True when a review verb in the item's text *governs* a bare ``#N``, so the ``#N`` denotes a
-    pull request rather than an ordinal ranking numeral ("our #1 priority").
+def _governing_pr_number(item: dict) -> int | None:
+    """The PR number a review verb *governs* in the item's text, or ``None``.
 
     The verb must be followed by the number (allowing only connective words in between), so a
     review word that merely appears elsewhere in a feature description — e.g. "improve the code
     review workflow, #2 on the roadmap" — does not turn an unrelated ordinal into a PR reference.
+    Returns the governed number itself so callers match the PR the verb actually points at,
+    rather than an ordinal ``#N`` that merely appears earlier in the same text.
     """
     blob = f"{item.get('title', '')} {item.get('rationale', '')}"
-    return bool(_REVIEW_REF_RE.search(blob))
+    match = _REVIEW_REF_RE.search(blob)
+    return int(match.group(1)) if match else None
+
+
+def _reads_as_pr_reference(item: dict) -> bool:
+    """True when a review verb in the item's text *governs* a bare ``#N``, so the ``#N`` denotes a
+    pull request rather than an ordinal ranking numeral ("our #1 priority")."""
+    return _governing_pr_number(item) is not None
 
 
 def _title_contains_pr_subject(item: dict, pr: dict) -> bool:
@@ -250,12 +258,21 @@ def _matched_pr(item: dict, prs: list):
 
     ref, qualified = _pr_reference(item.get("title", ""), item.get("rationale", ""))
     if ref is not None:
-        pr = by_number.get(ref)
         # A qualified "PR #N" is authoritative (even when stale -> None, which suppresses
-        # fallback matching). A bare "#N" is trusted only when the item actually reads as a PR
-        # reference or its content matches the PR; otherwise "#N" is an ordinal ("the #1
-        # feature") and must not hijack an unrelated open PR — fall through to content matching.
-        if qualified or _reads_as_pr_reference(item) or (pr is not None and _pr_content_matches(item, pr)):
+        # fallback matching).
+        if qualified:
+            return by_number.get(ref)
+        # A bare "#N" governed by a review verb ("review #7") denotes that PR — but resolve it
+        # to the *governed* number, not `ref` (the first bare "#N" scanned), so an ordinal that
+        # appears earlier ("our #1 priority, then review #7") can't redirect the match to the
+        # wrong PR. A stale governed number (-> None) suppresses fallback like a qualified one.
+        governed = _governing_pr_number(item)
+        if governed is not None:
+            return by_number.get(governed)
+        # Otherwise "#N" is an ordinal ("the #1 feature") and must not hijack an unrelated open
+        # PR — trust it only when the referenced PR's content matches; else fall through.
+        pr = by_number.get(ref)
+        if pr is not None and _pr_content_matches(item, pr):
             return pr
 
     # Full-subject phrase match. Nested titles ("Add streaming export" is a substring of

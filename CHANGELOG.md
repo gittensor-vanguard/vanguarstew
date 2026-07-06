@@ -19,6 +19,14 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Planner PR matching (`agent/planner.py`): `_matched_pr` resolved a review-governed bare
+  `#N` to the *first* bare number `_pr_reference` scanned, not the number the review verb
+  actually governs. So a plan item like "Deliver our #1 priority, then review #7" matched PR
+  **#1** (the leading ordinal) instead of **#7** — marking the wrong PR addressed in
+  `reconcile_plan_with_queue` and silently dropping the PR the maintainer asked to review. It
+  now resolves to the governed number (`_governing_pr_number`); a stale governed number
+  suppresses fallback like a qualified `PR #N`. Distinct from the ordinal-hijack (#795) and
+  qualified-shadowing (#385) cases already handled.
 - Benchmark gates (`benchmark/repeatability.py`): `assess_repeatability` computed the
   coefficient of variation from the *population* standard deviation (`pstdev`) rather than the
   *sample* standard deviation. The repeats are a sample of a noisy run, so the CV must use the

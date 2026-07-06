@@ -15,6 +15,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
     _explicit_pr_number,
+    _governing_pr_number,
     _is_review_item,
     _matched_pr,
     _normalize_files,
@@ -471,6 +472,22 @@ def test_bare_hash_still_matches_when_item_reads_as_review():
     # A review verb governing the ref across connective words still matches.
     assert _matched_pr({"title": "Review and merge #7", "kind": "triage"}, prs) == prs[0]
     assert _matched_pr({"title": "Review the #7 today", "kind": "triage"}, prs) == prs[0]
+
+
+def test_review_governed_ref_wins_over_an_earlier_ordinal():
+    # When a review verb governs "#7" but an ordinal "#1" appears earlier in the same text, the
+    # item must match the governed PR (#7), not the leading ordinal (#1) that `_pr_reference`
+    # scans first. Distinct from #795 (a bare ordinal trusted at all) and #385 (a bare ordinal
+    # shadowing a *qualified* reference): here the reference is a legitimate review-governed
+    # bare "#N", which was resolved to the wrong number.
+    prs = [{"number": 1, "title": "Add dark mode"}, {"number": 7, "title": "Add streaming export"}]
+    assert _matched_pr({"title": "Deliver our #1 priority, then review #7", "kind": "triage"}, prs) == prs[1]
+    # The governed number is authoritative even when stale (not in the queue): it suppresses
+    # fallback like a qualified ref, rather than redirecting to the earlier ordinal's PR.
+    assert _matched_pr({"title": "Our #1 pick; review #9", "kind": "triage"}, prs) is None
+    # The helper returns the number the review verb points at, regardless of earlier ordinals.
+    assert _governing_pr_number({"title": "our #1 priority, then merge #7"}) == 7
+    assert _governing_pr_number({"title": "our #1 priority"}) is None
 
 
 def test_non_governing_review_word_does_not_hijack_a_bare_ordinal():
