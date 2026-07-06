@@ -326,6 +326,37 @@ def test_commit_subject_tolerates_non_dict_entries():
     assert _commit_subject(["Fix", "loader"]) == ""
 
 
+def test_commit_subject_tolerates_a_non_string_subject():
+    # A dict entry whose subject isn't a string (a number, list, or nested object from an
+    # imperfect context producer) must resolve to "", never leaking a non-string into the
+    # kind heuristic. Mirrors _issue_title's handling of non-string titles.
+    assert _commit_subject({"subject": 123}) == ""
+    assert _commit_subject({"subject": ["Fix", "loader"]}) == ""
+    assert _commit_subject({"subject": None}) == ""
+    assert _commit_subject({"subject": {"nested": "obj"}}) == ""
+    assert _commit_subject({"subject": "Fix loader"}) == "Fix loader"
+
+
+def test_heuristic_baseline_survives_a_non_string_commit_subject():
+    # Regression: a non-string subject used to crash the kind heuristic with
+    # "AttributeError: 'int' object has no attribute 'lower'". It must instead be treated as
+    # empty (triage) while the well-formed commits around it are still classified and counted.
+    ctx = {
+        "recent_commits": [
+            {"subject": "Add release v1.2.0"},
+            {"subject": 123},
+            {"subject": "Fix parser crash"},
+        ],
+        "open_issues": [],
+    }
+    philosophy = heuristic_philosophy(ctx)
+    assert philosophy["values"]                       # did not crash
+    plan = heuristic_plan(ctx)
+    assert plan                                       # did not crash
+    # The malformed entry is counted as triage, not as a release/fix it isn't.
+    assert any(item["kind"] == "release" for item in plan)
+
+
 def test_commit_subject_logs_a_warning_for_non_dict_entries(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.baselines"):
         assert _commit_subject("not a dict") == ""

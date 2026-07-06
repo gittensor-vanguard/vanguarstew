@@ -91,10 +91,12 @@ def _baseline_list(items, field: str) -> list:
 
 
 def _commit_subject(commit) -> str:
-    """Return a commit's ``subject`` when the entry is a dict; else empty.
+    """Return a commit's ``subject`` when the entry is a dict with a string subject; else empty.
 
     ``recent_commits`` entries come from the (unvalidated) frozen context; a malformed entry
-    that isn't a dict must not crash the heuristic baseline — log and skip it instead.
+    that isn't a dict — or whose ``subject`` isn't a string — must not crash the heuristic
+    baseline. A non-dict entry is logged and skipped; a non-string subject resolves to "" so it
+    never reaches the kind heuristic (which would raise on, e.g., an ``int``).
     """
     if not isinstance(commit, dict):
         logger.warning(
@@ -102,7 +104,8 @@ def _commit_subject(commit) -> str:
             type(commit).__name__, commit,
         )
         return ""
-    return commit.get("subject", "") or ""
+    subject = commit.get("subject", "")
+    return subject if isinstance(subject, str) else ""
 
 
 def _infer_kind(text: str) -> str:
