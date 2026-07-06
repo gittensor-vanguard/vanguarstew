@@ -119,11 +119,19 @@ def base_from_releases(releases) -> str | None:
 
 
 def _plan_tokens(plan) -> set:
+    """Content tokens from a plan for module/backlog recall: item ``title`` and ``theme``
+    (and plain-string plan items verbatim).
+
+    ``kind`` is deliberately excluded. Its vocabulary (``docs``, ``ci``, ``build``, ``test``,
+    …) collides with real top-level module names, so folding it in let a plan item tagged,
+    e.g., ``kind: docs`` earn module-recall credit for the ``docs/`` module without ever
+    naming it — farming the deterministic, un-gameable objective anchor. Commit-kind
+    anticipation is scored separately by ``kind_recall``, which reads ``kind`` directly.
+    """
     toks = set()
     for item in plan or []:
         if isinstance(item, dict):
-            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", "")) \
-                | _tokens(item.get("kind", ""))
+            toks |= _tokens(item.get("title", "")) | _tokens(item.get("theme", ""))
         else:
             toks |= _tokens(str(item))
     return toks
