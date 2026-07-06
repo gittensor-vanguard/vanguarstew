@@ -76,6 +76,71 @@ def test_backlog_recall_honors_plan_files_for_issue_titles():
     assert res["backlog_recall"] == 1.0
 
 
+def test_module_recall_excludes_kind_tag_collision():
+    # A kind tag whose vocabulary collides with a module name (docs, ci, build, test, ...)
+    # must not earn module recall. Only real naming (title/theme/files) counts.
+    revealed = [{"subject": "chore: tidy", "files": ["docs/guide.md", "ci/workflow.yml"]}]
+    plan = [
+        {"title": "ship an unrelated feature", "kind": "docs"},
+        {"title": "some other thing", "kind": "ci"},
+    ]
+    res = module_recall(plan, revealed)
+    assert res["actual_modules"] == ["ci", "docs"]
+    assert res["matched_modules"] == []
+    assert res["module_recall"] == 0.0
+
+
+def test_module_recall_still_credits_title_theme_and_files_after_kind_exclusion():
+    # Excluding kind must not weaken legitimate matches via title, theme, or files.
+    revealed = [{"subject": "chore: tidy", "files": ["docs/guide.md", "ci/workflow.yml"]}]
+    plan = [
+        {"title": "refresh the docs guide", "kind": "chore"},        # names "docs" in the title
+        {"title": "housekeeping", "kind": "chore", "files": ["ci/workflow.yml"]},  # "ci" via files
+    ]
+    res = module_recall(plan, revealed)
+    assert set(res["matched_modules"]) == {"docs", "ci"}
+    assert res["module_recall"] == 1.0
+
+
+def test_module_recall_tokenizes_non_dict_plan_items():
+    # Plans may carry plain-string items; the non-dict branch must still tokenize them so a
+    # string that names a module earns recall (guards the else branch from regressing).
+    revealed = [{"subject": "refactor core engine", "files": ["core/engine.py"]}]
+    plan = ["overhaul the core engine"]  # a bare string, not a dict
+    res = module_recall(plan, revealed)
+    assert res["matched_modules"] == ["core"]
+    assert res["module_recall"] == 1.0
+
+
+def test_kind_recall_unaffected_by_module_recall_kind_exclusion():
+    # Dropping kind from module recall must not touch kind_recall, which still reads kind.
+    revealed = [
+        {"subject": "docs: refresh guide", "files": ["docs/guide.md"]},
+        {"subject": "ci: tune workflow", "files": ["ci/workflow.yml"]},
+    ]
+    plan = [
+        {"title": "ship an unrelated feature", "kind": "docs"},
+        {"title": "some other thing", "kind": "ci"},
+    ]
+    assert module_recall(plan, revealed)["module_recall"] == 0.0  # kind no longer farms modules
+    kr = kind_recall(plan, revealed)
+    assert set(kr["matched_kinds"]) == {"docs", "ci"}
+    assert kr["kind_recall"] == 1.0
+
+
+def test_backlog_recall_excludes_kind_tag_collision():
+    # A kind tag must not push a backlog issue over the match threshold; only real content
+    # tokens (title/theme/files) may anticipate an addressed issue.
+    open_issues = [{"number": 7, "title": "Update ci docs"}]
+    revealed = [{"subject": "update ci docs config", "files": ["ci/docs.yml"]}]
+    # The plan names only "docs" in real content; "ci" would come solely from the kind tag.
+    plan = [{"title": "refresh the docs", "kind": "ci"}]
+    res = backlog_recall(plan, revealed, open_issues)
+    assert res["addressed_issue_numbers"] == [7]  # the window does address the issue
+    assert res["matched_issue_numbers"] == []      # but the plan did not truly anticipate it
+    assert res["backlog_recall"] == 0.0
+
+
 def test_release_signals():
     assert release_signaled(REVEALED) is True
     assert release_predicted([{"title": "cut release", "kind": "release"}]) is True
