@@ -131,6 +131,16 @@ def _normalize_review(out: dict, stub: dict) -> dict:
 
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
+    if not isinstance(pr, dict):
+        return {
+            "action": "comment",
+            "value_label": "mult:maintenance",
+            "scope_ok": True,
+            "tests_present": True,
+            "summary": "non-dict PR payload",
+            "concerns": [],
+            "recommendation": "pr payload was not a dict — cannot review",
+        }
     raw_files = pr.get("files")
     files = []
     if isinstance(raw_files, list):

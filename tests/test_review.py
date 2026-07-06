@@ -204,3 +204,13 @@ def test_review_pr_files_list_unchanged_for_well_formed_paths():
           "additions": 175, "deletions": 4, "body": "Fixes #10", "diff": "",
           "files": ["benchmark/score.py", "tests/test_score.py"]}
     assert review_pr(pr, None, llm)["tests_present"] is True
+
+def test_review_pr_handles_non_dict_pr():
+    """Non-dict PR payload must not crash the review agent."""
+    from agent.llm import LLM
+    from agent.review import review_pr
+    llm = LLM(api_key='offline')
+    result = review_pr("not a dict", {}, llm)
+    assert result["action"] == "comment"
+    result2 = review_pr(None, {}, llm)
+    assert result2["action"] == "comment"
