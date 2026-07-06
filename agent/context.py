@@ -157,6 +157,7 @@ def context_for_agent(context: dict) -> dict:
 
 def _context_from_git(repo_path: str) -> dict:
     head = _git(repo_path, "rev-parse", "HEAD")
+    freeze_date = _git(repo_path, "show", "-s", "--format=%cI", head).strip() or None
     log = _git(repo_path, "log", "--pretty=format:%H%x09%s", "-n", "50")
     commits = []
     for line in log.splitlines():
@@ -189,7 +190,7 @@ def _context_from_git(repo_path: str) -> dict:
                 readme = _mask_forward_refs(f.read()[:4000])
             break
     return {
-        "frozen_at": {"commit": head[:10]},
+        "frozen_at": {"commit": head[:10], "date": freeze_date},
         "recent_commits": commits,
         "open_issues": [],
         "open_prs": [],

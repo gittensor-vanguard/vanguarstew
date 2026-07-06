@@ -24,6 +24,7 @@ from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
 from agent.planner import _render as render_planner_context  # noqa: E402
 from benchmark.freeze import build_context  # noqa: E402
+import benchmark.github_context as gc  # noqa: E402
 
 
 def test_context_for_agent_omits_unknown_issue_labels():
@@ -250,6 +251,53 @@ def _write(repo, relpath, text="x\n"):
     os.makedirs(os.path.dirname(full) or repo, exist_ok=True)
     with open(full, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_sets_frozen_at_date():
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        freeze_date = "2024-01-10T12:00:00+00:00"
+        _write(repo, "f.txt")
+        _git(repo, "add", "-A", date=freeze_date)
+        _git(repo, "commit", "-q", "-m", "c1", date=freeze_date)
+
+        ctx = _context_from_git(repo)
+        assert ctx["frozen_at"]["commit"]
+        assert ctx["frozen_at"]["date"]
+        assert gc._frozen_at_date(ctx) is not None
+        assert ctx["frozen_at"]["date"] == build_context(repo, "HEAD")["frozen_at"]["date"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_enrich_context_proceeds_for_git_fallback_context(monkeypatch):
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        freeze_date = "2024-01-10T12:00:00+00:00"
+        _write(repo, "f.txt")
+        _git(repo, "add", "-A", date=freeze_date)
+        _git(repo, "commit", "-q", "-m", "c1", date=freeze_date)
+
+        def fake_fetch(*a, **k):
+            return {
+                "repo": "foo/bar",
+                "open_issues": [],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [],
+                "_source": "github-api",
+            }
+
+        monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+        monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+        out = gc.enrich_context(_context_from_git(repo), repo)
+        assert out.get("_github_enriched") is True
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
