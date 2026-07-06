@@ -24,7 +24,7 @@ from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context
 from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
-from benchmark.repo_set import RepoSetError, load_repo_set
+from benchmark.repo_set import RepoSetError, is_placeholder_source, load_repo_set
 from benchmark.score import (
     base_from_releases,
     composite_score,
@@ -66,13 +66,9 @@ def _submission(out: dict) -> dict:
     }
 
 
-def _is_placeholder_source(source: str) -> bool:
-    return "OWNER/" in source
-
-
 def _materialize_repo_source(source: str, checkout_root: str | None) -> tuple[str, bool]:
     """Return a local repo path for a repo-set source plus whether it should be cleaned up."""
-    if _is_placeholder_source(source):
+    if is_placeholder_source(source):
         raise RepoSetError(
             f"repo-set source {source!r} is a placeholder (OWNER/...); "
             "copy the example config and replace placeholder sources with vetted repos"
@@ -197,6 +193,19 @@ def _rows_list(rows, field: str = "rows") -> list:
     return []
 
 
+def _freeze_window_dict(freeze_window, field: str = "freeze_window") -> dict:
+    """Return ``freeze_window`` when it is a dict; otherwise ignore replay hints."""
+    if isinstance(freeze_window, dict):
+        return freeze_window
+    if freeze_window is not None:
+        logger.warning(
+            "runner: %s is %s, not a dict; ignoring freeze_window hints",
+            field,
+            type(freeze_window).__name__,
+        )
+    return {}
+
+
 def _sweep_rows(rows) -> list:
     """Return ``rows`` when it is a list; otherwise treat as no scored tasks.
 
@@ -298,7 +307,7 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
     try:
         for repo in selected:
             repo_kwargs = dict(kwargs)
-            for key, value in repo.get("freeze_window", {}).items():
+            for key, value in _freeze_window_dict(repo.get("freeze_window")).items():
                 repo_kwargs[key] = value
             res = run_replay(repo["repo_path"], **repo_kwargs)
             meta = {k: v for k, v in repo.items() if k not in ("repo_path", "cleanup")}

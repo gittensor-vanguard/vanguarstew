@@ -17,6 +17,7 @@ from agent.planner import (  # noqa: E402
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
+    _normalize_files,
     _normalize_plan,
     _normalize_plan_item,
     _open_prs_list,
@@ -303,6 +304,36 @@ def test_normalize_plan_item_coerces_non_string_fields():
     assert _normalize_plan_item({"title": "work", "kind": "mystery"})["kind"] == "triage"
 
 
+def test_normalize_files_coerces_scalar_and_list_shapes():
+    assert _normalize_files(None) == []
+    assert _normalize_files("core/loader.py") == ["core/loader.py"]
+    assert _normalize_files("  core/loader.py  ") == ["core/loader.py"]
+    assert _normalize_files("") == []
+    assert _normalize_files(["core/a.py", "", None, 7]) == ["core/a.py", "7"]
+    assert _normalize_files({"bad": True}) == []
+
+
+def test_normalize_plan_item_wraps_scalar_files():
+    item = _normalize_plan_item({
+        "title": "harden loader",
+        "kind": "bugfix",
+        "files": "core/loader.py",
+    })
+    assert item["files"] == ["core/loader.py"]
+
+
+def test_normalize_plan_item_drops_empty_or_invalid_files():
+    assert "files" not in _normalize_plan_item({"title": "work", "kind": "docs", "files": ""})
+    assert "files" not in _normalize_plan_item({"title": "work", "kind": "docs", "files": 42})
+
+
+def test_normalize_files_logs_warning_for_non_list_scalar_object(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING):
+        assert _normalize_files({"path": "x.py"}) == []
+    assert any("non-list files" in r.message for r in caplog.records)
+
+
 def test_reconcile_plan_with_queue_tolerates_numeric_titles():
     plan = [{"title": 123, "kind": "feature", "rationale": "fix it"}]
     out = reconcile_plan_with_queue(plan, {"open_prs": []}, 5)
@@ -490,6 +521,30 @@ def test_plan_next_actions_handles_non_dict_context():
     llm = LLM(api_key='offline')
     assert isinstance(plan_next_actions(None, {}, 3, llm), list)
     assert isinstance(plan_next_actions(42, {}, 3, llm), list)
+
+
+def test_plan_next_actions_warns_for_dict_wrapped_non_list_plan(caplog):
+    import logging
+
+    from agent.llm import LLM
+
+    class BadPlanLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return {"plan": 42}
+
+    class BadActionsLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return {"actions": 42}
+
+    with caplog.at_level(logging.WARNING, logger="agent.planner"):
+        assert plan_next_actions({"open_prs": []}, {}, 3, BadPlanLLM(api_key="offline")) == []
+    assert any("plan is int" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="agent.planner"):
+        assert plan_next_actions({"open_prs": []}, {}, 3, BadActionsLLM(api_key="offline")) == []
+    assert any("actions is int" in r.message for r in caplog.records)
+
 
 def test_significant_tokens_handles_non_string():
     assert _significant_tokens(None) == set()

@@ -18,6 +18,7 @@ from benchmark.repo_set import (  # noqa: E402
     CURATED_REPO_SET,
     EXAMPLE_REPO_SET,
     RepoSetError,
+    is_placeholder_source,
     load_repo_set,
     replay_kwargs,
     validate_repo_set,
@@ -175,7 +176,7 @@ def test_curated_config_loads_and_has_real_sources():
     rs = load_repo_set(CURATED_REPO_SET)
     assert rs.name == "curated"
     assert len(rs) >= 3
-    assert all("OWNER/" not in e.source for e in rs)
+    assert all(not is_placeholder_source(e.source) for e in rs)
     assert all(e.source.startswith("https://github.com/") for e in rs)
     assert rs.tuned() and rs.held_out()
     assert rs.by_tier("recent") and rs.by_tier("obscure")

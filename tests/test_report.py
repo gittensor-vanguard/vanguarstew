@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -174,3 +175,43 @@ def test_load_artifact_round_trip(tmp_path):
     payload = _single_repo()
     path.write_text(json.dumps(payload), encoding="utf-8")
     assert load_artifact(str(path)) == payload
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.report", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_still_renders_a_well_formed_artifact(tmp_path):
+    path = tmp_path / "good.json"
+    path.write_text(json.dumps(_single_repo()), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 0
+    assert "# Benchmark report (single-repo)" in result.stdout

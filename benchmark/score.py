@@ -80,6 +80,34 @@ def _tokens(text) -> set:
     return set(_TOK.findall(text.lower()))
 
 
+def _plan_file_paths(files, field: str = "plan.files") -> list:
+    """Normalize a plan item's ``files`` field to stripped path strings.
+
+    A scalar string (a common LLM shape) must not be iterated character-by-character; a
+    non-list/non-string value is treated as absent (with a warning, mirroring ``_files_list``).
+    """
+    if files is None:
+        return []
+    if isinstance(files, str):
+        path = files.strip()
+        return [path] if path else []
+    if isinstance(files, list):
+        out = []
+        for path in files:
+            if not isinstance(path, str):
+                continue
+            p = path.strip()
+            if p:
+                out.append(p)
+        return out
+    logger.warning(
+        "score: %s is %s, not a list; treating as empty",
+        field,
+        type(files).__name__,
+    )
+    return []
+
+
 def parse_semver(text):
     """Parse the first semver core in `text` -> (major, minor, patch), or None.
 
@@ -211,9 +239,7 @@ def _plan_tokens(plan) -> set:
             # Structured `files` are part of a concrete plan item (the judge counts them
             # toward substance); tokenize path segments so module recall can match on the
             # top-level module even when the title omits it.
-            for path in _files_list(item.get("files"), "plan.files"):
-                if not isinstance(path, str):
-                    continue
+            for path in _plan_file_paths(item.get("files")):
                 toks |= _tokens(path.replace("/", " "))
         else:
             toks |= _tokens(str(item))
