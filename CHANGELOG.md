@@ -19,6 +19,13 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Benchmark gates (`benchmark/sample_adequacy.py`): `_partition_entries` collected the
+  top-level `per_repo` list **and** the `tuned`/`held_out` partition lists additively, so an
+  artifact carrying both shapes had every task counted twice (`_total_tasks` returned 14 for a
+  7-task run), which then failed `all_tasks_decided` even when the tally accounted for every
+  real task. It is now mutually exclusive — top-level `per_repo` wins, else the partitions —
+  mirroring the sibling gates (`coverage`, `tally_integrity`, `weight_integrity`, ...). Stock
+  multi-repo and generalization artifacts are unaffected.
 - Leakage / fail-closed (`benchmark/github_context.py`): `_issue_timeline` swallowed a
   transient error on a page *after* the first and returned the partial events with
   `truncated=False`, so `_issue_record_at` trusted an incomplete timeline and reported

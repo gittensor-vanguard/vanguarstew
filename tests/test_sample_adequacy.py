@@ -113,6 +113,23 @@ def test_a_generalization_run_sums_both_partitions():
     assert result["passed"] is True
 
 
+def test_top_level_per_repo_is_not_double_counted_with_partitions():
+    # An artifact that carries BOTH a top-level per_repo (the complete multi-repo list) and
+    # tuned/held_out partition lists must count the tasks once, not sum both shapes. The
+    # top-level list wins, mirroring the sibling gates (coverage, tally_integrity, ...).
+    artifact = {
+        "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 3}],
+        "tuned": {"per_repo": [{"repo": "a", "tasks": 4}]},
+        "held_out": {"per_repo": [{"repo": "b", "tasks": 3}]},
+        "tally": {"challenger": 4, "baseline": 2, "tie": 1},  # decides all 7 real tasks
+    }
+    result = check_sample_adequacy(artifact, min_tasks=6)
+    assert result["tasks"] == 7                       # not 14 (double-counted)
+    assert result["decided"] == 7
+    assert "all_tasks_decided" not in failed_checks(result)
+    assert result["passed"] is True
+
+
 def test_a_multi_repo_run_with_a_malformed_entry_fails_run_scored():
     # A non-dict per-repo entry makes the total untrustworthy: fail run_scored, don't silently drop.
     for bad_per_repo in ([{"tasks": 4}, "oops"], [{"tasks": 4}, {"repo": "x"}], [{"tasks": 4}, {"tasks": "n"}]):

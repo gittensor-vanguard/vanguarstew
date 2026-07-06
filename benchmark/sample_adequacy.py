@@ -78,15 +78,20 @@ def _check_rows_list(checks) -> list[dict]:
 
 
 def _partition_entries(result: dict) -> list:
-    """The per-repo entries of a multi-repo result, across generalization partitions if present."""
-    entries = []
+    """The per-repo entries of a multi-repo result, across generalization partitions if present.
+
+    Mutually exclusive, mirroring the sibling gates (`coverage._collect_per_repo_entries`,
+    `tally_integrity`, `weight_integrity`, ...): a multi-repo run's top-level ``per_repo`` is the
+    complete list, so it must not be summed *together with* the ``tuned``/``held_out`` partition
+    lists. Counting both shapes on an artifact that carries them would double-count every task.
+    """
     if "per_repo" in result:
-        entries.append(result.get("per_repo"))
-    for partition in ("tuned", "held_out"):
-        part = _dict(result.get(partition))
-        if "per_repo" in part:
-            entries.append(part.get("per_repo"))
-    return entries
+        return [result.get("per_repo")]
+    return [
+        part.get("per_repo")
+        for part in (_dict(result.get("tuned")), _dict(result.get("held_out")))
+        if "per_repo" in part
+    ]
 
 
 def _total_tasks(result: dict):
