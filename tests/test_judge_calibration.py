@@ -229,6 +229,7 @@ def test_symmetry_checks_list_returns_only_valid_rows():
         valid[0],
         42,
         {},
+        {"id": "", "passed": False},
         {"id": 99, "passed": False},
         {"id": "sym-a", "passed": 1},
         valid[1],
@@ -250,6 +251,32 @@ def test_symmetry_checks_list_rejects_int_as_passed(caplog):
     assert any("passed is int" in r.message for r in caplog.records)
 
 
+def test_symmetry_checks_list_rejects_empty_id(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list([{"id": "", "passed": False}]) == []
+    assert any("id is empty str" in r.message for r in caplog.records)
+
+
+def test_symmetry_checks_list_accepts_numpy_bool_when_available():
+    np = pytest.importorskip("numpy")
+    for factory in (np.bool_, np.bool8):
+        rows = [{"id": "sym-a", "passed": factory(True)}]
+        assert _symmetry_checks_list(rows) == rows
+
+
+def test_symmetry_checks_list_rejects_non_bool_passed_values(caplog):
+    class AlmostBool:
+        def __bool__(self):
+            return True
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        assert _symmetry_checks_list([{"id": "sym-a", "passed": AlmostBool()}]) == []
+        assert _symmetry_checks_list([{"id": "sym-a", "passed": "true"}]) == []
+    messages = [r.message for r in caplog.records]
+    assert any("passed is AlmostBool" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+
+
 def test_calibration_headline_uses_sanitized_symmetry_count(caplog):
     checks = [{"id": "sym-a", "passed": True}, 42, {"id": "bad", "passed": 1}]
     with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
@@ -258,6 +285,23 @@ def test_calibration_headline_uses_sanitized_symmetry_count(caplog):
         )
     assert line == "calibration: PASS (3 scenarios + 1 symmetry)"
     assert any("symmetry_checks[1] is int" in r.message for r in caplog.records)
+
+
+def test_calibration_headline_ignores_unsanitized_rows_in_symmetry_count(caplog):
+    checks = [
+        {"id": "sym-a", "passed": True},
+        {"id": "", "passed": True},
+        {"id": "sym-b", "passed": 1},
+        42,
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_calibration"):
+        line = calibration_headline(
+            {"passed": True, "scenario_count": 3, "symmetry_checks": checks},
+        )
+    assert line == "calibration: PASS (3 scenarios + 1 symmetry)"
+    assert any("id is empty str" in r.message for r in caplog.records)
+    assert any("passed is int" in r.message for r in caplog.records)
+    assert any("symmetry_checks[3] is int" in r.message for r in caplog.records)
 
 
 def test_failed_scenarios_and_headline_survive_malformed_fields():

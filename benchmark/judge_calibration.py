@@ -210,10 +210,27 @@ def _failed_ids_list(failed) -> list[str]:
 
 _SYMMETRY_ROW_KEYS = ("id", "passed")
 
+_NUMPY_BOOL_TYPENAMES = frozenset({"bool_", "bool8"})
 
-def _is_bool(value) -> bool:
-    """True for bool values including subclasses; rejects int 0/1 and other scalars."""
-    return isinstance(value, bool)
+
+def _is_passed(value) -> bool:
+    """Accept native ``bool`` and numpy scalar booleans; reject int 0/1 and other scalars.
+
+    Uses ``type(value) is bool`` rather than ``isinstance`` so arbitrary bool subclasses
+    (which can override ``__bool__``) are not treated as symmetry pass/fail flags.
+    """
+    if type(value) is bool:
+        return True
+    return type(value).__name__ in _NUMPY_BOOL_TYPENAMES
+
+
+def _check_symmetry_row_field(key: str, value) -> bool:
+    """Return whether ``value`` is usable for a symmetry row ``key`` in ``_SYMMETRY_ROW_KEYS``."""
+    if key == "id":
+        return isinstance(value, str) and bool(value.strip())
+    if key == "passed":
+        return _is_passed(value)
+    return False
 
 
 def _symmetry_checks_list(checks) -> list[dict]:
@@ -221,8 +238,8 @@ def _symmetry_checks_list(checks) -> list[dict]:
 
     ``None`` means the key is absent. An empty list means zero symmetry checks. Both are silent.
     Non-list containers are warned and treated as empty (never coerced). A usable row is a dict
-    whose ``id`` is a ``str`` and whose ``passed`` is a ``bool`` (subclasses allowed); anything
-    else is skipped with a warning.
+    with every key in ``_SYMMETRY_ROW_KEYS``: ``id`` must be a non-empty ``str`` and ``passed``
+    must be a native ``bool`` or numpy scalar boolean; anything else is skipped with a warning.
     """
     if checks is None:
         return []
@@ -249,18 +266,29 @@ def _symmetry_checks_list(checks) -> list[dict]:
                 missing,
             )
             continue
-        if not isinstance(row["id"], str):
+        bad_key = None
+        for key in _SYMMETRY_ROW_KEYS:
+            if not _check_symmetry_row_field(key, row[key]):
+                bad_key = key
+                break
+        if bad_key is not None:
+            value = row[bad_key]
+            if bad_key == "id":
+                detail = (
+                    type(value).__name__
+                    if not isinstance(value, str)
+                    else "empty str"
+                )
+                expected = "non-empty str"
+            else:
+                detail = type(value).__name__
+                expected = "bool"
             logger.warning(
-                "judge_calibration: symmetry_checks[%s] id is %s, not str; skipping",
+                "judge_calibration: symmetry_checks[%s] %s is %s, not a usable %s; skipping",
                 idx,
-                type(row["id"]).__name__,
-            )
-            continue
-        if not _is_bool(row["passed"]):
-            logger.warning(
-                "judge_calibration: symmetry_checks[%s] passed is %s, not bool; skipping",
-                idx,
-                type(row["passed"]).__name__,
+                bad_key,
+                detail,
+                expected,
             )
             continue
         rows.append(row)
