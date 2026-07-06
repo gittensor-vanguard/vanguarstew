@@ -1,6 +1,8 @@
 """Tests for the N-way score trend / regression analysis (deterministic, offline)."""
 
+import json
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -225,3 +227,79 @@ def test_trend_mixes_single_multi_and_generalization_artifacts():
     assert [p["composite_mean"] for p in out["points"]] == [0.50, 0.55, 0.40]
     assert out["min"] == 0.40 and out["max"] == 0.55
     assert [r["to_label"] for r in out["regressions"]] == ["gen"]      # 0.55 -> 0.40
+
+
+# --- CLI entry point: clean errors instead of tracebacks (#641) ---------------------------
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.trend", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def _write(path, payload):
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return str(path)
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    good = _write(tmp_path / "good.json", _single(0.5))
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(good, str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    good = _write(tmp_path / "good.json", _single(0.5))
+    bad = _write(tmp_path / "bad.json", [1, 2, 3])
+    result = _run_cli(good, bad)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    good = _write(tmp_path / "good.json", _single(0.5))
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(good, str(invalid))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_an_unreadable_path(tmp_path):
+    # A directory is unreadable as a file and raises IsADirectoryError (an OSError), like
+    # PermissionError does -- and unlike a chmod-000 fixture it fails even when the test
+    # runs as root, so this covers the OSError family without a conditional skip.
+    good = _write(tmp_path / "good.json", _single(0.5))
+    unreadable = tmp_path / "a-directory"
+    unreadable.mkdir()
+    result = _run_cli(good, str(unreadable))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(unreadable) in result.stderr
+
+
+def test_cli_still_trends_well_formed_artifacts(tmp_path):
+    a = _write(tmp_path / "a.json", _single(0.5))
+    b = _write(tmp_path / "b.json", _single(0.7))
+    result = _run_cli(a, b)
+    assert result.returncode == 0
+    assert "Traceback" not in result.stderr
+    summary = json.loads(result.stdout)
+    assert [p["composite_mean"] for p in summary["points"]] == [0.5, 0.7]
+
+
+def test_cli_fail_on_regression_still_gates(tmp_path):
+    # the error guard must not swallow the CI gating path: a real regression still exits 1
+    # via the gating branch, with the trend table (not a loader error) on stderr.
+    a = _write(tmp_path / "a.json", _single(0.7))
+    b = _write(tmp_path / "b.json", _single(0.4))
+    result = _run_cli(a, b, "--fail-on-regression")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "regression(s) exceed the threshold" in result.stderr
