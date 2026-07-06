@@ -113,6 +113,25 @@ def _pr_queue(context: dict) -> list:
     ]
 
 
+def _pr_dedup_key(pr: dict) -> tuple:
+    """Return a stable identity for deduplicating queue matches.
+
+    When ``number`` is a real integer, dedup by number as before. Otherwise fall back to the
+    normalized PR title (then URL) so two distinct numberless PRs do not collapse onto a shared
+    ``None`` key (#756).
+    """
+    number = pr.get("number")
+    if isinstance(number, int) and not isinstance(number, bool):
+        return ("number", number)
+    title = _pr_title(pr)
+    if title:
+        return ("title", title.lower())
+    url = pr.get("url")
+    if isinstance(url, str) and url.strip():
+        return ("url", url.strip())
+    return ("keys", tuple(sorted(pr.keys())))
+
+
 def _significant_tokens(text: str) -> set:
     if not isinstance(text, str):
         text = str(text) if text is not None else ""
@@ -354,21 +373,29 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     for item in plan:
         pr = _matched_pr(item, prs)
         if pr is not None:
-            number = pr.get("number")
-            if number in seen_prs:
+            key = _pr_dedup_key(pr)
+            if key in seen_prs:
                 continue
-            seen_prs.add(number)
+            seen_prs.add(key)
             addressed = True
             if not _is_review_item(item):
+                number = pr.get("number")
+                if isinstance(number, int) and not isinstance(number, bool):
+                    pr_ref = f"#{number}"
+                    restates = number
+                else:
+                    pr_ref = f'"{_pr_title(pr)}"'
+                    restates = None
                 item = {
                     **item,
                     "kind": "triage",
-                    "restates_pr": number,
                     "rationale": (
-                        f"restates open PR #{number} already in flight; review it instead of "
+                        f"restates open PR {pr_ref} already in flight; review it instead of "
                         "duplicating the work"
                     ),
                 }
+                if restates is not None:
+                    item["restates_pr"] = restates
         out.append(item)
 
     if not addressed:

@@ -19,10 +19,10 @@ from agent.planner import (  # noqa: E402
     _matched_pr,
     _normalize_files,
     _normalize_plan,
-    _normalize_files,
     _normalize_plan_item,
     _open_prs_list,
     _plan_list,
+    _pr_dedup_key,
     _pr_queue_note,
     _pr_title,
     _significant_tokens,
@@ -121,6 +121,70 @@ def test_redundant_items_targeting_same_pr_are_collapsed():
     out = reconcile_plan_with_queue(plan, CTX, 5)
     assert sum(1 for i in out if i.get("restates_pr") == 7) == 1  # collapsed to one
     assert any(i.get("kind") == "docs" for i in out)              # unrelated item survives
+
+
+def test_two_numberless_open_prs_both_kept():
+    """Fixes #756: distinct numberless PRs must not share a None dedup key."""
+    context = {"open_prs": [
+        {"title": "Fix loader race condition"},
+        {"title": "Add streaming export docs"},
+    ]}
+    plan = [
+        {"title": "Fix loader race condition", "kind": "bugfix"},
+        {"title": "Add streaming export docs", "kind": "docs"},
+    ]
+    out = reconcile_plan_with_queue(plan, context, 5)
+    assert len(out) == 2
+    assert out[0]["kind"] == "triage"
+    assert out[1]["kind"] == "triage"
+    assert "restates_pr" not in out[0]
+    assert "restates_pr" not in out[1]
+
+
+def test_numberless_open_pr_duplicates_still_collapsed():
+    context = {"open_prs": [{"title": "Fix loader race condition"}]}
+    plan = [
+        {"title": "Fix loader race condition", "kind": "bugfix"},
+        {"title": "Address loader race condition", "kind": "bugfix"},
+    ]
+    out = reconcile_plan_with_queue(plan, context, 5)
+    assert len(out) == 1
+    assert out[0]["kind"] == "triage"
+    assert "loader race condition" in out[0]["rationale"].lower()
+
+
+def test_mixed_numbered_and_numberless_open_prs_both_kept():
+    context = {"open_prs": [
+        {"number": 7, "title": "Add streaming export"},
+        {"title": "Fix loader race condition"},
+    ]}
+    plan = [
+        {"title": "Implement streaming export for reports", "kind": "feature"},
+        {"title": "Fix loader race condition", "kind": "bugfix"},
+    ]
+    out = reconcile_plan_with_queue(plan, context, 5)
+    assert len(out) == 2
+    assert out[0]["restates_pr"] == 7
+    assert out[1]["kind"] == "triage"
+    assert "restates_pr" not in out[1]
+
+
+def test_numberless_restating_item_references_title_not_hash_none():
+    context = {"open_prs": [{"title": "Fix loader race condition"}]}
+    plan = [{"title": "Fix loader race condition", "kind": "bugfix"}]
+    out = reconcile_plan_with_queue(plan, context, 5)
+    assert out[0]["kind"] == "triage"
+    assert "restates_pr" not in out[0]
+    assert '#None' not in out[0]["rationale"]
+    assert "Fix loader race condition" in out[0]["rationale"]
+
+
+def test_pr_dedup_key_uses_number_then_title():
+    numbered = {"number": 7, "title": "Add streaming export"}
+    numberless = {"title": "Fix loader race condition"}
+    assert _pr_dedup_key(numbered) == ("number", 7)
+    assert _pr_dedup_key(numberless) == ("title", "fix loader race condition")
+    assert _pr_dedup_key(numberless) != _pr_dedup_key({"title": "Add streaming export docs"})
 
 
 def test_plan_next_actions_offline_reconciles_queue():
