@@ -9,9 +9,12 @@ T, tags as releases, the README). The agent must never look past T.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 CONTEXT_FILE = ".vanguarstew_context.json"
 
@@ -52,18 +55,52 @@ def load_context(repo_path: str) -> dict:
     return _context_from_git(repo_path)
 
 
+def _agent_issue_pr_list(items, field: str) -> list:
+    """Return ``items`` when it is a list; otherwise treat as no issues/PRs.
+
+    A truthy non-list must not reach ``for item in items`` or malformed frozen context
+    aborts the agent prompt path (#493). An empty list is returned so the caller still
+    surfaces ``open_issues`` / ``open_prs`` keys with ``[]`` rather than omitting them.
+    """
+    if isinstance(items, list):
+        return items
+    if items is not None:
+        logger.warning(
+            "context_for_agent: %s is %s, not a list; treating as empty",
+            field,
+            type(items).__name__,
+        )
+    return []
+
+
 def context_for_agent(context: dict) -> dict:
     """Return the agent-facing view of frozen context.
 
     Issue/PR labels are historical only when ``labels_as_of_t`` is true. When that flag is
     false we omit ``labels`` from the agent-facing prompt view, so ``[]`` is not misread as
     "this item had no labels at T" when the real meaning is "label history unavailable".
+
+    A non-dict ``context`` is treated as empty (``{}``), matching the fail-closed posture
+    used when frozen context is unavailable.
     """
-    out = dict(context or {})
+    if not isinstance(context, dict):
+        logger.warning(
+            "context_for_agent: context is %s, not a dict; treating as empty",
+            type(context).__name__ if context is not None else "None",
+        )
+        return {}
+    out = dict(context)
     for key in ("open_issues", "open_prs"):
         items = []
-        for item in out.get(key) or []:
+        for idx, item in enumerate(_agent_issue_pr_list(out.get(key), key)):
             if not isinstance(item, dict):
+                logger.warning(
+                    "context_for_agent: non-dict %s entry at index %d (%s: %r); passing through",
+                    key,
+                    idx,
+                    type(item).__name__,
+                    item,
+                )
                 items.append(item)
                 continue
             clean = dict(item)
