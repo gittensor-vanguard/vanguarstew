@@ -49,7 +49,11 @@ def _normalize_action(action) -> str:
     maintainer decision has a hard ground truth, so it must never carry arbitrary
     free-text through to the objective scorer.
     """
-    key = (action or "").strip().lower()
+    if not isinstance(action, str):
+        return "plan"
+    key = action.strip().lower()
+    if not key:
+        return "plan"
     if key in VALID_ACTIONS:
         return key
     return _ACTION_SYNONYMS.get(key, "plan")

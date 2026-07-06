@@ -45,6 +45,30 @@ def test_normalize_action_falls_back_to_plan_for_unknown_or_missing():
     assert _normalize_action(None) == "plan"
 
 
+def test_normalize_action_falls_back_to_plan_for_non_string_values():
+    for bad in (["merge"], {"value": "merge"}, True, 42):
+        assert _normalize_action(bad) == "plan"
+
+
+class _NonStringActionLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return {
+            "action": ["merge", "reject"],
+            "labels": [],
+            "reviewer": None,
+            "version_bump": None,
+            "patch": None,
+            "rationale": "x",
+        }
+
+
+def test_decide_normalizes_non_string_action_from_llm():
+    out = decide({}, {}, "review PR #1", _NonStringActionLLM())
+    assert out["action"] == "plan"
+
+
 def test_decide_offline_returns_a_valid_action():
     llm = LLM(api_key="offline")
     out = decide({}, {}, "review PR #1", llm)
