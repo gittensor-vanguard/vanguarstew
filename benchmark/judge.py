@@ -95,22 +95,34 @@ def _has_structured_files(files) -> bool:
 def _item_substance(item) -> int:
     """Substance weight of a single plan item.
 
-    A blank item, or one whose whole title/theme is a generic filler word, scores 0 —
-    so stuffing a plan with content-free entries cannot inflate its rank. Scalar (non-dict)
+    A blank item, or one whose title AND theme are both blank or generic filler words, scores
+    0 — so stuffing a plan with content-free entries cannot inflate its rank. Scalar (non-dict)
     items are normalized through the same filler check on their text, so `"misc"` /
     `"updates"` never count. A concrete item earns 1 for a real title/theme plus 1 for each
     structured action field it backs it with (`kind`, `files`, per-item `rationale`),
     rewarding substance over the mere presence of a title.
     """
     if isinstance(item, dict):
-        title = (_text(item.get("title")) or _text(item.get("theme"))).lower()
+        title = _text(item.get("title")).lower()
+        theme = _text(item.get("theme")).lower()
+        # Prefer the title, but fall back to the theme whenever the title is missing OR a filler
+        # word — not only when it is empty. A filler-word title (`"Improvements"`, `"Cleanup"`,
+        # …) must not shadow a substantive theme: a concrete item earns credit for a real title
+        # OR a real theme (spec 004). Only when neither is a real, non-filler string is it 0.
+        if title and title not in _FILLER_TITLES:
+            content = title
+        elif theme and theme not in _FILLER_TITLES:
+            content = theme
+        else:
+            content = ""
     else:
         # A non-string scalar plan item carries no real title text: a JSON `null`/`false`/`0`
         # stringifies to "none"/"false"/"0" — none blank, none a filler word — so it would
         # slip past the guard below and score 1, letting a padded plan inflate its rank. Only
         # genuine scalar (string) items count; every other scalar is treated as blank.
-        title = item.strip().lower() if isinstance(item, str) else ""
-    if not title or title in _FILLER_TITLES:
+        text = item.strip().lower() if isinstance(item, str) else ""
+        content = "" if text in _FILLER_TITLES else text
+    if not content:
         return 0
     weight = 1
     if isinstance(item, dict):

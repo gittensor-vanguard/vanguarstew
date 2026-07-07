@@ -137,6 +137,36 @@ def test_plan_substance_normalizes_scalar_items_through_filler_check():
     assert pairwise_judge({}, fluff, substance, [], llm) == "B"
 
 
+def test_item_substance_filler_title_does_not_shadow_a_substantive_theme():
+    # A filler-word *title* must not zero out an item that carries a real theme + structured
+    # fields — the item is concrete (spec 004: credit for a real title OR theme + each field).
+    rich = {"title": "Improvements", "theme": "Migrate authentication to OAuth2",
+            "kind": "feature", "files": ["auth/oauth.py"], "rationale": "security hardening"}
+    assert _item_substance(rich) == 4  # theme (1) + kind + files + rationale
+    # Filler title + filler theme -> still 0 (no real content anywhere).
+    assert _item_substance({"title": "cleanup", "theme": "misc"}) == 0
+    # Filler title + no theme -> 0.
+    assert _item_substance({"title": "updates"}) == 0
+    # Real title + filler theme -> the real title is used (theme is irrelevant here).
+    assert _item_substance({"title": "add retry to the loader", "theme": "misc"}) == 1
+    # Non-string title still falls back to a real theme (regression: existing pinned case).
+    assert _item_substance({"title": 123, "theme": "concurrency"}) == 1
+
+
+def test_offline_judge_credits_a_filler_titled_but_substantive_plan():
+    # End-to-end: a plan whose one item has a filler title but a real theme+fields must beat a
+    # pure-filler plan from BOTH presentation orders (before the fix it tied / lost).
+    llm = LLM(api_key="offline")
+    substantive = {"philosophy": {"direction": "stabilize"},
+                   "plan": [{"title": "Improvements", "theme": "migrate auth to OAuth2",
+                             "kind": "feature", "files": ["auth/oauth.py"]}],
+                   "rationale": "security"}
+    filler = {"philosophy": {}, "plan": [{"title": "misc"}, {"title": "updates"}],
+              "rationale": "general improvements"}
+    assert pairwise_judge({}, substantive, filler, [], llm) == "A"
+    assert pairwise_judge({}, filler, substantive, [], llm) == "B"
+
+
 def test_plan_substance_counts_scalar_files_once():
     assert _plan_substance([{"title": "fix loader", "kind": "bugfix", "files": "core/loader.py"}]) == 3
 
