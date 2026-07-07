@@ -522,6 +522,15 @@ def test_mask_forward_refs_masks_github_links_and_shas():
     assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
 
 
+def test_mask_forward_refs_masks_scheme_less_github_links():
+    # A scheme-less github.com deep-link is still a forward-reference and must be masked (regression
+    # for #996); a look-alike host must not be, and an explicit-scheme link keeps working.
+    assert _mask_forward_refs("see github.com/o/r/pull/900 now") == "see <link> now"
+    assert _mask_forward_refs("www.github.com/o/r/issues/512") == "<link>"
+    assert "<link>" in _mask_forward_refs("https://github.com/o/r/commit/abcd123")
+    assert _mask_forward_refs("visit notgithub.com/o/r/pull/900") == "visit notgithub.com/o/r/pull/900"
+
+
 def test_mask_forward_refs_preserves_plain_numbers():
     text = "supports 2500000 requests per second, up from 1200000 last year"
     out = _mask_forward_refs(text)

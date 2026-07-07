@@ -30,7 +30,11 @@ README_PROBE_NAMES = ("README.md", "README.rst", "README.txt", "README", "docs/R
 _URL_STOP = "<>()[]{}\"'`"
 
 _GH_LINK = re.compile(
-    r"https?://(?:www\.)?github\.com"
+    # The scheme is optional: GitHub and markdown auto-link a scheme-less `github.com/...`, so a
+    # deep-link written without `https://` (common in commit subjects and READMEs) is just as much a
+    # forward-reference and must be masked (mirrors benchmark/leakage.py, fixed in #946). The
+    # `(?<![\w.])` boundary keeps a look-alike host (`notgithub.com`, `foo.github.com`) from matching.
+    r"(?<![\w.])(?:https?://)?(?:www\.)?github\.com"
     r"/[^\s" + re.escape(_URL_STOP) + r"]+/"
     r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|"
     r"milestone|milestones|discussions)/"
