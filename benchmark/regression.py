@@ -101,7 +101,24 @@ def _round(value):
 
 
 def _disagreement(artifact) -> float | None:
-    rate = _dict(_dict(artifact).get("judge_report")).get("disagreement_rate")
+    """The judge order-disagreement rate for an artifact, or None when not numeric.
+
+    Reads ``judge_report.disagreement_rate`` from the **same partition**
+    :func:`benchmark.trend.headline_score` scores the composite from: the ``tuned`` partition for a
+    ``--generalization`` artifact (whose ``judge_report`` is nested under ``tuned``/``held_out``,
+    never at the top level), and the top level for single/multi-repo runs. Reading only the top
+    level made the judge-instability check pass vacuously for every generalization run while the
+    composite check honored ``tuned`` — the two halves of a *gate* must judge the same partition,
+    or a candidate could clear (or be blocked on) an axis measured against a different run than the
+    composite it is gated against. (This is a per-partition gate read, not the cross-partition
+    *combine* the reporting summarizers use, e.g. ``order_agree_rate``/``skip_share``.) A
+    ``scored_repos: 0`` (unscored) tuned partition is already caught by ``both_scored`` via
+    ``headline_score``, so the disagreement value for such a run never decides the gate.
+    """
+    artifact = _dict(artifact)
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    source = tuned if isinstance(tuned, dict) and isinstance(held_out, dict) else artifact
+    rate = _dict(_dict(source).get("judge_report")).get("disagreement_rate")
     return float(rate) if _is_number(rate) else None
 
 

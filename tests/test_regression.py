@@ -83,6 +83,54 @@ def test_regression_compares_generalization_tuned_scores():
     assert result["passed"] is True
 
 
+# --- a generalization run's judge_report lives under tuned/held_out, not the top level ---------
+# check_regression reads the composite via headline_score (which honors the `tuned` partition), so
+# the judge-instability side must read the disagreement rate from the same partition — otherwise a
+# rising judge instability on the M3 generalization run slips the gate.
+
+
+def _gen_jr(tuned_comp, tuned_dis):
+    part = {"composite_mean": tuned_comp, "scored_repos": 3,
+            "judge_report": {"disagreement_rate": tuned_dis}}
+    return {"tuned": dict(part), "held_out": dict(part), "generalization_gap": 0.0}
+
+
+def test_generalization_judge_instability_regression_is_blocked():
+    # Composite flat, but the tuned judge disagreement explodes 0.1 -> 0.9 — must BLOCK, not pass.
+    result = check_regression(_gen_jr(0.60, 0.9), _gen_jr(0.60, 0.1), max_disagreement_increase=0.1)
+    assert result["disagreement_delta"] == 0.8
+    assert result["passed"] is False and "no_judge_instability_increase" in failed_checks(result)
+
+
+def test_generalization_stable_judge_passes():
+    # Control: a stable tuned disagreement on the same shape passes (delta computed, within bound).
+    result = check_regression(_gen_jr(0.60, 0.1), _gen_jr(0.60, 0.1))
+    assert result["disagreement_delta"] == 0.0 and result["passed"] is True
+
+
+def test_generalization_disagreement_read_from_tuned_not_held_out():
+    # The rate must come from the TUNED partition (the headline, per headline_score), not held_out.
+    def gen(tuned_dis, held_dis):
+        return {"tuned": {"composite_mean": 0.6, "scored_repos": 3,
+                          "judge_report": {"disagreement_rate": tuned_dis}},
+                "held_out": {"composite_mean": 0.5, "scored_repos": 2,
+                             "judge_report": {"disagreement_rate": held_dis}},
+                "generalization_gap": 0.1}
+    # tuned rises 0.1 -> 0.9 (blocked); held_out stays 0.1 and must not mask it.
+    result = check_regression(gen(0.9, 0.1), gen(0.1, 0.1), max_disagreement_increase=0.1)
+    assert result["disagreement_delta"] == 0.8 and result["passed"] is False
+
+
+def test_multi_repo_judge_instability_still_blocked():
+    # Control isolating the cause: a multi-repo artifact carries a TOP-LEVEL judge_report and was
+    # always caught; the fix must not change that (only the generalization nesting differed).
+    def multi(composite, disagreement):
+        return {"scored_repos": 2, "composite_mean": composite,
+                "judge_report": {"disagreement_rate": disagreement}}
+    result = check_regression(multi(0.60, 0.9), multi(0.60, 0.1), max_disagreement_increase=0.1)
+    assert result["disagreement_delta"] == 0.8 and result["passed"] is False
+
+
 def test_rising_judge_instability_is_blocked():
     # Composite held, but the judge got much less stable -> block.
     result = check_regression(_run(0.60, disagreement=0.5), _run(0.60, disagreement=0.1),
