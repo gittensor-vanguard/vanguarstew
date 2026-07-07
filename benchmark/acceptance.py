@@ -84,14 +84,37 @@ def _partition_error(partition):
 
 _CHECK_ROW_KEYS = ("name", "passed")
 
+_NUMPY_BOOL_TYPENAMES = frozenset({"bool_", "bool8"})
+
+
+def _is_passed(value) -> bool:
+    """Accept native ``bool`` and numpy scalar booleans; reject int 0/1 and other scalars.
+
+    Uses ``type(value) is bool`` rather than ``isinstance`` so arbitrary bool subclasses
+    (which can override ``__bool__``) are not treated as check-row pass/fail flags.
+    """
+    if type(value) is bool:
+        return True
+    return type(value).__name__ in _NUMPY_BOOL_TYPENAMES
+
+
+def _check_row_field(key: str, value) -> bool:
+    """Return whether ``value`` is usable for a check-row ``key`` in ``_CHECK_ROW_KEYS``."""
+    if key == "name":
+        return isinstance(value, str) and bool(value.strip())
+    if key == "passed":
+        return _is_passed(value)
+    return False
+
 
 def _check_rows_list(checks) -> list[dict]:
     """Return acceptance check rows for headline / failed_checks helpers.
 
     ``None`` means the key is absent. An empty list means zero checks. Both are silent.
-    Non-list containers (scalars, dicts, tuples, ranges, strings, etc.) are warned and
-    treated as empty (never coerced). A usable row is a dict whose ``name`` is a ``str`` and
-    whose ``passed`` is a ``bool``; anything else is skipped with a warning.
+    Non-list containers are warned and treated as empty (never coerced). A usable row is a
+    dict with every key in ``_CHECK_ROW_KEYS``: ``name`` must be a non-empty ``str`` and
+    ``passed`` must be a native ``bool`` or numpy scalar boolean; anything else is skipped
+    with a warning.
     """
     if checks is None:
         return []
@@ -118,18 +141,29 @@ def _check_rows_list(checks) -> list[dict]:
                 missing,
             )
             continue
-        if not isinstance(row["name"], str):
+        bad_key = None
+        for key in _CHECK_ROW_KEYS:
+            if not _check_row_field(key, row[key]):
+                bad_key = key
+                break
+        if bad_key is not None:
+            value = row[bad_key]
+            if bad_key == "name":
+                detail = (
+                    type(value).__name__
+                    if not isinstance(value, str)
+                    else "empty str"
+                )
+                expected = "non-empty str"
+            else:
+                detail = type(value).__name__
+                expected = "bool"
             logger.warning(
-                "acceptance: checks[%s] name is %s, not str; skipping",
+                "acceptance: checks[%s] %s is %s, not a usable %s; skipping",
                 idx,
-                type(row["name"]).__name__,
-            )
-            continue
-        if type(row["passed"]) is not bool:
-            logger.warning(
-                "acceptance: checks[%s] passed is %s, not bool; skipping",
-                idx,
-                type(row["passed"]).__name__,
+                bad_key,
+                detail,
+                expected,
             )
             continue
         rows.append(row)
@@ -211,7 +245,7 @@ def failed_checks(result: dict) -> list:
     """
     return [
         c["name"] for c in _check_rows_list(_dict(result).get("checks"))
-        if not c.get("passed")
+        if not c["passed"]
     ]
 
 

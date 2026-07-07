@@ -341,6 +341,69 @@ def test_check_rows_list_skips_row_missing_passed(caplog):
     assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "gap_within_bound", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.acceptance"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "gap_within_bound", "passed": False},
+        {"name": "gap_computed", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": "", "passed": False},
+        {"name": 99, "passed": False},
+        {"name": "gap_within_bound", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_accepts_native_bool_values():
+    rows = [
+        {"name": "gap_within_bound", "passed": True},
+        {"name": "gap_computed", "passed": False},
+    ]
+    assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_empty_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.acceptance"):
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+    assert any("name is empty str" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_accepts_numpy_bool_when_available():
+    np = pytest.importorskip("numpy")
+    for factory in (np.bool_, np.bool8):
+        rows = [{"name": "gap_within_bound", "passed": factory(True)}]
+        assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_non_bool_passed_values(caplog):
+    class AlmostBool:
+        def __bool__(self):
+            return True
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.acceptance"):
+        assert _check_rows_list([{"name": "gap_within_bound", "passed": AlmostBool()}]) == []
+        assert _check_rows_list([{"name": "gap_within_bound", "passed": "true"}]) == []
+    messages = [r.message for r in caplog.records]
+    assert any("passed is AlmostBool" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+
+
 def test_acceptance_headline_uses_sanitized_row_count(caplog):
     checks = [{"name": "gap_within_bound", "passed": False}, 42]
     with caplog.at_level(logging.WARNING, logger="benchmark.acceptance"):
@@ -355,11 +418,27 @@ def test_acceptance_headline_survives_rows_missing_required_keys():
         [{"name": "gap_within_bound"}],
         [{}],
         [{"name": 42, "passed": True}],
+        [{"name": "", "passed": False}],
         [{"name": "gap_within_bound", "passed": 1}],
     ):
         assert acceptance_headline({"checks": checks, "passed": False}) == (
             "acceptance: no checks evaluated"
         )
+
+
+def test_acceptance_headline_ignores_unsanitized_rows_in_denominator(caplog):
+    checks = [
+        {"name": "gap_within_bound", "passed": False},
+        {"name": "", "passed": False},
+        {"name": "gap_computed", "passed": 1},
+        42,
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.acceptance"):
+        line = acceptance_headline({"checks": checks, "passed": False})
+    assert line == "acceptance: FAIL (1/1 checks failed: gap_within_bound)"
+    assert any("name is empty str" in r.message for r in caplog.records)
+    assert any("passed is int" in r.message for r in caplog.records)
+    assert any("checks[3] is int" in r.message for r in caplog.records)
 
 
 def test_failed_checks_never_raises_on_malformed_rows():
@@ -369,12 +448,13 @@ def test_failed_checks_never_raises_on_malformed_rows():
         [{}],
         [42],
         [{"name": 42, "passed": True}],
+        [{"name": "", "passed": False}],
         [{"name": "gap_within_bound", "passed": "no"}],
     ):
         assert failed_checks({"checks": checks}) == []
 
 
-def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+def test_failed_checks_integration_with_check_rows_list(caplog):
     checks = [
         {"name": "gap_within_bound", "passed": False},
         42,
