@@ -6,7 +6,11 @@ and the M2 acceptance is explicit that "an agent that merely restates a memorize
 judge stats), but the *decision* — is this run good enough? — is made by eye.
 
 This makes that decision a reproducible **pass/fail gate**. ``check_promotion(result)`` evaluates
-a single-repo (``run_replay``) or multi-repo (``run_multi_replay``) result against named criteria:
+a single-repo (``run_replay``), multi-repo (``run_multi_replay``), or generalization
+(``run_generalization_report``) result against named criteria. For a ``--generalization`` artifact,
+composite, decisive margin, and disagreement are read from the **tuned** partition (mirroring
+:func:`benchmark.trend.headline_score` and :func:`benchmark.regression.check_regression`), not
+from the top level:
 
 1. ``run_completed`` - the run produced a scored result (no ``error``, a numeric composite);
 2. ``composite_floor`` - ``composite_mean`` is at least ``min_composite``;
@@ -90,6 +94,18 @@ def _check_rows_list(checks) -> list[dict]:
     return rows
 
 
+def _promotion_source(result: dict) -> dict:
+    """The partition whose scores gate promotion.
+
+    Single- and multi-repo artifacts are scored at the top level. A ``--generalization`` artifact
+    nests fields under ``tuned`` / ``held_out``; promotion is decided on tuned performance only.
+    """
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return result
+
+
 def _decisive_margin(result: dict):
     """The challenger's decisive margin (wins - losses), preferring the explicit field.
 
@@ -153,18 +169,20 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     merits.
     """
     result = _dict(result)
-    composite = _scored_composite(result)
-    margin = _decisive_margin(result)
-    disagreement = _dict(result.get("judge_report")).get("disagreement_rate")
+    source = _promotion_source(result)
+    composite = _scored_composite(source)
+    margin = _decisive_margin(source)
+    disagreement = _dict(source.get("judge_report")).get("disagreement_rate")
     checks = []
 
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    completed = not result.get("error") and composite is not None
+    run_error = result.get("error") or source.get("error")
+    completed = not run_error and composite is not None
     add("run_completed", completed,
         "run produced a scored composite" if completed
-        else f"no scored composite (error={result.get('error')!r}, composite={composite!r})")
+        else f"no scored composite (error={run_error!r}, composite={composite!r})")
 
     floor_ok = composite is not None and composite >= min_composite
     add("composite_floor", floor_ok,

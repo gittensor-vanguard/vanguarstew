@@ -65,7 +65,7 @@ def test_decisive_margin_is_derived_from_tally_when_absent():
 
 
 def test_decisive_margin_derived_from_judge_report_for_multi_repo():
-    # A real run_multi_replay / generalization artifact has NO top-level `tally` or
+    # A real run_multi_replay artifact has NO top-level `tally` or
     # `decisive_margin`; the aggregate win/loss counts live only under `judge_report`.
     # beats_baseline must derive the margin from there instead of holding the run.
     multi = {
@@ -76,6 +76,56 @@ def test_decisive_margin_derived_from_judge_report_for_multi_repo():
     assert result["decisive_margin"] == 7          # None before the judge_report fallback
     assert "beats_baseline" not in failed_checks(result)
     assert result["passed"] is True
+
+
+# --- #1045: generalization artifacts nest scores under tuned/held_out -------------------
+
+
+def _generalization(composite, disagreement):
+    tuned = {
+        "composite_mean": composite,
+        "scored_repos": 3,
+        "judge_report": {"wins": 9, "losses": 2, "disagreement_rate": disagreement},
+    }
+    return {
+        "tuned": tuned,
+        "held_out": {"composite_mean": 0.5, "scored_repos": 2},
+        "generalization_gap": 0.1,
+    }
+
+
+def test_strong_generalization_run_is_promoted():
+    result = check_promotion(_generalization(0.7, 0.1))
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+    assert result["composite_mean"] == 0.7
+    assert result["decisive_margin"] == 7
+    assert result["disagreement_rate"] == 0.1
+
+
+def test_high_tuned_disagreement_fails_judge_trustworthy():
+    result = check_promotion(_generalization(0.7, 0.8), max_disagreement=0.5)
+    assert result["passed"] is False
+    assert "judge_trustworthy" in failed_checks(result)
+    assert result["disagreement_rate"] == 0.8
+
+
+def test_generalization_uses_tuned_not_held_out_for_composite_floor():
+    # Held-out composite is low; tuned is strong — promotion follows tuned.
+    art = _generalization(0.7, 0.1)
+    art["held_out"]["composite_mean"] = 0.1
+    result = check_promotion(art, min_composite=0.5)
+    assert result["passed"] is True
+    assert "composite_floor" not in failed_checks(result)
+
+
+def test_tuned_partition_error_fails_run_completed():
+    art = _generalization(0.7, 0.1)
+    art["tuned"]["error"] = "no usable tasks"
+    del art["tuned"]["composite_mean"]
+    result = check_promotion(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
 
 
 def test_missing_margin_and_tally_fails_beats_baseline():
