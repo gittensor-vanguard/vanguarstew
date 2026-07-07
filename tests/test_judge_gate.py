@@ -127,6 +127,69 @@ def test_multi_repo_with_no_report_or_stats_blocks_fails_closed():
         assert "dual_order_judging" in failed_checks(result)
 
 
+# --- #1062: a run_generalization_report is evaluated on its tuned partition ---------------
+# A run_generalization_report nests every scored field under `tuned`/`held_out` with no top-level
+# `judge_dual_order`/`judge_report`/`judge_order_stats`, so reading the top level fails every check
+# vacuously ("not dual-order judged") for a run that judged both orders in every repo. The gate
+# evaluates the tuned partition (the headline figure, mirroring `benchmark.promotion._promotion_source`).
+
+
+def _generalization(tuned, held_out=None):
+    return {
+        "repo_set": "x",
+        "tuned": tuned,
+        "held_out": held_out if held_out is not None
+        else {"judge_report": {"disagreement_rate": 0.12, "dual_order_tasks": 5}},
+        "generalization_gap": 0.1,
+    }
+
+
+def test_generalization_dual_order_run_is_evaluated_on_tuned_partition():
+    # tuned judged both orders (6 tasks, low disagreement); pre-fix all three checks failed with
+    # top-level telemetry None. It must be gated on the tuned partition instead.
+    art = _generalization({"composite_mean": 0.7, "scored_repos": 3,
+                           "judge_report": {"disagreement_rate": 0.1, "dual_order_tasks": 6}})
+    result = check_judge(art)
+    assert result["dual_order"] is True
+    assert result["dual_order_tasks"] == 6        # from tuned, not the missing top level
+    assert result["disagreement_rate"] == 0.1
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+
+
+def test_generalization_single_order_tuned_partition_fails_closed():
+    # tuned judged a single order (dual_order_tasks 0): the gate must still fail closed.
+    art = _generalization({"judge_report": {"disagreement_rate": 0.1, "dual_order_tasks": 0}})
+    result = check_judge(art)
+    assert result["dual_order"] is False
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_generalization_high_tuned_disagreement_fails_low_disagreement():
+    art = _generalization({"judge_report": {"disagreement_rate": 0.8, "dual_order_tasks": 6}})
+    result = check_judge(art, max_disagreement=0.5)
+    assert result["passed"] is False
+    assert result["disagreement_rate"] == 0.8      # read from tuned, not None
+    assert "low_disagreement" in failed_checks(result)
+
+
+def test_generalization_tuned_derives_from_judge_order_stats_fallback():
+    # tuned's judge_report omits the count; it is resolved from the tuned judge_order_stats.
+    art = _generalization({"judge_report": {"disagreement_rate": 0.1},
+                           "judge_order_stats": {"dual_order_tasks": 4}})
+    result = check_judge(art)
+    assert result["dual_order_tasks"] == 4
+    assert result["dual_order"] is True and result["passed"] is True
+
+
+def test_non_generalization_artifact_still_read_at_top_level():
+    # Only a both-dict tuned/held_out redirects; a stray non-dict `tuned` key does not.
+    plain = {"tuned": "x", "judge_dual_order": True,
+             "judge_report": {"disagreement_rate": 0.1, "dual_order_tasks": 5}}
+    result = check_judge(plain)
+    assert result["dual_order"] is True and result["passed"] is True
+
+
 def test_disagreement_bound_is_inclusive():
     assert check_judge(_result(disagreement=0.3), max_disagreement=0.3)["passed"] is True
     assert check_judge(_result(disagreement=0.31), max_disagreement=0.3)["passed"] is False

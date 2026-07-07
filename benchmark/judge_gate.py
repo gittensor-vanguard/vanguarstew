@@ -147,6 +147,21 @@ def _dual_order_tasks(result: dict):
     return None
 
 
+def _judge_source(result: dict) -> dict:
+    """The partition whose judge telemetry the gate evaluates.
+
+    A ``run_generalization_report`` artifact nests every scored field under ``tuned`` and
+    ``held_out`` and carries no top-level ``judge_dual_order``/``judge_report``/``judge_order_stats``;
+    its headline is the **tuned** partition (mirroring ``benchmark.promotion._promotion_source`` and
+    ``benchmark.trend.headline_score``), so its judge robustness is read from that partition instead
+    of failing every check vacuously. Every other artifact is evaluated at the top level.
+    """
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return result
+
+
 def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
                 min_dual_order_tasks: int = DEFAULT_MIN_DUAL_ORDER_TASKS) -> dict:
     """Evaluate a run ``result``'s judge robustness against the criteria.
@@ -157,11 +172,16 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     status the gate acted on: the authoritative top-level ``judge_dual_order`` flag when the run
     reports it, otherwise the value derived from the aggregate dual-order task count for a
     multi-repo run (``False`` when neither is available).
+
+    A ``run_generalization_report`` artifact (judge telemetry nested under ``tuned``/``held_out``,
+    none at the top level) is evaluated on its ``tuned`` partition via :func:`_judge_source`; every
+    other artifact is evaluated at the top level.
     """
     result = _dict(result)
-    dual_order = result.get("judge_dual_order")
-    dual_tasks = _dual_order_tasks(result)
-    disagreement = _dict(result.get("judge_report")).get("disagreement_rate")
+    source = _judge_source(result)
+    dual_order = source.get("judge_dual_order")
+    dual_tasks = _dual_order_tasks(source)
+    disagreement = _dict(source.get("judge_report")).get("disagreement_rate")
     checks = []
 
     def add(name, passed, detail):
