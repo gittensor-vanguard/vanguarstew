@@ -287,6 +287,48 @@ def test_cli_reports_a_clean_error_for_a_nonexistent_repo_path(tmp_path):
     assert str(missing) in result.stderr
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_reports_a_clean_error_for_a_missing_agent_file(tmp_path):
+    repo = _tiny_repo(str(tmp_path / "repo"), n=16)
+    missing = tmp_path / "no-such-agent.py"
+    result = _run_cli(
+        "--repo", repo, "--tasks", "1", "--horizon", "1", "--agent", str(missing),
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "does not exist or is not a regular file" in result.stderr
+    assert missing.name in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_reports_a_clean_error_for_an_agent_directory(tmp_path):
+    repo = _tiny_repo(str(tmp_path / "repo"), n=16)
+    agent_dir = tmp_path / "agent-dir"
+    agent_dir.mkdir()
+    result = _run_cli(
+        "--repo", repo, "--tasks", "1", "--horizon", "1", "--agent", str(agent_dir),
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "does not exist or is not a regular file" in result.stderr
+    assert agent_dir.name in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_reports_a_clean_error_for_an_agent_syntax_error(tmp_path):
+    repo = _tiny_repo(str(tmp_path / "repo"), n=16)
+    bad_agent = tmp_path / "bad_agent.py"
+    bad_agent.write_text("def solve():\n", encoding="utf-8")
+    result = _run_cli(
+        "--repo", repo, "--tasks", "1", "--horizon", "1", "--agent", str(bad_agent),
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "cannot load agent file" in result.stderr
+    assert "expected an indented block" in result.stderr
+    assert bad_agent.name in result.stderr
+
+
 def test_cli_reports_a_clean_error_for_a_missing_repo_set(tmp_path):
     missing = tmp_path / "does-not-exist.json"
     result = _run_cli("--repo-set", str(missing))
