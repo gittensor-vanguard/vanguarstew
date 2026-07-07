@@ -17,7 +17,9 @@ if ROOT not in sys.path:
 
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
+from benchmark.repo_set import RepoSetError  # noqa: E402
 from benchmark.runner import (  # noqa: E402
+    _materialize_repo_source,
     load_solve,
     run_multi_replay,
     run_replay,
@@ -204,3 +206,65 @@ def test_load_solve_rejects_non_callable_solve(tmp_path):
 def test_load_solve_loads_valid_agent():
     solve = load_solve(os.path.join(ROOT, 'agent.py'))
     assert callable(solve)
+
+
+# ---- _materialize_repo_source (repo-set source resolution) ------------------
+
+def test_materialize_repo_source_local_dir_returned_without_cleanup(tmp_path):
+    path, cleanup = _materialize_repo_source(str(tmp_path), None)
+    assert path == str(tmp_path)
+    assert cleanup is False  # a pre-existing local checkout is never removed
+
+
+def test_materialize_repo_source_not_found_without_checkout_root(tmp_path):
+    missing = str(tmp_path / "nope")
+    with pytest.raises(RepoSetError, match="not found locally"):
+        _materialize_repo_source(missing, None)
+
+
+def test_materialize_repo_source_clones_remote_into_checkout_root(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        os.makedirs(cmd[-1], exist_ok=True)  # a real `git clone` creates the dest dir
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    path, cleanup = _materialize_repo_source("https://example.com/o/r.git", str(tmp_path))
+    assert cleanup is True  # a freshly-cloned checkout must be cleaned up
+    assert os.path.dirname(path) == str(tmp_path)
+    assert captured["cmd"][:3] == ["git", "clone", "-q"]
+
+
+def test_materialize_repo_source_clone_failure_raises_repo_set_error(tmp_path, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(1, cmd, stderr="fatal: repository not found")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(RepoSetError, match="failed to clone"):
+        _materialize_repo_source("https://example.com/o/r.git", str(tmp_path))
+
+
+# ---- run_replay GitHub enrichment path -------------------------------------
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_replay_enrich_github_routes_context_through_enrichment(monkeypatch):
+    # enrich_github=True enriches the frozen context, scrubs it, and rewrites the per-task
+    # context file. Stub both GitHub-scoped helpers so no network/token is needed.
+    seen = {}
+
+    def fake_enrich(ctx, repo_path, token=None):
+        seen["token"] = token
+        return {**ctx, "_enriched": True}
+
+    monkeypatch.setattr("benchmark.runner.enrich_context", fake_enrich)
+    monkeypatch.setattr("benchmark.runner.scrub_context", lambda ctx: ctx)
+    d = _tiny_repo(tempfile.mkdtemp())
+    try:
+        res = run_replay(d, agent_file=AGENT, n_tasks=1, horizon=3, seed=0,
+                         enrich_github=True, github_token="tok")
+        assert res["github_enriched"] is True
+        assert seen["token"] == "tok"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
