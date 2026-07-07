@@ -4,6 +4,10 @@
 CI dashboards. ``summarize_margin_outlook`` reports the margin (from ``decisive_margin``,
 ``tally``, or ``judge_report``) and whether the challenger is ahead, tied, or behind the baseline.
 
+For a ``generalization`` artifact the win/loss counts live under the ``tuned``/``held_out``
+partitions rather than at the top level, so the margin is read from the headline (``tuned``)
+partition — mirroring ``composite_spread`` — instead of the (empty) artifact root.
+
 Pure analysis: no I/O, never mutates its input, and missing data yields ``None`` rather than raising.
 """
 
@@ -29,6 +33,15 @@ def _margin_from_tally(tally: dict) -> int | None:
     if not all(_is_int(c) for c in counts):
         return None
     return counts[0] - counts[1]
+
+
+def _headline_partition(artifact: dict) -> dict:
+    """The partition whose margin heads the artifact: ``tuned`` for a generalization run
+    (win/loss counts are nested under ``tuned``/``held_out``, not the root), else the artifact
+    itself. Mirrors ``composite_spread._headline_partition`` so the two stay consistent."""
+    if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
+        return _dict(artifact.get("tuned"))
+    return artifact
 
 
 def _margin(artifact: dict) -> int | None:
@@ -60,7 +73,7 @@ def _outlook(margin: int | None) -> str | None:
 def summarize_margin_outlook(artifact) -> dict:
     """Return decisive margin and outlook for a replay ``artifact``."""
     artifact = _dict(artifact)
-    margin = _margin(artifact)
+    margin = _margin(_headline_partition(artifact))
     return {
         "kind": artifact_kind(artifact),
         "decisive_margin": margin,
