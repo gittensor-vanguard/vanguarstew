@@ -93,8 +93,9 @@ def test_check_score_floor_passes_at_exact_threshold():
 def test_check_score_floor_fails_when_below():
     msg = check_score_floor({"composite_mean": 0.4}, 0.5)
     assert msg is not None
-    assert "below threshold" in msg
+    assert "FAIL" in msg
     assert "0.400" in msg
+    assert "--fail-under=0.5" in msg
 
 
 def test_check_score_floor_fails_when_missing():
@@ -123,9 +124,9 @@ def test_check_score_floor_passes_for_generalization_shape():
 
 def test_check_score_floor_fails_when_generalization_partition_below_floor():
     msg = check_score_floor(_generalization_result(tuned=0.4, held_out=0.6), 0.5)
-    assert msg is not None and "tuned composite_mean" in msg and "0.400" in msg
+    assert msg is not None and "tuned" in msg and "0.400" in msg
     msg = check_score_floor(_generalization_result(tuned=0.6, held_out=0.4), 0.5)
-    assert msg is not None and "held_out composite_mean" in msg
+    assert msg is not None and "held_out" in msg
 
 
 def test_check_score_floor_skips_unscored_generalization_partition():
@@ -160,7 +161,7 @@ def test_check_score_floor_flags_genuine_zero_multi_repo():
     msg = check_score_floor(
         {"repos": 2, "scored_repos": 2, "skipped": 0, "composite_mean": 0.0}, 0.5,
     )
-    assert msg is not None and "below threshold" in msg and "0.000" in msg
+    assert msg is not None and "FAIL" in msg and "0.000" in msg
 
 
 def test_check_score_floor_bool_scored_repos_is_not_a_placeholder():
@@ -173,7 +174,7 @@ def test_check_score_floor_bool_scored_repos_is_not_a_placeholder():
 def test_check_score_floor_single_repo_zero_below_floor_unchanged():
     # A single-repo run carries no scored_repos key, so its real 0.0 is still gated normally.
     msg = check_score_floor({"tasks": 3, "composite_mean": 0.0}, 0.5)
-    assert msg is not None and "below threshold" in msg
+    assert msg is not None and "FAIL" in msg
 
 
 # --- #573: non-list weight_sweep must not abort stderr reporting --------------------
@@ -322,3 +323,36 @@ def test_cli_still_replays_a_well_formed_repo(tmp_path):
     # --out actually wrote the same artifact that was printed to stdout
     with open(out_path, "r", encoding="utf-8") as f:
         assert json.load(f) == payload
+
+
+# ---- --fail-under CLI gate --------------------------------------------------
+
+
+def test_cli_fail_under_exits_1_when_below_floor(monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys, "argv",
+        _argv("--repo", "/some/repo", "--tasks", "1", "--horizon", "1", "--fail-under", "0.5"),
+    )
+    with patch(
+        "scripts.run_eval.run_replay",
+        return_value={"composite_mean": 0.3, "tasks": 1, "rows": [{}]},
+    ):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "FAIL" in err
+    assert "0.300" in err
+    assert "--fail-under=0.5" in err
+
+
+def test_cli_fail_under_exits_0_when_above_floor(monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv",
+        _argv("--repo", "/some/repo", "--tasks", "1", "--horizon", "1", "--fail-under", "0.5"),
+    )
+    with patch(
+        "scripts.run_eval.run_replay",
+        return_value={"composite_mean": 0.6, "tasks": 1, "rows": [{}]},
+    ):
+        main()  # should not raise SystemExit

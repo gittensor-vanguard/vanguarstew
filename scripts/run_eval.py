@@ -79,19 +79,19 @@ def check_score_floor(result: dict, fail_under: float | None) -> str | None:
                 continue
             score = _numeric_score(part.get("composite_mean"))
             if score is None:
-                return (f"score floor {fail_under}: {label} composite_mean "
-                        "missing or non-numeric")
+                return (f"FAIL: {label} composite_mean missing or non-numeric"
+                        f" < --fail-under={fail_under}")
             if score < fail_under:
-                return (f"score floor {fail_under}: {label} composite_mean "
-                        f"{score:.3f} below threshold")
+                return (f"FAIL: {label} composite_mean={score:.3f}"
+                        f" < --fail-under={fail_under}")
         return None
     if _is_unscored_placeholder(result):
         return None  # nothing was scored — no real composite to gate against the floor
     score = _numeric_score(result.get("composite_mean"))
     if score is None:
-        return f"score floor {fail_under}: composite_mean missing or non-numeric"
+        return f"FAIL: composite_mean missing or non-numeric < --fail-under={fail_under}"
     if score < fail_under:
-        return f"score floor {fail_under}: composite_mean {score:.3f} below threshold"
+        return f"FAIL: composite_mean={score:.3f} < --fail-under={fail_under}"
     return None
 
 
