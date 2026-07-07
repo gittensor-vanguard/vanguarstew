@@ -60,6 +60,17 @@
         "rotation_seed": 3
       },
       "notes": "Held-out obscure HTTP/2 header library; low-traffic and unlikely to be memorized."
+    },
+    {
+      "name": "h2",
+      "source": "https://github.com/python-hyper/h2",
+      "tier": "obscure",
+      "held_out": true,
+      "freeze_window": {
+        "min_history": 30,
+        "rotation_seed": 7
+      },
+      "notes": "Held-out obscure HTTP/2 protocol implementation; sibling of hpack with distinct maintainer decisions."
     }
   ]
 }
