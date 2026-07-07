@@ -28,6 +28,11 @@ def load_artifact(path: str) -> dict:
     except FileNotFoundError:
         print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
+    except OSError as exc:
+        # A path that exists but can't be read as a file — a directory, or a
+        # permission-denied file — reaches open() and would otherwise raise a raw traceback.
+        print(f"artifact could not be read ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     except json.JSONDecodeError as exc:
         print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None

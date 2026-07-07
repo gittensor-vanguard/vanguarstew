@@ -5,6 +5,8 @@ import logging
 import os
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -16,6 +18,7 @@ from benchmark.sample_adequacy import (  # noqa: E402
     failed_checks,
     sample_adequacy_headline,
 )
+from scripts.sample_adequacy import load_artifact  # noqa: E402
 
 
 def _run(tasks, challenger=None, baseline=None, tie=None):
@@ -345,3 +348,32 @@ def test_check_sample_adequacy_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_sample_adequacy(run)
     assert run == snapshot
+
+
+def test_cli_load_artifact_reports_clean_error_for_a_directory(tmp_path, capsys):
+    # A directory path (or an unreadable file) reaches open() and would raise a raw
+    # IsADirectoryError/PermissionError traceback; load_artifact must report it cleanly and
+    # exit 2, like its other error branches (#1073).
+    d = tmp_path / "a_dir"
+    d.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(d))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "could not be read" in err
+    assert "Traceback" not in err
+
+
+def test_cli_load_artifact_still_distinguishes_a_missing_file(tmp_path, capsys):
+    # The broader OSError clause must not shadow the "genuinely missing" message.
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(tmp_path / "nope.json"))
+    assert exc.value.code == 2
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cli_load_artifact_reads_a_valid_object(tmp_path):
+    import json
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    assert load_artifact(str(path)) == {"composite_mean": 0.5}
