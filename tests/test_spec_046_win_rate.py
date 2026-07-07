@@ -1,6 +1,6 @@
 """Contract tests for specs/046-benchmark-win-rate — assert win_rate.py satisfies the spec's
-EARS criteria: tally parsing, per-outcome rates, headline branches, and pure evaluation.
-Offline, deterministic.
+EARS criteria: tally parsing, per-outcome rates, artifact-kind branches, headline branches,
+and pure evaluation. Offline, deterministic.
 """
 
 import copy
@@ -17,12 +17,14 @@ from benchmark.win_rate import (  # noqa: E402
     _dict,
     _is_int,
     _is_number,
+    _slice_summary,
     _tally_counts,
     summarize_win_rate,
     win_rate_headline,
 )
 
 _REQUIRED_KEYS = frozenset({
+    "kind",
     "total",
     "challenger",
     "baseline",
@@ -30,11 +32,21 @@ _REQUIRED_KEYS = frozenset({
     "challenger_rate",
     "baseline_rate",
     "tie_rate",
+    "partitions",
 })
 
 
 def _run(tally):
     return {"composite_mean": 0.6, "tally": tally}
+
+
+def _gen(tuned_tally, held_tally):
+    art = {"generalization_gap": 0.0}
+    if tuned_tally is not None:
+        art["tuned"] = {"tally": tuned_tally}
+    if held_tally is not None:
+        art["held_out"] = {"tally": held_tally}
+    return art
 
 
 # --- Input coercion -------------------------------------------------------------------------
@@ -43,8 +55,10 @@ def _run(tally):
 @pytest.mark.parametrize("bad", (None, "not a dict", 42, [1, 2], ()))
 def test_non_dict_artifact_coerced_to_empty_dict(bad):
     out = summarize_win_rate(bad)
+    assert out["kind"] == "invalid"
     assert out["total"] is None
     assert out["challenger_rate"] is None
+    assert out["partitions"] is None
 
 
 def test_dict_helper_returns_dict_or_empty():
@@ -99,11 +113,11 @@ def test_tally_counts_missing_or_malformed(artifact):
     assert _tally_counts(artifact) is None
 
 
-# --- Win rate summary -----------------------------------------------------------------------
+# --- Slice summary --------------------------------------------------------------------------
 
 
-def test_summarize_happy_path():
-    out = summarize_win_rate(_run({"challenger": 6, "baseline": 3, "tie": 1}))
+def test_slice_summary_happy_path():
+    out = _slice_summary(_run({"challenger": 6, "baseline": 3, "tie": 1}))
     assert out == {
         "total": 10,
         "challenger": 6,
@@ -115,33 +129,65 @@ def test_summarize_happy_path():
     }
 
 
-def test_zero_total_none_rates():
-    out = summarize_win_rate(_run({"challenger": 0, "baseline": 0, "tie": 0}))
+def test_slice_summary_zero_total_none_rates():
+    out = _slice_summary(_run({"challenger": 0, "baseline": 0, "tie": 0}))
     assert out["total"] == 0
-    assert out["challenger"] == 0
     assert out["challenger_rate"] is None
     assert out["baseline_rate"] is None
     assert out["tie_rate"] is None
 
 
-def test_malformed_tally_all_none():
-    out = summarize_win_rate({"composite_mean": 0.5})
+# --- Artifact-kind branches -----------------------------------------------------------------
+
+
+def test_summarize_single_kind():
+    out = summarize_win_rate(_run({"challenger": 6, "baseline": 3, "tie": 1}))
     assert out == {
-        "total": None,
-        "challenger": None,
-        "baseline": None,
-        "tie": None,
-        "challenger_rate": None,
-        "baseline_rate": None,
-        "tie_rate": None,
+        "kind": "single",
+        "total": 10,
+        "challenger": 6,
+        "baseline": 3,
+        "tie": 1,
+        "challenger_rate": 0.6,
+        "baseline_rate": 0.3,
+        "tie_rate": 0.1,
+        "partitions": None,
     }
+
+    malformed = summarize_win_rate({"composite_mean": 0.5})
+    assert malformed["kind"] == "single"
+    assert malformed["total"] is None
+    assert malformed["partitions"] is None
+
+
+def test_generalization_sums_partition_tallies():
+    out = summarize_win_rate(_gen(
+        {"challenger": 4, "baseline": 1, "tie": 1},
+        {"challenger": 1, "baseline": 2, "tie": 0},
+    ))
+    assert out["kind"] == "generalization"
+    assert out["total"] == 9
+    assert (out["challenger"], out["baseline"], out["tie"]) == (5, 3, 1)
+    assert out["challenger_rate"] == 0.556
+    assert out["partitions"]["tuned"]["total"] == 6
+    assert out["partitions"]["held_out"]["total"] == 3
+
+
+def test_generalization_partial_partition_withholds_overall():
+    out = summarize_win_rate({
+        "generalization_gap": 0.0,
+        "tuned": {"tally": {"challenger": 4, "baseline": 1, "tie": 1}},
+        "held_out": {},
+    })
+    assert out["total"] is None
+    assert out["partitions"]["tuned"]["total"] == 6
+    assert out["partitions"]["held_out"]["total"] is None
 
 
 def test_summary_always_includes_required_keys():
     for artifact in (
         _run({"challenger": 2, "baseline": 1, "tie": 0}),
-        _run({"challenger": 0, "baseline": 0, "tie": 0}),
-        {"composite_mean": 0.5},
+        _gen({"challenger": 1, "baseline": 0, "tie": 0}, {"challenger": 0, "baseline": 1, "tie": 0}),
         None,
     ):
         out = summarize_win_rate(artifact)
