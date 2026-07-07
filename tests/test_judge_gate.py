@@ -50,6 +50,55 @@ def test_single_order_run_fails_dual_order_check():
     assert "dual_order_judging" in failed_checks(result)
 
 
+# --- a multi-repo / generalization run has no top-level judge_dual_order flag (it is per-repo) ---
+# run_multi_replay / run_generalization_report emit the aggregate judge_report/judge_order_stats but
+# no top-level judge_dual_order. dual_order_judging must derive it from that telemetry, or a fully
+# dual-order-judged multi-repo run is wrongly SHAKY while enough_dual_order_tasks/low_disagreement
+# (which already read the aggregate) pass — a self-contradiction.
+
+
+def _multi(dual_tasks, disagreement=0.1):
+    # No top-level judge_dual_order; the aggregate telemetry is the source of truth.
+    return {"repos": 2, "scored_repos": 2, "composite_mean": 0.6,
+            "judge_report": {"disagreement_rate": disagreement, "dual_order_tasks": dual_tasks},
+            "per_repo": [{"judge_dual_order": True}, {"judge_dual_order": True}]}
+
+
+def test_multi_repo_dual_order_run_is_robust():
+    result = check_judge(_multi(dual_tasks=6, disagreement=0.167))
+    assert result["passed"] is True and result["dual_order"] is True
+    assert failed_checks(result) == []
+
+
+def test_multi_repo_single_order_run_fails_dual_order():
+    # No tasks judged in both orders -> no dual-order signal -> the check correctly fails.
+    result = check_judge(_multi(dual_tasks=0))
+    assert result["dual_order"] is False and "dual_order_judging" in failed_checks(result)
+
+
+def test_multi_repo_derives_from_judge_order_stats_fallback():
+    # The dual-order count can live under judge_order_stats rather than judge_report; the derive
+    # branch reads it via the same _dual_order_tasks fallback the other checks use.
+    result = check_judge({"repos": 2, "composite_mean": 0.6,
+                          "judge_report": {"disagreement_rate": 0.1},
+                          "judge_order_stats": {"dual_order_tasks": 4}})
+    assert result["dual_order"] is True and result["passed"] is True
+
+
+def test_explicit_single_order_flag_is_authoritative():
+    # An explicit top-level judge_dual_order=False is never overridden, even with a dual-order
+    # task count present, so a run configured single-order stays single-order.
+    result = check_judge(_result(dual_order=False, dual_tasks=5))
+    assert result["dual_order"] is False and "dual_order_judging" in failed_checks(result)
+
+
+def test_multi_repo_without_dual_order_telemetry_fails_closed():
+    # No top-level flag and no dual_order_tasks anywhere -> no signal -> fails closed, no crash.
+    for result in (check_judge({"repos": 2, "composite_mean": 0.6}),
+                   check_judge({"repos": 2, "judge_report": {"dual_order_tasks": "n/a"}})):
+        assert result["dual_order"] is False and "dual_order_judging" in failed_checks(result)
+
+
 def test_high_disagreement_is_shaky():
     result = check_judge(_result(disagreement=0.5), max_disagreement=0.3)
     assert result["passed"] is False

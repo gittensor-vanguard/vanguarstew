@@ -9,8 +9,10 @@ of tasks, the win/loss record (and the ``judge_mean`` half of the composite) is 
 This makes that a reproducible **pass/fail gate**. ``check_judge(result)`` evaluates a
 single- or multi-repo run against named criteria:
 
-1. ``dual_order_judging`` - the run judged both presentation orders (``judge_dual_order`` is
-   true), the mode that yields a consistency signal at all;
+1. ``dual_order_judging`` - the run judged both presentation orders, the mode that yields a
+   consistency signal at all. A single-repo run reports this as a top-level ``judge_dual_order``
+   flag; a multi-repo / generalization run carries no top-level flag (it is per-repo), so it is
+   derived from the aggregate telemetry (some tasks were judged in both orders);
 2. ``enough_dual_order_tasks`` - at least ``min_dual_order_tasks`` tasks were judged in both
    orders, so the disagreement rate is measured on a meaningful sample;
 3. ``low_disagreement`` - the order-``disagreement_rate`` is at most ``max_disagreement`` (the
@@ -161,10 +163,20 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    is_dual = dual_order is True
+    # A single-repo ``run_replay`` reports a top-level ``judge_dual_order`` config flag; a
+    # multi-repo / generalization run does not — that flag is per-repo (nested in ``per_repo``) —
+    # so when it is absent, derive dual-order-judged status from the same aggregate telemetry the
+    # other two checks read: the run has a dual-order consistency signal iff some tasks were
+    # actually judged in both orders (``dual_order_tasks > 0``). An explicit top-level flag stays
+    # authoritative, so a run flagged single-order (``False``) is never overridden by a stray count.
+    if dual_order is None:
+        is_dual = _is_number(dual_tasks) and dual_tasks > 0
+    else:
+        is_dual = dual_order is True
     add("dual_order_judging", is_dual,
         "judged in both presentation orders" if is_dual
-        else f"not dual-order judged (judge_dual_order={dual_order!r})")
+        else f"not dual-order judged (judge_dual_order={dual_order!r}, "
+             f"dual_order_tasks={dual_tasks!r})")
 
     enough = _is_number(dual_tasks) and dual_tasks >= min_dual_order_tasks
     add("enough_dual_order_tasks", enough,
@@ -179,7 +191,7 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     return {
         "passed": all(c["passed"] for c in checks),
         "checks": checks,
-        "dual_order": dual_order is True,
+        "dual_order": is_dual,
         "dual_order_tasks": dual_tasks if _is_number(dual_tasks) else None,
         "disagreement_rate": disagreement if _is_number(disagreement) else None,
         "max_disagreement": max_disagreement,
