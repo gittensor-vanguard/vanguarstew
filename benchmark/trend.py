@@ -15,6 +15,7 @@ math) so a partial series still produces a trend instead of raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,19 @@ DEFAULT_REGRESSION_THRESHOLD = 0.02
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats survive a save/load round trip (json.dump writes NaN/Infinity and
+    # json.load parses them back), so a hand-edited or degenerate artifact can carry a NaN/Inf
+    # composite_mean. Such a value is not a real score — treat it as malformed, like a missing
+    # or wrong-typed field, so headline_score returns None and the point is skipped in the
+    # delta/regression math instead of poisoning the trend with NaN/Inf. Mirrors
+    # benchmark/report.py::_is_number (#616). math.isfinite also raises OverflowError for an int
+    # too large for a float, which would otherwise crash the f-string float formatting below.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def headline_score(artifact) -> float | None:

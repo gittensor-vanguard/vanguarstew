@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.trend import (  # noqa: E402
+    _is_number,
     _trend_point,
     _trend_regressions,
     _trend_series,
@@ -74,6 +75,39 @@ def test_headline_score_treats_unscored_multi_repo_as_unscored():
     out = trend([("run1", {"scored_repos": 2, "composite_mean": 0.62}),
                  ("run2", unscored),
                  ("run3", {"scored_repos": 2, "composite_mean": 0.63})])
+    assert [p["composite_mean"] for p in out["points"]] == [0.62, None, 0.63]
+    assert out["regressions"] == []
+
+
+def test_is_number_rejects_non_finite_and_non_numeric():
+    # Real numbers pass; NaN/Inf (which survive a JSON round trip) and non-numerics do not.
+    assert _is_number(0.6) and _is_number(0) and _is_number(-1.5)
+    assert not _is_number(float("nan"))
+    assert not _is_number(float("inf"))
+    assert not _is_number(float("-inf"))
+    assert not _is_number(True) and not _is_number(False)
+    assert not _is_number("0.6") and not _is_number(None) and not _is_number([1])
+    # An int too large for a float raises OverflowError inside math.isfinite -> rejected, not raised.
+    assert not _is_number(10 ** 400)
+
+
+def test_headline_score_treats_non_finite_composite_as_unscored():
+    # A degenerate/hand-edited artifact can carry a NaN/Inf composite_mean (json.dump writes it,
+    # json.load reads it back). It is not a real score and must read as None, so it does not
+    # poison stability gating or trend summaries with NaN/Inf.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert headline_score(_single(bad)) is None, bad
+        assert headline_score({"tuned": {"composite_mean": bad, "scored_repos": 1},
+                               "held_out": {"composite_mean": 0.5}}) is None, bad
+    # A real score (including a genuine 0.0) is unaffected.
+    assert headline_score(_single(0.6)) == 0.6
+    assert headline_score(_single(0.0)) == 0.0
+
+
+def test_trend_skips_non_finite_points_in_delta_and_regression_math():
+    # A NaN point between two healthy runs is skipped (like an unscored one): no NaN delta, no
+    # spurious regression, and the two real scores compare directly.
+    out = trend([("r1", _single(0.62)), ("r2", _single(float("nan"))), ("r3", _single(0.63))])
     assert [p["composite_mean"] for p in out["points"]] == [0.62, None, 0.63]
     assert out["regressions"] == []
 
