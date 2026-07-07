@@ -4,6 +4,7 @@ input, offline determinism, and non-dict LLM/PR fallbacks. Offline, deterministi
 scripted fakes so no network is used.
 """
 
+import json
 import os
 import sys
 
@@ -19,12 +20,14 @@ from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
     VALUE_LABELS,
+    _PHILOSOPHY_PROMPT_LIMIT,
     _normalize_bool,
     _normalize_concerns,
     _normalize_review,
     _normalize_review_action,
     _normalize_text,
     _normalize_value_label,
+    _philosophy_prompt_block,
     review_pr,
 )
 
@@ -81,6 +84,20 @@ class _CapturingLLM:
         return self.payload
 
 
+_PR_HEADER = "\n\nPULL REQUEST #"
+
+
+def _philosophy_json_from_prompt(prompt: str) -> str | None:
+    """Extract the serialized philosophy JSON from a review prompt, if present."""
+    prefix = "Repository philosophy:\n"
+    if not prompt.startswith(prefix):
+        return None
+    body = prompt[len(prefix):]
+    end = body.find(_PR_HEADER)
+    assert end != -1, "review prompt missing PR header after philosophy block"
+    return body[:end]
+
+
 def _assert_review_shape(out: dict):
     assert isinstance(out, dict)
     assert _REVIEW_KEYS <= set(out)
@@ -103,20 +120,49 @@ def test_review_pr_returns_all_documented_keys_offline():
     _assert_review_shape(out)
 
 
-def test_review_pr_includes_philosophy_prompt_for_empty_dict():
-    llm = _CapturingLLM()
-    review_pr({"number": 1, "title": "Fix bug", "files": []}, {}, llm)
-    assert llm.last_user is not None
-    assert "Repository philosophy" in llm.last_user
-    assert "PULL REQUEST #1: Fix bug" in llm.last_user
+# --- Philosophy prompt assembly -------------------------------------------------------------
+
+def test_philosophy_prompt_block_none_returns_empty():
+    assert _philosophy_prompt_block(None) == ""
 
 
-def test_review_pr_omits_philosophy_prompt_when_none():
+def test_philosophy_prompt_block_serializes_empty_dict():
+    assert _philosophy_prompt_block({}) == f"Repository philosophy:\n{json.dumps({})}\n\n"
+
+
+def test_philosophy_prompt_block_serializes_nonempty_dict():
+    philosophy = {"summary": "conservative", "values": ["stability"]}
+    expected = json.dumps(philosophy)
+    assert _philosophy_prompt_block(philosophy) == f"Repository philosophy:\n{expected}\n\n"
+
+
+def test_philosophy_prompt_block_truncates_at_limit():
+    philosophy = {"summary": "x" * 4000}
+    rendered = json.dumps(philosophy)[:_PHILOSOPHY_PROMPT_LIMIT]
+    assert len(json.dumps(philosophy)) > _PHILOSOPHY_PROMPT_LIMIT
+    block = _philosophy_prompt_block(philosophy)
+    assert block == f"Repository philosophy:\n{rendered}\n\n"
+    assert len(rendered) == _PHILOSOPHY_PROMPT_LIMIT
+
+
+def test_review_pr_serializes_empty_philosophy_dict_in_prompt():
     llm = _CapturingLLM()
-    review_pr({"number": 1, "title": "Fix bug", "files": []}, None, llm)
+    pr = {"number": 1, "title": "Fix bug", "files": []}
+    review_pr(pr, {}, llm)
     assert llm.last_user is not None
-    assert "Repository philosophy" not in llm.last_user
-    assert llm.last_user.startswith("PULL REQUEST #1: Fix bug")
+    assert _philosophy_json_from_prompt(llm.last_user) == json.dumps({})
+    expected_prefix = _philosophy_prompt_block({})
+    assert llm.last_user.startswith(expected_prefix)
+    assert llm.last_user[len(expected_prefix):].startswith("PULL REQUEST #1: Fix bug\n")
+
+
+def test_review_pr_omits_philosophy_block_when_none():
+    llm = _CapturingLLM()
+    pr = {"number": 1, "title": "Fix bug", "files": []}
+    review_pr(pr, None, llm)
+    assert llm.last_user is not None
+    assert _philosophy_json_from_prompt(llm.last_user) is None
+    assert llm.last_user.splitlines()[0] == "PULL REQUEST #1: Fix bug"
 
 
 def test_review_pr_falls_back_when_llm_returns_non_dict():

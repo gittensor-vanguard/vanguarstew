@@ -142,6 +142,25 @@ def _clip_text(value, limit: int) -> str:
     return value[:limit] if isinstance(value, str) else ""
 
 
+_PHILOSOPHY_PROMPT_LIMIT = 1500
+
+
+def _philosophy_prompt_block(philosophy: dict | None) -> str:
+    """Return the philosophy section for the review prompt, or ``""`` when absent.
+
+    Only ``None`` means no philosophy context. An empty dict still serializes as ``{}``.
+    The JSON payload is capped at :data:`_PHILOSOPHY_PROMPT_LIMIT` characters so a large
+    philosophy object cannot dominate the review prompt (``body`` uses the same 1500 cap;
+    ``diff`` is allowed more because it is the primary review signal).
+    """
+    if philosophy is None:
+        return ""
+    return (
+        f"Repository philosophy:\n"
+        f"{json.dumps(philosophy)[:_PHILOSOPHY_PROMPT_LIMIT]}\n\n"
+    )
+
+
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
     if not isinstance(pr, dict):
@@ -161,7 +180,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
             if isinstance(path, str) and path.strip():
                 files.append(path.strip())
     user = (
-        (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy is not None else "")
+        _philosophy_prompt_block(philosophy)
         + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"
         + f"by @{pr.get('author')}  (+{pr.get('additions', 0)}/-{pr.get('deletions', 0)})\n\n"
         + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
