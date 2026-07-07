@@ -124,3 +124,28 @@ def test_infer_philosophy_handles_non_dict_context():
     llm = LLM(api_key='offline')
     assert infer_philosophy(None, llm)["summary"]
     assert infer_philosophy("not a dict", llm)["summary"]
+
+
+def test_infer_philosophy_non_dict_context_returns_complete_stub():
+    # A non-dict context must return the SAME complete five-key offline stub the normal path
+    # uses, not a two-key {"summary", "values": ["triage"]} fragment: every caller relies on
+    # EXPECTED_KEYS, and "triage" is a planner action kind, not a philosophy value (#1173).
+    from agent.llm import LLM
+    llm = LLM(api_key='offline')
+    for ctx in (None, "not a dict", 42, [1, 2]):
+        out = infer_philosophy(ctx, llm)
+        assert set(out) == EXPECTED_KEYS, f"{ctx!r} -> {out}"
+        assert out["values"] == []                       # not ["triage"]
+        assert out["merge_bar"] == "unknown (offline)"
+        assert out["direction"] == "unknown (offline)"
+        assert out["evidence"] == []
+
+
+def test_infer_philosophy_non_dict_stub_is_a_fresh_dict():
+    # Two calls must not share a mutable stub, so a caller mutating one result can't corrupt the
+    # next.
+    from agent.llm import LLM
+    llm = LLM(api_key='offline')
+    first = infer_philosophy(None, llm)
+    first["values"].append("x")
+    assert infer_philosophy(None, llm)["values"] == []

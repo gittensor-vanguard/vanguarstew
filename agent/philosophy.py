@@ -94,9 +94,27 @@ def _normalize_philosophy(out: dict, stub: dict) -> dict:
     }
 
 
+def _offline_stub() -> dict:
+    """The offline/degraded philosophy stub: all five expected keys, no anchoring values.
+
+    A fresh dict each call so a caller mutating one return value can't corrupt another.
+    """
+    return {
+        "summary": "offline stub philosophy",
+        "values": [],
+        "merge_bar": "unknown (offline)",
+        "direction": "unknown (offline)",
+        "evidence": [],
+    }
+
+
 def infer_philosophy(context: dict, llm) -> dict:
     if not isinstance(context, dict):
-        return {"summary": "offline stub philosophy", "values": ["triage"]}
+        # Return the same complete five-key stub the normal offline path uses. The old early
+        # return dropped merge_bar/direction/evidence and set values to ["triage"] (a planner
+        # action kind, not a philosophy value), so a non-dict context produced a malformed
+        # philosophy that every caller/test's EXPECTED_KEYS relies on being complete.
+        return _offline_stub()
     user = (
         "Infer the maintainer philosophy from this repository state.\n\n"
         f"{FEWSHOT}\n\n"
@@ -111,13 +129,7 @@ def infer_philosophy(context: dict, llm) -> dict:
         '  "direction": where the codebase appears to be heading (the "idea trajectory"),\n'
         '  "evidence": list of concrete signals you used.'
     )
-    stub = {
-        "summary": "offline stub philosophy",
-        "values": [],
-        "merge_bar": "unknown (offline)",
-        "direction": "unknown (offline)",
-        "evidence": [],
-    }
+    stub = _offline_stub()
     out = llm.chat_json(SYSTEM, user, stub=stub)
     return _normalize_philosophy(out, stub)
 
