@@ -36,21 +36,86 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _judge_telemetry(artifact: dict) -> dict:
-    for source in (artifact.get("judge_report"), artifact.get("judge_order_stats")):
+def _judge_telemetry(slice_) -> dict:
+    """Return judge telemetry from a replay slice (``judge_report`` preferred over stats)."""
+    slice_ = _dict(slice_)
+    for source in (slice_.get("judge_report"), slice_.get("judge_order_stats")):
         if isinstance(source, dict):
             return source
     return {}
 
 
-def _dual_order_tasks(telemetry: dict) -> int | None:
-    value = telemetry.get("dual_order_tasks")
-    return value if _is_int(value) and value >= 0 else None
+def _disagreement_counts(telemetry: dict) -> tuple[int, int] | None:
+    """Return ``(disagreements, dual_order_tasks)`` when both are valid non-negative ints."""
+    dual = telemetry.get("dual_order_tasks")
+    if not _is_int(dual):
+        agree = telemetry.get("agree")
+        disagree = telemetry.get("disagree")
+        tie = telemetry.get("tie")
+        if not all(_is_int(value) and value >= 0 for value in (agree, disagree, tie)):
+            return None
+        dual = agree + disagree + tie
+    disagreements = telemetry.get("disagreements")
+    if disagreements is None:
+        disagreements = telemetry.get("disagree")
+    if disagreements is None:
+        rate = telemetry.get("disagreement_rate")
+        if _is_number(rate) and _is_int(dual):
+            disagreements = round(rate * dual)
+        else:
+            return None
+    if not _is_int(disagreements) or disagreements < 0 or not _is_int(dual) or dual < 0:
+        return None
+    return disagreements, dual
 
 
-def _disagreement_rate(telemetry: dict) -> float | None:
-    value = telemetry.get("disagreement_rate")
-    return round(float(value), 3) if _is_number(value) else None
+def _slice_summary(slice_) -> dict:
+    telemetry = _judge_telemetry(slice_)
+    counts = _disagreement_counts(telemetry)
+    if counts is None:
+        return {
+            "dual_order_tasks": None,
+            "disagreements": None,
+            "disagreement_rate": None,
+        }
+    disagreements, dual = counts
+    rate = telemetry.get("disagreement_rate")
+    if _is_number(rate):
+        out_rate = round(float(rate), 3)
+    elif dual == 0:
+        out_rate = None
+    else:
+        out_rate = round(disagreements / dual, 3)
+    return {
+        "dual_order_tasks": dual,
+        "disagreements": disagreements,
+        "disagreement_rate": out_rate,
+    }
+
+
+def _combined(tuned: dict, held_out: dict) -> dict:
+    """Overall disagreement outlook across partitions — only when both carry complete counts."""
+    duals = [tuned.get("dual_order_tasks"), held_out.get("dual_order_tasks")]
+    disagreements = [tuned.get("disagreements"), held_out.get("disagreements")]
+    if not all(_is_int(value) for value in duals + disagreements):
+        return {
+            "dual_order_tasks": None,
+            "disagreements": None,
+            "disagreement_rate": None,
+        }
+    dual = sum(duals)
+    disagree = sum(disagreements)
+    if dual == 0:
+        return {
+            "dual_order_tasks": 0,
+            "disagreements": 0,
+            "disagreement_rate": None,
+        }
+    return {
+        "dual_order_tasks": dual,
+        "disagreements": disagree,
+        "disagreement_rate": round(disagree / dual, 3),
+    }
 
 
 def _verdict(rate: float | None, threshold: float) -> str | None:
@@ -60,18 +125,33 @@ def _verdict(rate: float | None, threshold: float) -> str | None:
 
 
 def summarize_disagreement_outlook(artifact, stable_threshold: float = DEFAULT_STABLE_THRESHOLD) -> dict:
-    """Return disagreement telemetry and outlook for a replay ``artifact``."""
+    """Return disagreement telemetry and outlook for a replay ``artifact``.
+
+    Single- and multi-repo artifacts report top-level telemetry; a ``generalization`` artifact
+    adds per-partition detail plus an overall outlook summed across ``tuned`` and ``held_out``
+    (``None`` unless both partitions carry complete counts).
+    """
     artifact = _dict(artifact)
-    telemetry = _judge_telemetry(artifact)
-    dual = _dual_order_tasks(telemetry)
-    rate = _disagreement_rate(telemetry)
+    kind = artifact_kind(artifact)
     threshold = float(stable_threshold) if _is_number(stable_threshold) else DEFAULT_STABLE_THRESHOLD
+    if kind == "generalization":
+        tuned = _slice_summary(artifact.get("tuned"))
+        held_out = _slice_summary(artifact.get("held_out"))
+        combined = _combined(tuned, held_out)
+        return {
+            "kind": kind,
+            **combined,
+            "verdict": _verdict(combined.get("disagreement_rate"), threshold),
+            "stable_threshold": threshold,
+            "partitions": {"tuned": tuned, "held_out": held_out},
+        }
+    summary = _slice_summary(artifact)
     return {
-        "kind": artifact_kind(artifact),
-        "dual_order_tasks": dual,
-        "disagreement_rate": rate,
-        "verdict": _verdict(rate, threshold),
+        "kind": kind,
+        **summary,
+        "verdict": _verdict(summary.get("disagreement_rate"), threshold),
         "stable_threshold": threshold,
+        "partitions": None,
     }
 
 
@@ -83,4 +163,16 @@ def disagreement_outlook_headline(summary: dict) -> str:
     verdict = summary.get("verdict") or "unknown"
     dual = summary.get("dual_order_tasks")
     dual_txt = str(dual) if _is_int(dual) else "n/a"
+    if summary.get("kind") == "generalization":
+        parts = _dict(summary.get("partitions"))
+        tuned = _dict(parts.get("tuned"))
+        held = _dict(parts.get("held_out"))
+        tuned_rate = tuned.get("disagreement_rate")
+        held_rate = held.get("disagreement_rate")
+        tuned_txt = f"{float(tuned_rate):.1%}" if _is_number(tuned_rate) else "n/a"
+        held_txt = f"{float(held_rate):.1%}" if _is_number(held_rate) else "n/a"
+        return (
+            f"disagreement outlook: {verdict} (rate {rate_txt}, {dual_txt} dual-order task(s)) "
+            f"[tuned {tuned_txt}, held-out {held_txt}]"
+        )
     return f"disagreement outlook: {verdict} (rate {rate_txt}, {dual_txt} dual-order task(s))"
