@@ -426,6 +426,29 @@ def test_enrich_context_proceeds_for_git_fallback_context(monkeypatch):
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_includes_highest_semver_outside_recent_window():
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        creation = ["v2.0.0", *[f"v1.{i}.0" for i in range(9, 19)]]
+        for seq, tag in enumerate(creation, start=1):
+            freeze_date = f"2024-01-{seq:02d}T12:00:00+00:00"
+            _write(repo, f"f{seq}.txt", f"{tag}\n")
+            _git(repo, "add", "-A", date=freeze_date)
+            _git(repo, "commit", "-q", "-m", f"commit {tag}", date=freeze_date)
+            _git(repo, "tag", tag, date=freeze_date)
+
+        from benchmark.score import base_from_releases
+
+        ctx = _context_from_git(repo)
+        release_tags = [r["tag"] for r in ctx["releases"]]
+        assert "v2.0.0" in release_tags
+        assert base_from_releases(ctx["releases"]) == "v2.0.0"
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_excludes_tags_created_after_head():
     # A retroactive annotated tag on a commit already at T leaks a future release unless
     # filtered by tagger/creator date — must match benchmark/freeze.build_context (#749).

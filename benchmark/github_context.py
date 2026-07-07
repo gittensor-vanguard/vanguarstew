@@ -371,6 +371,29 @@ def _frozen_at_date(context: dict):
     return _parse_dt(frozen.get("date"))
 
 
+def _merge_releases(git_releases, gh_releases) -> list:
+    """Union git tags with GitHub release metadata; never drop git-only tags."""
+    by_tag: dict[str, dict] = {}
+    order: list[str] = []
+    for rel in git_releases or []:
+        tag = rel.get("tag") if isinstance(rel, dict) else rel
+        if not tag:
+            continue
+        by_tag[tag] = dict(rel) if isinstance(rel, dict) else {"tag": tag}
+        if tag not in order:
+            order.append(tag)
+    for rel in gh_releases or []:
+        tag = rel.get("tag") if isinstance(rel, dict) else rel
+        if not tag:
+            continue
+        if tag in by_tag:
+            by_tag[tag] = {**by_tag[tag], **rel}
+        else:
+            by_tag[tag] = dict(rel) if isinstance(rel, dict) else {"tag": tag}
+            order.append(tag)
+    return [by_tag[tag] for tag in order]
+
+
 def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
     """Merge GitHub state (as of the freeze time in `context`) into a git-only context.
 
@@ -396,9 +419,16 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
         merged = dict(context)
         # No ``labels`` here: the repo label catalog is intentionally omitted from the frozen
         # context (see module docstring), so ``fetch_context_at`` never produces that key.
-        for key in ("repo", "open_issues", "open_prs", "milestones", "releases"):
+        for key in ("repo", "open_issues", "open_prs", "milestones"):
             if key in gh:
                 merged[key] = gh[key]
+        if gh.get("_releases_truncated") is True:
+            merged["_releases_truncated"] = True
+        elif "releases" in gh:
+            if gh.get("releases"):
+                merged["releases"] = _merge_releases(context.get("releases"), gh["releases"])
+            else:
+                merged["releases"] = []
         for key in _ENRICH_META_KEYS:
             if key in gh:
                 merged[key] = gh[key]

@@ -14,6 +14,8 @@ import os
 import re
 import subprocess
 
+from benchmark.releases import context_releases
+
 logger = logging.getLogger(__name__)
 
 CONTEXT_FILE = ".vanguarstew_context.json"
@@ -226,7 +228,7 @@ def _context_from_git(repo_path: str) -> dict:
         "open_prs": [],
         "labels": [],
         "milestones": [],
-        "releases": [{"tag": _mask_forward_refs(t)} for t in tags[-10:]],
+        "releases": context_releases([_mask_forward_refs(t) for t in tags]),
         "readme_excerpt": readme,
         "_source": "git",
     }

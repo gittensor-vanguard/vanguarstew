@@ -167,3 +167,38 @@ def test_run_replay_survives_non_dict_agent_output():
         assert "tally" in res
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_replay_continues_after_task_failure(monkeypatch):
+    d = tempfile.mkdtemp()
+    try:
+        subprocess.run(["git", "init", "-q", d], check=True)
+        subprocess.run(["git", "-C", d, "config", "user.email", "t@t"], check=True)
+        subprocess.run(["git", "-C", d, "config", "user.name", "t"], check=True)
+        for i in range(20):
+            with open(os.path.join(d, f"f{i}.py"), "w", encoding="utf-8") as f:
+                f.write(f"x = {i}\n")
+            subprocess.run(["git", "-C", d, "add", "-A"], check=True)
+            subprocess.run(["git", "-C", d, "commit", "-q", "-m", f"commit {i}"], check=True)
+
+        import benchmark.runner as runner
+
+        calls = {"n": 0}
+        real_judge = runner.judge_verbose
+
+        def flaky_judge(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("judge timeout")
+            return real_judge(*args, **kwargs)
+
+        monkeypatch.setattr(runner, "judge_verbose", flaky_judge)
+        res = run_replay(d, agent_file=os.path.join(ROOT, "agent.py"), n_tasks=2, horizon=3)
+        assert res["tasks"] == 2
+        assert res["scored_tasks"] == 1
+        assert res["task_errors"] == 1
+        assert any("error" in row for row in res["rows"])
+        assert any("composite" in row for row in res["rows"])
+    finally:
+        shutil.rmtree(d, ignore_errors=True)

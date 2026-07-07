@@ -301,7 +301,7 @@ def _enrich_with_fake_fetch(monkeypatch, gh_payload, base):
                 "open_issues": [],
                 "open_prs": [{"number": 10, "title": "fresh pr"}],
                 "milestones": [{"title": "m1", "state": "open"}],
-                "releases": [{"tag": "v1.0.0"}],
+                "releases": [{"tag": "v9.9.9"}, {"tag": "v1.0.0"}],
             },
             id="empty-issues-nonempty-other-lists",
         ),
@@ -322,7 +322,7 @@ def _enrich_with_fake_fetch(monkeypatch, gh_payload, base):
                 "open_issues": [{"number": 3, "title": "fresh issue"}],
                 "open_prs": [],
                 "milestones": [],
-                "releases": [{"tag": "v2.0.0"}],
+                "releases": [{"tag": "v0.1.0"}, {"tag": "v2.0.0"}],
             },
             id="empty-prs-nonempty-other-lists",
         ),
@@ -343,7 +343,7 @@ def _enrich_with_fake_fetch(monkeypatch, gh_payload, base):
                 "open_issues": [{"number": 4, "title": "only issue at T"}],
                 "open_prs": [{"number": 5, "title": "only pr at T"}],
                 "milestones": [],
-                "releases": [{"tag": "v1.1.0"}],
+                "releases": [{"tag": "v9.9.9"}, {"tag": "v1.1.0"}],
             },
             id="empty-milestones-only-clears-stale-milestones",
         ),
@@ -637,6 +637,63 @@ def test_releases_fail_closed_when_list_pagination_cap_hit(monkeypatch):
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
     assert ctx["_releases_truncated"] is True
     assert ctx["releases"] == []
+
+
+def test_merge_releases_unions_git_tags_with_github_metadata():
+    git = [{"tag": "v1.10.0"}]
+    gh = [{"tag": "v1.9.0", "name": "Nine", "published_at": "2023-03-01T00:00:00Z"}]
+    merged = gc._merge_releases(git, gh)
+    assert [r["tag"] for r in merged] == ["v1.10.0", "v1.9.0"]
+    by_tag = {r["tag"]: r for r in merged}
+    assert by_tag["v1.9.0"]["name"] == "Nine"
+
+
+def test_enrich_context_preserves_git_releases_when_github_truncated(monkeypatch):
+    from benchmark.score import base_from_releases
+
+    base = {
+        "frozen_at": {"date": "2023-06-01T00:00:00Z"},
+        "releases": [{"tag": "v1.10.0"}],
+        "_source": "git-freeze",
+    }
+
+    def fake_fetch(owner, repo, until, token=None, **kwargs):
+        return {
+            "releases": [],
+            "_releases_truncated": True,
+            "_source": "github-api",
+        }
+
+    monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda _path: "https://github.com/foo/bar.git")
+
+    merged = gc.enrich_context(base, "/fake/repo")
+    assert merged["releases"] == [{"tag": "v1.10.0"}]
+    assert merged["_releases_truncated"] is True
+    assert base_from_releases(merged["releases"]) == "v1.10.0"
+
+
+def test_enrich_context_merges_git_only_tags_with_github_releases(monkeypatch):
+    from benchmark.score import base_from_releases
+
+    base = {
+        "frozen_at": {"date": "2023-06-01T00:00:00Z"},
+        "releases": [{"tag": "v1.10.0"}],
+        "_source": "git-freeze",
+    }
+
+    def fake_fetch(owner, repo, until, token=None, **kwargs):
+        return {
+            "releases": [{"tag": "v1.9.0", "name": "Nine", "published_at": "2023-03-01T00:00:00Z"}],
+            "_source": "github-api",
+        }
+
+    monkeypatch.setattr(gc, "fetch_context_at", fake_fetch)
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda _path: "https://github.com/foo/bar.git")
+
+    merged = gc.enrich_context(base, "/fake/repo")
+    assert {r["tag"] for r in merged["releases"]} == {"v1.10.0", "v1.9.0"}
+    assert base_from_releases(merged["releases"]) == "v1.10.0"
 
 
 def test_milestones_fail_closed_when_list_pagination_cap_hit(monkeypatch):

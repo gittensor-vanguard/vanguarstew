@@ -71,6 +71,28 @@ def test_build_context_keeps_ten_most_recent_releases():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_build_context_includes_highest_semver_outside_recent_window():
+    repo = tempfile.mkdtemp()
+    try:
+        _git(repo, "init", "-q")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+
+        creation = ["v2.0.0", *[f"v1.{i}.0" for i in range(9, 19)]]
+        for seq, tag in enumerate(creation, start=1):
+            _commit_and_tag(repo, seq, tag)
+
+        from benchmark.score import base_from_releases
+
+        ctx = build_context(repo, "HEAD")
+        release_tags = [r["tag"] for r in ctx["releases"]]
+        assert "v2.0.0" in release_tags
+        assert base_from_releases(ctx["releases"]) == "v2.0.0"
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_build_context_release_order_is_not_lexicographic():
     # Stronger #90 guard: the newest tag (v1.2.0) is created LAST, so it sorts to
     # the middle lexicographically — chronological creation order must still win.

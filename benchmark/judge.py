@@ -29,6 +29,11 @@ from benchmark.score import _plan_list
 logger = logging.getLogger(__name__)
 
 _WINNER = re.compile(r'"?winner"?\s*[:=]\s*"?(A|B|tie)\b', re.I)
+_JUDGE_ROLE = re.compile(
+    r'\byou\s+are\s+(?:now\s+)?(?:the\s+)?(?:judge|evaluator|grader|scorer|referee)\b', re.I)
+_IGNORE_PRIOR = re.compile(
+    r'\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+'
+    r'(?:instructions?|prompts?|rules?|guidelines?)\b', re.I)
 
 SYSTEM = (
     "You are judging two maintainers' submissions for the same repository, frozen at a point "
@@ -53,6 +58,51 @@ def _parse_winner(text: str) -> str:
         return "tie"
     value = match.group(1).upper()
     return value if value in ("A", "B") else "tie"
+
+
+def _submission_text(submission: dict) -> str:
+    """Concatenate free-text fields miners can use for judge-directed injection."""
+    if not isinstance(submission, dict):
+        return ""
+    chunks = []
+    phil = submission.get("philosophy")
+    if isinstance(phil, dict):
+        for val in phil.values():
+            if isinstance(val, str):
+                chunks.append(val)
+            elif isinstance(val, list):
+                chunks.extend(str(x) for x in val)
+    elif phil:
+        chunks.append(str(phil))
+    for item in _plan_list(submission.get("plan")):
+        if isinstance(item, dict):
+            for key in ("title", "theme", "kind", "rationale"):
+                if item.get(key):
+                    chunks.append(str(item[key]))
+        else:
+            chunks.append(str(item))
+    if submission.get("rationale"):
+        chunks.append(str(submission["rationale"]))
+    return "\n".join(chunks)
+
+
+def _has_judge_injection(submission: dict) -> bool:
+    """True when a submission tries to instruct or hijack the pairwise judge."""
+    text = _submission_text(submission)
+    return bool(_WINNER.search(text) or _JUDGE_ROLE.search(text) or _IGNORE_PRIOR.search(text))
+
+
+def _injection_verdict(submission_a, submission_b) -> tuple[str, str] | None:
+    """Return (winner, 'injection') when either side tampers with the judge."""
+    inj_a = _has_judge_injection(submission_a)
+    inj_b = _has_judge_injection(submission_b)
+    if inj_a and inj_b:
+        return "tie", "injection"
+    if inj_a:
+        return "B", "injection"
+    if inj_b:
+        return "A", "injection"
+    return None
 
 
 def _render(submission: dict) -> str:
@@ -181,6 +231,10 @@ def judge_verbose(context: dict, submission_a, submission_b, revealed, llm, rng=
     """
     rng = rng or random.Random(0)
 
+    injection = _injection_verdict(submission_a, submission_b)
+    if injection is not None:
+        return injection
+
     if llm.offline:
         ra, rb = _offline_rank(submission_a), _offline_rank(submission_b)
         winner = "A" if ra > rb else ("B" if rb > ra else "tie")
@@ -255,7 +309,7 @@ def summarize_judge_orders(categories) -> dict:
     a judge-stability warning. Treat that as prompt/model drift or scoring noise to inspect,
     not as evidence that challenger and baseline are closer in quality.
     """
-    stats = {key: 0 for key in ("agree", "disagree", "tie", "single", "offline")}
+    stats = {key: 0 for key in ("agree", "disagree", "tie", "single", "offline", "injection")}
     for category in _order_categories_list(categories):
         if category in stats:
             stats[category] += 1

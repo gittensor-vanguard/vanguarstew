@@ -16,6 +16,7 @@ import tarfile
 
 from agent.context import CONTEXT_FILE, README_PROBE_NAMES
 from benchmark.leakage import scrub_context
+from benchmark.releases import context_releases
 
 
 def _git(repo, *args, check=True):
@@ -177,7 +178,7 @@ def build_context(repo: str, commit: str, lookback: int = 50) -> dict:
         "open_prs": [],
         "labels": [],
         "milestones": [],
-        "releases": [{"tag": t} for t in tags[-10:]],
+        "releases": context_releases(tags),
         "readme_excerpt": readme,
         "_source": "git-freeze",
     }
