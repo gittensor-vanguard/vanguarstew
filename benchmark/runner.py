@@ -61,7 +61,12 @@ def load_solve(agent_file: str = "agent.py"):
         raise RuntimeError(
             f"cannot load agent file {agent_file!r}: {exc}"
         ) from exc
-    return module.solve
+    solve = getattr(module, "solve", None)
+    if not callable(solve):
+        raise RuntimeError(
+            f"agent file {agent_file!r} does not define a callable 'solve' entrypoint"
+        )
+    return solve
 
 
 # Backwards-compatible alias; opponents now live in benchmark.baselines.

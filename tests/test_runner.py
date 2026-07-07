@@ -182,6 +182,24 @@ def test_load_solve_rejects_syntax_error(tmp_path):
         load_solve(str(bad))
 
 
+def test_load_solve_rejects_missing_solve_entrypoint(tmp_path):
+    # An agent file that imports cleanly but defines no `solve` must fail with a clean error,
+    # not a raw AttributeError from `module.solve`.
+    agent = tmp_path / "nosolve.py"
+    agent.write_text("x = 1\n")
+    with pytest.raises(RuntimeError, match="does not define a callable 'solve'"):
+        load_solve(str(agent))
+
+
+def test_load_solve_rejects_non_callable_solve(tmp_path):
+    # A `solve` bound to a non-callable must be rejected up front, not returned silently and
+    # crash later when the harness tries to invoke it.
+    agent = tmp_path / "badsolve.py"
+    agent.write_text("solve = 42\n")
+    with pytest.raises(RuntimeError, match="does not define a callable 'solve'"):
+        load_solve(str(agent))
+
+
 def test_load_solve_loads_valid_agent():
     solve = load_solve(os.path.join(ROOT, 'agent.py'))
     assert callable(solve)
