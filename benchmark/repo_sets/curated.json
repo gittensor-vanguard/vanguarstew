@@ -60,6 +60,17 @@
         "rotation_seed": 3
       },
       "notes": "Held-out obscure HTTP/2 header library; low-traffic and unlikely to be memorized."
+    },
+    {
+      "name": "zipp",
+      "source": "https://github.com/jaraco/zipp",
+      "tier": "obscure",
+      "held_out": true,
+      "freeze_window": {
+        "min_history": 35,
+        "rotation_seed": 7
+      },
+      "notes": "Held-out obscure pathlib ZipPath backport; steady jaraco maintenance with releases and PR history, unlikely to be memorized (#1023)."
     }
   ]
 }
