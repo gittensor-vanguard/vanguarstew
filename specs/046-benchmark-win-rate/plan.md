@@ -13,7 +13,8 @@ Maps the [spec](./spec.md) onto `benchmark/win_rate.py` as-built. No product cod
 | Whole-number count semantics | `test_is_int_rejects_bool`, `test_is_int_rejects_float_whole_numbers` |
 | Finite numeric semantics | `test_bool_and_non_finite_not_numeric` |
 | Tally parsing | `test_tally_counts_happy_path`, `test_tally_counts_missing_or_malformed` |
-| Win rate summary | `test_summarize_happy_path`, `test_zero_total_none_rates`, `test_malformed_tally_all_none`, `test_summary_always_includes_required_keys` |
+| Slice summary | `test_slice_summary_happy_path`, `test_slice_summary_zero_total_none_rates` |
+| Artifact-kind branches | `test_summarize_single_kind`, `test_generalization_sums_partition_tallies`, `test_generalization_partial_partition_withholds_overall`, `test_summary_always_includes_required_keys` |
 | Win rate headline | `test_headline_happy_path_exact_format`, `test_headline_zero_total_exact`, `test_headline_missing_total`, `test_headline_nan_rate_shows_na`, `test_headline_non_dict_summary_coerced` |
 | Pure evaluation | `test_summarize_does_not_mutate_artifact` |
 

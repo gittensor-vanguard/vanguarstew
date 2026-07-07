@@ -15,7 +15,8 @@ as-built behavior of `benchmark/win_rate.py`; it introduces **no behavior change
 ## Why
 
 `judge_wlt` reads the compact `judge_report` block; `win_rate` normalizes the underlying `tally`
-counts into per-outcome rates for CI dashboards.
+counts into per-outcome rates for CI dashboards, with per-partition detail for a
+`--generalization` artifact.
 
 ## User stories
 
@@ -45,19 +46,30 @@ counts into per-outcome rates for CI dashboards.
 
 ### Tally parsing (`_tally_counts`)
 
-- SHALL read `challenger`, `baseline`, and `tie` from `artifact["tally"]` when `tally` is a `dict`.
+- SHALL read `challenger`, `baseline`, and `tie` from `slice_["tally"]` when `tally` is a `dict`.
 - WHEN `tally` is missing or not a `dict` THEN `_tally_counts` SHALL return `None`.
 - WHEN every count is a non-negative `_is_int` THEN `_tally_counts` SHALL return the triple.
 - WHEN any count is invalid THEN `_tally_counts` SHALL return `None`.
 
-### Win rate summary (`summarize_win_rate`)
+### Slice summary (`_slice_summary`, `_rates`)
 
-Every summary SHALL include: `total`, `challenger`, `baseline`, `tie`, `challenger_rate`,
-`baseline_rate`, `tie_rate`.
-
-- WHEN `_tally_counts` returns `None` THEN all fields SHALL be `None`.
+- WHEN `_tally_counts` returns `None` THEN `_slice_summary` SHALL return all count/rate fields
+  as `None`.
 - WHEN `total > 0` THEN each rate field SHALL be `round(count / total, 3)` for its outcome.
 - WHEN `total == 0` THEN count fields SHALL be `0` and all rate fields SHALL be `None`.
+
+### Artifact-kind branches (`summarize_win_rate`)
+
+Every summary SHALL include: `kind`, `total`, `challenger`, `baseline`, `tie`, `challenger_rate`,
+`baseline_rate`, `tie_rate`, `partitions`.
+
+1. **`single` or `multi`** — top-level `_slice_summary(artifact)`; `partitions` SHALL be `None`.
+2. **`generalization`** — per-partition `_slice_summary` for `tuned` and `held_out`; WHEN both
+   slices carry `_is_int` `total` values THEN overall counts SHALL be summed and rates computed
+   on the totals; OTHERWISE overall fields SHALL be `None`; `partitions` SHALL always include
+   both partition slices.
+3. **`invalid`** — top-level slice with all count/rate fields `None`; `partitions` SHALL be
+   `None`.
 
 ### Win rate headline
 
