@@ -32,6 +32,7 @@ def _tiny_repo(dirpath, n=16, prefix="feat"):
     subprocess.run(["git", "init", "-q", dirpath], check=True)
     subprocess.run(["git", "-C", dirpath, "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", dirpath, "config", "user.name", "t"], check=True)
+    subprocess.run(["git", "-C", dirpath, "config", "core.fsync", "false"], check=True)
     for i in range(n):
         with open(os.path.join(dirpath, f"{prefix}{i}.py"), "w", encoding="utf-8") as f:
             f.write(f"x = {i}\n")
