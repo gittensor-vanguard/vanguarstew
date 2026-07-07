@@ -16,10 +16,12 @@ if ROOT not in sys.path:
 from benchmark.acceptance import (  # noqa: E402
     DEFAULT_MAX_GAP,
     _check_rows_list,
+    _partition_error,
     acceptance_headline,
     check_acceptance,
     failed_checks,
 )
+from benchmark.artifact_snapshot import _has_error  # noqa: E402
 
 
 def _report(gap=0.05, tuned_scored=3, held_scored=2, tuned_err=None, held_err=None):
@@ -64,6 +66,62 @@ def test_a_partition_error_fails_the_no_error_check():
     result = check_acceptance(_report(held_err="clone failed"))
     assert result["passed"] is False
     assert "no_partition_error" in failed_checks(result)
+
+
+# --- a repo that failed to clone/freeze is recorded inside per_repo, not as a partition error ---
+# run_multi_replay does not abort on a bad repo: it stores {"error": ..., "tasks": 0} in per_repo
+# and counts it in `skipped`. no_partition_error must scan those rows (a well-formed dict row's
+# error, or a malformed per-repo entry that is itself an error string), or the acceptance gate
+# signs off a run in which a repo errored.
+
+
+def _report_pr(held_per_repo, tuned_per_repo=None):
+    report = _report()
+    report["tuned"]["per_repo"] = tuned_per_repo or [{"repo": "a", "tasks": 5}]
+    report["held_out"]["per_repo"] = held_per_repo
+    return report
+
+
+def test_a_per_repo_error_fails_the_no_error_check():
+    report = _report_pr([{"repo": "c", "tasks": 4}, {"repo": "d", "tasks": 0, "error": "not a git repo"}])
+    result = check_acceptance(report)
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+    assert _has_error(report) is True     # agrees with the canonical detector on a well-formed row
+
+
+def test_a_per_repo_row_that_is_an_error_string_fails_closed():
+    # A malformed per-repo entry that is itself a non-empty error string (not a dict) must not be
+    # silently skipped — a corrupt artifact fails closed.
+    report = _report_pr([{"repo": "c", "tasks": 4}, "fatal: not a git repository"])
+    result = check_acceptance(report)
+    assert result["passed"] is False and "no_partition_error" in failed_checks(result)
+
+
+def test_a_clean_run_with_per_repo_rows_still_passes():
+    # Control: per_repo rows present but none carry an error -> no_partition_error still passes,
+    # so the fix only fails a run that actually errored (no false positives).
+    report = _report_pr([{"repo": "c", "tasks": 4}])
+    result = check_acceptance(report)
+    assert result["passed"] is True and "no_partition_error" not in failed_checks(result)
+    assert _has_error(report) is False
+
+
+def test_per_repo_error_detail_names_the_erroring_partition():
+    report = _report_pr([{"repo": "d", "tasks": 0, "error": "not a git repository"}])
+    detail = next(c for c in check_acceptance(report)["checks"]
+                  if c["name"] == "no_partition_error")["detail"]
+    assert "not a git repository" in detail and "held_out" in detail
+
+
+def test_partition_error_helper_scans_all_sources_and_tolerates_malformed():
+    assert _partition_error({"error": "whole partition failed"}) == "whole partition failed"
+    assert _partition_error({"per_repo": [{"tasks": 4}, {"tasks": 0, "error": "boom"}]}) == "boom"
+    assert _partition_error({"per_repo": [{"tasks": 4}, "  clone failed  "]}) == "  clone failed  "
+    assert _partition_error({"per_repo": [{"repo": "a", "tasks": 5}]}) is None    # no error
+    assert _partition_error({"per_repo": ["", "   ", {"tasks": 5}]}) is None      # blank strings
+    for bad in (None, "x", 42, [1], {"per_repo": "notalist"}, {"per_repo": [42, None]}, {"error": 0}):
+        assert _partition_error(bad) is None    # no crash / no false error on malformed input
 
 
 def test_a_partition_that_scored_too_few_repos_fails():
