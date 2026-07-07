@@ -11,6 +11,7 @@ if ROOT not in sys.path:
 from benchmark.generalization_gate import (  # noqa: E402
     DEFAULT_MAX_GAP,
     DEFAULT_MIN_HELD_OUT_REPOS,
+    _composite,
     check_generalization,
     failed_checks,
     generalization_headline,
@@ -23,6 +24,10 @@ def _gen(tuned, held, held_repos=3):
         "held_out": {"composite_mean": held, "scored_repos": held_repos},
         "generalization_gap": round(tuned - held, 3),
     }
+
+
+def _part(scored, composite):
+    return {"composite_mean": composite, "scored_repos": scored}
 
 
 def _names(result):
@@ -46,6 +51,53 @@ def test_a_large_gap_fails_gap_within_tolerance():
 def test_the_gap_bound_is_inclusive():
     assert check_generalization(_gen(0.70, 0.60), max_gap=0.1)["passed"] is True   # gap exactly 0.1
     assert check_generalization(_gen(0.71, 0.60), max_gap=0.1)["passed"] is False  # gap 0.11
+
+
+# --- a partition that scored no repos reports a placeholder composite, not a real score ---------
+# scored_repos: 0 carries composite_mean 0.0 (an average over an empty list). Reading it as a real
+# score let the gate sign off "GENERALIZES" on a run whose tuned partition never scored — the
+# placeholder 0.0 makes the tuned-minus-held-out gap negative ("held-out beat tuned"), which is
+# always within tolerance. The composite is guarded as headline_score/promotion/component_floor do.
+
+
+def test_an_unscored_tuned_partition_is_not_generalization():
+    # tuned scored nothing (placeholder 0.0), held-out scored fine. Pre-fix the gate PASSED
+    # ("GENERALIZES", gap -0.55); it must fail closed instead.
+    result = check_generalization({"tuned": _part(0, 0.0), "held_out": _part(3, 0.55),
+                                   "generalization_gap": None})
+    assert result["passed"] is False
+    assert result["tuned_composite"] is None and result["gap"] is None
+    assert set(failed_checks(result)) >= {"has_partitions", "gap_within_tolerance"}
+    assert "GENERALIZES" not in generalization_headline(result)
+
+
+def test_an_unscored_held_out_partition_is_not_generalization():
+    result = check_generalization({"tuned": _part(4, 0.65), "held_out": _part(0, 0.0),
+                                   "generalization_gap": None})
+    assert result["passed"] is False and "has_partitions" in failed_checks(result)
+
+
+def test_a_genuinely_scored_zero_composite_is_kept():
+    # Control isolating the cause: scored_repos > 0 with a real 0.0 composite keeps its score and is
+    # evaluated on the gap (here tuned 0.0 vs held-out 0.0 = gap 0.0, within tolerance) — proving
+    # scored_repos, not the numeric 0.0, is what marks a partition unscored.
+    result = check_generalization({"tuned": _part(4, 0.0), "held_out": _part(3, 0.0),
+                                   "generalization_gap": 0.0})
+    assert result["tuned_composite"] == 0.0 and result["gap"] == 0.0 and result["passed"] is True
+
+
+def test_composite_helper_guards_unscored_and_tolerates_malformed():
+    assert _composite(_part(0, 0.0)) is None          # scored_repos 0 -> placeholder -> None
+    assert _composite(_part(0.0, 0.0)) is None         # float 0.0 count is still the placeholder
+    assert _composite(_part(4, 0.0)) == 0.0            # scored -> real 0.0 kept
+    assert _composite({"composite_mean": 0.6}) == 0.6  # no scored_repos key -> single-repo score
+    assert _composite({"scored_repos": False, "composite_mean": 0.6}) == 0.6  # bool is not a count
+    # A non-dict partition yields None (no crash); a non-numeric scored_repos is not the 0
+    # placeholder, so the real composite is kept.
+    for bad in (None, "x", 42, [1]):
+        assert _composite(bad) is None
+    assert _composite({"scored_repos": "n", "composite_mean": 0.6}) == 0.6
+    assert _composite({"scored_repos": 2, "composite_mean": "bad"}) is None    # non-numeric score
 
 
 def test_a_held_out_score_above_tuned_is_within_tolerance():

@@ -42,7 +42,21 @@ def _num(value):
 
 
 def _composite(partition: dict):
-    value = _dict(partition).get("composite_mean")
+    """The partition's real composite score, or ``None`` when it did not score a repo.
+
+    A partition that scored no repos reports ``scored_repos: 0`` with a placeholder
+    ``composite_mean`` of ``0.0`` (an average over an empty list) — an infra/transient outcome, not
+    a real score. It is guarded here exactly as ``trend.headline_score``,
+    ``promotion._scored_composite``, and ``component_floor._scored_metric`` guard it, so an unscored
+    tuned partition cannot masquerade as a real ``0.0`` and produce a spuriously-negative "gap" that
+    reads as generalization (or make ``has_partitions`` pass on a partition that never scored). A
+    partition with no ``scored_repos`` key keeps its real composite, including a genuine ``0.0``.
+    """
+    partition = _dict(partition)
+    scored = partition.get("scored_repos")
+    if _is_number(scored) and not scored:
+        return None
+    value = partition.get("composite_mean")
     return value if _is_number(value) else None
 
 
