@@ -9,8 +9,11 @@ of tasks, the win/loss record (and the ``judge_mean`` half of the composite) is 
 This makes that a reproducible **pass/fail gate**. ``check_judge(result)`` evaluates a
 single- or multi-repo run against named criteria:
 
-1. ``dual_order_judging`` - the run judged both presentation orders (``judge_dual_order`` is
-   true), the mode that yields a consistency signal at all;
+1. ``dual_order_judging`` - the run judged both presentation orders, the mode that yields a
+   consistency signal at all. A single-repo run states this directly in its top-level
+   ``judge_dual_order`` flag (authoritative when present); a multi-repo aggregate omits that
+   flag, so the status is derived from the aggregate dual-order task count (``> 0`` means both
+   orders were judged), failing closed when neither the flag nor that count is available;
 2. ``enough_dual_order_tasks`` - at least ``min_dual_order_tasks`` tasks were judged in both
    orders, so the disagreement rate is measured on a meaningful sample;
 3. ``low_disagreement`` - the order-``disagreement_rate`` is at most ``max_disagreement`` (the
@@ -150,7 +153,10 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
 
     Returns ``{"passed": bool, "checks": [{"name", "passed", "detail"}], "dual_order",
     "dual_order_tasks", "disagreement_rate", ...thresholds}``. ``passed`` is True only when every
-    check passes; all checks are always reported.
+    check passes; all checks are always reported. ``dual_order`` is the effective dual-order
+    status the gate acted on: the authoritative top-level ``judge_dual_order`` flag when the run
+    reports it, otherwise the value derived from the aggregate dual-order task count for a
+    multi-repo run (``False`` when neither is available).
     """
     result = _dict(result)
     dual_order = result.get("judge_dual_order")
@@ -161,10 +167,17 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    is_dual = dual_order is True
+    # A single-repo run carries the authoritative ``judge_dual_order`` flag; a multi-repo
+    # aggregate omits it, so derive the status from the pooled dual-order task count (``> 0``
+    # means both orders were judged). No flag and no count -> fail closed (not dual-order).
+    if dual_order is None:
+        is_dual = _is_number(dual_tasks) and dual_tasks > 0
+    else:
+        is_dual = dual_order is True
     add("dual_order_judging", is_dual,
         "judged in both presentation orders" if is_dual
-        else f"not dual-order judged (judge_dual_order={dual_order!r})")
+        else f"not dual-order judged (judge_dual_order={dual_order!r}, "
+             f"dual_order_tasks={dual_tasks!r})")
 
     enough = _is_number(dual_tasks) and dual_tasks >= min_dual_order_tasks
     add("enough_dual_order_tasks", enough,
@@ -179,7 +192,7 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     return {
         "passed": all(c["passed"] for c in checks),
         "checks": checks,
-        "dual_order": dual_order is True,
+        "dual_order": is_dual,
         "dual_order_tasks": dual_tasks if _is_number(dual_tasks) else None,
         "disagreement_rate": disagreement if _is_number(disagreement) else None,
         "max_disagreement": max_disagreement,

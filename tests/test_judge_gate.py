@@ -70,6 +70,63 @@ def test_dual_order_tasks_falls_back_to_judge_order_stats():
     assert result["dual_order_tasks"] == 4 and result["passed"] is True
 
 
+# --- multi-repo aggregates omit the top-level judge_dual_order flag -----------------------
+# A single-repo run states judge_dual_order directly; a run_multi_replay aggregate does not, so
+# the status is derived from the pooled dual-order task count (judge_report, else
+# judge_order_stats), failing closed when neither the flag nor that count is present.
+
+
+def _multi(dual_tasks=5, disagreement=0.1, stats_tasks=None):
+    r = {"judge_report": {"disagreement_rate": disagreement}}
+    if dual_tasks is not None:
+        r["judge_report"]["dual_order_tasks"] = dual_tasks
+    if stats_tasks is not None:
+        r["judge_order_stats"] = {"dual_order_tasks": stats_tasks}
+    return r
+
+
+def test_multi_repo_dual_order_run_is_robust():
+    result = check_judge(_multi(dual_tasks=6, disagreement=0.1))
+    assert result["dual_order"] is True and result["passed"] is True
+    assert "dual_order_judging" not in failed_checks(result)
+
+
+def test_multi_repo_single_order_run_fails_closed():
+    result = check_judge(_multi(dual_tasks=0))
+    assert result["dual_order"] is False
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_explicit_single_order_flag_is_authoritative():
+    # judge_dual_order=False wins even when a stale pooled count looks dual-order.
+    result = check_judge({"judge_dual_order": False,
+                          "judge_report": {"disagreement_rate": 0.1, "dual_order_tasks": 9}})
+    assert result["dual_order"] is False
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_multi_repo_derives_dual_order_from_judge_order_stats_fallback():
+    # judge_report omits the count; it is resolved from judge_order_stats and drives the status.
+    result = check_judge(_multi(dual_tasks=None, stats_tasks=4))
+    assert result["dual_order_tasks"] == 4
+    assert result["dual_order"] is True and result["passed"] is True
+
+
+def test_multi_repo_without_dual_order_telemetry_fails_closed():
+    # No flag, judge_report present but no count, no judge_order_stats -> unavailable; fail closed.
+    result = check_judge(_multi(dual_tasks=None))
+    assert result["dual_order"] is False and result["dual_order_tasks"] is None
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_multi_repo_with_no_report_or_stats_blocks_fails_closed():
+    # Both aggregate telemetry blocks absent (or empty) -> derived status False, no crash.
+    for run in ({}, {"judge_order_stats": {}}, {"judge_report": {"disagreement_rate": 0.1}}):
+        result = check_judge(run)
+        assert result["dual_order"] is False and result["dual_order_tasks"] is None
+        assert "dual_order_judging" in failed_checks(result)
+
+
 def test_disagreement_bound_is_inclusive():
     assert check_judge(_result(disagreement=0.3), max_disagreement=0.3)["passed"] is True
     assert check_judge(_result(disagreement=0.31), max_disagreement=0.3)["passed"] is False
