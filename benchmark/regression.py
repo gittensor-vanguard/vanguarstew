@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from benchmark.trend import headline_score
+from benchmark.trend import _headline_partition, headline_score
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,22 @@ def _round(value):
 
 
 def _disagreement(artifact) -> float | None:
-    rate = _dict(_dict(artifact).get("judge_report")).get("disagreement_rate")
+    """The judge order-disagreement rate for an artifact, or None when there is no numeric rate.
+
+    Reads ``judge_report.disagreement_rate`` from the **same partition**
+    :func:`benchmark.trend.headline_score` scores the composite from — selected through the shared
+    :func:`benchmark.trend._headline_partition`, so the two halves of this gate can never read
+    different partitions. For a ``--generalization`` artifact that is the ``tuned`` partition
+    (whose ``judge_report`` is nested there, never at the top level); for single/multi-repo runs it
+    is the top level.
+
+    A partition that carries no ``judge_report`` (a single-order run, or a degenerate artifact)
+    yields ``None`` — no disagreement signal, so ``no_judge_instability_increase`` passes vacuously,
+    the same posture as a single-order run. An unscored (``scored_repos: 0``) or composite-less
+    partition is separately caught by ``both_scored`` (its ``headline_score`` is ``None``), so the
+    gate never turns on a disagreement rate read from a run whose composite it could not score.
+    """
+    rate = _dict(_headline_partition(artifact).get("judge_report")).get("disagreement_rate")
     return float(rate) if _is_number(rate) else None
 
 

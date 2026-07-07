@@ -27,20 +27,44 @@ def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _headline_partition(artifact) -> dict:
+    """The partition a headline metric is read from.
+
+    A ``--generalization`` artifact nests its scores/stats under ``tuned`` / ``held_out``; its
+    headline partition is ``tuned`` (the primary figure, mirrored by ``held_out`` and the gap).
+    Single- and multi-repo artifacts have no such partitions, so the artifact itself is the source.
+    A non-dict artifact (or one missing a partition) yields ``{}``.
+
+    Every headline reader must select the partition through this one function so they can never
+    disagree — the composite (:func:`headline_score`) and the judge-stability gate
+    (``benchmark.regression._disagreement``) must read the *same* partition, or a gate's two axes
+    could measure different runs.
+
+    A ``--generalization`` artifact is keyed only on ``tuned``/``held_out`` both being dicts (the
+    long-standing :func:`headline_score` behavior), deliberately *not* also requiring a
+    ``generalization_gap`` key as the integrity gates do: adding that guard would change
+    ``headline_score`` for every consumer (``trend``, ``leaderboard``, ``repeatability``, …), and
+    because both axes share this one selector, no divergence can arise from the looser test.
+    """
+    if not isinstance(artifact, dict):
+        return {}
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return artifact
+
+
 def headline_score(artifact) -> float | None:
     """The single comparable score for an artifact, or ``None`` when unavailable.
 
     Single-repo and multi-repo artifacts expose a top-level ``composite_mean``. A
     ``--generalization`` artifact nests scores under ``tuned`` / ``held_out``; its headline is
-    the **tuned** ``composite_mean`` (the primary figure, mirrored by ``held_out`` and the gap).
-    An aggregate run that scored no repos (``scored_repos: 0``) carries a placeholder 0.0 and is
-    treated as unscored. Anything without a numeric score yields ``None``.
+    the **tuned** ``composite_mean`` (the primary figure, mirrored by ``held_out`` and the gap) —
+    selected via :func:`_headline_partition`. An aggregate run that scored no repos
+    (``scored_repos: 0``) carries a placeholder 0.0 and is treated as unscored. Anything without a
+    numeric score yields ``None``.
     """
-    if not isinstance(artifact, dict):
-        return None
-    # A --generalization artifact scores under its tuned partition; anything else at the top level.
-    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
-    source = tuned if isinstance(tuned, dict) and isinstance(held_out, dict) else artifact
+    source = _headline_partition(artifact)
     # An aggregate that scored no repos reports a placeholder composite_mean of 0.0, not a real
     # score. A single-repo artifact has no scored_repos key and keeps its score.
     scored = source.get("scored_repos")

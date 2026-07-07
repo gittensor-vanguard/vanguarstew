@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.trend import (  # noqa: E402
+    _headline_partition,
     _trend_regressions,
     _trend_series,
     headline_score,
@@ -39,6 +40,19 @@ def test_headline_score_reads_top_level_and_generalization_tuned():
     assert headline_score({"error": "no tasks"}) is None                    # no score
     assert headline_score("not a dict") is None                            # non-dict, no crash
     assert headline_score({"composite_mean": "bad"}) is None                # non-numeric
+
+
+def test_headline_partition_selects_the_shared_source():
+    # The one selector every headline reader shares (composite + regression._disagreement), so a
+    # gate's axes can never read different partitions: tuned for generalization, the artifact
+    # itself for single/multi-repo, {} for a non-dict or a partition-incomplete shape.
+    assert _headline_partition(_gen(0.71)) == {"composite_mean": 0.71, "scored_repos": 3}
+    single = {"composite_mean": 0.62, "judge_report": {"disagreement_rate": 0.2}}
+    assert _headline_partition(single) is single                       # single/multi: the artifact
+    assert _headline_partition({"tuned": {"x": 1}, "held_out": "bad"}) == {"tuned": {"x": 1},
+                                                                           "held_out": "bad"}
+    for bad in (None, "x", 42, [1]):
+        assert _headline_partition(bad) == {}
 
 
 def test_headline_score_treats_unscored_tuned_partition_as_unscored():

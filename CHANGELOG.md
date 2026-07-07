@@ -19,6 +19,15 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Benchmark gates (`benchmark/regression.py` / `benchmark/trend.py`): `check_regression`'s
+  `no_judge_instability_increase` check read `judge_report.disagreement_rate` from the artifact's
+  top level, but a `--generalization` artifact nests `judge_report` under `tuned`/`held_out`. So
+  the judge-stability axis passed vacuously for every generalization run while the composite axis
+  correctly gated the `tuned` headline, letting a real judge-instability regression on the M3
+  generalization run slip the gate. Both axes now select the partition through one shared
+  `trend._headline_partition` helper (tuned for generalization, top level otherwise), so a gate's
+  two halves can never read different partitions — a per-partition **gate** read, distinct from
+  the cross-partition *combine* the reporting summarizers use (#1034).
 - Benchmark reporting (`benchmark/order_agree_rate.py`): `summarize_order_agree_rate` read
   only the artifact's top-level `judge_order_stats`, so a `--generalization` artifact (which
   carries stats under `tuned`/`held_out` only) reported `agree_rate: n/a` for every

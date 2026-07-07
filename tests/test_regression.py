@@ -16,6 +16,7 @@ if ROOT not in sys.path:
 from benchmark.regression import (  # noqa: E402
     DEFAULT_MAX_COMPOSITE_DROP,
     _check_rows_list,
+    _disagreement,
     check_regression,
     failed_checks,
     regression_headline,
@@ -81,6 +82,78 @@ def test_regression_compares_generalization_tuned_scores():
     result = check_regression(_gen(0.66), _gen(0.60))
     assert result["baseline_composite"] == 0.60 and result["candidate_composite"] == 0.66
     assert result["passed"] is True
+
+
+# --- a generalization run's judge_report is nested under tuned/held_out, not the top level -----
+# check_regression reads the composite via headline_score (which honors the `tuned` partition), so
+# the judge-instability axis must read disagreement_rate from the SAME partition (both share
+# trend._headline_partition) — otherwise a rising judge instability on the M3 generalization run
+# slips the gate. These cover the tuned/held_out, unscored, no-judge_report, and non-dict shapes.
+
+
+def _gen_jr(tuned_dis, held_dis=None, tuned_scored=3, held_scored=2):
+    def part(dis, scored):
+        p = {"composite_mean": 0.6, "scored_repos": scored}
+        if dis is not None:
+            p["judge_report"] = {"disagreement_rate": dis}
+        return p
+    return {"tuned": part(tuned_dis, tuned_scored),
+            "held_out": part(held_dis if held_dis is not None else tuned_dis, held_scored),
+            "generalization_gap": 0.0}
+
+
+def test_disagreement_reads_the_headline_partition():
+    # Exact-source unit test: tuned for generalization (not held_out), top level otherwise, None
+    # when the selected partition has no judge_report or the artifact is non-dict.
+    assert _disagreement(_gen_jr(0.9, held_dis=0.1)) == 0.9              # tuned, not held_out 0.1
+    assert _disagreement({"judge_report": {"disagreement_rate": 0.3}}) == 0.3   # single/multi top
+    assert _disagreement({"tuned": {"composite_mean": 0.6}, "held_out": {}}) is None  # no tuned jr
+    for bad in (None, "x", 42, [1], {"judge_report": 42}):
+        assert _disagreement(bad) is None
+
+
+def test_generalization_judge_instability_regression_is_blocked():
+    # Composite flat, but the tuned judge disagreement explodes 0.1 -> 0.9 — must BLOCK.
+    result = check_regression(_gen_jr(0.9), _gen_jr(0.1), max_disagreement_increase=0.1)
+    assert result["disagreement_delta"] == 0.8
+    assert result["passed"] is False and "no_judge_instability_increase" in failed_checks(result)
+
+
+def test_generalization_disagreement_read_from_tuned_not_held_out():
+    # A quiet held_out (0.1) must not mask the tuned instability the composite is gated against.
+    result = check_regression(_gen_jr(0.9, held_dis=0.1), _gen_jr(0.1, held_dis=0.1),
+                              max_disagreement_increase=0.1)
+    assert result["disagreement_delta"] == 0.8 and result["passed"] is False
+
+
+def test_generalization_stable_judge_passes():
+    assert check_regression(_gen_jr(0.1), _gen_jr(0.1))["disagreement_delta"] == 0.0
+
+
+def test_generalization_unscored_tuned_partition_is_blocked():
+    # scored_repos: 0 makes headline_score None, so both_scored fails first — the gate never turns
+    # on a disagreement rate read from a run whose composite it could not score.
+    result = check_regression(_gen_jr(0.9, tuned_scored=0), _gen_jr(0.1, tuned_scored=0))
+    assert result["passed"] is False and "both_scored" in failed_checks(result)
+
+
+def test_generalization_without_a_tuned_judge_report_passes_vacuously():
+    # No judge_report in the tuned partition -> no disagreement signal -> the judge-instability
+    # check passes vacuously, the same posture as a single-order run (composite still gated).
+    both = check_regression(_gen_jr(None), _gen_jr(None))
+    assert both["disagreement_delta"] is None
+    trust = next(c for c in both["checks"] if c["name"] == "no_judge_instability_increase")
+    assert trust["passed"] is True
+
+
+def test_multi_repo_judge_instability_still_blocked():
+    # Control: a multi-repo artifact carries a TOP-LEVEL judge_report and was always caught; the
+    # fix must leave the single/multi-repo path unchanged.
+    def multi(composite, disagreement):
+        return {"scored_repos": 2, "composite_mean": composite,
+                "judge_report": {"disagreement_rate": disagreement}}
+    result = check_regression(multi(0.60, 0.9), multi(0.60, 0.1), max_disagreement_increase=0.1)
+    assert result["disagreement_delta"] == 0.8 and result["passed"] is False
 
 
 def test_rising_judge_instability_is_blocked():
