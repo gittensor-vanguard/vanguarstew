@@ -108,8 +108,10 @@ def _check_rows_list(checks) -> list[dict]:
     ``check_component_floors`` always emits well-formed ``{"name", "passed", ...}`` rows, but a
     hand-built or deserialized result can carry anything. ``None`` means the key is absent and an
     empty list means zero checks — both silent. A non-list container (scalar, dict, tuple, string,
-    …) is warned and treated as empty (never coerced/iterated). A non-dict row, or a dict row
-    missing ``name``/``passed``, is skipped with a warning rather than crashing the helper.
+    …) is warned and treated as empty (never coerced/iterated). A usable row is a dict whose
+    ``name`` is a non-empty ``str`` and whose ``passed`` is a ``bool``; anything else is skipped
+    with a warning. Mirrors the sanitizer used by the other gates (``skip_budget`` #839,
+    ``generalization_gate`` #1114, ``improvement`` #1123).
     """
     if checks is None:
         return []
@@ -136,6 +138,21 @@ def _check_rows_list(checks) -> list[dict]:
                 missing,
             )
             continue
+        name = row["name"]
+        if not isinstance(name, str) or not name.strip():
+            logger.warning(
+                "component_floor: checks[%s] name is %s, not a non-empty str; skipping",
+                idx,
+                type(name).__name__,
+            )
+            continue
+        if type(row["passed"]) is not bool:
+            logger.warning(
+                "component_floor: checks[%s] passed is %s, not bool; skipping",
+                idx,
+                type(row["passed"]).__name__,
+            )
+            continue
         rows.append(row)
     if checks and not rows:
         logger.warning(
@@ -149,10 +166,13 @@ def _check_rows_list(checks) -> list[dict]:
 def failed_checks(result: dict) -> list:
     """The names of the checks that failed in a :func:`check_component_floors` result.
 
-    Malformed ``checks`` containers, non-dict rows, and rows missing ``name``/``passed`` are
-    skipped (after logging a warning) rather than raising.
+    Malformed ``checks`` containers and unusable rows (missing keys, wrong types) are skipped
+    after logging a warning; they never raise.
     """
-    return [c["name"] for c in _check_rows_list(_dict(result).get("checks")) if not c.get("passed")]
+    return [
+        c["name"] for c in _check_rows_list(_dict(result).get("checks"))
+        if not c["passed"]
+    ]
 
 
 def component_floor_headline(result: dict) -> str:
