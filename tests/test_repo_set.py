@@ -166,6 +166,58 @@ def test_load_reports_missing_file_and_bad_json(tmp_path):
         load_repo_set(str(bad))
 
 
+def test_load_reports_a_directory_path_as_a_clean_error(tmp_path):
+    # os.path.exists is true for a directory, so a directory path reaches open() and raises
+    # IsADirectoryError — an OSError, but NOT a FileNotFoundError. It must surface as a clean
+    # RepoSetError carrying the real OS text, distinct from "not found" (the path DOES exist)
+    # and "invalid JSON" (it was never read as text) (#1072).
+    sub = tmp_path / "a_dir"
+    sub.mkdir()
+    with pytest.raises(RepoSetError, match="cannot read repo-set config") as exc:
+        load_repo_set(str(sub))
+    assert "not found" not in str(exc.value) and "invalid JSON" not in str(exc.value)
+
+
+def test_load_distinguishes_not_found_directory_and_bad_json(tmp_path):
+    # The three failure modes stay three distinct messages — proving the OSError branch does not
+    # swallow the not-found case (FileNotFoundError is an OSError subclass, caught first).
+    missing = tmp_path / "gone.json"
+    a_dir = tmp_path / "dir"
+    a_dir.mkdir()
+    bad = tmp_path / "bad.json"
+    bad.write_text("{nope", encoding="utf-8")
+    messages = {}
+    for label, path in (("missing", missing), ("dir", a_dir), ("bad", bad)):
+        with pytest.raises(RepoSetError) as exc:
+            load_repo_set(str(path))
+        messages[label] = str(exc.value)
+    assert "not found" in messages["missing"]
+    assert "cannot read repo-set config" in messages["dir"]
+    assert "invalid JSON" in messages["bad"]
+    assert len(set(messages.values())) == 3
+
+
+def test_load_reports_an_unreadable_file_as_a_clean_error(tmp_path):
+    # A file that exists but is unreadable (permission denied) also reaches open(); its OSError
+    # is wrapped in RepoSetError like every other load failure.
+    import os
+    import stat
+
+    locked = tmp_path / "locked.json"
+    locked.write_text('{"repos": []}', encoding="utf-8")
+    locked.chmod(0)
+    if os.access(str(locked), os.R_OK):
+        # Running as root (or a filesystem that ignores mode bits): the read isn't actually
+        # blocked, so there is nothing to assert. Restore and skip.
+        locked.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        pytest.skip("cannot make a file unreadable in this environment (running as root?)")
+    try:
+        with pytest.raises(RepoSetError, match="cannot read repo-set config"):
+            load_repo_set(str(locked))
+    finally:
+        locked.chmod(stat.S_IRUSR | stat.S_IWUSR)  # let tmp_path cleanup remove it
+
+
 def test_example_json_is_parseable_directly():
     # sanity: the shipped file is literally valid JSON
     with open(EXAMPLE_REPO_SET, "r", encoding="utf-8") as f:

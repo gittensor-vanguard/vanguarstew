@@ -245,4 +245,14 @@ def load_repo_set(path) -> RepoSet:
             data = json.load(f)
     except json.JSONDecodeError as exc:
         raise RepoSetError(f"invalid JSON in {path}: {exc}") from exc
+    except FileNotFoundError as exc:
+        # FileNotFoundError is an OSError subclass, so it must be caught before the general
+        # OSError branch below to keep the "not found" wording (the file was removed between
+        # the exists() check and open() — a TOCTOU race) distinct from the unreadable case.
+        raise RepoSetError(f"repo-set config not found: {path}") from exc
+    except OSError as exc:
+        # os.path.exists is true for a directory, and a file can exist but be unreadable
+        # (permission denied), so open() can still raise IsADirectoryError/PermissionError.
+        # Wrap it as RepoSetError so every caller gets a clean error, not a raw traceback.
+        raise RepoSetError(f"cannot read repo-set config {path}: {exc}") from exc
     return validate_repo_set(data)
