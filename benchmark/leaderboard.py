@@ -65,6 +65,26 @@ def _leaderboard_entries(entries) -> list:
     return []
 
 
+def _leaderboard_point(entry, index=None):
+    """Return a ``(label, artifact)`` pair from an entry, or ``None`` to skip it.
+
+    Entries come from the same malformed CLI / saved-artifact input the container guard covers
+    (#532). A non-pair entry — not a list/tuple, or the wrong length (including a ``bytes`` value,
+    which is not a ``(label, artifact)`` pair even though it is iterable) — is skipped rather than
+    crashing the ``label, artifact`` unpacking. The warning names the offending index and its
+    actual content so a bad saved leaderboard can be pinpointed, matching how the module already
+    logs a non-list ``entries`` / ``unscored``.
+    """
+    if isinstance(entry, (list, tuple)) and len(entry) == 2:
+        return entry[0], entry[1]
+    where = f"entries[{index}]" if index is not None else "a leaderboard entry"
+    logger.warning(
+        "leaderboard: %s is not a (label, artifact) pair (%s: %s); skipping",
+        where, type(entry).__name__, repr(entry)[:120],
+    )
+    return None
+
+
 def rank(entries) -> dict:
     """Rank an iterable of ``(label, artifact)`` by headline composite score, best first.
 
@@ -80,7 +100,11 @@ def rank(entries) -> dict:
     """
     scored = []       # (index, label, score, components) — index keeps ties in input order
     unscored = []
-    for index, (label, artifact) in enumerate(_leaderboard_entries(entries)):
+    for index, entry in enumerate(_leaderboard_entries(entries)):
+        pair = _leaderboard_point(entry, index)
+        if pair is None:
+            continue
+        label, artifact = pair
         score = headline_score(artifact)
         if score is None:
             unscored.append(label)
