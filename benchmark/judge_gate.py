@@ -7,7 +7,11 @@ of tasks, the win/loss record (and the ``judge_mean`` half of the composite) is 
 ``run_eval`` reports the judge stats, but whether they clear the bar is decided by eye.
 
 This makes that a reproducible **pass/fail gate**. ``check_judge(result)`` evaluates a
-single- or multi-repo run against named criteria:
+single- or multi-repo run against named criteria. A ``run_generalization_report`` nests its judge
+telemetry under ``tuned``/``held_out`` with none at the top level; it is evaluated on its **tuned**
+partition (the headline figure, mirroring ``benchmark.trend.headline_score`` and
+``check_promotion``), so a generalization run is judged on its merits instead of failing every
+check vacuously. The criteria:
 
 1. ``dual_order_judging`` - the run judged both presentation orders, the mode that yields a
    consistency signal at all. A single-repo run states this directly in its top-level
@@ -147,6 +151,21 @@ def _dual_order_tasks(result: dict):
     return None
 
 
+def _judge_source(result: dict) -> dict:
+    """The partition whose judge telemetry the gate evaluates.
+
+    A ``run_generalization_report`` artifact nests every scored field under ``tuned`` and
+    ``held_out`` and carries no top-level ``judge_report`` / ``judge_order_stats`` /
+    ``judge_dual_order``; its headline is the **tuned** partition (the primary figure, mirroring
+    ``benchmark.trend.headline_score`` and ``check_promotion``'s ``_promotion_source``). Every
+    other artifact is evaluated at the top level.
+    """
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return result
+
+
 def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
                 min_dual_order_tasks: int = DEFAULT_MIN_DUAL_ORDER_TASKS) -> dict:
     """Evaluate a run ``result``'s judge robustness against the criteria.
@@ -157,11 +176,17 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     status the gate acted on: the authoritative top-level ``judge_dual_order`` flag when the run
     reports it, otherwise the value derived from the aggregate dual-order task count for a
     multi-repo run (``False`` when neither is available).
+
+    A ``run_generalization_report`` artifact (judge telemetry nested under ``tuned``/``held_out``,
+    none at the top level) is evaluated on its ``tuned`` partition via :func:`_judge_source`, so a
+    dual-order-judged generalization run is judged on its merits instead of failing every check
+    vacuously; every other artifact is evaluated at the top level.
     """
     result = _dict(result)
-    dual_order = result.get("judge_dual_order")
-    dual_tasks = _dual_order_tasks(result)
-    disagreement = _dict(result.get("judge_report")).get("disagreement_rate")
+    source = _judge_source(result)
+    dual_order = source.get("judge_dual_order")
+    dual_tasks = _dual_order_tasks(source)
+    disagreement = _dict(source.get("judge_report")).get("disagreement_rate")
     checks = []
 
     def add(name, passed, detail):

@@ -127,6 +127,70 @@ def test_multi_repo_with_no_report_or_stats_blocks_fails_closed():
         assert "dual_order_judging" in failed_checks(result)
 
 
+# --- generalization reports nest judge telemetry under tuned/held_out ---------------------
+# A run_generalization_report carries no top-level judge_report/judge_order_stats/judge_dual_order;
+# both live per-partition. The gate reads its tuned partition (the headline, mirroring
+# check_promotion's _promotion_source), so a dual-order-judged generalization run is not vacuously
+# marked SHAKY.
+
+
+def _partition(disagreement=0.1, dual_tasks=6):
+    # A partition is a run_multi_replay result: judge telemetry at its own top level, no flag.
+    return {"scored_repos": 2, "composite_mean": 0.7,
+            "judge_report": {"disagreement_rate": disagreement, "dual_order_tasks": dual_tasks},
+            "judge_order_stats": {"dual_order_tasks": dual_tasks}}
+
+
+def _generalization(tuned=None, held_out=None):
+    return {"repo_set": "curated", "tuned": tuned if tuned is not None else _partition(),
+            "held_out": held_out if held_out is not None else _partition(),
+            "generalization_gap": 0.04}
+
+
+def test_generalization_run_is_evaluated_on_its_tuned_partition():
+    # Dual-order judged with low disagreement in the tuned partition -> ROBUST, not vacuous SHAKY.
+    result = check_judge(_generalization())
+    assert result["passed"] is True
+    assert result["dual_order"] is True and result["dual_order_tasks"] == 6
+    assert result["disagreement_rate"] == 0.1
+
+
+def test_generalization_run_with_shaky_tuned_partition_fails():
+    # The tuned partition's disagreement is over tolerance -> the run is SHAKY on its merits.
+    result = check_judge(_generalization(tuned=_partition(disagreement=0.6)), max_disagreement=0.3)
+    assert result["passed"] is False
+    assert failed_checks(result) == ["low_disagreement"]
+    assert result["disagreement_rate"] == 0.6
+
+
+def test_generalization_tuned_partition_drives_the_verdict_not_held_out():
+    # A robust tuned partition passes even if held_out looks worse: tuned is the headline.
+    result = check_judge(_generalization(tuned=_partition(disagreement=0.05, dual_tasks=8),
+                                         held_out=_partition(disagreement=0.9, dual_tasks=8)))
+    assert result["passed"] is True and result["dual_order_tasks"] == 8
+
+
+def test_generalization_single_order_tuned_partition_fails_closed():
+    # Tuned partition has zero pooled dual-order tasks -> not dual-order judged; fail closed.
+    result = check_judge(_generalization(tuned=_partition(dual_tasks=0)))
+    assert result["dual_order"] is False
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_only_one_partition_is_not_treated_as_a_generalization_report():
+    # tuned without held_out (or vice versa) is not the generalization shape; read top level.
+    result = check_judge({"tuned": _partition(), "judge_dual_order": True,
+                          "judge_report": {"disagreement_rate": 0.1, "dual_order_tasks": 5}})
+    assert result["dual_order_tasks"] == 5 and result["passed"] is True
+
+
+def test_generalization_with_non_dict_partition_is_ignored():
+    # A malformed tuned/held_out (not both dicts) falls back to top-level evaluation, no crash.
+    result = check_judge({"tuned": "oops", "held_out": _partition()})
+    assert result["passed"] is False
+    assert result["dual_order"] is False and result["dual_order_tasks"] is None
+
+
 def test_disagreement_bound_is_inclusive():
     assert check_judge(_result(disagreement=0.3), max_disagreement=0.3)["passed"] is True
     assert check_judge(_result(disagreement=0.31), max_disagreement=0.3)["passed"] is False
