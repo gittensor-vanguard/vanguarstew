@@ -645,3 +645,20 @@ def test_significant_tokens_handles_non_string():
     assert _significant_tokens(None) == set()
     assert _significant_tokens(42) == set()
     assert isinstance(_significant_tokens(["list"]), set)
+
+
+def test_review_verb_governs_number_across_an_action_verb():
+    # "Merge and land #7" / "Review then ship #7": a follow-through action verb between the review
+    # verb and #N still means the item addresses that PR, so it isn't duplicated (regression for
+    # #1000). A bare action verb (no review verb) and a review word in a feature description with an
+    # ordinal (comma-separated) must still NOT be treated as PR references.
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    assert _matched_pr({"title": "Merge and land #7"}, prs) == prs[0]
+    assert _matched_pr({"title": "Review then ship #7"}, prs) == prs[0]
+    assert _matched_pr({"title": "Land #7 quickly"}, prs) is None
+    assert _matched_pr({"title": "improve the code review workflow, #7 on the roadmap"}, prs) is None
+
+    # The plan no longer carries a duplicate "Review pull request #7" item beside the real one.
+    out = reconcile_plan_with_queue([{"title": "Merge and land #7", "kind": "triage"}],
+                                    {"open_prs": prs}, 5)
+    assert [o["title"] for o in out] == ["Merge and land #7"]

@@ -32,13 +32,17 @@ _REVIEW_MARKER_RE = re.compile(
     re.I,
 )
 # A bare "#N" denotes a pull request only when a review verb *governs* it — the verb is
-# directly followed by the number, allowing only connective words in between ("Review #7",
-# "Merge and land #7", "Review the PR #7"). A review word that merely appears elsewhere in a
-# feature description ("improve the code review workflow, #2 on the roadmap") does not qualify:
-# there the "#2" is a roadmap ordinal, not a reference to PR #2.
+# directly followed by the number, allowing only connective words and follow-through action verbs
+# in between ("Review #7", "Merge and land #7", "Review then ship #7", "Review the PR #7"). A review
+# word that merely appears elsewhere in a feature description ("improve the code review workflow, #2
+# on the roadmap") does not qualify: there "workflow" is a noun (not a connective or action verb) so
+# the run stops before "#2", leaving it a roadmap ordinal, not a reference to PR #2.
 _REVIEW_REF_RE = re.compile(
     r"\b(?:review|reviewing|reviewed|merge|merging|merged|approve|approving|approved)\b"
-    r"(?:\s+(?:and|or|then|the|a|an|this|that|it|pr|pull|request|changes))*"
+    r"(?:\s+(?:and|or|then|the|a|an|this|that|it|pr|pull|request|changes"
+    r"|land|landed|ship|shipped|finish|finished|complete|completed|finalize|finalized"
+    r"|close|closed|deliver|delivered|do|done|handle|handled|address|addressed"
+    r"|resolve|resolved|get|wrap|submit|submitted|apply|applied|integrate|integrated))*"
     r"\s+#?\s*\d+\b",
     re.I,
 )
