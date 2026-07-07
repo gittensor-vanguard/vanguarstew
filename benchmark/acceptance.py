@@ -13,7 +13,8 @@ The criteria (each a named, independently-reported check):
 
 1. ``is_generalization`` - the artifact is a generalization report (``tuned``/``held_out``
    partitions plus a ``generalization_gap``);
-2. ``no_partition_error`` - neither partition carries an ``error`` (the run completed clean);
+2. ``no_partition_error`` - neither partition carries an ``error`` — a whole-partition ``error``
+   *or* a per-repo row that failed to clone/freeze (the run completed clean);
 3. ``both_partitions_scored`` - each partition scored at least ``min_scored_repos`` repos, so
    the gap contrasts two real measurements;
 4. ``gap_computed`` - ``generalization_gap`` is a number (it is ``None`` unless both partitions
@@ -41,6 +42,29 @@ def _is_number(value) -> bool:
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+def _partition_error(partition) -> object | None:
+    """The first error a partition carries, or ``None`` when it completed clean.
+
+    A whole-partition failure (e.g. a ``RepoSetError`` — no repos to replay) surfaces as a
+    top-level ``error``. But a single repo that failed to clone or freeze does **not** abort the
+    batch: ``run_multi_replay`` records it inside ``per_repo[i]`` as ``{"error": ..., "tasks": 0}``
+    and counts it in ``skipped``. So a partition's per-repo rows must be scanned too, mirroring
+    :func:`benchmark.artifact_snapshot._has_error` — the canonical helper the rest of the project
+    already uses to decide a run "did not complete clean". Reading only the top-level ``error``
+    would let the acceptance gate sign off a run in which a repo errored.
+    """
+    if not isinstance(partition, dict):
+        return None
+    if partition.get("error"):
+        return partition["error"]
+    per_repo = partition.get("per_repo")
+    if isinstance(per_repo, list):
+        for row in per_repo:
+            if isinstance(row, dict) and row.get("error"):
+                return row["error"]
+    return None
 
 
 _CHECK_ROW_KEYS = ("name", "passed")
@@ -129,8 +153,8 @@ def check_acceptance(report, max_gap: float = DEFAULT_MAX_GAP,
         "tuned/held_out partitions and a generalization_gap are present"
         if is_gen else "not a --generalization artifact (missing tuned/held_out/gap)")
 
-    tuned_err, held_err = tuned.get("error"), held_out.get("error")
-    no_error = not tuned_err and not held_err
+    tuned_err, held_err = _partition_error(tuned), _partition_error(held_out)
+    no_error = tuned_err is None and held_err is None
     add("no_partition_error", no_error,
         "both partitions completed without error" if no_error
         else f"partition error(s): tuned={tuned_err!r}, held_out={held_err!r}")
