@@ -468,8 +468,16 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     stub = _offline_plan_stub(context, n)
     plan = llm.chat_json(SYSTEM, user, stub=stub)
     if isinstance(plan, dict):  # tolerate {"plan": [...]}
-        wrapped = _plan_list(plan.get("plan"), "plan")
-        plan = wrapped or _plan_list(plan.get("actions"), "actions")
+        raw_plan = plan.get("plan")
+        # An explicit "plan" key — even an empty list — must be honored and
+        # not silently replaced by a stale "actions" fallback (#1011).  A
+        # non-list "plan" still gets the existing warning + fallback path.
+        if isinstance(raw_plan, list):
+            plan = raw_plan
+        elif "plan" in plan:
+            plan = _plan_list(raw_plan, "plan") or _plan_list(plan.get("actions"), "actions")
+        else:
+            plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
     return reconcile_plan_with_queue(plan, context, n)
 

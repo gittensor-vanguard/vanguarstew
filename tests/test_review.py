@@ -254,3 +254,31 @@ def test_review_pr_handles_non_dict_pr():
     assert result["action"] == "comment"
     result2 = review_pr(None, {}, llm)
     assert result2["action"] == "comment"
+
+
+class _CaptureUserLLM:
+    def __init__(self):
+        from agent.llm import LLM
+        self._llm = LLM(api_key="offline")
+        self.last_user = None
+
+    def __getattr__(self, name):
+        return getattr(self._llm, name)
+
+    def chat_json(self, system, user, stub=None):
+        self.last_user = user
+        return stub
+
+
+def test_review_pr_includes_empty_dict_philosophy():
+    pr = {"number": 1, "title": "Fix", "files": []}
+    llm = _CaptureUserLLM()
+    review_pr(pr, {}, llm)
+    assert "Repository philosophy" in llm.last_user
+
+
+def test_review_pr_omits_none_philosophy():
+    pr = {"number": 1, "title": "Fix", "files": []}
+    llm = _CaptureUserLLM()
+    review_pr(pr, None, llm)
+    assert "Repository philosophy" not in llm.last_user

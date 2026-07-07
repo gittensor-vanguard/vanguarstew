@@ -641,6 +641,18 @@ def test_plan_next_actions_warns_for_dict_wrapped_non_list_plan(caplog):
     assert any("actions is int" in r.message for r in caplog.records)
 
 
+def test_plan_next_actions_honors_explicit_empty_plan():
+    from agent.llm import LLM
+
+    class EmptyPlanLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return {"plan": [], "actions": [{"title": "stale", "kind": "bugfix",
+                    "rationale": "x", "theme": "y"}]}
+
+    result = plan_next_actions({"open_prs": []}, {}, 3, EmptyPlanLLM(api_key="offline"))
+    assert result == [], f"empty plan must be honored, got {result}"
+
+
 def test_significant_tokens_handles_non_string():
     assert _significant_tokens(None) == set()
     assert _significant_tokens(42) == set()
