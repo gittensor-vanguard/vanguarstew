@@ -22,9 +22,15 @@ the relevant checks rather than raising.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_MIN_COMPOSITE = 0.5
 DEFAULT_MIN_JUDGE = 0.4
 DEFAULT_MIN_OBJECTIVE = 0.4
+
+_CHECK_ROW_KEYS = ("name", "passed")
 
 
 def _is_number(value) -> bool:
@@ -96,15 +102,67 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     }
 
 
+def _check_rows_list(checks) -> list[dict]:
+    """Return usable component-floor check rows for the headline / failed_checks helpers.
+
+    ``check_component_floors`` always emits well-formed ``{"name", "passed", ...}`` rows, but a
+    hand-built or deserialized result can carry anything. ``None`` means the key is absent and an
+    empty list means zero checks — both silent. A non-list container (scalar, dict, tuple, string,
+    …) is warned and treated as empty (never coerced/iterated). A non-dict row, or a dict row
+    missing ``name``/``passed``, is skipped with a warning rather than crashing the helper.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
+        logger.warning(
+            "component_floor: checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "component_floor: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "component_floor: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "component_floor: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
+
+
 def failed_checks(result: dict) -> list:
-    """The names of the checks that failed in a :func:`check_component_floors` result."""
-    return [c["name"] for c in _dict(result).get("checks", []) if not c.get("passed")]
+    """The names of the checks that failed in a :func:`check_component_floors` result.
+
+    Malformed ``checks`` containers, non-dict rows, and rows missing ``name``/``passed`` are
+    skipped (after logging a warning) rather than raising.
+    """
+    return [c["name"] for c in _check_rows_list(_dict(result).get("checks")) if not c.get("passed")]
 
 
 def component_floor_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_component_floors` result."""
+    """A one-line human summary of a :func:`check_component_floors` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"component floors: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = result.get("checks") or []
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "component floors: no checks evaluated"
     if result.get("passed"):
