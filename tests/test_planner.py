@@ -519,6 +519,25 @@ def test_qualified_reference_wins_over_an_earlier_bare_ordinal():
     assert out[0]["restates_pr"] == 7
 
 
+def test_review_governed_bare_number_beats_leading_ordinal():
+    prs = [{"number": 1, "title": "Add dark mode"}, {"number": 7, "title": "Add streaming export"}]
+    ordinal_first = {"title": "Deliver our #1 priority, then review #7", "kind": "triage"}
+    assert _matched_pr(ordinal_first, prs)["number"] == 7
+
+    review_first = {"title": "Review #7, our #1 priority", "kind": "triage"}
+    assert _matched_pr(review_first, prs)["number"] == 7
+
+    stale = {"title": "Deliver our #1 priority, then review #9", "kind": "triage"}
+    assert _matched_pr(stale, prs) is None
+
+
+def test_review_governed_number_reconciles_the_right_pr():
+    prs = [{"number": 1, "title": "Add dark mode"}, {"number": 7, "title": "Add streaming export"}]
+    item = {"title": "Deliver our #1 priority, then review #7", "kind": "triage"}
+    out = reconcile_plan_with_queue([item], {"open_prs": prs}, 5)
+    assert [o["title"] for o in out] == [item["title"]]
+
+
 # --- #426: a non-list open_prs queue must not abort planner reconciliation ---------------
 
 _MALFORMED_OPEN_PRS = [42, 3.14, True, {"number": 1, "title": "Fix bug"}, "not a list"]

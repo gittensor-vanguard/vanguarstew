@@ -43,7 +43,7 @@ _REVIEW_REF_RE = re.compile(
     r"|land|landed|ship|shipped|finish|finished|complete|completed|finalize|finalized"
     r"|close|closed|deliver|delivered|do|done|handle|handled|address|addressed"
     r"|resolve|resolved|get|wrap|submit|submitted|apply|applied|integrate|integrated))*"
-    r"\s+#?\s*\d+\b",
+    r"\s+#?\s*(\d+)\b",
     re.I,
 )
 # Explicit PR references: "#7", "PR #7", "pull request 7"
@@ -217,6 +217,18 @@ def _reads_as_pr_reference(item: dict) -> bool:
     return bool(_REVIEW_REF_RE.search(blob))
 
 
+def _review_governed_pr_number(item: dict) -> int | None:
+    """The bare ``#N`` a review verb governs in the item text, or ``None`` when none."""
+    blob = f"{item.get('title', '')} {item.get('rationale', '')}"
+    match = _REVIEW_REF_RE.search(blob)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
 def _title_contains_pr_subject(item: dict, pr: dict) -> bool:
     """True when the plan item quotes the PR's subject as a phrase (not a lone token)."""
     subject = _pr_title(pr).lower()
@@ -259,7 +271,15 @@ def _matched_pr(item: dict, prs: list):
 
     ref, qualified = _pr_reference(item.get("title", ""), item.get("rationale", ""))
     if ref is not None:
-        pr = by_number.get(ref)
+        lookup = ref
+        # A review verb may govern a *later* bare "#N" while an earlier "#N" is an ordinal
+        # ("Deliver our #1 priority, then review #7") — resolve the governed number, not the
+        # first bare match from ``_pr_reference``.
+        if not qualified and _reads_as_pr_reference(item):
+            governed = _review_governed_pr_number(item)
+            if governed is not None:
+                lookup = governed
+        pr = by_number.get(lookup)
         # A qualified "PR #N" is authoritative (even when stale -> None, which suppresses
         # fallback matching). A bare "#N" is trusted only when the item actually reads as a PR
         # reference or its content matches the PR; otherwise "#N" is an ordinal ("the #1
