@@ -28,6 +28,15 @@ def load_artifact(path: str) -> dict:
     except FileNotFoundError:
         print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
+    except OSError as exc:
+        # A directory path or an unreadable file reaches open() and raises OSError; wrap it so
+        # callers get a clean message, distinct from "not found" (#1073).
+        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except UnicodeDecodeError as exc:
+        # A non-UTF-8 file raises UnicodeDecodeError (a ValueError, not an OSError) mid-read.
+        print(f"artifact is not valid UTF-8 JSON ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     except json.JSONDecodeError as exc:
         print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None

@@ -1,9 +1,13 @@
 """Tests for the sample-adequacy gate (deterministic, offline)."""
 
 import copy
+import json
 import logging
 import os
+import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -16,6 +20,7 @@ from benchmark.sample_adequacy import (  # noqa: E402
     failed_checks,
     sample_adequacy_headline,
 )
+from scripts.sample_adequacy import load_artifact  # noqa: E402
 
 
 def _run(tasks, challenger=None, baseline=None, tie=None):
@@ -345,3 +350,62 @@ def test_check_sample_adequacy_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_sample_adequacy(run)
     assert run == snapshot
+
+
+# --- load_artifact error handling (#1073) ---------------------------------------------------
+
+
+def _write(tmp_path, name, text):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def test_load_artifact_reports_directory_path(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(tmp_path))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err
+    assert "not found" not in err
+
+
+def test_load_artifact_distinguishes_missing_unreadable_and_bad_json(tmp_path, capsys):
+    missing = tmp_path / "gone.json"
+    a_dir = tmp_path / "dir"
+    a_dir.mkdir()
+    bad = tmp_path / "bad.json"
+    bad.write_text("{nope", encoding="utf-8")
+    messages = {}
+    for label, path in (("missing", missing), ("dir", a_dir), ("bad", bad)):
+        with pytest.raises(SystemExit) as exc:
+            load_artifact(str(path))
+        assert exc.value.code == 2
+        messages[label] = capsys.readouterr().err
+    assert "not found" in messages["missing"]
+    assert "cannot read artifact" in messages["dir"]
+    assert "not valid JSON" in messages["bad"]
+    assert len(set(messages.values())) == 3
+
+
+def test_load_artifact_non_utf8_file(tmp_path, capsys):
+    path = tmp_path / "latin1.json"
+    path.write_bytes(b'{"tasks": \xff}')
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(path))
+    assert exc.value.code == 2
+    assert "not valid UTF-8 JSON" in capsys.readouterr().err
+
+
+def test_load_artifact_success(tmp_path):
+    path = _write(tmp_path, "ok.json", json.dumps({"tasks": 5, "tally": {"challenger": 3, "baseline": 2, "tie": 0}}))
+    assert load_artifact(path)["tasks"] == 5
+
+
+def test_module_main_no_arg_exits_nonzero():
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.sample_adequacy"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert "run" in proc.stderr.lower()
