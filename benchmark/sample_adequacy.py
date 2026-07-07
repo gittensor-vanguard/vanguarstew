@@ -119,17 +119,51 @@ def _total_tasks(result: dict):
     return total
 
 
+def _entry_decided(entry: dict):
+    """Tasks a per-repo entry's tally decides.
+
+    The challenger/baseline/tie sum when the entry carries a numeric tally; ``0`` for a skipped
+    (zero-task) repo that carries no tally and decides nothing; None when a *scored* entry's tally
+    is missing or malformed (so the caller fails closed instead of under-counting).
+    """
+    tally = entry.get("tally")
+    if not isinstance(tally, dict):
+        tasks = entry.get("tasks")
+        return 0 if (_is_number(tasks) and tasks == 0) else None
+    counts = [tally.get(k) for k in ("challenger", "baseline", "tie")]
+    return sum(counts) if all(_is_number(c) for c in counts) else None
+
+
 def _decided(result: dict):
     """The number of tasks the tally decides, or None when there is no complete tally.
 
-    Requires the challenger/baseline/tie tally to be present with all three numeric keys; a missing
-    tally or a missing key returns None (which fails ``all_tasks_decided``).
+    Single-repo runs report a top-level challenger/baseline/tie ``tally``. Multi-repo /
+    generalization runs report no top-level tally — the per-task tally lives under each
+    ``per_repo`` entry (``run_multi_replay``) — so sum those exactly as :func:`_total_tasks` sums
+    the per-repo task counts, over the same (mutually exclusive) :func:`_partition_entries`. A
+    skipped zero-task repo decides nothing; a *scored* entry whose tally is missing or malformed,
+    or a missing key anywhere, returns None (which fails ``all_tasks_decided``) rather than
+    silently under-counting the decided total.
     """
-    if not isinstance(result.get("tally"), dict):
+    top = result.get("tally")
+    if isinstance(top, dict):
+        counts = [top.get(k) for k in ("challenger", "baseline", "tie")]
+        return sum(counts) if all(_is_number(c) for c in counts) else None
+    per_repo_lists = _partition_entries(result)
+    if not per_repo_lists:
         return None
-    tally = result["tally"]
-    counts = [tally.get(k) for k in ("challenger", "baseline", "tie")]
-    return sum(counts) if all(_is_number(c) for c in counts) else None
+    total = 0
+    for per_repo in per_repo_lists:
+        if not isinstance(per_repo, list) or not per_repo:
+            return None
+        for entry in per_repo:
+            if not isinstance(entry, dict):
+                return None
+            decided = _entry_decided(entry)
+            if decided is None:
+                return None
+            total += decided
+    return total
 
 
 def check_sample_adequacy(result, min_tasks: int = DEFAULT_MIN_TASKS) -> dict:

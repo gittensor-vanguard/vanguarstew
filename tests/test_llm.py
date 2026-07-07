@@ -1,12 +1,9 @@
-"""Tests for the managed-inference client (agent/llm.py). Run:
-
-    VANGUARSTEW_OFFLINE=1 python -m pytest tests/test_llm.py -q
-"""
+"""Unit tests for agent/llm.py — managed-inference client and offline stub."""
 
 import json
 import os
 import sys
-import urllib.request
+from unittest import mock
 
 import pytest
 
@@ -16,14 +13,42 @@ if ROOT not in sys.path:
 
 from agent.llm import LLM  # noqa: E402
 
-# ---- Construction ---------------------------------------------------------
+
+class _FakeResp:
+    def __init__(self, body: str):
+        self._body = body.encode("utf-8")
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
 
 
-def test_constructs_with_stub_params():
-    llm = LLM(api_base="https://api.example.com", api_key="sk-test", model="gpt-4")
-    assert llm.model == "gpt-4"
-    assert llm.api_base == "https://api.example.com"
-    assert llm.api_key == "sk-test"
+def _online(monkeypatch):
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+    assert llm.offline is False
+    return llm
+
+
+# ---- Construction -----------------------------------------------------------
+
+
+def test_llm_constructs_with_managed_inference_params(monkeypatch):
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(
+        api_base="https://stub.example",
+        api_key="stub-key",
+        model="stub-model",
+    )
+    assert llm.model == "stub-model"
+    assert llm.api_base == "https://stub.example"
+    assert llm.api_key == "stub-key"
+    assert llm.offline is False
 
 
 def test_constructs_defaults_when_no_args():
@@ -33,19 +58,14 @@ def test_constructs_defaults_when_no_args():
     assert llm.api_key is None
 
 
-# ---- Offline mode ---------------------------------------------------------
+# ---- Offline mode -----------------------------------------------------------
 
 
-def test_offline_mode_deterministic_stub(monkeypatch):
-    monkeypatch.setenv("VANGUARSTEW_OFFLINE", "1")
-    llm = LLM(api_base="https://api.example.com", api_key="k")
-    raw = llm.chat("system prompt", "user message")
-    assert json.loads(raw) == {"_offline": True}
-
-
-def test_offline_when_api_key_is_offline_literal():
-    llm = LLM(api_base="https://api.example.com", api_key="offline")
-    assert llm.offline is True
+def test_offline_chat_returns_deterministic_stub():
+    llm = LLM(api_key="offline")
+    first = llm.chat("system prompt", "user prompt")
+    second = llm.chat("other system", "other user")
+    assert first == second == json.dumps({"_offline": True})
 
 
 def test_offline_when_no_api_base():
@@ -53,115 +73,113 @@ def test_offline_when_no_api_base():
     assert LLM(api_base="").offline is True
 
 
-# ---- Timeout --------------------------------------------------------------
+# ---- Timeout ----------------------------------------------------------------
 
 
 def test_timeout_defaults_to_120():
-    llm = LLM()
-    assert llm.timeout == 120.0
+    assert LLM().timeout == 120.0
 
 
 def test_timeout_from_constructor():
-    llm = LLM(timeout=30)
-    assert llm.timeout == 30.0
+    assert LLM(timeout=30).timeout == 30.0
 
 
 def test_timeout_from_env(monkeypatch):
     monkeypatch.setenv("TAU_AGENT_TIMEOUT_SECONDS", "45")
-    llm = LLM()
-    assert llm.timeout == 45.0
+    assert LLM().timeout == 45.0
 
 
 def test_timeout_constructor_overrides_env(monkeypatch):
     monkeypatch.setenv("TAU_AGENT_TIMEOUT_SECONDS", "45")
-    llm = LLM(timeout=10)
-    assert llm.timeout == 10.0
+    assert LLM(timeout=10).timeout == 10.0
 
 
-def test_timeout_is_passed_to_urlopen(monkeypatch):
+def test_chat_passes_timeout_to_urlopen(monkeypatch):
     monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
-    llm = LLM(model="m", api_base="https://api.example.com", api_key="k", timeout=7)
-    assert llm.offline is False
+    monkeypatch.delenv("TAU_AGENT_TIMEOUT_SECONDS", raising=False)
 
-    called_with = {}
+    captured = {}
 
     def fake_urlopen(req, timeout=None):
-        called_with["timeout"] = timeout
-        raise ConnectionError("stop before reading body")
+        captured["timeout"] = timeout
+        return _FakeResp('{"choices": [{"message": {"content": "ok"}}]}')
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-    with pytest.raises(ConnectionError):
-        llm.chat("system", "user")
-    assert called_with["timeout"] == 7
-
-
-# ---- Response validation (mocked HTTP) -----------------------------------
-
-
-class _FakeResp:
-    def __init__(self, body):
-        self._b = body.encode("utf-8")
-
-    def read(self):
-        return self._b
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    llm = LLM(
+        model="m",
+        api_base="https://api.example.com",
+        api_key="secret",
+        timeout=42.5,
+    )
+    assert llm.chat("system", "user") == "ok"
+    assert captured["timeout"] == 42.5
 
 
-def _online_llm(monkeypatch, body, timeout=None):
+# ---- Response validation (mocked HTTP) --------------------------------------
+
+
+def test_chat_returns_content_from_valid_http_200_envelope(monkeypatch):
     monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
-    llm = LLM(model="m", api_base="https://api.example.com", api_key="k", timeout=timeout)
-    assert llm.offline is False
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _FakeResp(body))
-    return llm
-
-
-def test_chat_returns_content_from_valid_envelope(monkeypatch):
-    body = '{"choices": [{"message": {"content": "merge this PR"}}]}'
-    assert _online_llm(monkeypatch, body).chat("s", "u") == "merge this PR"
+    body = '{"choices": [{"message": {"content": "hello from model"}}]}'
+    with mock.patch(
+        "urllib.request.urlopen",
+        return_value=_FakeResp(body),
+    ) as urlopen_mock:
+        llm = LLM(
+            model="m",
+            api_base="https://api.example.com",
+            api_key="secret",
+        )
+        assert llm.offline is False
+        assert llm.chat("system", "user") == "hello from model"
+        urlopen_mock.assert_called_once()
+        _, kwargs = urlopen_mock.call_args
+        assert kwargs["timeout"] == llm.timeout
 
 
 def test_chat_raises_valueerror_on_http200_error_object(monkeypatch):
     body = '{"error": {"message": "model overloaded", "type": "server_error"}}'
-    with pytest.raises(ValueError, match="unexpected chat-completion response envelope"):
-        _online_llm(monkeypatch, body).chat("s", "u")
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp(body)):
+        with pytest.raises(ValueError, match="unexpected chat-completion response envelope"):
+            _online(monkeypatch).chat("s", "u")
 
 
 def test_chat_raises_valueerror_on_empty_object(monkeypatch):
-    with pytest.raises(ValueError, match="unexpected chat-completion response envelope"):
-        _online_llm(monkeypatch, "{}").chat("s", "u")
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp("{}")):
+        with pytest.raises(ValueError, match="unexpected chat-completion response envelope"):
+            _online(monkeypatch).chat("s", "u")
 
 
 def test_chat_raises_valueerror_on_bare_array(monkeypatch):
-    with pytest.raises(ValueError, match="unexpected chat-completion response envelope"):
-        _online_llm(monkeypatch, "[]").chat("s", "u")
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp("[]")):
+        with pytest.raises(ValueError, match="unexpected chat-completion response envelope"):
+            _online(monkeypatch).chat("s", "u")
 
 
 def test_chat_raises_on_non_json_response_body(monkeypatch):
-    with pytest.raises(json.JSONDecodeError):
-        _online_llm(monkeypatch, "not json at all").chat("s", "u")
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp("not json at all")):
+        with pytest.raises(json.JSONDecodeError):
+            _online(monkeypatch).chat("s", "u")
 
 
-# ---- chat_json fallback ---------------------------------------------------
+# ---- chat_json fallback -----------------------------------------------------
 
 
 def test_chat_json_falls_back_to_stub_on_malformed_envelope(monkeypatch):
     stub = {"action": "plan", "labels": []}
-    result = _online_llm(monkeypatch, "{}").chat_json("s", "u", stub=stub)
-    assert result == stub
+    llm = _online(monkeypatch)
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp("{}")):
+        assert llm.chat_json("s", "u", stub=stub) == stub
 
 
 def test_chat_json_falls_back_to_empty_dict_when_no_stub(monkeypatch):
-    assert _online_llm(monkeypatch, "[]").chat_json("s", "u", stub=None) == {}
+    llm = _online(monkeypatch)
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp("[]")):
+        assert llm.chat_json("s", "u", stub=None) == {}
 
 
 def test_chat_json_propagates_transport_error(monkeypatch):
-    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
-    llm = LLM(model="m", api_base="https://api.example.com", api_key="k")
+    llm = _online(monkeypatch)
 
     def boom(system, user):
         raise ConnectionError("timeout")
@@ -173,4 +191,6 @@ def test_chat_json_propagates_transport_error(monkeypatch):
 
 def test_chat_json_returns_parsed_json_from_valid_envelope(monkeypatch):
     body = '{"choices": [{"message": {"content": "{\\"action\\": \\"merge\\"}"}}]}'
-    assert _online_llm(monkeypatch, body).chat_json("s", "u") == {"action": "merge"}
+    llm = _online(monkeypatch)
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp(body)):
+        assert llm.chat_json("s", "u") == {"action": "merge"}

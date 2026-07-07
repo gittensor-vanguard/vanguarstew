@@ -113,6 +113,53 @@ def test_a_generalization_run_sums_both_partitions():
     assert result["passed"] is True
 
 
+# --- a real multi-repo/generalization run reports its tally under per_repo, not top-level ------
+# run_multi_replay / run_generalization_report emit no top-level `tally`; each per_repo entry
+# carries its own. all_tasks_decided must sum those (as _total_tasks sums per-repo tasks) instead
+# of only reading a top-level tally that real cross-repo runs never emit.
+
+
+def _repo(tasks, ch, ba, ti):
+    return {"repo": "r", "tasks": tasks, "tally": {"challenger": ch, "baseline": ba, "tie": ti}}
+
+
+def test_real_multi_repo_run_with_per_repo_tallies_is_adequate():
+    result = check_sample_adequacy({"per_repo": [_repo(5, 4, 1, 0), _repo(5, 3, 1, 1)]}, min_tasks=6)
+    assert result["tasks"] == 10 and result["decided"] == 10
+    assert result["passed"] is True and "all_tasks_decided" not in failed_checks(result)
+
+
+def test_real_generalization_run_with_per_repo_tallies_is_adequate():
+    result = check_sample_adequacy({
+        "tuned": {"per_repo": [_repo(4, 3, 1, 0)]},
+        "held_out": {"per_repo": [_repo(3, 1, 1, 1)]},
+        "generalization_gap": 0.1,
+    }, min_tasks=6)
+    assert result["tasks"] == 7 and result["decided"] == 7 and result["passed"] is True
+
+
+def test_multi_repo_with_a_skipped_repo_is_fully_decided():
+    # A skipped (zero-task) repo carries no tally and decides nothing; the scored repo's tasks are
+    # still all accounted for, so decided == tasks over the run that actually scored.
+    result = check_sample_adequacy(
+        {"per_repo": [_repo(5, 4, 1, 0), {"repo": "b", "tasks": 0, "error": "too small"}]}, min_tasks=3)
+    assert result["tasks"] == 5 and result["decided"] == 5 and result["passed"] is True
+
+
+def test_multi_repo_undercounted_tally_fails_all_tasks_decided():
+    # Correctness of the aggregate, not just "did not crash": a per_repo tally that decides fewer
+    # tasks than the repo ran (a dropped task) must fail accounting, not pass.
+    result = check_sample_adequacy({"per_repo": [_repo(5, 3, 1, 0)]}, min_tasks=3)  # tally sums 4 != 5
+    assert result["decided"] == 4 and result["tasks"] == 5
+    assert result["passed"] is False and "all_tasks_decided" in failed_checks(result)
+
+
+def test_multi_repo_scored_entry_missing_tally_fails_closed():
+    # A scored per_repo entry with no tally cannot be accounted for -> fail closed (decided None).
+    result = check_sample_adequacy({"per_repo": [_repo(5, 4, 1, 0), {"repo": "b", "tasks": 3}]}, min_tasks=3)
+    assert result["decided"] is None and "all_tasks_decided" in failed_checks(result)
+
+
 def test_top_level_per_repo_is_not_double_counted_with_partitions():
     # An artifact that carries BOTH a top-level per_repo (the complete multi-repo list) and
     # tuned/held_out partition lists must count the tasks once, not sum both shapes. The
