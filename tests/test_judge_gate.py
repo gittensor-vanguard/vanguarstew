@@ -70,6 +70,62 @@ def test_dual_order_tasks_falls_back_to_judge_order_stats():
     assert result["dual_order_tasks"] == 4 and result["passed"] is True
 
 
+def _gen_part(dual_order=True, dual_tasks=5, disagreement=0.1, disagreements=None):
+    report = {"dual_order_tasks": dual_tasks, "disagreement_rate": disagreement}
+    if disagreements is not None:
+        report["disagreements"] = disagreements
+    return {"judge_dual_order": dual_order, "judge_report": report}
+
+
+def test_generalization_reads_partition_telemetry():
+    # Partition-only generalization artifacts carry no top-level judge telemetry (#1055).
+    art = {
+        "tuned": _gen_part(dual_tasks=10, disagreement=0.5),
+        "held_out": _gen_part(dual_tasks=8, disagreement=0.05),
+        "generalization_gap": 0.1,
+    }
+    result = check_judge(art, max_disagreement=0.3)
+    assert result["dual_order"] is True
+    assert result["dual_order_tasks"] == 18
+    assert result["disagreement_rate"] == round(5 / 18, 3)
+    assert "dual_order_judging" not in failed_checks(result)
+    assert "enough_dual_order_tasks" not in failed_checks(result)
+
+
+def test_generalization_combined_disagreement_fails_when_above_threshold():
+    art = {
+        "tuned": _gen_part(dual_tasks=10, disagreement=0.5),
+        "held_out": _gen_part(dual_tasks=8, disagreement=0.5),
+        "generalization_gap": 0.1,
+    }
+    result = check_judge(art, max_disagreement=0.3)
+    assert result["passed"] is False
+    assert failed_checks(result) == ["low_disagreement"]
+    assert result["disagreement_rate"] == 0.5
+
+
+def test_generalization_fails_when_either_partition_not_dual_order():
+    art = {
+        "tuned": _gen_part(dual_order=True),
+        "held_out": _gen_part(dual_order=False),
+        "generalization_gap": 0.1,
+    }
+    result = check_judge(art)
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_generalization_missing_partition_telemetry_fails_closed():
+    art = {
+        "tuned": _gen_part(dual_tasks=10, disagreement=0.1),
+        "held_out": {},
+        "generalization_gap": None,
+    }
+    result = check_judge(art)
+    assert result["disagreement_rate"] is None
+    assert "enough_dual_order_tasks" in failed_checks(result)
+    assert "low_disagreement" in failed_checks(result)
+
+
 def test_disagreement_bound_is_inclusive():
     assert check_judge(_result(disagreement=0.3), max_disagreement=0.3)["passed"] is True
     assert check_judge(_result(disagreement=0.31), max_disagreement=0.3)["passed"] is False

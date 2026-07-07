@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.comparability import artifact_kind
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_DISAGREEMENT = 0.3
@@ -35,6 +37,10 @@ DEFAULT_MIN_DUAL_ORDER_TASKS = 2
 
 def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _dict(value) -> dict:
@@ -144,6 +150,125 @@ def _dual_order_tasks(result: dict):
     return None
 
 
+def _judge_telemetry(slice_) -> dict:
+    """Return judge telemetry from a replay slice (``judge_report`` preferred over stats)."""
+    slice_ = _dict(slice_)
+    for source in (slice_.get("judge_report"), slice_.get("judge_order_stats")):
+        if isinstance(source, dict):
+            return source
+    return {}
+
+
+def _disagreement_counts(telemetry: dict) -> tuple[int, int] | None:
+    """Return ``(disagreements, dual_order_tasks)`` when both are valid non-negative ints."""
+    dual = telemetry.get("dual_order_tasks")
+    if not _is_int(dual):
+        agree = telemetry.get("agree")
+        disagree = telemetry.get("disagree")
+        tie = telemetry.get("tie")
+        if not all(_is_int(value) and value >= 0 for value in (agree, disagree, tie)):
+            return None
+        dual = agree + disagree + tie
+    disagreements = telemetry.get("disagreements")
+    if disagreements is None:
+        disagreements = telemetry.get("disagree")
+    if disagreements is None:
+        rate = telemetry.get("disagreement_rate")
+        if _is_number(rate) and _is_int(dual):
+            disagreements = round(rate * dual)
+        else:
+            return None
+    if not _is_int(disagreements) or disagreements < 0 or not _is_int(dual) or dual < 0:
+        return None
+    return disagreements, dual
+
+
+def _slice_judge_summary(slice_) -> dict:
+    """Per-slice dual-order task count and disagreement telemetry."""
+    telemetry = _judge_telemetry(slice_)
+    counts = _disagreement_counts(telemetry)
+    if counts is None:
+        dual_tasks = _dual_order_tasks(slice_)
+        return {
+            "dual_order_tasks": dual_tasks if _is_number(dual_tasks) else None,
+            "disagreements": None,
+            "disagreement_rate": None,
+        }
+    disagreements, dual = counts
+    rate = telemetry.get("disagreement_rate")
+    if _is_number(rate):
+        out_rate = round(float(rate), 3)
+    elif dual == 0:
+        out_rate = None
+    else:
+        out_rate = round(disagreements / dual, 3)
+    return {
+        "dual_order_tasks": dual,
+        "disagreements": disagreements,
+        "disagreement_rate": out_rate,
+    }
+
+
+def _combined_judge_summary(tuned: dict, held_out: dict) -> dict:
+    """Overall judge telemetry across partitions — only when both carry complete counts."""
+    duals = [tuned.get("dual_order_tasks"), held_out.get("dual_order_tasks")]
+    disagreements = [tuned.get("disagreements"), held_out.get("disagreements")]
+    if not all(_is_int(value) for value in duals + disagreements):
+        return {
+            "dual_order_tasks": None,
+            "disagreements": None,
+            "disagreement_rate": None,
+        }
+    dual = sum(duals)
+    disagree = sum(disagreements)
+    if dual == 0:
+        return {
+            "dual_order_tasks": 0,
+            "disagreements": 0,
+            "disagreement_rate": None,
+        }
+    return {
+        "dual_order_tasks": dual,
+        "disagreements": disagree,
+        "disagreement_rate": round(disagree / dual, 3),
+    }
+
+
+def _generalization_judge_metrics(result: dict) -> tuple[bool, int | None, float | None]:
+    """Judge telemetry for a ``--generalization`` artifact (both partitions required)."""
+    tuned = _dict(result.get("tuned"))
+    held_out = _dict(result.get("held_out"))
+    is_dual = (
+        tuned.get("judge_dual_order") is True
+        and held_out.get("judge_dual_order") is True
+    )
+    combined = _combined_judge_summary(
+        _slice_judge_summary(tuned),
+        _slice_judge_summary(held_out),
+    )
+    dual_tasks = combined.get("dual_order_tasks")
+    disagreement = combined.get("disagreement_rate")
+    return (
+        is_dual,
+        dual_tasks if _is_number(dual_tasks) else None,
+        disagreement if _is_number(disagreement) else None,
+    )
+
+
+def _judge_metrics(result: dict) -> tuple[bool, int | None, float | None]:
+    """Return ``(dual_order, dual_order_tasks, disagreement_rate)`` for any artifact kind."""
+    if artifact_kind(result) == "generalization":
+        return _generalization_judge_metrics(result)
+    dual_order = result.get("judge_dual_order")
+    dual_tasks = _dual_order_tasks(result)
+    disagreement = _dict(result.get("judge_report")).get("disagreement_rate")
+    return (
+        dual_order is True,
+        dual_tasks if _is_number(dual_tasks) else None,
+        disagreement if _is_number(disagreement) else None,
+    )
+
+
 def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
                 min_dual_order_tasks: int = DEFAULT_MIN_DUAL_ORDER_TASKS) -> dict:
     """Evaluate a run ``result``'s judge robustness against the criteria.
@@ -153,18 +278,15 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     check passes; all checks are always reported.
     """
     result = _dict(result)
-    dual_order = result.get("judge_dual_order")
-    dual_tasks = _dual_order_tasks(result)
-    disagreement = _dict(result.get("judge_report")).get("disagreement_rate")
+    is_dual, dual_tasks, disagreement = _judge_metrics(result)
     checks = []
 
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    is_dual = dual_order is True
     add("dual_order_judging", is_dual,
         "judged in both presentation orders" if is_dual
-        else f"not dual-order judged (judge_dual_order={dual_order!r})")
+        else "not dual-order judged (partition or top-level judge_dual_order not true)")
 
     enough = _is_number(dual_tasks) and dual_tasks >= min_dual_order_tasks
     add("enough_dual_order_tasks", enough,
@@ -179,7 +301,7 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     return {
         "passed": all(c["passed"] for c in checks),
         "checks": checks,
-        "dual_order": dual_order is True,
+        "dual_order": is_dual,
         "dual_order_tasks": dual_tasks if _is_number(dual_tasks) else None,
         "disagreement_rate": disagreement if _is_number(disagreement) else None,
         "max_disagreement": max_disagreement,
