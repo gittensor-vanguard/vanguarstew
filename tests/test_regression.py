@@ -404,3 +404,33 @@ def test_cli_reports_blocked_for_a_genuine_regression(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["passed"] is False
     assert "no_composite_regression" in failed_checks(payload)
+
+
+def test_disagreement_reads_partition_telemetry_from_generalization():
+    from benchmark.regression import _disagreement
+
+    gen = {
+        "tuned": {
+            "judge_report": {"disagreements": 2, "dual_order_tasks": 10},
+            "composite_mean": 0.7,
+            "scored_repos": 2,
+        },
+        "held_out": {
+            "judge_report": {"disagreements": 1, "dual_order_tasks": 5},
+            "composite_mean": 0.5,
+            "scored_repos": 1,
+        },
+    }
+    rate = _disagreement(gen)
+    assert rate is not None
+    assert rate == pytest.approx(3 / 15)
+
+
+def test_disagreement_returns_none_when_partitions_lack_dual_order():
+    from benchmark.regression import _disagreement
+
+    gen = {
+        "tuned": {"judge_report": {}, "composite_mean": 0.7, "scored_repos": 2},
+        "held_out": {"judge_report": {}, "composite_mean": 0.5, "scored_repos": 1},
+    }
+    assert _disagreement(gen) is None

@@ -101,7 +101,26 @@ def _round(value):
 
 
 def _disagreement(artifact) -> float | None:
-    rate = _dict(_dict(artifact).get("judge_report")).get("disagreement_rate")
+    artifact = _dict(artifact)
+    # Generalization artifacts nest telemetry under tuned/held_out — sum the
+    # disagreement counts from both partitions, mirroring the fix for
+    # disagreement_outlook (#1037 / #1041).
+    if "tuned" in artifact and "held_out" in artifact:
+        total_dis = 0
+        total_dual = 0
+        for label in ("tuned", "held_out"):
+            part = _dict(artifact.get(label))
+            jr = _dict(part.get("judge_report"))
+            disagreements = jr.get("disagreements", jr.get("disagree"))
+            dual = jr.get("dual_order_tasks")
+            if not _is_number(disagreements) or not _is_number(dual):
+                continue
+            total_dis += int(disagreements)
+            total_dual += int(dual)
+        if total_dual > 0:
+            return total_dis / total_dual
+        return None
+    rate = _dict(artifact.get("judge_report")).get("disagreement_rate")
     return float(rate) if _is_number(rate) else None
 
 
