@@ -10,6 +10,7 @@ if ROOT not in sys.path:
 
 from benchmark.improvement import (  # noqa: E402
     DEFAULT_MIN_GAIN,
+    _check_rows_list,
     check_improvement,
     failed_checks,
     improvement_headline,
@@ -102,6 +103,61 @@ def test_failed_checks_helper_is_robust():
     assert failed_checks({}) == []
     assert failed_checks("not a dict") == []
     assert failed_checks(check_improvement(_run(0.5), _run(0.6))) != []
+
+
+# --- a non-list / malformed `checks` field must not crash the reporting helpers ----------------
+# check_improvement always emits a list of well-formed rows, but a hand-built or deserialized
+# result whose `checks` isn't a list used to crash failed_checks / the headline on `c["name"]`.
+
+_MALFORMED_CHECKS = ["not a list", 42, 3.14, True, {"name": "both_scored"}, ("a", "b"), range(2)]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "both_scored", "passed": True}]
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []          # absent key -> silent empty
+    assert _check_rows_list([]) == []
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+
+
+def test_check_rows_list_skips_unusable_rows():
+    # Non-dict rows, rows missing name/passed, and rows with wrong-typed name/passed are skipped.
+    checks = [
+        {"name": "keep", "passed": False},
+        "not a dict",
+        {"passed": True},                       # missing name
+        {"name": "no_passed"},                   # missing passed
+        {"name": 42, "passed": True},            # non-str name
+        {"name": "bad_passed", "passed": "yes"},  # non-bool passed
+    ]
+    assert _check_rows_list(checks) == [{"name": "keep", "passed": False}]
+
+
+def test_check_rows_list_warns_when_every_row_is_unusable(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.improvement"):
+        assert _check_rows_list([42, "bad", None]) == []
+    assert any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_a_non_list_checks_field():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_headline_survives_a_non_list_checks_field():
+    for bad in _MALFORMED_CHECKS:
+        assert improvement_headline({"checks": bad}) == "improvement: no checks evaluated", bad
+
+
+def test_helpers_log_a_warning_for_a_non_list_checks_field(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.improvement"):
+        assert failed_checks({"checks": "garbage"}) == []
+    assert any("checks is str" in r.message for r in caplog.records)
 
 
 def test_zero_min_gain_adopts_any_strict_improvement():
