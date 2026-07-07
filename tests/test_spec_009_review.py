@@ -67,6 +67,20 @@ class _FakeLLM:
         return self.payload
 
 
+class _CapturingLLM:
+    """Record the user prompt passed to chat_json."""
+
+    offline = False
+
+    def __init__(self, payload=None):
+        self.payload = payload if payload is not None else _STUB
+        self.last_user = None
+
+    def chat_json(self, system, user, stub=None):
+        self.last_user = user
+        return self.payload
+
+
 def _assert_review_shape(out: dict):
     assert isinstance(out, dict)
     assert _REVIEW_KEYS <= set(out)
@@ -87,6 +101,22 @@ def _assert_review_shape(out: dict):
 def test_review_pr_returns_all_documented_keys_offline():
     out = review_pr(_SAMPLE_PR, None, LLM(api_key="offline"))
     _assert_review_shape(out)
+
+
+def test_review_pr_includes_philosophy_prompt_for_empty_dict():
+    llm = _CapturingLLM()
+    review_pr({"number": 1, "title": "Fix bug", "files": []}, {}, llm)
+    assert llm.last_user is not None
+    assert "Repository philosophy" in llm.last_user
+    assert "PULL REQUEST #1: Fix bug" in llm.last_user
+
+
+def test_review_pr_omits_philosophy_prompt_when_none():
+    llm = _CapturingLLM()
+    review_pr({"number": 1, "title": "Fix bug", "files": []}, None, llm)
+    assert llm.last_user is not None
+    assert "Repository philosophy" not in llm.last_user
+    assert llm.last_user.startswith("PULL REQUEST #1: Fix bug")
 
 
 def test_review_pr_falls_back_when_llm_returns_non_dict():

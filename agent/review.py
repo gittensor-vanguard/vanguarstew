@@ -161,7 +161,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
             if isinstance(path, str) and path.strip():
                 files.append(path.strip())
     user = (
-        (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy else "")
+        (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy is not None else "")
         + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"
         + f"by @{pr.get('author')}  (+{pr.get('additions', 0)}/-{pr.get('deletions', 0)})\n\n"
         + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
