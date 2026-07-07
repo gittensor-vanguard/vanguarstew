@@ -4,12 +4,15 @@ import copy
 import os
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.component_floor import (  # noqa: E402
     DEFAULT_MIN_COMPOSITE,
+    _check_rows_list,
     check_component_floors,
     component_floor_headline,
     failed_checks,
@@ -93,6 +96,60 @@ def test_headline_reports_pass_and_fail():
     assert "PASS" in component_floor_headline(check_component_floors(_result(0.62, 0.7, 0.6)))
     fail = component_floor_headline(check_component_floors(_result(0.55, 0.9, 0.1)))
     assert "FAIL" in fail and "objective_floor" in fail
+
+
+# --- #1126: failed_checks / headline must sanitize a malformed `checks` container / rows -------
+# check_component_floors always emits well-formed rows, but a hand-built or deserialized result
+# can carry a truthy non-list `checks` or non-dict / key-missing rows. The helpers route through
+# _check_rows_list (the same contract as promotion / judge_gate / coverage) instead of crashing.
+
+
+@pytest.mark.parametrize("bad", ["garbage", 42, 3.14, {"name": "x"}, (1, 2), True])
+def test_failed_checks_survives_non_list_checks(bad):
+    # a truthy non-list `checks` would crash `c.get(...)` / iteration without the guard.
+    assert failed_checks({"checks": bad}) == []
+    assert component_floor_headline({"checks": bad}) == "component floors: no checks evaluated"
+
+
+def test_failed_checks_skips_non_dict_and_key_missing_rows():
+    mixed = {"checks": [
+        {"name": "composite_floor", "passed": False},  # kept — a real failure
+        "junk",                                          # non-dict, skipped
+        {"passed": True},                                # missing name, skipped
+        {"name": "obj"},                                 # missing passed, skipped
+        {"name": "judge_floor", "passed": True},         # kept, but passed -> not failed
+    ]}
+    assert failed_checks(mixed) == ["composite_floor"]
+
+
+def test_check_rows_list_filters_and_counts():
+    rows = [{"name": "a", "passed": True}, {"name": "b", "passed": False}]
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+    assert _check_rows_list("nope") == []
+    # only unusable rows -> empty (drives the "no checks evaluated" headline)
+    assert _check_rows_list(["x", {"passed": True}]) == []
+
+
+def test_headline_reports_count_over_total_usable_rows():
+    # 1 failed of 2 usable rows; a junk row is excluded from the denominator, not counted.
+    result = {"passed": False, "checks": [
+        {"name": "judge_floor", "passed": False},
+        {"name": "obj", "passed": True},
+        "junk",
+    ]}
+    assert component_floor_headline(result) == (
+        "component floors: FAIL (1/2 below floor: judge_floor)"
+    )
+
+
+def test_check_rows_list_warns_on_non_list(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.component_floor"):
+        assert _check_rows_list("garbage") == []
+    assert any("checks is str" in r.message for r in caplog.records)
     assert component_floor_headline({}) == "component floors: no checks evaluated"
     assert DEFAULT_MIN_COMPOSITE == 0.5
 
