@@ -14,7 +14,8 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
-from agent.philosophy import (  # noqa: E402
+from agent.philosophy import (  # noqa: E402  # noqa: E402
+    _OFFLINE_STUB,
     FEWSHOT,
     _normalize_philosophy,
     _normalize_string_list,
@@ -120,7 +121,19 @@ def test_infer_philosophy_normalizes_malformed_field_types():
     assert out["evidence"] == ["recent refactors"]
 
 def test_infer_philosophy_handles_non_dict_context():
-    from agent.llm import LLM
-    llm = LLM(api_key='offline')
-    assert infer_philosophy(None, llm)["summary"]
-    assert infer_philosophy("not a dict", llm)["summary"]
+    llm = LLM(api_key="offline")
+    for bad_context in (None, "not a dict", 42, [], True):
+        out = infer_philosophy(bad_context, llm)
+        assert EXPECTED_KEYS <= set(out), f"missing keys for context={bad_context!r}: {EXPECTED_KEYS - set(out)}"
+        assert out["values"] == [], f"values should be [] not {out['values']!r}"
+        assert out["merge_bar"] == _OFFLINE_STUB["merge_bar"]
+        assert out["direction"] == _OFFLINE_STUB["direction"]
+        assert out["evidence"] == []
+
+
+def test_infer_philosophy_non_dict_context_returns_fresh_copy():
+    llm = LLM(api_key="offline")
+    a = infer_philosophy(None, llm)
+    b = infer_philosophy(None, llm)
+    a["summary"] = "mutated"
+    assert b["summary"] != "mutated"
