@@ -79,19 +79,51 @@ def _slice_summary(slice_) -> dict:
     }
 
 
+def _combined(tuned: dict, held_out: dict) -> dict:
+    """Overall agree rate across partitions — only when both carry complete stats."""
+    agrees = [tuned.get("agree"), held_out.get("agree")]
+    disagrees = [tuned.get("disagree"), held_out.get("disagree")]
+    ties = [tuned.get("tie"), held_out.get("tie")]
+    totals = [tuned.get("total"), held_out.get("total")]
+    if not all(_is_int(value) for value in agrees + disagrees + ties + totals):
+        return {
+            "agree": None,
+            "disagree": None,
+            "tie": None,
+            "total": None,
+            "agree_rate": None,
+        }
+    agree, disagree, tie = sum(agrees), sum(disagrees), sum(ties)
+    total = sum(totals)
+    if total == 0:
+        return {"agree": 0, "disagree": 0, "tie": 0, "total": 0, "agree_rate": None}
+    return {
+        "agree": agree,
+        "disagree": disagree,
+        "tie": tie,
+        "total": total,
+        "agree_rate": round(agree / total, 3),
+    }
+
+
 def summarize_order_agree_rate(artifact) -> dict:
-    """Return dual-order agree-rate summary for a replay ``artifact``."""
+    """Return dual-order agree-rate summary for a replay ``artifact``.
+
+    Single- and multi-repo artifacts report a top-level rate; a ``generalization`` artifact adds
+    per-partition detail plus an overall rate summed across ``tuned`` and ``held_out`` (``None``
+    unless both partitions carry complete stats).
+    """
     artifact = _dict(artifact)
     kind = artifact_kind(artifact)
-    summary = {"kind": kind, **_slice_summary(artifact)}
     if kind == "generalization":
-        summary["partitions"] = {
-            "tuned": _slice_summary(artifact.get("tuned")),
-            "held_out": _slice_summary(artifact.get("held_out")),
+        tuned = _slice_summary(artifact.get("tuned"))
+        held_out = _slice_summary(artifact.get("held_out"))
+        return {
+            "kind": kind,
+            **_combined(tuned, held_out),
+            "partitions": {"tuned": tuned, "held_out": held_out},
         }
-    else:
-        summary["partitions"] = None
-    return summary
+    return {"kind": kind, **_slice_summary(artifact), "partitions": None}
 
 
 def _fmt_rate(value) -> str:

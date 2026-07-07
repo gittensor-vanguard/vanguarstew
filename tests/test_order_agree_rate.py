@@ -78,7 +78,27 @@ def test_generalization_reports_both_partitions():
     }
     out = summarize_order_agree_rate(art)
     assert out["kind"] == "generalization"
+    assert out["agree_rate"] == 0.625  # overall sums partitions (5/8), not top-level stats
     assert out["partitions"]["tuned"]["agree_rate"] == 1.0
+    assert out["partitions"]["held_out"]["agree_rate"] == 0.25
+
+
+def test_generalization_overall_sums_partitions_when_no_top_level_stats():
+    # A --generalization artifact from run_generalization_report carries judge_order_stats only
+    # under tuned/held_out — no top-level block. The overall agree rate must sum the partitions
+    # (mirroring offline_share / dual_order_share).
+    art = {
+        "generalization_gap": 0.0,
+        "tuned": _stats(3, 1, 0),
+        "held_out": _stats(1, 2, 1),
+    }
+    out = summarize_order_agree_rate(art)
+    assert out["agree"] == 4
+    assert out["disagree"] == 3
+    assert out["tie"] == 1
+    assert out["total"] == 8
+    assert out["agree_rate"] == 0.5
+    assert out["partitions"]["tuned"]["agree_rate"] == 0.75
     assert out["partitions"]["held_out"]["agree_rate"] == 0.25
 
 

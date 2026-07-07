@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Benchmark reporting (`benchmark/order_agree_rate.py`): `summarize_order_agree_rate` read
+  only the artifact's top-level `judge_order_stats`, so a `--generalization` artifact (which
+  carries stats under `tuned`/`held_out` only) reported `agree_rate: n/a` for every
+  generalization run while sibling utilities (`offline_share`, `dual_order_share`, …) correctly
+  summed the partitions. Generalization artifacts now derive the overall rate from
+  `_combined(tuned, held_out)`.
 - Benchmark gates (`benchmark/repeatability.py`): `assess_repeatability` computed the
   coefficient of variation from the *population* standard deviation (`pstdev`) rather than the
   *sample* standard deviation. The repeats are a sample of a noisy run, so the CV must use the
