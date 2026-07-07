@@ -218,6 +218,20 @@ def test_load_reports_an_unreadable_file_as_a_clean_error(tmp_path):
         locked.chmod(stat.S_IRUSR | stat.S_IWUSR)  # let tmp_path cleanup remove it
 
 
+def test_load_reports_a_non_utf8_file_as_a_clean_error(tmp_path):
+    # A file that exists and is readable but is not valid UTF-8 (saved as UTF-16/latin-1, or a
+    # binary file passed by mistake) makes json.load raise UnicodeDecodeError while decoding the
+    # stream. It is a ValueError, not a JSONDecodeError or an OSError, so without a dedicated
+    # branch it escapes as a raw traceback. It must surface as a clean RepoSetError, distinct from
+    # "not found", "cannot read", and "invalid JSON" (#1090).
+    cfg = tmp_path / "utf16.json"
+    cfg.write_bytes('{"repos": []}'.encode("utf-16"))
+    with pytest.raises(RepoSetError, match="is not valid UTF-8") as exc:
+        load_repo_set(str(cfg))
+    msg = str(exc.value)
+    assert "invalid JSON" not in msg and "not found" not in msg and "cannot read" not in msg
+
+
 def test_example_json_is_parseable_directly():
     # sanity: the shipped file is literally valid JSON
     with open(EXAMPLE_REPO_SET, "r", encoding="utf-8") as f:
