@@ -70,6 +70,26 @@ def _trend_series(series) -> list:
     return []
 
 
+def _trend_point(entry):
+    """Return the ``(label, artifact)`` pair for a well-formed series entry, else ``None``.
+
+    A valid entry is a 2-element list or tuple. Anything else is malformed and skipped after a
+    warning that includes the offending value (``%r``) so the bad entry can be located: a 1- or
+    3-element sequence, a bare scalar, ``None``, or a ``str``/``bytes`` — the latter two are
+    iterable and would otherwise unpack character/byte-wise into a bogus ``(label, artifact)``.
+    This extends the container guard in :func:`_trend_series` (#528) to the entries themselves, so
+    one bad entry no longer aborts the whole trend; the well-formed points around it still count.
+    """
+    if isinstance(entry, (list, tuple)) and len(entry) == 2:
+        label, artifact = entry
+        return label, artifact
+    logger.warning(
+        "trend: series entry is not a (label, artifact) pair, skipping: %r",
+        entry,
+    )
+    return None
+
+
 def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) -> dict:
     """Summarize how the headline score moves across an ordered ``series`` of artifacts.
 
@@ -84,11 +104,19 @@ def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) ->
     - ``regressions``: consecutive scored points whose drop exceeds ``regression_threshold``,
       each ``{from_label, to_label, drop}`` (``drop`` positive);
     - ``scored`` / ``total``: how many points carried a usable score.
+
+    A non-list ``series`` yields an empty summary (:func:`_trend_series`), and a malformed *entry*
+    inside the list — anything that is not a 2-element ``(label, artifact)`` pair — is skipped with
+    a warning (:func:`_trend_point`) rather than aborting the analysis.
     """
     points = []
     scored = []           # (label, score) for points with a numeric score, in order
     prev_score = None
-    for label, artifact in _trend_series(series):
+    for entry in _trend_series(series):
+        point = _trend_point(entry)
+        if point is None:
+            continue
+        label, artifact = point
         score = headline_score(artifact)
         delta = _round(score - prev_score) if (score is not None and prev_score is not None) else None
         points.append({"label": label, "composite_mean": score, "delta": delta})

@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.trend import (  # noqa: E402
+    _trend_point,
     _trend_regressions,
     _trend_series,
     headline_score,
@@ -149,6 +150,70 @@ def test_trend_logs_warning_for_non_list_series(caplog):
         out = trend(42)
     assert out["scored"] == 0
     assert any("series is int" in r.message for r in caplog.records)
+
+
+# --- #1067: a malformed *entry* inside a valid series list must be skipped, not crash ----------
+# _trend_series (#528) guards a non-list series; _trend_point extends that to the entries. Only a
+# 2-element list/tuple is a valid (label, artifact) pair; everything else is skipped with a
+# warning that names the offending value, and the well-formed points around it still count.
+
+
+class _Weird:
+    """A custom object that is not a (label, artifact) pair."""
+
+
+_MALFORMED_ENTRIES = [
+    42,                       # bare scalar (unpacking a non-iterable)
+    3.14,
+    True,
+    None,
+    "ab",                     # str: iterable, would unpack char-wise into ('a', 'b')
+    b"ab",                    # bytes: iterable, would unpack byte-wise
+    (),                       # empty tuple
+    ("only-one",),            # 1-element
+    ("a", "b", "c"),          # 3-element
+    ["a", "b", "c"],
+    {"label": "run1"},        # dict (not a pair)
+    _Weird(),                 # custom object
+]
+
+
+def test_trend_point_accepts_only_two_element_pairs():
+    assert _trend_point(("run1", {"composite_mean": 0.5})) == ("run1", {"composite_mean": 0.5})
+    assert _trend_point(["run1", {"composite_mean": 0.5}]) == ("run1", {"composite_mean": 0.5})
+    for bad in _MALFORMED_ENTRIES:
+        assert _trend_point(bad) is None, bad
+
+
+def test_trend_skips_malformed_entries_and_still_summarizes_the_rest():
+    # A well-formed point on either side of every malformed entry; only the two real points count.
+    series = [("a", _single(0.50))] + _MALFORMED_ENTRIES + [("b", _single(0.60))]
+    out = trend(series)
+    assert out["total"] == 2 and out["scored"] == 2           # malformed entries are truly dropped
+    assert [p["label"] for p in out["points"]] == ["a", "b"]  # only the real labels survive
+    assert out["first"] == 0.50 and out["last"] == 0.60 and out["change"] == 0.100
+
+
+def test_trend_two_char_string_entry_is_not_unpacked_as_a_pair():
+    # Regression guard: "ab" is iterable and would unpack to label='a', artifact='b' without the
+    # str/bytes rejection — silently inventing a bogus point instead of skipping.
+    out = trend([("a", _single(0.5)), "ab"])
+    assert out["total"] == 1 and [p["label"] for p in out["points"]] == ["a"]
+
+
+def test_trend_logs_the_offending_entry_content_for_a_malformed_entry(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.trend"):
+        out = trend([("a", _single(0.5)), 42])
+    assert out["total"] == 1
+    warnings = [r.message for r in caplog.records if "not a (label, artifact) pair" in r.message]
+    assert warnings and "42" in warnings[0]      # the value itself is in the message, not just its type
+
+
+def test_trend_all_entries_malformed_yields_empty_summary():
+    out = trend(_MALFORMED_ENTRIES)
+    assert out["total"] == 0 and out["scored"] == 0 and out["regressions"] == []
 
 
 def test_trend_headline_summarizes_direction_and_regressions():
