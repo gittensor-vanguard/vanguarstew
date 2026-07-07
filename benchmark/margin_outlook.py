@@ -1,8 +1,8 @@
 """Report the challenger's decisive margin and outlook from a replay artifact.
 
 ``promotion`` gates on ``decisive_margin``, but nothing exposes a compact read-only summary for
-CI dashboards. ``summarize_margin_outlook`` reports the margin (from ``decisive_margin`` or
-``tally``) and whether the challenger is ahead, tied, or behind the baseline.
+CI dashboards. ``summarize_margin_outlook`` reports the margin (from ``decisive_margin``,
+``tally``, or ``judge_report``) and whether the challenger is ahead, tied, or behind the baseline.
 
 Pure analysis: no I/O, never mutates its input, and missing data yields ``None`` rather than raising.
 """
@@ -37,7 +37,13 @@ def _margin(artifact: dict) -> int | None:
         return margin
     tally = artifact.get("tally")
     if isinstance(tally, dict):
-        return _margin_from_tally(tally)
+        derived = _margin_from_tally(tally)
+        if derived is not None:
+            return derived
+    report = _dict(artifact.get("judge_report"))
+    wins, losses = report.get("wins"), report.get("losses")
+    if _is_int(wins) and _is_int(losses):
+        return wins - losses
     return None
 
 

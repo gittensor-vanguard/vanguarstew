@@ -39,6 +39,23 @@ def test_falls_back_to_tally():
     assert out["outlook"] == "ahead"
 
 
+def test_falls_back_to_judge_report_for_multi_repo():
+    out = summarize_margin_outlook({
+        "composite_mean": 0.72,
+        "judge_report": {"wins": 9, "losses": 2, "ties": 1},
+    })
+    assert out["decisive_margin"] == 7
+    assert out["outlook"] == "ahead"
+
+
+def test_judge_report_headline():
+    out = summarize_margin_outlook({
+        "composite_mean": 0.72,
+        "judge_report": {"wins": 9, "losses": 2, "ties": 1},
+    })
+    assert margin_outlook_headline(out) == "margin outlook: ahead (decisive_margin 7)"
+
+
 def test_missing_data_yields_none():
     out = summarize_margin_outlook({"composite_mean": 0.5})
     assert out["outlook"] is None
