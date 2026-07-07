@@ -10,6 +10,7 @@ if ROOT not in sys.path:
 
 from benchmark.component_floor import (  # noqa: E402
     DEFAULT_MIN_COMPOSITE,
+    _check_rows_list,
     check_component_floors,
     component_floor_headline,
     failed_checks,
@@ -204,3 +205,77 @@ def test_bool_scored_repos_is_not_treated_as_an_unscored_placeholder():
     assert result["composite_mean"] == 0.7
     assert result["judge_mean"] == 0.6
     assert result["passed"] is True
+
+
+# --- a non-list / malformed `checks` field must not crash the reporting helpers ----------------
+# check_component_floors always emits a list of well-formed rows, but a hand-built or deserialized
+# result whose `checks` isn't a list used to crash failed_checks / the headline on `c["name"]`.
+
+_MALFORMED_CHECKS = ["not a list", 42, 3.14, True, {"name": "composite_floor"}, ("a", "b"), range(2)]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "composite_floor", "passed": True}]
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+
+
+def test_check_rows_list_skips_unusable_rows():
+    checks = [
+        {"name": "keep", "passed": False},
+        "not a dict",
+        {"passed": True},                       # missing name
+        {"name": "no_passed"},                   # missing passed
+        {"name": 42, "passed": True},            # non-str name
+        {"name": True, "passed": True},          # bool name (bool is an int subclass, not a str)
+        {"name": "", "passed": True},            # empty name
+        {"name": "   ", "passed": True},         # whitespace-only name
+        {"name": "bad_passed", "passed": "yes"},  # non-bool passed
+        {"name": "int_passed", "passed": 1},     # int is not bool
+    ]
+    assert _check_rows_list(checks) == [{"name": "keep", "passed": False}]
+
+
+def test_a_dict_checks_value_is_warned_not_silently_dropped(caplog):
+    # A dict `checks` is a non-list -> it is warned (not silent) and distinguished from a missing
+    # key (None, which is silent). Refutes any notion that a dict is dropped silently.
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.component_floor"):
+        assert _check_rows_list({"name": "composite_floor", "passed": True}) == []
+    assert any("checks is dict" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_row_is_unusable(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.component_floor"):
+        assert _check_rows_list([42, "bad", None]) == []
+    assert any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_a_non_list_checks_field():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_headline_survives_a_non_list_checks_field():
+    for bad in _MALFORMED_CHECKS:
+        assert component_floor_headline({"checks": bad}) == "component floors: no checks evaluated", bad
+
+
+def test_none_checks_is_silent_but_a_non_list_is_warned(caplog):
+    # None (a missing checks key) is legitimate -> silent empty; a non-list value is malformed ->
+    # warned. The two are handled distinctly, not conflated.
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.component_floor"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="benchmark.component_floor"):
+        assert _check_rows_list("garbage") == []
+    assert any("checks is str" in r.message for r in caplog.records)
