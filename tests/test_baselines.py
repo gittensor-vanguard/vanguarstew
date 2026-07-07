@@ -219,6 +219,77 @@ def test_queue_first_tolerates_non_list_open_prs():
     assert isinstance(out["plan"], list)
 
 
+# --- #722/#957: the baseline must fail closed on a truncated backlog, like every other reader ---
+# fetch_context_at zeroes a truncated backlog at the source, but a frozen artifact can still carry
+# a partial open_issues/open_prs alongside _issues_truncated=True (the "older frozen artifacts that
+# still carry a partial backlog" case context_for_agent, planner._safe_prs, and
+# open_issues_from_context all guard). The reference opponent was the last consumer missing that
+# guard: it would plan review/backlog items for a partial backlog the challenger's context zeroes.
+
+_CTX_TRUNCATED = {
+    "recent_commits": [{"subject": "fix: patch the loader"}],
+    "open_issues": [{"title": "Memory leak under load"}],
+    "open_prs": [{"number": 7, "title": "Add streaming export"}],
+    "_issues_truncated": True,
+}
+
+
+def test_queue_first_fails_closed_on_truncated_queue():
+    plan = queue_first_plan(_CTX_TRUNCATED, 5)
+    assert not any(item["theme"] == "PR review queue" for item in plan)   # partial queue dropped
+    # It degrades to exactly the heuristic plan for the same (fail-closed) context.
+    assert plan == heuristic_plan(_CTX_TRUNCATED, 5)
+
+
+def test_heuristic_fails_closed_on_truncated_backlog():
+    plan = heuristic_plan(_CTX_TRUNCATED, 5)
+    assert not any(item["theme"] == "issue backlog" for item in plan)     # partial backlog dropped
+    # heuristic_philosophy must not report the partial backlog count either.
+    assert "0 open issue(s)" in heuristic_philosophy(_CTX_TRUNCATED)["summary"]
+
+
+def test_queue_first_solve_reports_zero_prs_when_truncated():
+    out = queue_first_solve(context=_CTX_TRUNCATED, n=5)
+    assert "clear 0 open PR(s)" in out["rationale"]
+
+
+def test_all_solve_variants_fail_closed_on_truncation():
+    # Every baseline entrypoint (not just the plan helpers) must fail closed, so no solve leaks a
+    # partial backlog into the opponent's plan or its reported counts.
+    for solve in (heuristic_solve, stability_first_solve, queue_first_solve):
+        out = solve(context=_CTX_TRUNCATED, n=5)
+        plan = out["plan"]
+        assert not any(p.get("theme") in ("PR review queue", "issue backlog") for p in plan), solve
+        assert "0 open issue(s)" in out["rationale"] or "clear 0 open PR(s)" in out["rationale"], solve
+
+
+def test_truncated_flag_fails_closed_only_when_boolean_true():
+    # Mirrors #957: only a literal boolean True fails closed. A truthy non-bool (1, "true") is not
+    # the flag and must NOT drop the queue, so a malformed value can't silently blank the opponent.
+    for not_true in (1, "true", [1]):
+        ctx = {**_CTX_WITH_QUEUE, "_issues_truncated": not_true}
+        assert any(p["theme"] == "PR review queue" for p in queue_first_plan(ctx, 5)), not_true
+
+
+def test_non_truncated_baseline_still_uses_queue_and_backlog():
+    # Control: without the flag the baseline is unchanged — it reviews the queue and addresses the
+    # backlog. Isolates _issues_truncated as the sole cause of the fail-closed behavior above.
+    plan = queue_first_plan(_CTX_WITH_QUEUE, 5)
+    assert any(p["theme"] == "PR review queue" for p in plan)
+    assert any(p["theme"] == "issue backlog" for p in heuristic_plan(_CTX_WITH_QUEUE, 5))
+
+
+def test_truncated_baseline_matches_the_agent_context_view():
+    # The point of the fix: on a truncated task the baseline and the challenger now see the same
+    # (empty) backlog/queue, so the pairwise judge compares them on a consistent view.
+    from agent.context import context_for_agent
+
+    agent_view = context_for_agent(_CTX_TRUNCATED)
+    assert agent_view["open_prs"] == [] and agent_view["open_issues"] == []
+    baseline_plan = queue_first_plan(_CTX_TRUNCATED, 5)
+    assert not any(p["theme"] in ("PR review queue", "issue backlog") for p in baseline_plan)
+
+
 def test_empty_baseline_proposes_nothing():
     out = empty_solve(context=CTX, n=5)
     assert out["plan"] == []
