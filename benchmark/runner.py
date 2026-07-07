@@ -45,9 +45,25 @@ def load_solve(agent_file: str = "agent.py"):
     root = os.path.dirname(os.path.abspath(agent_file))
     if root not in sys.path:
         sys.path.insert(0, root)
+    if not os.path.exists(agent_file):
+        raise RuntimeError(f"agent file not found: {agent_file}")
+    if not os.path.isfile(agent_file):
+        raise RuntimeError(f"agent path is not a file: {agent_file}")
     spec = importlib.util.spec_from_file_location("vanguarstew_entry", agent_file)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load agent file: {agent_file}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except SyntaxError as exc:
+        raise RuntimeError(
+            f"cannot load agent file {agent_file}: syntax error: {exc.msg} "
+            f"({exc.filename}:{exc.lineno})"
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(
+            f"cannot load agent file {agent_file}: {type(exc).__name__}: {exc}"
+        ) from exc
     return module.solve
 
 
