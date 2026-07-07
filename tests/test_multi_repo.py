@@ -29,15 +29,27 @@ AGENT = os.path.join(ROOT, "agent.py")
 
 
 def _tiny_repo(dirpath, n=16, prefix="feat"):
-    subprocess.run(["git", "init", "-q", dirpath], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", dirpath], check=True)
     subprocess.run(["git", "-C", dirpath, "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", dirpath, "config", "user.name", "t"], check=True)
+    # Git 2.43+ fsync defaults can corrupt rapid /tmp commits on CI ("invalid object").
     subprocess.run(["git", "-C", dirpath, "config", "core.fsync", "false"], check=True)
+    subprocess.run(["git", "-C", dirpath, "config", "core.fsyncObjectFiles", "false"], check=True)
     for i in range(n):
-        with open(os.path.join(dirpath, f"{prefix}{i}.py"), "w", encoding="utf-8") as f:
+        relpath = f"{prefix}{i}.py"
+        with open(os.path.join(dirpath, relpath), "w", encoding="utf-8") as f:
             f.write(f"x = {i}\n")
-        subprocess.run(["git", "-C", dirpath, "add", "-A"], check=True)
-        subprocess.run(["git", "-C", dirpath, "commit", "-q", "-m", f"{prefix} {i}"], check=True)
+        subprocess.run(["git", "-C", dirpath, "add", "--", relpath], check=True)
+        completed = subprocess.run(
+            ["git", "-C", dirpath, "commit", "-q", "-m", f"{prefix} {i}"],
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"git commit failed in {dirpath!r} at {relpath}: "
+                f"{completed.stderr.strip() or completed.stdout.strip()}"
+            )
     return dirpath
 
 
@@ -193,9 +205,11 @@ def test_multi_repo_aggregates_surviving_repos_when_one_fails():
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_generalization_report_survives_non_git_repo_set_source():
-    tuned_ok = _tiny_repo(tempfile.mkdtemp(), prefix="tuned")
+    # min_history=3 and horizon=3 need len(commits) > 6; n=8 keeps enough history without
+    # the 16-commit git loop that flakes on CI under load (see Git 2.43+ /tmp fsync issues).
+    tuned_ok = _tiny_repo(tempfile.mkdtemp(), n=8, prefix="tuned")
     tuned_bad = tempfile.mkdtemp()  # materializes as a plain dir, then fails inside run_replay
-    held = _tiny_repo(tempfile.mkdtemp(), prefix="held")
+    held = _tiny_repo(tempfile.mkdtemp(), n=8, prefix="held")
     cfg_dir = tempfile.mkdtemp()
     cfg = os.path.join(cfg_dir, "repos.json")
     _write_repo_set(cfg, [
