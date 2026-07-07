@@ -42,12 +42,25 @@ _JUDGE_COMPONENT = {"challenger": 1.0, "tie": 0.5, "baseline": 0.0}
 
 
 def load_solve(agent_file: str = "agent.py"):
+    if not os.path.isfile(agent_file):
+        raise RuntimeError(
+            f"agent file {agent_file!r} does not exist or is not a regular file"
+        )
     root = os.path.dirname(os.path.abspath(agent_file))
     if root not in sys.path:
         sys.path.insert(0, root)
     spec = importlib.util.spec_from_file_location("vanguarstew_entry", agent_file)
+    if spec is None:
+        raise RuntimeError(
+            f"cannot load agent file {agent_file!r}: unsupported file type or missing loader"
+        )
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise RuntimeError(
+            f"cannot load agent file {agent_file!r}: {exc}"
+        ) from exc
     return module.solve
 
 

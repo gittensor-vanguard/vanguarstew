@@ -18,6 +18,7 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.runner import (  # noqa: E402
+    load_solve,
     run_multi_replay,
     run_replay,
 )
@@ -160,3 +161,27 @@ def test_run_multi_replay_disallows_ambiguous_args():
             run_multi_replay(repos=None, repo_set=None)
     finally:
         shutil.rmtree(a, ignore_errors=True)
+
+
+# ---- load_solve error handling ----------------------------------------------
+
+def test_load_solve_rejects_missing_file():
+    with pytest.raises(RuntimeError, match="does not exist"):
+        load_solve("/tmp/vanguarstew-no-such-agent.py")
+
+
+def test_load_solve_rejects_directory():
+    with pytest.raises(RuntimeError, match="does not exist"):
+        load_solve("/tmp")
+
+
+def test_load_solve_rejects_syntax_error(tmp_path):
+    bad = tmp_path / "bad.py"
+    bad.write_text("def solve():\n")
+    with pytest.raises(RuntimeError, match="cannot load agent"):
+        load_solve(str(bad))
+
+
+def test_load_solve_loads_valid_agent():
+    solve = load_solve(os.path.join(ROOT, 'agent.py'))
+    assert callable(solve)
