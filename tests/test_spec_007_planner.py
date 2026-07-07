@@ -100,6 +100,14 @@ def test_plan_next_actions_unwraps_dict_wrapped_actions():
     assert out[0]["kind"] == "bugfix"
 
 
+def test_plan_next_actions_honors_explicit_empty_plan_over_actions():
+    payload = {
+        "plan": [],
+        "actions": [{"title": "From actions", "kind": "bugfix", "rationale": "x", "theme": "y"}],
+    }
+    assert plan_next_actions({"open_prs": []}, {}, 5, _FakeLLM(payload)) == []
+
+
 def test_plan_next_actions_treats_non_list_llm_payload_as_empty():
     for bad in (42, "not a list", {"plan": 42}):
         out = plan_next_actions({"open_prs": []}, {}, 3, _FakeLLM(bad))
