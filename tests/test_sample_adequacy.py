@@ -3,7 +3,10 @@
 import copy
 import logging
 import os
+import stat
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -16,6 +19,7 @@ from benchmark.sample_adequacy import (  # noqa: E402
     failed_checks,
     sample_adequacy_headline,
 )
+from scripts import sample_adequacy as cli  # noqa: E402
 
 
 def _run(tasks, challenger=None, baseline=None, tie=None):
@@ -345,3 +349,74 @@ def test_check_sample_adequacy_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_sample_adequacy(run)
     assert run == snapshot
+
+
+# --- the CLI load_artifact must report a clean error, not a raw traceback (#1073) --------------
+# load_artifact caught FileNotFoundError / JSONDecodeError / non-object, but a path that reaches
+# open() and raises a non-FileNotFoundError OSError — a directory (IsADirectoryError) or an
+# unreadable file (PermissionError) — escaped as a raw traceback. Each read-failure mode is now
+# reported distinctly with exit code 2.
+
+
+def test_load_artifact_reads_a_valid_object(tmp_path):
+    path = tmp_path / "ok.json"
+    path.write_text('{"tasks": 3}', encoding="utf-8")
+    assert cli.load_artifact(str(path)) == {"tasks": 3}
+
+
+def test_load_artifact_missing_file_still_reports_not_found(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.load_artifact(str(tmp_path / "missing.json"))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "not found" in err and "is a directory" not in err and "permission" not in err.lower()
+
+
+def test_load_artifact_directory_path_exits_two_cleanly(tmp_path, capsys):
+    # A directory reaches open() and raises IsADirectoryError (POSIX) or PermissionError (Windows) —
+    # an OSError, not FileNotFoundError. It must surface as a clean exit(2) artifact-read error,
+    # never a raw traceback and never mistaken for "not found" / "invalid JSON".
+    d = tmp_path / "a_dir"
+    d.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        cli.load_artifact(str(d))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact" in err
+    assert "not found" not in err and "not valid JSON" not in err and "JSON object" not in err
+    if os.name == "posix":
+        assert "is a directory" in err  # IsADirectoryError branch on POSIX (CI)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file-mode permissions required")
+def test_load_artifact_unreadable_file_exits_two_cleanly(tmp_path, capsys):
+    # A real permission-denied file (os.chmod, not a mock): open() raises PermissionError (an
+    # OSError). It must exit 2 with a permission message, not a raw traceback.
+    locked = tmp_path / "locked.json"
+    locked.write_text('{"tasks": 1}', encoding="utf-8")
+    locked.chmod(0)
+    if os.access(str(locked), os.R_OK):
+        # Running as root (or a filesystem ignoring mode bits): the read isn't actually blocked.
+        locked.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        pytest.skip("cannot make a file unreadable in this environment (running as root?)")
+    try:
+        with pytest.raises(SystemExit) as exc:
+            cli.load_artifact(str(locked))
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "permission denied" in err.lower() and "not found" not in err
+    finally:
+        locked.chmod(stat.S_IRUSR | stat.S_IWUSR)  # let tmp_path cleanup remove it
+
+
+def test_load_artifact_still_reports_bad_json_and_non_object(tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli.load_artifact(str(bad))
+    assert "not valid JSON" in capsys.readouterr().err
+    lst = tmp_path / "list.json"
+    lst.write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli.load_artifact(str(lst))
+    assert "JSON object" in capsys.readouterr().err

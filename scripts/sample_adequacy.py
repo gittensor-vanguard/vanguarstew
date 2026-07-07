@@ -21,12 +21,27 @@ from benchmark.sample_adequacy import (
 
 
 def load_artifact(path: str) -> dict:
-    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON."""
+    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON.
+
+    A path that reaches ``open()`` can raise ``OSError`` for several distinct reasons; each is
+    reported with an actionable message (and exit code 2) rather than a raw traceback: the path is
+    a directory, the file is unreadable (permission denied), or any other read failure. A broken
+    symlink surfaces as ``FileNotFoundError`` (the target is missing) and is reported as not found.
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
         print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except PermissionError as exc:
+        print(f"permission denied reading artifact ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except OSError as exc:
+        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except json.JSONDecodeError as exc:
         print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
