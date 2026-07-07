@@ -70,6 +70,22 @@ def _trend_series(series) -> list:
     return []
 
 
+def _trend_point(entry):
+    """Return an ``(label, artifact)`` pair from a series entry, or ``None`` to skip it.
+
+    Entries come from the same malformed CLI / saved-artifact input the container guard covers
+    (#528); a non-pair entry (wrong length, or not a list/tuple) must be logged and skipped rather
+    than crash the ``label, artifact`` unpacking.
+    """
+    if isinstance(entry, (list, tuple)) and len(entry) == 2:
+        return entry[0], entry[1]
+    logger.warning(
+        "trend: series entry is %s, not a (label, artifact) pair; skipping",
+        type(entry).__name__,
+    )
+    return None
+
+
 def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) -> dict:
     """Summarize how the headline score moves across an ordered ``series`` of artifacts.
 
@@ -88,7 +104,11 @@ def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) ->
     points = []
     scored = []           # (label, score) for points with a numeric score, in order
     prev_score = None
-    for label, artifact in _trend_series(series):
+    for entry in _trend_series(series):
+        pair = _trend_point(entry)
+        if pair is None:
+            continue
+        label, artifact = pair
         score = headline_score(artifact)
         delta = _round(score - prev_score) if (score is not None and prev_score is not None) else None
         points.append({"label": label, "composite_mean": score, "delta": delta})

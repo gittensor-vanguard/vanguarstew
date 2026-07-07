@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.trend import (  # noqa: E402
+    _trend_point,
     _trend_regressions,
     _trend_series,
     headline_score,
@@ -149,6 +150,38 @@ def test_trend_logs_warning_for_non_list_series(caplog):
         out = trend(42)
     assert out["scored"] == 0
     assert any("series is int" in r.message for r in caplog.records)
+
+
+_MALFORMED_ENTRIES = [["only-one"], {"composite_mean": 0.5}, "a string", 42, None,
+                      ("l", "a", "extra"), ()]
+
+
+def test_trend_point_accepts_only_two_element_pairs():
+    assert _trend_point(("run1", {"composite_mean": 0.5})) == ("run1", {"composite_mean": 0.5})
+    assert _trend_point(["run1", {"composite_mean": 0.5}]) == ("run1", {"composite_mean": 0.5})
+    for bad in _MALFORMED_ENTRIES:
+        assert _trend_point(bad) is None, bad
+
+
+def test_trend_survives_a_malformed_series_entry():
+    # A single malformed entry (wrong length, or not a list/tuple) must be skipped, not crash the
+    # `label, artifact` unpacking — the same input class the non-list guard covers (#528). The
+    # well-formed points around it are still summarized.
+    for bad in _MALFORMED_ENTRIES:
+        series = [("a", _single(0.50)), bad, ("b", _single(0.60))]
+        out = trend(series)
+        assert out["scored"] == 2 and out["total"] == 2, bad
+        assert out["change"] == 0.10
+        assert out["regressions"] == []
+
+
+def test_trend_logs_a_warning_for_a_malformed_series_entry(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.trend"):
+        out = trend([("a", _single(0.5)), {"composite_mean": 0.6}])
+    assert out["scored"] == 1
+    assert any("series entry is dict" in r.message for r in caplog.records)
 
 
 def test_trend_headline_summarizes_direction_and_regressions():
