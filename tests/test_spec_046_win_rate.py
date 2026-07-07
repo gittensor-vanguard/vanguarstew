@@ -23,6 +23,7 @@ from benchmark.win_rate import (  # noqa: E402
 )
 
 _REQUIRED_KEYS = frozenset({
+    "kind",
     "total",
     "challenger",
     "baseline",
@@ -30,6 +31,7 @@ _REQUIRED_KEYS = frozenset({
     "challenger_rate",
     "baseline_rate",
     "tie_rate",
+    "partitions",
 })
 
 
@@ -105,6 +107,7 @@ def test_tally_counts_missing_or_malformed(artifact):
 def test_summarize_happy_path():
     out = summarize_win_rate(_run({"challenger": 6, "baseline": 3, "tie": 1}))
     assert out == {
+        "kind": "single",
         "total": 10,
         "challenger": 6,
         "baseline": 3,
@@ -112,6 +115,7 @@ def test_summarize_happy_path():
         "challenger_rate": 0.6,
         "baseline_rate": 0.3,
         "tie_rate": 0.1,
+        "partitions": None,
     }
 
 
@@ -127,6 +131,7 @@ def test_zero_total_none_rates():
 def test_malformed_tally_all_none():
     out = summarize_win_rate({"composite_mean": 0.5})
     assert out == {
+        "kind": "single",
         "total": None,
         "challenger": None,
         "baseline": None,
@@ -134,6 +139,7 @@ def test_malformed_tally_all_none():
         "challenger_rate": None,
         "baseline_rate": None,
         "tie_rate": None,
+        "partitions": None,
     }
 
 
