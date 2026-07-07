@@ -22,7 +22,9 @@ from benchmark.decisive_rate import (  # noqa: E402
     summarize_decisive_rate,
 )
 
-_REQUIRED_KEYS = frozenset({"total", "decisive", "tie", "decisive_rate", "tie_share"})
+_REQUIRED_KEYS = frozenset(
+    {"kind", "total", "decisive", "tie", "decisive_rate", "tie_share", "partitions"}
+)
 
 
 def _run(tally):
@@ -97,11 +99,13 @@ def test_tally_counts_missing_or_malformed(artifact):
 def test_summarize_happy_path():
     out = summarize_decisive_rate(_run({"challenger": 6, "baseline": 3, "tie": 1}))
     assert out == {
+        "kind": "single",
         "total": 10,
         "decisive": 9,
         "tie": 1,
         "decisive_rate": 0.9,
         "tie_share": 0.1,
+        "partitions": None,
     }
 
 
@@ -122,11 +126,13 @@ def test_zero_total_none_rates():
 def test_malformed_tally_all_none():
     out = summarize_decisive_rate({"composite_mean": 0.5})
     assert out == {
+        "kind": "single",
         "total": None,
         "decisive": None,
         "tie": None,
         "decisive_rate": None,
         "tie_share": None,
+        "partitions": None,
     }
 
 

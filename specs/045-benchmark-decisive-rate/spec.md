@@ -9,14 +9,17 @@
   [`benchmark/judge_wlt.py`](../../benchmark/judge_wlt.py) (compact judge report),
   [`benchmark/order_agree_rate.py`](../../benchmark/order_agree_rate.py) (dual-order agree rate)
 
-This spec makes the **existing, implicit** decisive-rate contract explicit. It describes the
-as-built behavior of `benchmark/decisive_rate.py`; it introduces **no behavior change**.
+This spec makes the decisive-rate contract explicit. It describes the behavior of
+`benchmark/decisive_rate.py`, including summing the `tuned` / `held_out` partitions for a
+`--generalization` artifact so the overall rate is reported instead of `n/a` (mirroring
+`win_rate`; see #1154).
 
 ## Why
 
 `win_rate` reports challenger/baseline/tie rates separately; `decisive_rate` reports how often
 judging produced a decisive winner (`challenger + baseline`) versus a tie — useful for spotting
-memorized-tie artifacts in CI dashboards.
+memorized-tie artifacts in CI dashboards, with per-partition detail for a `--generalization`
+artifact.
 
 ## User stories
 
@@ -53,13 +56,19 @@ memorized-tie artifacts in CI dashboards.
 
 ### Decisive rate summary (`summarize_decisive_rate`)
 
-Every summary SHALL include: `total`, `decisive`, `tie`, `decisive_rate`, `tie_share`.
+Every summary SHALL include: `kind`, `total`, `decisive`, `tie`, `decisive_rate`, `tie_share`,
+`partitions`. A single slice's `_slice_summary` reads its tally as: all fields `None` when
+`_tally_counts` returns `None`; `decisive` = `challenger + baseline`, `tie` the tally tie count,
+`decisive_rate` = `round(decisive / total, 3)`, and `tie_share` = `round(tie / total, 3)` when
+`total > 0`; and count fields `0` with `None` rates when `total == 0`.
 
-- WHEN `_tally_counts` returns `None` THEN all fields SHALL be `None`.
-- WHEN `total > 0` THEN `decisive` SHALL be `challenger + baseline`, `tie` SHALL be the tally tie
-  count, `decisive_rate` SHALL be `round(decisive / total, 3)`, and `tie_share` SHALL be
-  `round(tie / total, 3)`.
-- WHEN `total == 0` THEN count fields SHALL be `0` and both rate fields SHALL be `None`.
+The `kind` (from `benchmark.comparability.artifact_kind`) selects the slice:
+
+1. **`single` / `multi` / `invalid`** — top-level slice from the artifact's own tally;
+   `partitions` SHALL be `None`.
+2. **`generalization`** — per-partition slices for `tuned` and `held_out`; WHEN both carry an
+   `_is_int` `total` THEN overall counts SHALL be summed and rates computed on the totals;
+   OTHERWISE overall fields SHALL be `None`; `partitions` SHALL always include both slices.
 
 ### Decisive rate headline
 

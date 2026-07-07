@@ -122,3 +122,60 @@ def test_cli_non_object_json_exits_two(tmp_path, capsys):
     path.write_text("[1]", encoding="utf-8")
     assert cli.run([str(path)]) == 2
     assert "JSON object" in capsys.readouterr().err
+
+
+# --- generalization: sum the tuned/held_out partition tallies (mirrors win_rate) -------------
+
+def _gen(tuned_tally, held_tally):
+    art = {"generalization_gap": 0.0}
+    if tuned_tally is not None:
+        art["tuned"] = {"tally": tuned_tally}
+    if held_tally is not None:
+        art["held_out"] = {"tally": held_tally}
+    return art
+
+
+def test_generalization_sums_partition_tallies():
+    # tuned 4/1/1 + held 1/2/0 -> 5 + 3 = 8 decisive of 9 tasks (only the tuned tie), i.e. 8/9.
+    out = summarize_decisive_rate(_gen({"challenger": 4, "baseline": 1, "tie": 1},
+                                       {"challenger": 1, "baseline": 2, "tie": 0}))
+    assert out["kind"] == "generalization"
+    assert out["total"] == 9
+    assert out["decisive"] == 8
+    assert out["tie"] == 1
+    assert out["decisive_rate"] == 0.889          # 8/9
+    assert out["tie_share"] == 0.111              # 1/9
+    assert out["partitions"]["tuned"]["total"] == 6
+    assert out["partitions"]["tuned"]["decisive"] == 5
+    assert out["partitions"]["held_out"]["total"] == 3
+    assert out["partitions"]["held_out"]["decisive"] == 3
+
+
+def test_generalization_headline_reports_summed_rate():
+    out = summarize_decisive_rate(_gen({"challenger": 4, "baseline": 1, "tie": 1},
+                                       {"challenger": 1, "baseline": 2, "tie": 0}))
+    assert "8/9" in decisive_rate_headline(out)
+
+
+def test_generalization_missing_partition_yields_none_overall_but_keeps_partitions():
+    out = summarize_decisive_rate({"generalization_gap": 0.0,
+                                   "tuned": {"tally": {"challenger": 4, "baseline": 1, "tie": 1}},
+                                   "held_out": {}})       # no tally
+    assert out["kind"] == "generalization"
+    assert out["total"] is None
+    assert out["decisive_rate"] is None
+    assert out["partitions"]["tuned"]["total"] == 6
+    assert out["partitions"]["held_out"]["total"] is None
+
+
+def test_generalization_both_partitions_zero_total_yields_none_rate():
+    out = summarize_decisive_rate(_gen({"challenger": 0, "baseline": 0, "tie": 0},
+                                       {"challenger": 0, "baseline": 0, "tie": 0}))
+    assert out["total"] == 0
+    assert out["decisive_rate"] is None
+
+
+def test_single_repo_reports_kind_and_null_partitions():
+    out = summarize_decisive_rate(_run({"challenger": 2, "baseline": 1, "tie": 0}))
+    assert out["kind"] != "generalization"
+    assert out["partitions"] is None

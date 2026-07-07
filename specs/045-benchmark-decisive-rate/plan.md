@@ -3,7 +3,7 @@
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1119
 
-Maps the [spec](./spec.md) onto `benchmark/decisive_rate.py` as-built. No product code.
+Maps the [spec](./spec.md) onto `benchmark/decisive_rate.py`.
 
 ## EARS → test mapping
 
