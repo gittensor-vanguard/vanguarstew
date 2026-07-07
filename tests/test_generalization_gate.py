@@ -11,6 +11,7 @@ if ROOT not in sys.path:
 from benchmark.generalization_gate import (  # noqa: E402
     DEFAULT_MAX_GAP,
     DEFAULT_MIN_HELD_OUT_REPOS,
+    _check_rows_list,
     _composite,
     check_generalization,
     failed_checks,
@@ -191,6 +192,60 @@ def test_failed_checks_helper_is_robust():
     assert failed_checks({}) == []
     assert failed_checks("not a dict") == []
     assert failed_checks(check_generalization(_gen(0.70, 0.40))) != []
+
+
+# --- a non-list / malformed `checks` field must not crash the reporting helpers ----------------
+# check_generalization always emits a list of well-formed rows, but a hand-built or deserialized
+# result whose `checks` isn't a list used to crash failed_checks / the headline on `c["name"]`.
+
+_MALFORMED_CHECKS = ["not a list", 42, 3.14, True, {"name": "has_partitions"}, ("a", "b"), range(2)]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "has_partitions", "passed": True}]
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+
+
+def test_check_rows_list_skips_unusable_rows():
+    checks = [
+        {"name": "keep", "passed": False},
+        "not a dict",
+        {"passed": True},                       # missing name
+        {"name": "no_passed"},                   # missing passed
+        {"name": 42, "passed": True},            # non-str name
+        {"name": "bad_passed", "passed": "yes"},  # non-bool passed
+    ]
+    assert _check_rows_list(checks) == [{"name": "keep", "passed": False}]
+
+
+def test_check_rows_list_warns_when_every_row_is_unusable(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.generalization_gate"):
+        assert _check_rows_list([42, "bad", None]) == []
+    assert any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_a_non_list_checks_field():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_headline_survives_a_non_list_checks_field():
+    for bad in _MALFORMED_CHECKS:
+        assert generalization_headline({"checks": bad}) == "generalization: no checks evaluated", bad
+
+
+def test_helpers_log_a_warning_for_a_non_list_checks_field(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.generalization_gate"):
+        assert failed_checks({"checks": "garbage"}) == []
+    assert any("checks is str" in r.message for r in caplog.records)
 
 
 def test_check_generalization_does_not_mutate_the_result():
