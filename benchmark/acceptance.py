@@ -13,7 +13,8 @@ The criteria (each a named, independently-reported check):
 
 1. ``is_generalization`` - the artifact is a generalization report (``tuned``/``held_out``
    partitions plus a ``generalization_gap``);
-2. ``no_partition_error`` - neither partition carries an ``error`` (the run completed clean);
+2. ``no_partition_error`` - neither partition carries an ``error`` — a whole-partition ``error`` or
+   a per-repo row that failed to clone/freeze (the run completed clean);
 3. ``both_partitions_scored`` - each partition scored at least ``min_scored_repos`` repos, so
    the gap contrasts two real measurements;
 4. ``gap_computed`` - ``generalization_gap`` is a number (it is ``None`` unless both partitions
@@ -41,6 +42,44 @@ def _is_number(value) -> bool:
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+def _partition_error(partition):
+    """The first error a partition carries, or ``None`` when it completed clean.
+
+    Returns the error *value* (not a bool) so the ``no_partition_error`` detail can name the exact
+    failure; the boolean "this partition errored" is simply ``_partition_error(...) is not None``.
+
+    Scans for an error in three places, so a run that did not complete clean cannot be signed off:
+
+    1. the partition's top-level ``error`` — a whole-partition failure (e.g. a ``RepoSetError`` when
+       a partition has no repos to replay);
+    2. a ``per_repo`` row's ``error`` — a single repo that failed to clone/freeze does **not** abort
+       the batch; ``run_multi_replay`` records it inside ``per_repo[i]`` as
+       ``{"error": ..., "tasks": 0}`` and counts it in ``skipped``, so the top-level ``error`` stays
+       absent. Reading only the top level (the previous behavior) let the acceptance gate sign off a
+       run in which a repo errored;
+    3. a ``per_repo`` row that is *itself* a non-empty error string rather than a well-formed dict —
+       a malformed/corrupt entry, treated as an error so a broken artifact fails closed.
+
+    On a well-formed report this agrees with ``benchmark.artifact_snapshot._has_error`` (both flag a
+    dict row's ``error``); it additionally fails closed on the malformed string-row case. Non-dict,
+    non-string entries and a non-list ``per_repo`` are ignored, and a non-dict ``partition`` yields
+    ``None`` rather than raising.
+    """
+    if not isinstance(partition, dict):
+        return None
+    if partition.get("error"):
+        return partition["error"]
+    per_repo = partition.get("per_repo")
+    if isinstance(per_repo, list):
+        for row in per_repo:
+            if isinstance(row, dict):
+                if row.get("error"):
+                    return row["error"]
+            elif isinstance(row, str) and row.strip():
+                return row
+    return None
 
 
 _CHECK_ROW_KEYS = ("name", "passed")
@@ -129,8 +168,8 @@ def check_acceptance(report, max_gap: float = DEFAULT_MAX_GAP,
         "tuned/held_out partitions and a generalization_gap are present"
         if is_gen else "not a --generalization artifact (missing tuned/held_out/gap)")
 
-    tuned_err, held_err = tuned.get("error"), held_out.get("error")
-    no_error = not tuned_err and not held_err
+    tuned_err, held_err = _partition_error(tuned), _partition_error(held_out)
+    no_error = tuned_err is None and held_err is None
     add("no_partition_error", no_error,
         "both partitions completed without error" if no_error
         else f"partition error(s): tuned={tuned_err!r}, held_out={held_err!r}")
