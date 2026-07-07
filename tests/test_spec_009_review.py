@@ -18,9 +18,9 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
+    _PHILOSOPHY_PROMPT_LIMIT,
     ACTIONS,
     VALUE_LABELS,
-    _PHILOSOPHY_PROMPT_LIMIT,
     _normalize_bool,
     _normalize_concerns,
     _normalize_review,
