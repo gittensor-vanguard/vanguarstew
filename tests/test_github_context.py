@@ -183,6 +183,123 @@ def test_labels_at_none_when_nothing_reconstructable():
     ) is None
 
 
+def test_title_at_uses_live_title_when_no_renames():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._title_at([], T, "original title") == "original title"
+
+
+def test_title_at_returns_title_before_post_T_rename():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        {"event": "renamed", "created_at": "2023-01-01T00:00:00Z",
+         "rename": {"from": "alpha", "to": "beta"}},
+        {"event": "renamed", "created_at": "2023-09-01T00:00:00Z",
+         "rename": {"from": "beta", "to": "future-only"}},
+    ]
+    assert gc._title_at(events, T, "future-only") == "beta"
+
+
+def test_title_at_replays_rename_chain_at_or_before_T():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        {"event": "renamed", "created_at": "2023-02-01T00:00:00Z",
+         "rename": {"from": "alpha", "to": "beta"}},
+        {"event": "renamed", "created_at": "2023-05-01T00:00:00Z",
+         "rename": {"from": "beta", "to": "gamma"}},
+    ]
+    assert gc._title_at(events, T, "gamma") == "gamma"
+
+
+def test_title_at_returns_none_for_non_string_live_title_without_renames():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._title_at([], T, None) is None
+    assert gc._title_at([], T, 42) is None
+
+
+def test_title_at_handles_unavailable_or_non_list_events():
+    # A missing (None) or malformed (non-list) timeline must not crash reconstruction; it is
+    # treated as "no timeline" (via _timeline_events) and falls back to the live title (a str)
+    # or None, exactly like _labels_at.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._title_at(None, T, "live title") == "live title"
+    assert gc._title_at("not-a-list", T, "live title") == "live title"
+    assert gc._title_at({"event": "renamed"}, T, "live title") == "live title"
+    assert gc._title_at(None, T, None) is None
+
+
+def test_title_at_skips_malformed_rename_payloads():
+    # A renamed event with a non-dict `rename`, a non-string from/to, or no timestamp is skipped
+    # rather than trusted; with no usable rename left, the live title stands.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    malformed = [
+        {"event": "renamed", "created_at": "2023-02-01T00:00:00Z", "rename": "oops"},
+        {"event": "renamed", "created_at": "2023-03-01T00:00:00Z", "rename": {"from": 1, "to": "x"}},
+        {"event": "renamed", "created_at": None, "rename": {"from": "a", "to": "b"}},
+    ]
+    assert gc._title_at(malformed, T, "live title") == "live title"
+    # A well-formed post-T rename mixed in with the malformed ones is still honored.
+    valid = malformed + [{"event": "renamed", "created_at": "2023-09-01T00:00:00Z",
+                          "rename": {"from": "as-of-T title", "to": "future title"}}]
+    assert gc._title_at(valid, T, "future title") == "as-of-T title"
+
+
+def test_open_issue_title_omitted_when_timeline_truncated(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 7, "title": "leaked future title", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return [{"event": "renamed", "created_at": "2023-01-01T00:00:00Z",
+                     "rename": {"from": "old", "to": "leaked future title"}}] * 100
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["title"] == ""
+    assert iss["title_as_of_t"] is False
+
+
+def test_open_issue_title_reconstructed_when_renamed_after_T(monkeypatch):
+    # End-to-end (#632): an issue renamed AFTER T must surface its as-of-T title, not the leaked
+    # present-day one — a post-T rename can describe work (a version/fix, a future issue ref) that
+    # had not happened at T and would otherwise leak forward signal into prompts and ground truth.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 7, "title": "Parser crash - fixed in v2.4 (#900)",
+               "created_at": "2023-01-01T00:00:00Z", "closed_at": None}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return [{"event": "renamed", "created_at": "2023-08-01T00:00:00Z",
+                     "rename": {"from": "Parser crash on nested input",
+                                "to": "Parser crash - fixed in v2.4 (#900)"}}]
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["title"] == "Parser crash on nested input"   # as-of-T title, not the post-T rename
+    assert iss["title_as_of_t"] is True
+    assert "v2.4" not in iss["title"] and "#900" not in iss["title"]  # future signal not leaked
+
+
+def test_issue_record_fails_closed_on_truncated_timeline_even_with_renames(monkeypatch):
+    # _issue_record_at must omit the title on a truncated timeline even when the partial events
+    # carry a usable rename: a later, unfetched rename could contradict it, so fail closed with
+    # title=""/title_as_of_t=False -- the same posture as labels (a direct unit on the guard).
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    partial = [{"event": "renamed", "created_at": "2023-02-01T00:00:00Z",
+                "rename": {"from": "old", "to": "new"}}]
+    monkeypatch.setattr(gc, "_issue_timeline", lambda *a, **k: (partial, True))
+    rec = gc._issue_record_at("base", {"number": 5, "title": "live title"}, T, None, 20)
+    assert rec["title"] == ""
+    assert rec["title_as_of_t"] is False
+    assert rec["labels_as_of_t"] is False  # truncation fails both fields closed together
+
+
 def test_open_issue_labels_reconstructed_as_of_T(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     # Live label list says "shipped" — that must NOT leak; only the as-of-T set from
@@ -547,10 +664,9 @@ def test_releases_filtered_by_published_at_including_boundary_and_drafts(monkeyp
     assert [r["tag"] for r in ctx["releases"]] == ["v1.0", "v1.1"]
 
 
-def test_issue_record_copies_number_created_at_and_live_title(monkeypatch):
-    # Contract: number/created_at are immutable; title is copied live (present-day value).
-    # Pinned so a change that tries to as-of-T these fields also revisits the documented
-    # field-stability contract. Timeline is empty here to isolate title/number copying.
+def test_issue_record_copies_number_created_at_and_reconstructs_title(monkeypatch):
+    # Contract: number/created_at are immutable; title is as-of-T when the timeline is complete.
+    # Empty timeline here means no rename events — the live REST title is unchanged since creation.
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     issues = [{"number": 42, "title": "present-day title", "created_at": "2023-01-01T00:00:00Z",
                "closed_at": None, "labels": [{"name": "x"}]}]
@@ -566,6 +682,7 @@ def test_issue_record_copies_number_created_at_and_live_title(monkeypatch):
     iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
     assert iss["number"] == 42
     assert iss["title"] == "present-day title"
+    assert iss["title_as_of_t"] is True
     assert iss["created_at"] == "2023-01-01T00:00:00Z"
     assert iss["labels_as_of_t"] is False  # no timeline -> labels omitted, not leaked live
 
