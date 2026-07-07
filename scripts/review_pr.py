@@ -28,8 +28,20 @@ def _gh(*args) -> str:
     ``gh`` exits non-zero with empty stdout and a specific stderr message for bad
     ``--repo``/``--pr``, missing auth, no repo access, rate limits, or network errors.
     Without this check the failure surfaces only as a downstream ``JSONDecodeError``.
+
+    When the ``gh`` binary is not installed or not on ``PATH``, ``subprocess.run``
+    raises ``FileNotFoundError`` (an ``OSError``) at the spawn site, before any exit
+    code exists. That is neither the ``RuntimeError`` nor the ``ValueError`` that
+    ``main`` guards against, so it is translated here into a clean ``RuntimeError``
+    with an actionable install hint instead of escaping as a raw traceback.
     """
-    result = subprocess.run(["gh", *args], capture_output=True, text=True)
+    try:
+        result = subprocess.run(["gh", *args], capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "the `gh` CLI is required but was not found on PATH; install it from "
+            "https://cli.github.com/ and run `gh auth login`"
+        ) from exc
     if result.returncode != 0:
         cmd = " ".join(["gh", *args])
         stderr = result.stderr.strip()

@@ -313,6 +313,36 @@ def test_cli_reports_a_clean_error_for_a_real_gh_failure():
     assert "not-a-real-repo-xyz123" in result.stderr
 
 
+def test_gh_translates_a_missing_binary_into_a_clean_runtimeerror(tmp_path, monkeypatch):
+    # When the `gh` binary is not on PATH, subprocess.run raises FileNotFoundError at the spawn
+    # site -- before any exit code exists. Point PATH at an empty dir so `gh` genuinely cannot
+    # be found (real spawn failure, no mock), and assert _gh maps it to a RuntimeError that
+    # main() already catches, not a bare OSError. Without the fix this raises FileNotFoundError.
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(RuntimeError) as exc:
+        _gh("pr", "view", "1", "-R", "o/r")
+    msg = str(exc.value)
+    assert "gh" in msg
+    assert "not found on PATH" in msg
+
+
+def test_cli_reports_a_clean_error_when_gh_is_not_installed(tmp_path):
+    # End-to-end: drive the real subprocess entry point with a PATH that has no `gh` on it, so
+    # the binary is genuinely missing. The CLI must exit 1 with the install hint on stderr and
+    # no raw Traceback -- the same posture it already has for a gh that runs and then fails.
+    import subprocess as _subprocess
+
+    env = {**os.environ, "PATH": str(tmp_path), "VANGUARSTEW_OFFLINE": "1"}
+    result = _subprocess.run(
+        [sys.executable, "-m", "scripts.review_pr", "--repo", "o/r", "--pr", "1"],
+        cwd=ROOT, capture_output=True, text=True, check=False, env=env,
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "gh" in result.stderr
+    assert "https://cli.github.com" in result.stderr
+
+
 def test_main_still_prints_the_review_for_a_well_formed_pr(monkeypatch, capsys):
     payload = {
         "number": 7, "title": "Add streaming export", "body": "Fixes #10",
