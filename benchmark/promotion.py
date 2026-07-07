@@ -6,7 +6,11 @@ and the M2 acceptance is explicit that "an agent that merely restates a memorize
 judge stats), but the *decision* — is this run good enough? — is made by eye.
 
 This makes that decision a reproducible **pass/fail gate**. ``check_promotion(result)`` evaluates
-a single-repo (``run_replay``) or multi-repo (``run_multi_replay``) result against named criteria:
+a single-repo (``run_replay``) or multi-repo (``run_multi_replay``) result against named criteria.
+A ``run_generalization_report`` artifact nests its scored fields under ``tuned``/``held_out`` with
+no top-level ``composite_mean``/``judge_report``; it is evaluated on its **tuned** partition (the
+headline figure, mirroring ``benchmark.trend.headline_score``), so a generalization run is gated on
+its merits instead of failing every check vacuously. The criteria:
 
 1. ``run_completed`` - the run produced a scored result (no ``error``, a numeric composite);
 2. ``composite_floor`` - ``composite_mean`` is at least ``min_composite``;
@@ -114,6 +118,20 @@ def _decisive_margin(result: dict):
     return None
 
 
+def _promotion_source(result: dict) -> dict:
+    """The partition whose telemetry the promotion gate evaluates.
+
+    A ``run_generalization_report`` artifact nests every scored field under ``tuned`` and
+    ``held_out`` and carries no top-level ``composite_mean``/``judge_report``; its headline is
+    the **tuned** partition (the primary figure, mirroring ``benchmark.trend.headline_score`` and
+    ``check_regression``'s composite path). Every other artifact is evaluated at the top level.
+    """
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return result
+
+
 def _scored_composite(result: dict):
     """The run's real headline composite, or ``None`` when there is no real score.
 
@@ -143,6 +161,10 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     "decisive_margin", "disagreement_rate", ...thresholds}``. ``passed`` is True only when every
     check passes; all checks are always reported.
 
+    A ``run_generalization_report`` artifact (scores nested under ``tuned``/``held_out``, no
+    top-level ``composite_mean``) is evaluated on its ``tuned`` partition via
+    :func:`_promotion_source`; every other artifact is evaluated at the top level.
+
     The headline composite is read through :func:`_scored_composite`, which drops the unscored
     multi-repo placeholder so it is not mistaken for a real 0.0 score. A ``run_multi_replay`` that
     scored no repos reports ``scored_repos == 0`` with a placeholder ``composite_mean`` of ``0.0``
@@ -153,18 +175,20 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     merits.
     """
     result = _dict(result)
-    composite = _scored_composite(result)
-    margin = _decisive_margin(result)
-    disagreement = _dict(result.get("judge_report")).get("disagreement_rate")
+    source = _promotion_source(result)
+    composite = _scored_composite(source)
+    margin = _decisive_margin(source)
+    disagreement = _dict(source.get("judge_report")).get("disagreement_rate")
+    error = result.get("error") or source.get("error")
     checks = []
 
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    completed = not result.get("error") and composite is not None
+    completed = not error and composite is not None
     add("run_completed", completed,
         "run produced a scored composite" if completed
-        else f"no scored composite (error={result.get('error')!r}, composite={composite!r})")
+        else f"no scored composite (error={error!r}, composite={composite!r})")
 
     floor_ok = composite is not None and composite >= min_composite
     add("composite_floor", floor_ok,

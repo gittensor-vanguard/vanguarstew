@@ -103,6 +103,123 @@ def test_an_error_run_fails_run_completed():
     assert "run_completed" in failed_checks(result)
 
 
+# --- #1045: a run_generalization_report is evaluated on its tuned partition ---------------
+# A generalization artifact nests every scored field under `tuned`/`held_out` with no top-level
+# `composite_mean`/`judge_report`, so reading the top level fails every check vacuously. The gate
+# evaluates the tuned partition (the headline figure, mirroring `benchmark.trend.headline_score`).
+
+
+def _generalization(tuned, held_out=None, gap=0.1):
+    return {
+        "tuned": tuned,
+        "held_out": held_out if held_out is not None else {"composite_mean": 0.5, "scored_repos": 2},
+        "generalization_gap": gap,
+    }
+
+
+def test_strong_generalization_run_is_promoted_on_its_tuned_partition():
+    art = _generalization({
+        "composite_mean": 0.7, "scored_repos": 3,
+        "judge_report": {"wins": 9, "losses": 2, "disagreement_rate": 0.1},
+    })
+    result = check_promotion(art)
+    assert result["passed"] is True
+    assert result["composite_mean"] == 0.7        # from tuned, not the missing top level
+    assert result["decisive_margin"] == 7          # 9 - 2, from tuned's judge_report
+    assert result["disagreement_rate"] == 0.1
+    assert failed_checks(result) == []
+
+
+def test_high_tuned_disagreement_fails_judge_trustworthy():
+    art = _generalization({
+        "composite_mean": 0.7, "scored_repos": 3,
+        "judge_report": {"wins": 9, "losses": 2, "disagreement_rate": 0.8},
+    })
+    result = check_promotion(art, max_disagreement=0.5)
+    assert result["passed"] is False
+    assert failed_checks(result) == ["judge_trustworthy"]
+    assert result["disagreement_rate"] == 0.8      # read from tuned, not None
+
+
+def test_generalization_below_floor_holds_on_tuned_composite():
+    art = _generalization({
+        "composite_mean": 0.4, "scored_repos": 3,
+        "judge_report": {"wins": 9, "losses": 2, "disagreement_rate": 0.1},
+    })
+    result = check_promotion(art, min_composite=0.5)
+    assert result["passed"] is False
+    assert "composite_floor" in failed_checks(result)
+    assert result["composite_mean"] == 0.4
+
+
+def test_unscored_tuned_partition_fails_run_completed():
+    # tuned scored no repos: placeholder composite 0.0 is dropped, so the run is not "completed".
+    art = _generalization({"composite_mean": 0.0, "scored_repos": 0})
+    result = check_promotion(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+    assert result["composite_mean"] is None
+
+
+def test_errored_tuned_partition_fails_run_completed():
+    art = _generalization({"error": "partition failed", "composite_mean": 0.7, "scored_repos": 3})
+    result = check_promotion(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+
+
+def test_non_generalization_artifact_still_evaluated_at_top_level():
+    # Only both-dict tuned/held_out redirects to a partition; a plain artifact is unaffected.
+    plain = _result(composite=0.7, margin=2, disagreement=0.1)
+    result = check_promotion(plain)
+    assert result["passed"] is True
+    assert result["composite_mean"] == 0.7
+
+
+def test_tuned_partition_without_judge_report_does_not_crash():
+    # A tuned partition may carry no judge_report at all; margin/disagreement resolve to None
+    # (never a KeyError/AttributeError). beats_baseline holds for lack of a decisive margin, and
+    # judge_trustworthy passes as a single-order run with no instability signal.
+    art = _generalization({"composite_mean": 0.7, "scored_repos": 3})
+    result = check_promotion(art)
+    assert result["decisive_margin"] is None
+    assert result["disagreement_rate"] is None
+    assert failed_checks(result) == ["beats_baseline"]
+    trust = next(c for c in result["checks"] if c["name"] == "judge_trustworthy")
+    assert trust["passed"] is True
+
+
+def test_held_out_error_is_ignored_when_tuned_is_strong():
+    # The gate reads the tuned partition; a failed held_out partition does not block promotion.
+    art = _generalization(
+        {"composite_mean": 0.7, "scored_repos": 3,
+         "judge_report": {"wins": 9, "losses": 2, "disagreement_rate": 0.1}},
+        held_out={"error": "held_out partition failed"},
+    )
+    result = check_promotion(art)
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+
+
+def test_partial_partition_without_held_out_is_not_generalization():
+    # Only a both-dict tuned/held_out pair is a generalization artifact. A lone tuned block (no
+    # held_out) is evaluated at the top level, where there is no composite -> the run is unscored.
+    art = {"tuned": {"composite_mean": 0.7, "scored_repos": 3}, "generalization_gap": 0.1}
+    result = check_promotion(art)
+    assert result["composite_mean"] is None
+    assert "run_completed" in failed_checks(result)
+
+
+def test_non_dict_partition_falls_back_to_top_level():
+    # A non-dict tuned (or held_out) is not a partition pair; the top-level fields are used.
+    art = {"tuned": None, "held_out": {"composite_mean": 0.5},
+           "composite_mean": 0.6, "decisive_margin": 2,
+           "judge_report": {"disagreement_rate": 0.1}}
+    result = check_promotion(art)
+    assert result["passed"] is True
+    assert result["composite_mean"] == 0.6
+
+
 # --- #610: an unscored multi-repo run must not be read as a real 0.0 score --------------
 # `run_multi_replay` reports `scored_repos: 0` with a placeholder `composite_mean: 0.0`
 # (an average over an empty list). The gate drops that placeholder to None (the same
