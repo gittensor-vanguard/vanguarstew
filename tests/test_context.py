@@ -474,6 +474,41 @@ def test_context_from_git_readme_probe_matches_build_context(readme_path, conten
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+@pytest.mark.parametrize("files,expected", [
+    # Load-bearing: an empty higher-priority README must not shadow a populated lower-priority
+    # one. build_context skips the empty file (truthy check) and surfaces README.rst; the
+    # fallback must too, or the two context paths diverge for the same repo.
+    ({"README.md": "", "README.rst": "Real overview.\n"}, "Real overview.\n"),
+    # Whitespace-only content is still content -- both surface it verbatim, so the fix mirrors
+    # the truthy check exactly and never adds a stricter .strip() (which would re-diverge).
+    ({"README.md": "  \n"}, "  \n"),
+    # Every probe file empty -> both yield "" without crashing or defaulting to a stale file.
+    ({"README.md": "", "docs/README.md": ""}, ""),
+])
+def test_context_from_git_readme_probe_skips_empty_higher_priority_file(files, expected):
+    # build_context (benchmark/freeze.py) reads a missing and an empty file alike (git show ->
+    # ""), so an empty higher-priority README falls through to the next probe name. The git-only
+    # fallback stopped at the first *existing* file, surfacing "" where freeze surfaced the real
+    # lower-priority README -- a path-dependent excerpt that skews philosophy/plan/scoring inputs
+    # for the same repo. Both builders must agree (the #916/#937 alignment invariant).
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        for path, text in files.items():
+            _write(repo, path, text)
+        _write(repo, "f.txt")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "c1")
+
+        fallback = _context_from_git(repo)["readme_excerpt"]
+        harness = build_context(repo, "HEAD")["readme_excerpt"]
+        assert fallback == harness     # the two git-only context paths never diverge
+        assert fallback == expected
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_excludes_tags_unreachable_from_head():
     # A tag that exists only on an unmerged branch isn't an ancestor of HEAD, so it wasn't
     # knowable at T -- the fallback context must not surface it as a "release".

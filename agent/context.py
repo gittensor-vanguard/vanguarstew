@@ -219,9 +219,18 @@ def _context_from_git(repo_path: str) -> dict:
     readme = ""
     for name in README_PROBE_NAMES:
         p = os.path.join(repo_path, name)
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                readme = _mask_forward_refs(f.read()[:4000])
+        if not os.path.isfile(p):
+            continue
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        # An empty higher-priority README must not shadow a populated lower-priority one: skip
+        # it and keep probing, mirroring build_context's truthy ``if content`` check (freeze
+        # reads a missing *and* an empty file as an empty string alike). Otherwise the two
+        # git-only context builders diverge on the same repo -- freeze surfaces the lower
+        # README while this fallback stops at the empty one -- so philosophy/plan prompts and
+        # scoring inputs differ by code path (the #916/#937 alignment invariant).
+        if content:
+            readme = _mask_forward_refs(content[:4000])
             break
     return {
         "frozen_at": {"commit": head[:10], "date": freeze_date},
