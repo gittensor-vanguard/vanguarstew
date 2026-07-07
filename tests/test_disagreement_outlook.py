@@ -31,6 +31,16 @@ def _run(rate=0.1, dual=4, source="judge_report"):
     }
 
 
+def _partition_report(disagreements, dual):
+    return {
+        "judge_report": {
+            "dual_order_tasks": dual,
+            "disagreements": disagreements,
+            "disagreement_rate": round(disagreements / dual, 3) if dual else None,
+        }
+    }
+
+
 def test_stable_verdict_below_threshold():
     out = summarize_disagreement_outlook(_run(0.1, 5))
     assert out["verdict"] == "stable"
@@ -60,6 +70,44 @@ def test_falls_back_to_judge_order_stats():
     }
     out = summarize_disagreement_outlook(art)
     assert out["dual_order_tasks"] == 2
+
+
+def test_generalization_overall_sums_partitions_when_no_top_level_telemetry():
+    art = {
+        "generalization_gap": 0.0,
+        "tuned": _partition_report(disagreements=1, dual=4),
+        "held_out": _partition_report(disagreements=2, dual=4),
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["kind"] == "generalization"
+    assert out["dual_order_tasks"] == 8
+    assert out["disagreements"] == 3
+    assert out["disagreement_rate"] == 0.375
+    assert out["verdict"] == "unstable"
+    assert out["partitions"]["tuned"]["disagreement_rate"] == 0.25
+    assert out["partitions"]["held_out"]["disagreement_rate"] == 0.5
+
+
+def test_generalization_missing_partition_telemetry_yields_none_overall():
+    art = {
+        "generalization_gap": None,
+        "tuned": _partition_report(disagreements=1, dual=4),
+        "held_out": {},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["disagreement_rate"] is None
+    assert out["verdict"] is None
+
+
+def test_generalization_headline_includes_partition_rates():
+    art = {
+        "generalization_gap": 0.0,
+        "tuned": _partition_report(disagreements=1, dual=4),
+        "held_out": _partition_report(disagreements=0, dual=4),
+    }
+    line = disagreement_outlook_headline(summarize_disagreement_outlook(art))
+    assert "tuned 25.0%" in line
+    assert "held-out 0.0%" in line
 
 
 def test_missing_telemetry_yields_none_verdict():
