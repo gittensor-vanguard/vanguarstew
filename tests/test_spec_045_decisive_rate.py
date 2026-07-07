@@ -17,16 +17,34 @@ from benchmark.decisive_rate import (  # noqa: E402
     _dict,
     _is_int,
     _is_number,
+    _slice_summary,
     _tally_counts,
     decisive_rate_headline,
     summarize_decisive_rate,
 )
 
-_REQUIRED_KEYS = frozenset({"total", "decisive", "tie", "decisive_rate", "tie_share"})
+_REQUIRED_KEYS = frozenset({
+    "kind",
+    "total",
+    "decisive",
+    "tie",
+    "decisive_rate",
+    "tie_share",
+    "partitions",
+})
 
 
 def _run(tally):
     return {"composite_mean": 0.6, "tally": tally}
+
+
+def _gen(tuned_tally, held_tally):
+    art = {"generalization_gap": 0.0}
+    if tuned_tally is not None:
+        art["tuned"] = {"tally": tuned_tally}
+    if held_tally is not None:
+        art["held_out"] = {"tally": held_tally}
+    return art
 
 
 # --- Input coercion -------------------------------------------------------------------------
@@ -35,8 +53,10 @@ def _run(tally):
 @pytest.mark.parametrize("bad", (None, "not a dict", 42, [1, 2], ()))
 def test_non_dict_artifact_coerced_to_empty_dict(bad):
     out = summarize_decisive_rate(bad)
+    assert out["kind"] == "invalid"
     assert out["total"] is None
     assert out["decisive_rate"] is None
+    assert out["partitions"] is None
 
 
 def test_dict_helper_returns_dict_or_empty():
@@ -91,11 +111,11 @@ def test_tally_counts_missing_or_malformed(artifact):
     assert _tally_counts(artifact) is None
 
 
-# --- Decisive rate summary ------------------------------------------------------------------
+# --- Slice summary --------------------------------------------------------------------------
 
 
-def test_summarize_happy_path():
-    out = summarize_decisive_rate(_run({"challenger": 6, "baseline": 3, "tie": 1}))
+def test_slice_summary_happy_path():
+    out = _slice_summary(_run({"challenger": 6, "baseline": 3, "tie": 1}))
     assert out == {
         "total": 10,
         "decisive": 9,
@@ -103,6 +123,70 @@ def test_summarize_happy_path():
         "decisive_rate": 0.9,
         "tie_share": 0.1,
     }
+
+
+def test_slice_summary_zero_total_none_rates():
+    out = _slice_summary(_run({"challenger": 0, "baseline": 0, "tie": 0}))
+    assert out["total"] == 0
+    assert out["decisive_rate"] is None
+    assert out["tie_share"] is None
+
+
+# --- Artifact-kind branches -----------------------------------------------------------------
+
+
+def test_summarize_single_kind():
+    out = summarize_decisive_rate(_run({"challenger": 6, "baseline": 3, "tie": 1}))
+    assert out == {
+        "kind": "single",
+        "total": 10,
+        "decisive": 9,
+        "tie": 1,
+        "decisive_rate": 0.9,
+        "tie_share": 0.1,
+        "partitions": None,
+    }
+
+    malformed = summarize_decisive_rate({"composite_mean": 0.5})
+    assert malformed["kind"] == "single"
+    assert malformed["total"] is None
+    assert malformed["partitions"] is None
+
+
+def test_generalization_sums_partition_tallies():
+    out = summarize_decisive_rate(_gen(
+        {"challenger": 4, "baseline": 1, "tie": 1},
+        {"challenger": 1, "baseline": 2, "tie": 0},
+    ))
+    assert out["kind"] == "generalization"
+    assert out["total"] == 9
+    assert (out["decisive"], out["tie"]) == (8, 1)
+    assert out["decisive_rate"] == 0.889
+    assert out["partitions"]["tuned"]["total"] == 6
+    assert out["partitions"]["held_out"]["total"] == 3
+
+
+def test_generalization_partial_partition_withholds_overall():
+    out = summarize_decisive_rate({
+        "generalization_gap": 0.0,
+        "tuned": {"tally": {"challenger": 4, "baseline": 1, "tie": 1}},
+        "held_out": {},
+    })
+    assert out["total"] is None
+    assert out["partitions"]["tuned"]["total"] == 6
+    assert out["partitions"]["held_out"]["total"] is None
+
+
+# --- Decisive rate summary ------------------------------------------------------------------
+
+
+def test_summarize_happy_path():
+    out = summarize_decisive_rate(_run({"challenger": 6, "baseline": 3, "tie": 1}))
+    assert out["total"] == 10
+    assert out["decisive"] == 9
+    assert out["tie"] == 1
+    assert out["decisive_rate"] == 0.9
+    assert out["tie_share"] == 0.1
 
 
 def test_all_ties_zero_decisive_rate():
@@ -121,20 +205,19 @@ def test_zero_total_none_rates():
 
 def test_malformed_tally_all_none():
     out = summarize_decisive_rate({"composite_mean": 0.5})
-    assert out == {
-        "total": None,
-        "decisive": None,
-        "tie": None,
-        "decisive_rate": None,
-        "tie_share": None,
-    }
+    assert out["kind"] == "single"
+    assert out["total"] is None
+    assert out["decisive"] is None
+    assert out["tie"] is None
+    assert out["decisive_rate"] is None
+    assert out["tie_share"] is None
+    assert out["partitions"] is None
 
 
 def test_summary_always_includes_required_keys():
     for artifact in (
         _run({"challenger": 2, "baseline": 1, "tie": 0}),
-        _run({"challenger": 0, "baseline": 0, "tie": 0}),
-        {"composite_mean": 0.5},
+        _gen({"challenger": 1, "baseline": 0, "tie": 0}, {"challenger": 0, "baseline": 1, "tie": 0}),
         None,
     ):
         out = summarize_decisive_rate(artifact)
