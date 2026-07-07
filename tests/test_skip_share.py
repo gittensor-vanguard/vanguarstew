@@ -67,6 +67,19 @@ def test_generalization_reports_each_partition():
     assert summary["partitions"]["held_out"]["skip_share"] == 0.5
 
 
+def test_generalization_overall_sums_partitions_when_no_top_level_counts():
+    # run_generalization_report emits no top-level repos/scored_repos, so the overall must be
+    # summed from the tuned/held_out partitions (mirroring scored_fraction) instead of reporting
+    # n/a. Keeps skip_share the complement of scored_fraction on the same artifact.
+    summary = summarize_skip_share({
+        "generalization_gap": 0.0,
+        "tuned": {"repos": 3, "scored_repos": 3},
+        "held_out": {"repos": 2, "scored_repos": 1},
+    })
+    assert summary["repos"] == 5 and summary["scored_repos"] == 4
+    assert summary["skipped"] == 1 and summary["skip_share"] == 0.2
+
+
 def test_generalization_missing_partition_keys():
     summary = summarize_skip_share({
         "generalization_gap": 0.0,

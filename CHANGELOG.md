@@ -19,6 +19,10 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Benchmark reporting (`benchmark/skip_share.py`): a `--generalization` artifact has no
+  top-level `repos`/`scored_repos`, so `summarize_skip_share` reported `n/a` for every
+  generalization run. It now sums the `tuned`/`held_out` partitions for the overall, mirroring
+  `scored_fraction` — keeping the two complements (`skip_share + scored_fraction == 1.0`).
 - Benchmark gates (`benchmark/repeatability.py`): `assess_repeatability` computed the
   coefficient of variation from the *population* standard deviation (`pstdev`) rather than the
   *sample* standard deviation. The repeats are a sample of a noisy run, so the CV must use the

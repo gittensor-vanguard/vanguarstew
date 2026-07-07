@@ -75,22 +75,42 @@ def _slice_summary(slice_) -> dict:
     }
 
 
+def _combined(*slices: dict) -> dict:
+    """Overall skip share across partitions — only when every partition has both counts.
+
+    Mirrors ``benchmark.scored_fraction._combined`` (Spec 034): a ``--generalization`` artifact
+    carries no top-level ``repos``/``scored_repos``, so the overall is the sum of the ``tuned``
+    and ``held_out`` counts, keeping ``skip_share`` the complement of ``scored_fraction`` on the
+    same artifact instead of reporting ``n/a`` for every generalization run.
+    """
+    if all(_is_int(s.get("repos")) and _is_int(s.get("scored_repos")) for s in slices):
+        repos = sum(s["repos"] for s in slices)
+        scored = sum(s["scored_repos"] for s in slices)
+        share = _skip_share(repos, scored)
+        if share is not None:
+            return {"repos": repos, "scored_repos": scored,
+                    "skipped": repos - scored, "skip_share": share}
+    return {"repos": None, "scored_repos": None, "skipped": None, "skip_share": None}
+
+
 def summarize_skip_share(artifact) -> dict:
     """Return the skip share for a replay ``artifact``.
 
-    Single- and multi-repo artifacts report a top-level slice; a ``generalization`` artifact adds a
-    ``partitions`` map with the ``tuned`` and ``held_out`` slices. An ``invalid`` artifact reports
-    ``None`` counts. The top-level slice always reflects the artifact's own ``repos``/``scored_repos``.
+    Single- and multi-repo artifacts report a top-level slice from the artifact's own
+    ``repos``/``scored_repos``. A ``generalization`` artifact has no top-level counts, so its
+    overall is summed from the ``tuned`` and ``held_out`` partitions (mirroring
+    ``scored_fraction``); it also adds a ``partitions`` map. An ``invalid`` artifact reports
+    ``None`` counts.
     """
     artifact = _dict(artifact)
     kind = artifact_kind(artifact)
-    summary = {"kind": kind, **_slice_summary(artifact)}
     if kind == "generalization":
-        summary["partitions"] = {
-            "tuned": _slice_summary(artifact.get("tuned")),
-            "held_out": _slice_summary(artifact.get("held_out")),
-        }
+        tuned = _slice_summary(artifact.get("tuned"))
+        held_out = _slice_summary(artifact.get("held_out"))
+        summary = {"kind": kind, **_combined(tuned, held_out)}
+        summary["partitions"] = {"tuned": tuned, "held_out": held_out}
     else:
+        summary = {"kind": kind, **_slice_summary(artifact)}
         summary["partitions"] = None
     return summary
 
