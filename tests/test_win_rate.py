@@ -79,6 +79,69 @@ def test_headline_with_nan_rate_does_not_crash():
     assert "n/a" in win_rate_headline(out)
 
 
+def test_single_repo_reports_kind_and_no_partitions():
+    out = summarize_win_rate(_run({"challenger": 1, "baseline": 1, "tie": 0}))
+    assert out["kind"] != "generalization"
+    assert out["partitions"] is None
+
+
+# --- generalization: sum the tuned/held_out partition tallies (mirrors offline_share) --------
+
+def _gen(tuned_tally, held_tally):
+    art = {"generalization_gap": 0.0}
+    if tuned_tally is not None:
+        art["tuned"] = {"tally": tuned_tally}
+    if held_tally is not None:
+        art["held_out"] = {"tally": held_tally}
+    return art
+
+
+def test_generalization_sums_partition_tallies():
+    out = summarize_win_rate(_gen({"challenger": 4, "baseline": 1, "tie": 1},
+                                  {"challenger": 1, "baseline": 2, "tie": 0}))
+    assert out["kind"] == "generalization"
+    assert out["total"] == 9
+    assert (out["challenger"], out["baseline"], out["tie"]) == (5, 3, 1)
+    assert out["challenger_rate"] == 0.556        # 5/9
+    assert out["partitions"]["tuned"]["total"] == 6
+    assert out["partitions"]["held_out"]["total"] == 3
+
+
+def test_generalization_missing_partition_yields_none_overall_but_keeps_partitions():
+    out = summarize_win_rate({"generalization_gap": 0.0,
+                              "tuned": {"tally": {"challenger": 4, "baseline": 1, "tie": 1}},
+                              "held_out": {}})                       # no tally
+    assert out["total"] is None                                     # can't combine a partial set
+    assert out["partitions"]["tuned"]["total"] == 6                 # valid partition still reported
+    assert out["partitions"]["held_out"]["total"] is None
+
+
+def test_non_dict_partition_is_not_classified_generalization():
+    # A non-dict partition is not a valid generalization set (artifact_kind -> not
+    # "generalization"), so it falls back to the top-level tally (absent here) rather than
+    # combining a partition that isn't there.
+    out = summarize_win_rate({"generalization_gap": 0.0,
+                              "tuned": "nope",
+                              "held_out": {"tally": {"challenger": 1, "baseline": 0, "tie": 0}}})
+    assert out["kind"] != "generalization"
+    assert out["total"] is None
+    assert out["partitions"] is None
+
+
+def test_generalization_malformed_partition_tally_yields_none_overall():
+    out = summarize_win_rate(_gen({"challenger": 4, "baseline": 1, "tie": 1},
+                                  {"challenger": 1, "baseline": -1, "tie": 0}))  # negative count
+    assert out["total"] is None
+    assert out["partitions"]["held_out"]["total"] is None
+
+
+def test_generalization_zero_total_yields_none_rates():
+    out = summarize_win_rate(_gen({"challenger": 0, "baseline": 0, "tie": 0},
+                                  {"challenger": 0, "baseline": 0, "tie": 0}))
+    assert out["total"] == 0
+    assert out["challenger_rate"] is None
+
+
 @pytest.fixture
 def tmp_artifact(tmp_path):
     def write(name, payload):
