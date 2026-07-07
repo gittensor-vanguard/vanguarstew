@@ -156,6 +156,30 @@ def test_plan_next_actions_offline_reconciles_queue():
     assert any("streaming export" in i.get("title", "").lower() for i in plan)
 
 
+def test_offline_stub_titles_include_the_pr_number():
+    # The stub must carry the PR number so reconcile can re-associate the item with its PR.
+    stub = _offline_plan_stub({"open_prs": [{"number": 7, "title": "Fix bug"}]}, 5)
+    assert stub[0]["title"] == "Review pull request #7: Fix bug"
+
+
+def test_offline_stub_numberless_pr_keeps_the_plain_heading():
+    # A PR with no usable number falls back to the numberless heading (subject-phrase matching).
+    stub = _offline_plan_stub({"open_prs": [{"title": "Refactor the scheduler module"}]}, 5)
+    assert stub[0]["title"] == "Review pull request: Refactor the scheduler module"
+
+
+def test_offline_plan_does_not_duplicate_review_of_a_short_titled_pr():
+    # Regression: a short (< 8 char) or single-significant-token PR title ("Fix bug") could not be
+    # re-matched to its PR by reconcile (no #N, subject-phrase disabled < 8 chars, token-overlap
+    # disabled for one token), so a second review item was prepended for the same PR.
+    for title in ("Fix bug", "Update UI", "Add streaming export"):
+        ctx = {"open_prs": [{"number": 1, "title": title}]}
+        plan = plan_next_actions(ctx, {}, 5, LLM(api_key="offline"))
+        reviews = [i for i in plan if "review pull request" in i.get("title", "").lower()]
+        assert len(reviews) == 1, (title, [i["title"] for i in reviews])
+        assert reviews[0]["title"] == f"Review pull request #1: {title}"
+
+
 def test_explicit_pr_number_in_title_or_rationale():
     prs = [{"number": 12, "title": "Refactor auth module"}]
     assert _explicit_pr_number("Review PR #12 before release") == 12

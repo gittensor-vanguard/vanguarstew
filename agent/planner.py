@@ -144,8 +144,15 @@ def _offline_plan_stub(context: dict, n: int) -> list:
         title = _pr_title(pr)
         if not title:
             continue
+        # Include the PR number so ``reconcile_plan_with_queue`` -> ``_matched_pr`` re-associates
+        # this stub item with its PR via the ``#N`` reference. Without it, a short (< 8 char) or
+        # single-significant-token title (e.g. "Fix bug") matches on neither the subject-phrase
+        # nor token-overlap path, so reconcile treats the queue as unaddressed and prepends a
+        # *second* review item for the same PR. Mirrors the numbered title reconcile itself uses.
+        number = _pr_number(pr)
+        heading = f"Review pull request #{number}" if number is not None else "Review pull request"
         items.append({
-            "title": f"Review pull request: {title}",
+            "title": f"{heading}: {title}",
             "kind": "triage",
             "rationale": "open PR awaiting maintainer review",
             "theme": "PR queue",
