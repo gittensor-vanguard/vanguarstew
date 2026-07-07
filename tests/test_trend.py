@@ -12,12 +12,26 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.trend import (  # noqa: E402
+    _trend_point,
     _trend_regressions,
     _trend_series,
     headline_score,
     trend,
     trend_headline,
 )
+
+
+class _WeirdEntry:
+    """A custom object that is not a (label, artifact) pair."""
+
+
+# Every shape that is not a 2-element list/tuple. Includes bytes/bytearray (iterable but not a
+# pair) and a custom object, per review feedback.
+_MALFORMED_ENTRIES = [
+    ["only-one"], ["a", "b", "c"], (), ("l", "a", "extra"),
+    {"composite_mean": 0.5}, "a string", 42, 3.5, None, True,
+    b"bytes", bytearray(b"buf"), _WeirdEntry(),
+]
 
 
 def _single(score):
@@ -149,6 +163,38 @@ def test_trend_logs_warning_for_non_list_series(caplog):
         out = trend(42)
     assert out["scored"] == 0
     assert any("series is int" in r.message for r in caplog.records)
+
+
+def test_trend_point_accepts_only_two_element_pairs():
+    assert _trend_point(("run1", {"composite_mean": 0.5})) == ("run1", {"composite_mean": 0.5})
+    assert _trend_point(["run1", {"composite_mean": 0.5}]) == ("run1", {"composite_mean": 0.5})
+    for bad in _MALFORMED_ENTRIES:
+        assert _trend_point(bad) is None, bad
+
+
+def test_trend_survives_and_excludes_a_malformed_series_entry():
+    # A single malformed entry (wrong length, not a list/tuple, bytes, or a custom object) is
+    # skipped — not crashing the `label, artifact` unpacking — and it is truly absent from the
+    # output: only the well-formed points remain, correctly summarized.
+    for bad in _MALFORMED_ENTRIES:
+        series = [("a", _single(0.50)), bad, ("b", _single(0.60))]
+        out = trend(series)
+        assert out["scored"] == 2 and out["total"] == 2, bad
+        assert [p["label"] for p in out["points"]] == ["a", "b"], bad   # malformed entry excluded
+        assert out["change"] == 0.10
+        assert out["regressions"] == []
+
+
+def test_trend_logs_the_index_and_content_of_a_malformed_entry(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.trend"):
+        out = trend([("a", _single(0.5)), {"composite_mean": 0.6}])
+    assert out["scored"] == 1
+    msg = " ".join(r.message for r in caplog.records)
+    assert "series[1]" in msg          # the offending index
+    assert "dict" in msg               # the offending type
+    assert "composite_mean" in msg     # the actual entry content, for debugging
 
 
 def test_trend_headline_summarizes_direction_and_regressions():
