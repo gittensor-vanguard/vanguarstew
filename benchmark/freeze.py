@@ -19,7 +19,17 @@ from benchmark.leakage import scrub_context
 
 
 def _git(repo, *args, check=True):
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        # The git binary is not installed / not on PATH: subprocess.run raises FileNotFoundError
+        # at the spawn site, before any exit code exists. Translate it into the same clean
+        # RuntimeError this wrapper already raises when git runs and fails, so a missing git
+        # surfaces as an actionable error instead of a raw traceback.
+        raise RuntimeError(
+            "the `git` CLI is required but was not found on PATH; install it from "
+            "https://git-scm.com/downloads"
+        ) from exc
     if check and r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout
