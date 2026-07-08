@@ -80,6 +80,7 @@ def test_partition_score_happy_path():
 
 def test_partition_score_zero_scored_repos():
     assert _partition_score(_part(0.0, scored=0)) is None
+    assert _partition_score({"composite_mean": 0.0, "scored_repos": 0.0}) is None
 
 
 # --- Gap outlook summary --------------------------------------------------------------------

@@ -9,8 +9,9 @@
   [`benchmark/trend.py`](../../benchmark/trend.py) (headline score fallback),
   [`benchmark/comparability.py`](../../benchmark/comparability.py) (artifact kind classification)
 
-This spec makes the **existing, implicit** gap-outlook contract explicit. It describes the
-as-built behavior of `benchmark/gap_outlook.py`; it introduces **no behavior change**.
+This spec makes the gap-outlook contract explicit. It describes the behavior of
+`benchmark/gap_outlook.py`, including recomputing the gap from partition composites rather than
+trusting a possibly-stale top-level field (mirroring `check_generalization`).
 
 ## Why
 
@@ -40,7 +41,8 @@ the gap, partition headline scores, and whether held-out performance held up ver
 
 ### Partition score (`_partition_score`)
 
-- WHEN `scored_repos` is the integer `0` (not `bool`) THEN `_partition_score` SHALL return `None`.
+- WHEN `scored_repos` is numeric and zero (including `0.0`, not `bool`) THEN `_partition_score`
+  SHALL return `None`.
 - WHEN `composite_mean` passes `_is_number` THEN `_partition_score` SHALL return
   `round(float(composite_mean), 3)`.
 - OTHERWISE `_partition_score` SHALL return `None`.
@@ -51,8 +53,11 @@ Every summary SHALL include: `kind`, `generalization_gap`, `tuned_score`, `held_
 `verdict`.
 
 - WHEN `kind != "generalization"` THEN all telemetry fields SHALL be `None`.
-- WHEN `kind == "generalization"` THEN `generalization_gap` SHALL be `round(float(gap), 3)` when
-  the top-level gap passes `_is_number`, otherwise `None`.
+- WHEN `kind == "generalization"` THEN `generalization_gap` SHALL be
+  `round(tuned_composite - held_out_composite, 3)` when both partition composites are available
+  (via `_partition_score`), otherwise `None`. The top-level ``generalization_gap`` field is
+  ignored when recomputing (mirroring ``check_generalization``), so a stale value cannot flip
+  the verdict.
 - `tuned_score` SHALL be `_partition_score(tuned)` when that returns a number, otherwise
   `headline_score(tuned)`.
 - `held_out_score` SHALL be `_partition_score(held_out)`.

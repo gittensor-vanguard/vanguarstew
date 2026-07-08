@@ -48,6 +48,19 @@ def test_verdict_agrees_with_acceptance_gate():
     assert "gap_within_bound" in [c["name"] for c in gate["checks"] if not c["passed"]]
 
 
+def test_stale_generalization_gap_field_is_ignored():
+    # Recompute from partition composites; a stale top-level gap must not flip the verdict.
+    artifact = _gen(0.8, 0.3, -0.1)                      # stale field says favorable; true gap +0.5
+    out = summarize_gap_outlook(artifact)
+    assert out["generalization_gap"] == 0.5
+    assert out["verdict"] == "unfavorable"
+
+
+def test_float_zero_scored_repos_treated_as_unscored():
+    from benchmark.gap_outlook import _partition_score
+    assert _partition_score({"composite_mean": 0.0, "scored_repos": 0.0}) is None
+
+
 def test_non_generalization_returns_none_verdict():
     out = summarize_gap_outlook({"composite_mean": 0.6, "tasks": 5})
     assert out["verdict"] is None

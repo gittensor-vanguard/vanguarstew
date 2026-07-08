@@ -6,6 +6,10 @@ partition headline scores, and whether held-out performance held up versus tuned
 ``runner``/``acceptance``/``gap_integrity``), the verdict is ``favorable`` when
 ``generalization_gap <= 0`` and ``unfavorable`` otherwise.
 
+The gap is recomputed from the two partition composites (rounded to three decimals) rather than
+trusting a possibly-stale top-level ``generalization_gap`` field — mirroring
+``check_generalization`` — so a hand-edited or drifted gap cannot flip the outlook verdict.
+
 Pure analysis: no I/O, never mutates its input, and missing telemetry yields ``None`` fields.
 """
 
@@ -30,10 +34,20 @@ def _dict(value) -> dict:
 def _partition_score(partition: dict) -> float | None:
     partition = _dict(partition)
     scored = partition.get("scored_repos")
-    if isinstance(scored, int) and not isinstance(scored, bool) and scored == 0:
+    if _is_number(scored) and not scored:
         return None
     score = partition.get("composite_mean")
     return round(float(score), 3) if _is_number(score) else None
+
+
+def _recomputed_gap(tuned: dict, held_out: dict) -> float | None:
+    """Gap implied by partition composites (``tuned - held_out``), or ``None`` when either
+    partition did not score."""
+    tuned_score = _partition_score(tuned)
+    held_score = _partition_score(held_out)
+    if tuned_score is None or held_score is None:
+        return None
+    return round(tuned_score - held_score, 3)
 
 
 def summarize_gap_outlook(artifact) -> dict:
@@ -50,8 +64,7 @@ def summarize_gap_outlook(artifact) -> dict:
         }
     tuned = _dict(artifact.get("tuned"))
     held_out = _dict(artifact.get("held_out"))
-    gap = artifact.get("generalization_gap")
-    gap_value = round(float(gap), 3) if _is_number(gap) else None
+    gap_value = _recomputed_gap(tuned, held_out)
     tuned_score = _partition_score(tuned)
     held_score = _partition_score(held_out)
     verdict = None
