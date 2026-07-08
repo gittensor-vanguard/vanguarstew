@@ -1,8 +1,11 @@
 """Tests for the generalization gate (deterministic, offline)."""
 
 import copy
+import logging
 import os
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -11,6 +14,7 @@ if ROOT not in sys.path:
 from benchmark.generalization_gate import (  # noqa: E402
     DEFAULT_MAX_GAP,
     DEFAULT_MIN_HELD_OUT_REPOS,
+    _check_rows_list,
     _composite,
     check_generalization,
     failed_checks,
@@ -198,3 +202,88 @@ def test_check_generalization_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_generalization(run)
     assert run == snapshot
+
+
+# --- #1113: checks-row sanitization so the helpers never crash on a non-list checks ---
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "has_partitions"}, "garbage",
+    ({"name": "has_partitions", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
+
+
+def test_failed_checks_survives_a_non_list_checks_field():
+    # Before #1113 this raised AttributeError: iterating the str yields characters and
+    # 'garbage'[0].get(...) has no .get. It must degrade to "no failed checks", not crash.
+    assert failed_checks({"checks": "garbage"}) == []
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_generalization_headline_survives_a_non_list_checks_field():
+    # 'garbage' is truthy, so the old `result.get("checks") or []` passed it straight into
+    # len()/failed_checks() and crashed. It must read as "no checks evaluated".
+    assert generalization_headline({"checks": "garbage"}) == "generalization: no checks evaluated"
+    for bad in _MALFORMED_CHECKS:
+        assert generalization_headline({"checks": bad}) == "generalization: no checks evaluated", bad
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "has_partitions", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+def test_check_rows_list_skips_unusable_rows_but_keeps_good_ones():
+    checks = [
+        {"name": "has_partitions", "passed": True},
+        {"name": "enough_held_out_repos"},          # missing 'passed' -> skipped
+        {"name": 7, "passed": False},               # non-str name -> skipped
+        {"name": "gap_within_tolerance", "passed": 1},  # non-bool passed -> skipped
+        {"name": "gap_within_tolerance", "passed": False},
+    ]
+    assert _check_rows_list(checks) == [
+        {"name": "has_partitions", "passed": True},
+        {"name": "gap_within_tolerance", "passed": False},
+    ]
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.generalization_gate"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_absent_and_empty_are_silent(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.generalization_gate"):
+        assert _check_rows_list(None) == []
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_a_well_formed_result_is_unaffected_by_the_sanitizer():
+    # The happy path (check_generalization emits proper rows) still reports failures exactly.
+    result = check_generalization(_gen(0.70, 0.40))  # 0.30 gap -> overfit
+    assert failed_checks(result) == ["gap_within_tolerance"]
+    assert generalization_headline(result).startswith("generalization: OVERFIT")
+
+
+def test_check_rows_list_warns_when_no_row_is_usable(caplog):
+    # A non-empty list whose every row is unusable degrades to [] and warns once about it.
+    with caplog.at_level(logging.WARNING, logger="benchmark.generalization_gate"):
+        assert _check_rows_list([{"name": 7, "passed": False}]) == []
+    assert any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_non_dict_elements_inside_the_list(caplog):
+    # A list whose elements are not objects: each is warned and skipped, good rows survive.
+    checks = [42, "garbage", {"name": "has_partitions", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.generalization_gate"):
+        assert _check_rows_list(checks) == [{"name": "has_partitions", "passed": True}]
+    assert any("not an object" in r.message for r in caplog.records)
