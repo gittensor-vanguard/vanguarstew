@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from benchmark.freeze import _git as freeze_git  # noqa: E402
 from benchmark.freeze import _safe_extractall, build_context, export_tree  # noqa: E402
 
 
@@ -312,3 +313,28 @@ def test_build_context_keeps_lightweight_tags_at_or_before_freeze():
         assert releases == ["v0.1.0", "v0.2.0"], releases
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_git_translates_a_missing_binary_into_a_clean_runtimeerror(tmp_path, monkeypatch):
+    # When the `git` binary is not on PATH, subprocess.run raises FileNotFoundError at the spawn
+    # site -- before any exit code exists. Point PATH at an empty dir so `git` genuinely cannot
+    # be found (a real spawn failure, no mock), and assert _git maps it to a RuntimeError with an
+    # actionable install hint, mirroring the non-zero-exit path. Without the fix this raises the
+    # raw FileNotFoundError as a traceback out of the freeze/replay path.
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(RuntimeError) as exc:
+        freeze_git(str(tmp_path), "rev-parse", "HEAD")
+    msg = str(exc.value)
+    assert "git" in msg
+    assert "not found on PATH" in msg
+
+
+def test_git_still_reports_a_run_failure_as_runtimeerror(tmp_path):
+    # The missing-binary translation must not swallow the pre-existing non-zero-exit contract:
+    # a `git` that runs and then fails (here, a rev-parse in a non-repository directory) still
+    # surfaces the clean "git ... failed" RuntimeError, not a FileNotFoundError message.
+    with pytest.raises(RuntimeError) as exc:
+        freeze_git(str(tmp_path), "rev-parse", "--verify", "HEAD")
+    msg = str(exc.value)
+    assert "failed" in msg
+    assert "not found on PATH" not in msg
