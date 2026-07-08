@@ -70,6 +70,21 @@ def _scored_metric(result: dict, key: str, *, nested_key: str | None = None):
     return value
 
 
+def _floor_source(result: dict) -> dict:
+    """The partition whose component scores the floor gate evaluates.
+
+    A ``run_generalization_report`` artifact nests every scored field under ``tuned`` and
+    ``held_out`` and carries no top-level ``composite_mean``/``composite_parts``; its headline is
+    the **tuned** partition (the primary figure, mirroring ``benchmark.trend.headline_score``,
+    ``check_promotion``'s ``_promotion_source``, and ``check_judge``'s ``_judge_source``). Every
+    other artifact is evaluated at the top level.
+    """
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return result
+
+
 def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
                            min_judge: float = DEFAULT_MIN_JUDGE,
                            min_objective: float = DEFAULT_MIN_OBJECTIVE) -> dict:
@@ -78,11 +93,17 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     Returns ``{"passed": bool, "checks": [{"name", "passed", "detail"}], "composite_mean",
     "judge_mean", "objective_mean", ...floors}``. ``passed`` is True only when every check passes;
     all checks are always reported.
+
+    A ``run_generalization_report`` artifact (scores nested under ``tuned``/``held_out``, no
+    top-level ``composite_mean``/``composite_parts``) is evaluated on its ``tuned`` partition via
+    :func:`_floor_source`, so a strong generalization run is gated on its merits instead of failing
+    every floor vacuously; every other artifact is evaluated at the top level.
     """
     result = _dict(result)
-    composite = _scored_metric(result, "composite_mean")
-    judge = _scored_metric(result, "judge_mean", nested_key="composite_parts")
-    objective = _scored_metric(result, "objective_mean", nested_key="composite_parts")
+    source = _floor_source(result)
+    composite = _scored_metric(source, "composite_mean")
+    judge = _scored_metric(source, "judge_mean", nested_key="composite_parts")
+    objective = _scored_metric(source, "objective_mean", nested_key="composite_parts")
 
     checks = [
         _floor_check("composite_floor", composite, min_composite),

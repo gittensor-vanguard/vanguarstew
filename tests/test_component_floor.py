@@ -261,3 +261,74 @@ def test_bool_scored_repos_is_not_treated_as_an_unscored_placeholder():
     assert result["composite_mean"] == 0.7
     assert result["judge_mean"] == 0.6
     assert result["passed"] is True
+
+
+# --- generalization: evaluate the tuned partition (mirrors check_promotion / check_judge) ----
+
+def _generalization(tuned, held_out=None, gap=0.1):
+    return {
+        "tuned": tuned,
+        "held_out": held_out or {"composite_mean": 0.5, "scored_repos": 2},
+        "generalization_gap": gap,
+    }
+
+
+def test_strong_generalization_run_passes_on_its_tuned_partition():
+    art = _generalization({
+        "scored_repos": 3,
+        "composite_mean": 0.65,
+        "composite_parts": {"judge_mean": 0.70, "objective_mean": 0.55},
+    })
+    result = check_component_floors(art, min_composite=0.5, min_judge=0.4, min_objective=0.4)
+    assert result["passed"] is True
+    assert result["composite_mean"] == 0.65
+    assert result["judge_mean"] == 0.70
+    assert result["objective_mean"] == 0.55
+
+
+def test_generalization_weak_objective_on_tuned_is_caught():
+    art = _generalization({
+        "scored_repos": 3,
+        "composite_mean": 0.55,
+        "composite_parts": {"judge_mean": 0.9, "objective_mean": 0.2},
+    })
+    result = check_component_floors(art, min_composite=0.5, min_judge=0.4, min_objective=0.4)
+    assert result["passed"] is False
+    assert failed_checks(result) == ["objective_floor"]
+
+
+def test_unscored_tuned_partition_fails_all_floors():
+    art = _generalization({
+        "scored_repos": 0,
+        "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    })
+    result = check_component_floors(art)
+    assert result["passed"] is False
+    assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
+    assert result["composite_mean"] is None
+
+
+def test_partial_partition_without_held_out_is_not_generalization():
+    art = {
+        "tuned": {
+            "scored_repos": 3,
+            "composite_mean": 0.65,
+            "composite_parts": {"judge_mean": 0.70, "objective_mean": 0.55},
+        },
+        "generalization_gap": 0.1,
+    }
+    result = check_component_floors(art, min_composite=0.5, min_judge=0.4, min_objective=0.4)
+    assert result["passed"] is False
+    assert result["composite_mean"] is None
+
+
+def test_held_out_weak_components_do_not_affect_tuned_gate():
+    art = _generalization(
+        {"scored_repos": 3, "composite_mean": 0.65,
+         "composite_parts": {"judge_mean": 0.70, "objective_mean": 0.55}},
+        {"scored_repos": 3, "composite_mean": 0.1,
+         "composite_parts": {"judge_mean": 0.1, "objective_mean": 0.1}},
+    )
+    result = check_component_floors(art, min_composite=0.5, min_judge=0.4, min_objective=0.4)
+    assert result["passed"] is True
