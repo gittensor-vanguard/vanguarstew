@@ -19,7 +19,22 @@ from benchmark.leakage import scrub_context
 
 
 def _git(repo, *args, check=True):
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    """Run ``git`` against ``repo`` and return stdout; raise a clean error on failure.
+
+    A non-zero exit is already translated into a ``RuntimeError`` carrying git's
+    stderr. When the ``git`` binary is not installed or not on ``PATH``,
+    ``subprocess.run`` raises ``FileNotFoundError`` (an ``OSError``) at the spawn
+    site, before any exit code exists — a different failure mode that would
+    otherwise escape the freeze/replay path as a raw traceback. It is translated
+    here into the same clean ``RuntimeError`` with an actionable install hint.
+    """
+    try:
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "the `git` binary is required but was not found on PATH; "
+            "install git (https://git-scm.com/) to run the freeze/replay path"
+        ) from exc
     if check and r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout
