@@ -93,9 +93,14 @@ def test_sha_detection_masks_hex_with_letter_preserves_numeric_and_respects_leng
     # All-numeric token (year/count/id) -> preserved, even though it is valid hex.
     assert _looks_like_sha("1234567") is False
     assert _looks_like_sha("2024") is False
-    # Below 7 / above 40 hex chars -> not a SHA.
+    # Below 7 / in the 41-63 gap / above 64 hex chars -> not a SHA.
     assert _looks_like_sha("a1b2c") is False           # 5 chars
-    assert _looks_like_sha("a" * 41) is False          # 41 chars
+    assert _looks_like_sha("a" * 41) is False          # 41 chars (not a real hash length)
+    assert _looks_like_sha("b" * 63) is False          # 63 chars
+    assert _looks_like_sha("c" * 65) is False          # 65 chars
+    # Exactly 64 hex chars WITH a letter is a full SHA-256 object hash -> masked.
+    assert _looks_like_sha("abc123" + "0" * 58) is True   # 64 chars
+    assert _looks_like_sha("1" * 64) is False             # 64-char all-numeric -> preserved
 
     out = strip_forward_refs("see 1a2b3c4d in PR #42 at https://github.com/o/r/pull/9 (count 1234567)")
     assert "1a2b3c4d" not in out and "<sha>" in out    # hex SHA masked

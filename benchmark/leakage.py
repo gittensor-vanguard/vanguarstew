@@ -53,7 +53,12 @@ _GH_LINK = re.compile(
 _TRAILING_PUNCT = ".,;!"
 
 _ISSUE_REF = re.compile(r"#\d+")
-_SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
+# Raw commit hashes: a word-bounded hex run of 7-40 chars (abbreviated or full SHA-1) or
+# exactly 64 chars (a full SHA-256 object hash; git has supported the SHA-256 format since
+# 2.29). The exact-64 arm is separate so lengths 41-63 stay unmasked, keeping the guard off
+# arbitrary long hex-like tokens that are not real hashes. `_looks_like_sha` still requires a
+# hex letter, so bare numeric tokens of any length are preserved.
+_SHA = re.compile(r"\b(?:[0-9a-f]{7,40}|[0-9a-f]{64})\b", re.I)
 
 
 def _mask_link(match) -> str:
