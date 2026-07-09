@@ -15,11 +15,13 @@ if ROOT not in sys.path:
 
 import benchmark.github_context as gc  # noqa: E402
 from agent.context import (  # noqa: E402
+    _SHA,
     CONTEXT_FILE,
     README_PROBE_NAMES,
     _agent_context_list,
     _agent_issue_pr_list,
     _context_from_git,
+    _looks_like_sha,
     _mask_forward_refs,
     context_for_agent,
     load_context,
@@ -578,6 +580,8 @@ def test_mask_forward_refs_masks_full_sha256_hash():
     # is as much a forward-reference leak as a 40-char SHA-1 and must be masked too.
     sha256 = "abc123" + "0" * 58  # 64 hex chars, contains a hex letter
     assert len(sha256) == 64
+    assert _SHA.fullmatch(sha256) is not None
+    assert _looks_like_sha(sha256) is True
     out = _mask_forward_refs(f"regressed by commit {sha256} upstream")
     assert sha256 not in out and "<sha>" in out
     assert _mask_forward_refs("see " + "a" * 40) == "see <sha>"
@@ -585,14 +589,48 @@ def test_mask_forward_refs_masks_full_sha256_hash():
 
 
 def test_mask_forward_refs_leaves_non_hash_length_hex_runs_untouched():
-    # Only real hash lengths (7-40 SHA-1, exactly 64 SHA-256) are masked; 41-63 char hex runs
-    # are not valid full hashes, and a 64-char all-numeric token is preserved by the hex-letter gate.
+    # Only real hash lengths (7-40 SHA-1, exactly 64 SHA-256 with a hex letter) are masked;
+    # 41-63 char hex runs are not valid full hashes, and a 64-char all-numeric token is
+    # excluded by the 64-char regex branch (not merely deferred to _looks_like_sha).
     hex41 = "a" * 41
     hex63 = "b" * 63
     num64 = "1" * 64
+    assert _SHA.fullmatch(hex41) is None
+    assert _SHA.fullmatch(hex63) is None
+    assert _SHA.fullmatch(num64) is None
+    assert _looks_like_sha(num64) is False
     out = _mask_forward_refs(f"blob {hex41} and {hex63} and count {num64}")
     assert hex41 in out and hex63 in out and num64 in out
     assert "<sha>" not in out
+
+
+def test_looks_like_sha_preserves_numeric_tokens_and_masks_real_hashes():
+    # Mirror the boundary contract exercised for benchmark/leakage.py (spec 003).
+    assert _looks_like_sha("1a2b3c4") is True
+    assert _looks_like_sha("deadbeef1234") is True
+    assert _looks_like_sha("1234567") is False
+    assert _looks_like_sha("2024") is False
+    assert _looks_like_sha("a1b2c") is False           # 5 chars — below minimum
+    assert _looks_like_sha("a" * 41) is False          # 41 chars — not a real hash length
+    assert _looks_like_sha("b" * 63) is False          # 63 chars
+    assert _looks_like_sha("c" * 65) is False          # 65 chars
+    assert _looks_like_sha("abc123" + "0" * 58) is True   # 64-char SHA-256
+    assert _looks_like_sha("1" * 64) is False             # 64-char all-numeric
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_masks_sha256_in_subjects():
+    # SHA-256 object hashes (64 hex chars) must be scrubbed in the git-only path, not just SHA-1.
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        sha256 = "abc123" + "0" * 58
+        _git(repo, "commit", "-q", "--allow-empty", "-m", f"Fix parser (regressed by {sha256})")
+        ctx = _context_from_git(repo)
+        subject = ctx["recent_commits"][0]["subject"]
+        assert sha256 not in subject and "<sha>" in subject
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")

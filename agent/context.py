@@ -48,10 +48,17 @@ _ISSUE_REF = re.compile(r"#\d+")
 # Raw commit hashes: a word-bounded hex run of 7-40 chars (abbreviated or full SHA-1) or
 # exactly 64 chars (a full SHA-256 object hash; git has supported the SHA-256 format since
 # 2.29). The exact-64 arm is separate so lengths 41-63 stay unmasked, keeping the guard off
-# arbitrary long hex-like tokens that are not real hashes. `_looks_like_sha` still requires a
-# hex letter, so bare numeric tokens of any length are preserved. Keep aligned with
-# ``benchmark/leakage.py``.
-_SHA = re.compile(r"\b(?:[0-9a-f]{7,40}|[0-9a-f]{64})\b", re.I)
+# arbitrary long hex-like tokens that are not real hashes. The 64-char arm also requires at
+# least one hex letter in the pattern so all-numeric 64-char prose (counts, IDs) never even
+# enters the SHA candidate set. Shorter runs still rely on ``_looks_like_sha`` for the same
+# numeric-preservation policy. Keep aligned with ``benchmark/leakage.py``.
+_SHA = re.compile(
+    r"\b(?:"
+    r"[0-9a-f]{7,40}|"
+    r"(?=[0-9a-f]{64}\b)(?=[0-9a-f]*[a-f])[0-9a-f]{64}"
+    r")\b",
+    re.I,
+)
 
 
 def _mask_link(match) -> str:
