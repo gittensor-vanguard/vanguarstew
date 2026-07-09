@@ -587,6 +587,17 @@ def test_pr_queue_note_tolerates_non_list_open_prs():
         assert _pr_queue_note({"open_prs": bad}) == ""
 
 
+def test_pr_queue_note_uses_pr_number_not_raw_number_field():
+    note = _pr_queue_note({"open_prs": [{"number": 7, "title": "Fix bug"}]})
+    assert "#7: Fix bug" in note
+    assert "#True" not in note
+    bad = _pr_queue_note({"open_prs": [{"number": True, "title": "Fix bug"}]})
+    assert "#?: Fix bug" in bad
+    assert "#True" not in bad
+    bad = _pr_queue_note({"open_prs": [{"number": [7], "title": "Add streaming export"}]})
+    assert "#?: Add streaming export" in bad
+
+
 _TRUNCATED_CTX = {
     "_issues_truncated": True,
     "open_prs": [{"number": 2, "title": "partial pr awaiting review"}],

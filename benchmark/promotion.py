@@ -19,7 +19,10 @@ its merits instead of failing every check vacuously. The criteria:
    agent that does not actually out-decide the reference does not pass;
 4. ``judge_trustworthy`` - the pairwise judge's order-``disagreement_rate`` is at most
    ``max_disagreement`` (a run whose verdicts flip on presentation order isn't a trustworthy
-   basis for promotion). A run judged single-order carries no disagreement rate and passes this
+   basis for promotion). The rate is recomputed from ``judge_order_stats`` when available
+   (``disagree`` / ``dual_order_tasks``), falling back to ``judge_report.disagreement_rate``
+   only when stats are absent — mirroring ``check_judge`` and ``check_regression`` — so a stale report field cannot
+   false-pass the gate. A run judged single-order carries no disagreement rate and passes this
    check, since there is no instability signal to fail on.
 
 The companion ``scripts/promotion.py`` exits non-zero when the gate fails, so promotion can be
@@ -32,6 +35,8 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+
+from benchmark.judge_gate import _disagreement_rate
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +137,25 @@ def _promotion_source(result: dict) -> dict:
     return result
 
 
+def _promotion_disagreement_rate(source: dict):
+    """Order-disagreement rate for promotion, preferring stats over a stale report.
+
+    Reuses :func:`benchmark.judge_gate._disagreement_rate` for the authoritative rate. When no
+    rate can be derived but a telemetry block carries a present non-numeric
+    ``disagreement_rate``, that raw value is returned so ``judge_trustworthy`` fails closed per
+    spec 014 (distinct from a missing rate, which passes as single-order).
+    """
+    source = _dict(source)
+    rate = _disagreement_rate(source)
+    if rate is not None:
+        return rate
+    for telemetry in (_dict(source.get("judge_order_stats")), _dict(source.get("judge_report"))):
+        raw = telemetry.get("disagreement_rate")
+        if raw is not None and not _is_number(raw):
+            return raw
+    return None
+
+
 def _scored_composite(result: dict):
     """The run's real headline composite, or ``None`` when there is no real score.
 
@@ -178,7 +202,7 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     source = _promotion_source(result)
     composite = _scored_composite(source)
     margin = _decisive_margin(source)
-    disagreement = _dict(source.get("judge_report")).get("disagreement_rate")
+    disagreement = _promotion_disagreement_rate(source)
     error = result.get("error") or source.get("error")
     checks = []
 
@@ -213,7 +237,7 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
         "checks": checks,
         "composite_mean": composite,
         "decisive_margin": margin,
-        "disagreement_rate": disagreement,
+        "disagreement_rate": disagreement if _is_number(disagreement) else None,
         "min_composite": min_composite,
         "min_decisive_margin": min_decisive_margin,
         "max_disagreement": max_disagreement,

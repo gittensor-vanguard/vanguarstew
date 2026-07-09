@@ -33,6 +33,25 @@ def _round(value):
     return round(float(value), 3) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _coerce_runs(value) -> int | None:
+    """Return a non-negative run count, or ``None`` when ``value`` is not a usable integer."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        if value is not None:
+            logger.warning(
+                "repeatability: runs is %s, not a non-negative int; treating as absent",
+                type(value).__name__,
+            )
+        return None
+    return value if value >= 0 else None
+
+
+def _effective_min_runs(min_runs: int) -> int:
+    """Minimum scored repeats required; ``0`` means \"at least one scored run\" for gating."""
+    if isinstance(min_runs, bool) or not isinstance(min_runs, int):
+        return DEFAULT_MIN_RUNS
+    return max(0, min_runs)
+
+
 def _repeatability_artifacts(artifacts) -> list:
     """Return ``artifacts`` when it is a list; otherwise treat as no repeat runs.
 
@@ -85,8 +104,13 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
         "reason": "",
     }
 
-    if runs < min_runs:
-        result["reason"] = f"insufficient runs: {runs} scored < min_runs {min_runs}"
+    if runs == 0:
+        result["reason"] = "no scored runs"
+        return result
+
+    required = _effective_min_runs(min_runs)
+    if runs < required:
+        result["reason"] = f"insufficient runs: {runs} scored < min_runs {required}"
         return result
 
     mu = round(mean(scores), 3)
@@ -120,10 +144,14 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
 
 def repeatability_headline(result: dict) -> str:
     """A one-line human summary of an :func:`assess_repeatability` result."""
-    if not isinstance(result, dict) or not result.get("runs"):
+    if not isinstance(result, dict):
         return "repeatability: no scored runs"
-    if result.get("runs", 0) < result.get("min_runs", DEFAULT_MIN_RUNS):
-        return f"repeatability: inconclusive ({result['runs']} run(s))"
+    runs = _coerce_runs(result.get("runs"))
+    if runs is None or runs == 0:
+        return "repeatability: no scored runs"
+    min_runs = _effective_min_runs(result.get("min_runs", DEFAULT_MIN_RUNS))
+    if runs < min_runs:
+        return f"repeatability: inconclusive ({runs} run(s))"
     verdict = "STABLE" if result.get("stable") else "UNSTABLE"
     cv = result.get("cv")
     cv_txt = f"{cv:.1%}" if isinstance(cv, (int, float)) and not isinstance(cv, bool) else "n/a"

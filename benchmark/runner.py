@@ -40,6 +40,11 @@ logger = logging.getLogger(__name__)
 # runner's decoded winner label): a win is 1.0, a tie 0.5, a loss 0.0.
 _JUDGE_COMPONENT = {"challenger": 1.0, "tie": 0.5, "baseline": 0.0}
 
+# Wall-clock cap for cloning a repo-set source. `git clone` reaches out over the network, so
+# without a bound a slow, stalled, or unresponsive remote hangs the entire replay indefinitely.
+# Fail the source closed (RepoSetError) instead, so the run records a clean per-repo error.
+CLONE_TIMEOUT_SECONDS = 300
+
 
 def load_solve(agent_file: str = "agent.py"):
     if not os.path.isfile(agent_file):
@@ -97,8 +102,14 @@ def _materialize_repo_source(source: str, checkout_root: str | None) -> tuple[st
         raise RepoSetError(f"repo-set source not found locally: {source}")
     dest = os.path.join(checkout_root, f"repo_{len(os.listdir(checkout_root))}")
     try:
-        subprocess.run(["git", "clone", "-q", source, dest], check=True, capture_output=True,
-                       text=True)
+        # `--` ends option parsing so a source beginning with `-` is treated as a repo, never a
+        # git flag; `timeout` bounds a network clone so a stalled remote can't hang the replay.
+        subprocess.run(["git", "clone", "-q", "--", source, dest], check=True,
+                       capture_output=True, text=True, timeout=CLONE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise RepoSetError(
+            f"timed out cloning repo-set source {source!r} after {CLONE_TIMEOUT_SECONDS}s"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         raise RepoSetError(f"failed to clone repo-set source {source!r}: {exc.stderr.strip()}") from exc
     return dest, True

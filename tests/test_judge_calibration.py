@@ -259,7 +259,10 @@ def test_symmetry_checks_list_rejects_empty_id(caplog):
 
 def test_symmetry_checks_list_accepts_numpy_bool_when_available():
     np = pytest.importorskip("numpy")
-    for factory in (np.bool_, np.bool8):
+    factories = [np.bool_]
+    if hasattr(np, "bool8"):
+        factories.append(np.bool8)
+    for factory in factories:
         rows = [{"id": "sym-a", "passed": factory(True)}]
         assert _symmetry_checks_list(rows) == rows
 

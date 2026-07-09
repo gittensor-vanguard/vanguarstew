@@ -70,6 +70,18 @@ def test_dual_order_tasks_falls_back_to_judge_order_stats():
     assert result["dual_order_tasks"] == 4 and result["passed"] is True
 
 
+def test_stale_judge_report_disagreement_rate_is_recomputed_from_stats():
+    r = {
+        "judge_dual_order": True,
+        "judge_report": {"disagreement_rate": 0.05, "dual_order_tasks": 10, "disagreements": 1},
+        "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+    }
+    result = check_judge(r, max_disagreement=0.3)
+    assert result["passed"] is False
+    assert result["disagreement_rate"] == 0.8
+    assert "low_disagreement" in failed_checks(result)
+
+
 # --- multi-repo aggregates omit the top-level judge_dual_order flag -----------------------
 # A single-repo run states judge_dual_order directly; a run_multi_replay aggregate does not, so
 # the status is derived from the pooled dual-order task count (judge_report, else
@@ -361,7 +373,12 @@ def test_check_rows_list_rejects_empty_name(caplog):
 
 def test_check_rows_list_accepts_numpy_bool_when_available():
     np = pytest.importorskip("numpy")
-    for factory in (np.bool_, np.bool8):
+    # np.bool8 was removed in numpy 2.0; use it only when present so the test
+    # passes on both numpy 1.x and 2.x.
+    factories = [np.bool_]
+    if hasattr(np, "bool8"):
+        factories.append(np.bool8)
+    for factory in factories:
         rows = [{"name": "dual_order_judging", "passed": factory(True)}]
         assert _check_rows_list(rows) == rows
 

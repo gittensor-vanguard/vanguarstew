@@ -207,7 +207,8 @@ def _is_passed(value) -> bool:
     """Accept bool values (including subclasses) and numpy.bool_; reject int 0/1."""
     if isinstance(value, bool):
         return True
-    return type(value).__name__ in ("bool_", "bool8")
+    # numpy scalar bool: "bool_"/"bool8" (numpy 1.x) or "bool" (numpy 2.x).
+    return type(value).__name__ in ("bool_", "bool8", "bool")
 
 
 def _check_row_field(key: str, value) -> bool:

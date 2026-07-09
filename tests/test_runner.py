@@ -17,7 +17,10 @@ if ROOT not in sys.path:
 
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
+from benchmark.repo_set import RepoSetError  # noqa: E402
 from benchmark.runner import (  # noqa: E402
+    CLONE_TIMEOUT_SECONDS,
+    _materialize_repo_source,
     load_solve,
     run_multi_replay,
     run_replay,
@@ -204,3 +207,33 @@ def test_load_solve_rejects_non_callable_solve(tmp_path):
 def test_load_solve_loads_valid_agent():
     solve = load_solve(os.path.join(ROOT, 'agent.py'))
     assert callable(solve)
+
+
+# ---- repo-set clone is bounded and option-safe ------------------------------
+
+def test_clone_timeout_raises_clean_repo_set_error(tmp_path, monkeypatch):
+    # A network clone must not hang forever: a TimeoutExpired becomes a clean RepoSetError so the
+    # run records a per-repo error instead of stalling the whole replay.
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    monkeypatch.setattr("benchmark.runner.subprocess.run", fake_run)
+    with pytest.raises(RepoSetError, match="timed out cloning"):
+        _materialize_repo_source("https://example.invalid/repo.git", str(tmp_path))
+
+
+def test_clone_passes_end_of_options_guard_and_finite_timeout(tmp_path, monkeypatch):
+    # The clone must carry a `--` immediately before the source (so a leading-dash source is never
+    # parsed as a git flag) and a finite timeout.
+    calls = {}
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = list(cmd)
+        calls["timeout"] = kwargs.get("timeout")
+        return None
+
+    monkeypatch.setattr("benchmark.runner.subprocess.run", fake_run)
+    source = "https://example.invalid/repo.git"
+    _materialize_repo_source(source, str(tmp_path))
+    assert calls["cmd"][calls["cmd"].index(source) - 1] == "--"
+    assert calls["timeout"] == CLONE_TIMEOUT_SECONDS
