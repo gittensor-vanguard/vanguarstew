@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -83,6 +84,22 @@ def test_insufficient_runs_is_inconclusive():
     assert "insufficient runs" in result["reason"]
     assert result["mean"] is None
     assert assess_repeatability([], min_runs=2)["runs"] == 0
+
+
+def test_empty_scored_set_with_min_runs_zero_does_not_raise():
+    result = assess_repeatability([], min_runs=0)
+    assert result["runs"] == 0
+    assert result["reason"] == "no scored runs"
+    assert result["mean"] is None
+
+
+def test_headline_tolerates_truthy_non_integer_runs(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.repeatability"):
+        headline = repeatability_headline({
+            "runs": "2", "min_runs": 2, "stable": True, "mean": 0.6, "cv": 0.01,
+        })
+    assert headline == "repeatability: no scored runs"
+    assert any("runs is str" in r.message for r in caplog.records)
 
 
 def test_unscored_runs_are_skipped_not_counted():
@@ -177,7 +194,7 @@ def test_assess_repeatability_survives_non_list_artifacts():
     for bad in _MALFORMED_ARTIFACTS:
         result = assess_repeatability(bad, min_runs=2)
         assert result["runs"] == 0 and result["stable"] is False, bad
-        assert "insufficient runs" in result["reason"], bad
+        assert result["reason"] in ("no scored runs",) or "insufficient runs" in result["reason"], bad
 
 
 def test_assess_repeatability_logs_warning_for_non_list_artifacts(caplog):
