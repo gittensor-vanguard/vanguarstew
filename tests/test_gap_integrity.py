@@ -44,6 +44,26 @@ def test_a_consistent_generalization_report_passes():
     ]
 
 
+def test_non_finite_scored_repos_fails_instead_of_raising():
+    # Previously ValueError/OverflowError from int(scored) in _partition_scored. A NaN/Infinity
+    # scored_repos survives a JSON save/load round trip but is not a usable count -- treat the
+    # partition as unscored and flag the report, don't crash the gate.
+    art = _report(tuned_scored=float("nan"), gap=0.05)
+    result = check_gap_integrity(art)          # must not raise
+    assert result["passed"] is False
+    assert "gap_absent_when_unscored" in failed_checks(result)
+
+
+def test_non_finite_numeric_fields_never_raise_for_any_variant():
+    # NaN, +/-Infinity, and an int too large for a float all survive a JSON round trip and would
+    # crash int()/float()/isfinite; none may raise in any scored_repos/composite/gap field.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        for kwargs in ({"tuned_scored": bad}, {"held_scored": bad},
+                       {"tuned_mean": bad}, {"held_mean": bad}, {"gap": bad}):
+            result = check_gap_integrity(_report(**kwargs))   # must not raise
+            assert isinstance(result["passed"], bool), (kwargs, bad)
+
+
 def test_expected_gap_matches_runner_semantics():
     assert _expected_gap(0.62, 0.57) == 0.05
     assert _expected_gap(0.6, 0.58) == 0.02
