@@ -345,9 +345,7 @@ def test_non_numeric_fields_do_not_crash():
              "judge_report": {"disagreement_rate": "some"}}
     result = check_promotion(weird)
     assert result["passed"] is False
-    # Non-numeric disagreement_rate with no derivable stats -> None -> judge_trustworthy passes
-    # (no dual-order signal), matching _disagreement_rate / single-order semantics.
-    assert {"composite_floor", "beats_baseline"} <= set(failed_checks(result))
+    assert {"composite_floor", "beats_baseline", "judge_trustworthy"} <= set(failed_checks(result))
 
 
 def test_headline_reports_promote_and_hold():

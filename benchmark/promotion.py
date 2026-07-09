@@ -137,6 +137,25 @@ def _promotion_source(result: dict) -> dict:
     return result
 
 
+def _promotion_disagreement_rate(source: dict):
+    """Order-disagreement rate for promotion, preferring stats over a stale report.
+
+    Reuses :func:`benchmark.judge_gate._disagreement_rate` for the authoritative rate. When no
+    rate can be derived but a telemetry block carries a present non-numeric
+    ``disagreement_rate``, that raw value is returned so ``judge_trustworthy`` fails closed per
+    spec 014 (distinct from a missing rate, which passes as single-order).
+    """
+    source = _dict(source)
+    rate = _disagreement_rate(source)
+    if rate is not None:
+        return rate
+    for telemetry in (_dict(source.get("judge_order_stats")), _dict(source.get("judge_report"))):
+        raw = telemetry.get("disagreement_rate")
+        if raw is not None and not _is_number(raw):
+            return raw
+    return None
+
+
 def _scored_composite(result: dict):
     """The run's real headline composite, or ``None`` when there is no real score.
 
@@ -183,7 +202,7 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     source = _promotion_source(result)
     composite = _scored_composite(source)
     margin = _decisive_margin(source)
-    disagreement = _disagreement_rate(source)
+    disagreement = _promotion_disagreement_rate(source)
     error = result.get("error") or source.get("error")
     checks = []
 
@@ -218,7 +237,7 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
         "checks": checks,
         "composite_mean": composite,
         "decisive_margin": margin,
-        "disagreement_rate": disagreement,
+        "disagreement_rate": disagreement if _is_number(disagreement) else None,
         "min_composite": min_composite,
         "min_decisive_margin": min_decisive_margin,
         "max_disagreement": max_disagreement,
