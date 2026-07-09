@@ -128,7 +128,10 @@ def _pr_queue_note(context: dict) -> str:
     prs = [p for p in _safe_prs(context) if _pr_title(p)]
     if not prs:
         return ""
-    lines = [f"- #{p.get('number', '?')}: {_pr_title(p)}" for p in prs]
+    lines = []
+    for p in prs:
+        num = _pr_number(p)
+        lines.append(f"- #{num if num is not None else '?'}: {_pr_title(p)}")
     return (
         f"\nOpen pull requests awaiting review ({len(lines)}):\n"
         + "\n".join(lines)
