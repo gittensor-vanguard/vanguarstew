@@ -84,13 +84,18 @@ def _slice_coverage(slice_) -> dict:
 
 
 def _combined(*slices: dict) -> dict:
-    """Overall coverage summed across partition slices.
+    """Overall coverage summed across partition slices — only when every partition is coherent.
 
-    Returns the summed ``dual_order_tasks``/``tasks`` and their coverage only when *every* slice
-    carries an integer count for both; if any partition is missing a count the aggregate is withheld
-    (all ``None``), so a partial partition never produces a misleading overall.
+    Each slice is a :func:`_slice_coverage` result, whose ``coverage`` is a number only when that
+    partition's counts are coherent (``tasks > 0`` and ``0 <= dual_order_tasks <= tasks``) and
+    ``None`` otherwise. Gating on ``coverage is not None`` — rather than merely on the raw counts
+    being integers — keeps an incoherent partition (``dual_order_tasks > tasks``, a zero-task slice,
+    or a missing/negative count) from being summed into a plausible-but-wrong overall, per
+    :func:`_coverage`'s contract. When every partition is coherent the summed counts are coherent
+    too (``tasks > 0``, ``0 <= dual_order_tasks <= tasks``), so ``_coverage`` never returns ``None``
+    on this path.
     """
-    if all(_is_int(s["dual_order_tasks"]) and _is_int(s["tasks"]) for s in slices):
+    if all(s["coverage"] is not None for s in slices):
         dual = sum(s["dual_order_tasks"] for s in slices)
         total = sum(s["tasks"] for s in slices)
         return {"dual_order_tasks": dual, "tasks": total, "coverage": _coverage(dual, total)}
