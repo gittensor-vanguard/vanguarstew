@@ -69,6 +69,36 @@ def test_strip_forward_refs_masks_mixed_case_sha_like_tokens_only():
     assert "1234567" in out
 
 
+def test_strip_forward_refs_masks_sha256_commit_hash():
+    # A full 64-char SHA-256 object hash (git 2.29+) is a forward reference just like a SHA-1;
+    # the {7,40} bound left no word boundary to backtrack to inside a 64-char run, so it slipped
+    # through entirely (#1201).
+    sha256 = "abc123" + "0" * 58
+    assert len(sha256) == 64
+    text = f"see commit {sha256} for the fix"
+    out = strip_forward_refs(text)
+    assert sha256 not in out and "<sha>" in out
+
+
+def test_strip_forward_refs_preserves_64_char_numeric_token():
+    # Same length as a SHA-256, but no hex letters -- must stay preserved like any other bare
+    # numeric token (a count/id/measurement), not masked as a hash.
+    numeric64 = "1" * 64
+    text = f"processed {numeric64} rows"
+    out = strip_forward_refs(text)
+    assert numeric64 in out
+    assert "<sha>" not in out
+
+
+def test_strip_forward_refs_still_masks_sha1_length_hash():
+    # Regression guard: widening the upper bound to 64 must not disturb the original 40-char
+    # SHA-1 case.
+    sha1 = "a" * 40
+    text = f"reverted in {sha1} last week"
+    out = strip_forward_refs(text)
+    assert sha1 not in out and "<sha>" in out
+
+
 def test_scrub_context_scrubs_nested_fields_only():
     ctx = {
         "readme_excerpt": "roadmap toward plugins; tracked in #101 after commit aBc1234; "

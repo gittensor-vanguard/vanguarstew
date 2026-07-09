@@ -77,12 +77,13 @@ must be written down so every freeze/context/leakage change is reviewed against 
   have forward-references neutralized: issue/PR back-references (`#N` → `#ref`), GitHub deep
   links (issues/pull/commit/compare/…) → masked, and raw commit SHAs → `<sha>`.
 - **SHA detection (exact rule).** A token SHALL be treated as a SHA and masked to `<sha>` only
-  when it is a word-bounded run of 7–40 characters drawn from `[0-9a-f]` (case-insensitive) AND
+  when it is a word-bounded run of 7–64 characters drawn from `[0-9a-f]` (case-insensitive) AND
   it contains **at least one** hex letter `a`–`f` (`_looks_like_sha` = `_SHA.fullmatch` + a
-  hex-letter check). Consequently:
-  - an all-numeric 7–40 char token (a count, year, ID, measurement) SHALL be **preserved** — it
+  hex-letter check). The 64-char upper bound covers both SHA-1 (40 hex chars) and SHA-256 (64
+  hex chars, supported by git since 2.29). Consequently:
+  - an all-numeric 7–64 char token (a count, year, ID, measurement) SHALL be **preserved** — it
     is technically valid hex but far more likely real content;
-  - a token shorter than 7 or longer than 40 hex chars SHALL NOT be masked;
+  - a token shorter than 7 or longer than 64 hex chars SHALL NOT be masked;
   - the check is applied per whitespace/word-boundary token, so hex inside a larger word is not
     spuriously masked.
 
@@ -111,7 +112,7 @@ this spec:
   and omitted labels (never a partial/present-day set); `_labels_at` returns `None` when only
   post-T events exist;
 - **SHA detection (exact rule):** a hex token with a letter is masked, an all-numeric token is
-  preserved, and a token below 7 / above 40 hex chars is not masked;
+  preserved, and a token below 7 / above 64 hex chars is not masked;
 - **milestone state as-of-T:** a milestone closed after T reads `open` at T.
 
 These complement the broader coverage already in `tests/test_github_context.py`,

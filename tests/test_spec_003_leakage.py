@@ -87,15 +87,17 @@ def test_labels_at_returns_none_when_only_post_T_events():
 # --- SHA detection: exact rule --------------------------------------------------------------
 
 def test_sha_detection_masks_hex_with_letter_preserves_numeric_and_respects_length():
-    # A 7-40 char hex token WITH a hex letter is a SHA -> masked.
+    # A 7-64 char hex token WITH a hex letter is a SHA -> masked.
     assert _looks_like_sha("1a2b3c4") is True
     assert _looks_like_sha("deadbeef1234") is True
     # All-numeric token (year/count/id) -> preserved, even though it is valid hex.
     assert _looks_like_sha("1234567") is False
     assert _looks_like_sha("2024") is False
-    # Below 7 / above 40 hex chars -> not a SHA.
+    # Below 7 / above 64 hex chars -> not a SHA. The upper bound covers SHA-1 (40) and
+    # SHA-256 (64, git 2.29+); a 64-char hex token with a letter is masked, a 65-char one isn't.
     assert _looks_like_sha("a1b2c") is False           # 5 chars
-    assert _looks_like_sha("a" * 41) is False          # 41 chars
+    assert _looks_like_sha("a" * 64) is True           # 64 chars (SHA-256)
+    assert _looks_like_sha("a" * 65) is False          # 65 chars
 
     out = strip_forward_refs("see 1a2b3c4d in PR #42 at https://github.com/o/r/pull/9 (count 1234567)")
     assert "1a2b3c4d" not in out and "<sha>" in out    # hex SHA masked

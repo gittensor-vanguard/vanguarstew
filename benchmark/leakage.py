@@ -53,7 +53,10 @@ _GH_LINK = re.compile(
 _TRAILING_PUNCT = ".,;!"
 
 _ISSUE_REF = re.compile(r"#\d+")
-_SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
+# Upper bound 64 covers both SHA-1 (40 hex chars) and SHA-256 (64 hex chars, supported by git
+# since 2.29). A tighter bound leaves no word boundary mid-token to backtrack to, so a longer
+# hash is left completely unmasked rather than partially matched (#1201).
+_SHA = re.compile(r"\b[0-9a-f]{7,64}\b", re.I)
 
 
 def _mask_link(match) -> str:
