@@ -44,7 +44,13 @@ def main() -> None:
                     help="exit 1 when any floor is missed (for CI gating)")
     args = ap.parse_args()
 
-    result = check_component_floors(load_artifact(args.artifact),
+    try:
+        artifact = load_artifact(args.artifact)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+    result = check_component_floors(artifact,
                                     min_composite=args.min_composite,
                                     min_judge=args.min_judge,
                                     min_objective=args.min_objective)

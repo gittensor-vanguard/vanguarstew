@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Tooling (`scripts/component_floor.py`): the gate CLI called `load_artifact` without a
+  `try/except`, so a missing file, invalid JSON, or a non-object artifact dumped a raw Python
+  traceback instead of a clean one-line error. It now catches
+  `(OSError, json.JSONDecodeError, ValueError)` and prints the message to stderr with exit 1,
+  matching the sibling gate scripts (`acceptance`, `promotion`, `regression`).
 - Benchmark reporting (`benchmark/dual_order_coverage.py`): `_task_total` read only the
   top-level `tasks` field, which a multi-repo run and each generalization partition never emit
   (task counts live under `per_repo[*].tasks`), so coverage was `n/a` for every aggregate run —

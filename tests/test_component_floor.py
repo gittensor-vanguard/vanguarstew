@@ -1,7 +1,9 @@
 """Tests for the per-component score-floor gate (deterministic, offline)."""
 
 import copy
+import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -332,3 +334,45 @@ def test_held_out_weak_components_do_not_affect_tuned_gate():
     )
     result = check_component_floors(art, min_composite=0.5, min_judge=0.4, min_objective=0.4)
     assert result["passed"] is True
+
+
+# --- CLI: clean errors instead of a raw traceback (mirrors the sibling gate scripts) --------
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.component_floor", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "must be a JSON object" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_gates_a_well_formed_artifact(tmp_path):
+    path = tmp_path / "good.json"
+    path.write_text(json.dumps(_result(0.62, 0.7, 0.55)), encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 0
+    assert "Traceback" not in result.stderr
