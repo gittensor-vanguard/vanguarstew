@@ -43,6 +43,7 @@ priority order:
 | ------ | --------- | ------------- |
 | High   | Correctness & tests | Does it do what it claims? Is it covered by a test that would fail without the change? |
 | High   | Scope fit | Does it address the referenced issue without unrelated churn? |
+| High   | Non-redundancy | Does it duplicate existing analysis over the **same data shape**? A new module/metric/report that slices a dict another module already slices, or re-derives a value an existing helper produces, is redundant even when its diff is original and its tests pass. Prefer parametrizing or extending the existing code. Conceptual duplication is rejected the same as literal duplication. |
 | Medium | Quality & clarity | Readable, consistent with surrounding code, no dead code. |
 | Medium | Real-behavior proof | The PR shows it actually works (a run, output, or command), not just a claim. |
 
@@ -58,9 +59,9 @@ ordered value ladder, prepared now and active on registration:
 
 | Label | Multiplier | Applies to |
 | ----- | ---------- | ---------- |
-| `mult:core-correctness` | ×2.0 | Fixes/hardens scoring correctness, judge integrity, or a bug that would skew results. |
+| `mult:core-correctness` | ×2.0 | A fix to a bug that **materially skews a score, judge verdict, or gate outcome** — i.e. without it, a real run produces a wrong number or a wrong pass/fail. Reserved for the top tier: the bug must change an outcome, not merely be "in the scoring code." A partition-handling fix to a metric module counts **only** if that metric feeds a live gate or the composite; a fix to an unwired/redundant helper does not. |
 | `mult:leakage-integrity` | ×1.8 | Anti-leakage / task-integrity work — the benchmark's trust depends on it. |
-| `mult:capability` | ×1.5 | New agent capability or a new benchmark dimension / task-gen improvement. |
+| `mult:capability` | ×1.5 | New agent capability or a **genuinely new** benchmark dimension / task-gen improvement — not a re-slice of a metric an existing module already computes. |
 | `mult:enhancement` | ×1.2 | Solid improvement to existing behavior. |
 | `mult:maintenance` | ×1.0 | Refactor, small fix, tests, tooling (neutral). |
 | `mult:docs` | ×0.8 | Docs-only / cosmetic — welcome, lower weight. |
@@ -72,7 +73,9 @@ ordered value ladder, prepared now and active on registration:
 ## Rejections
 
 Common reasons a PR is closed rather than merged: no linked issue, out of scope, missing
-tests, trivial/no-op diff, duplicated or plagiarized work, or AI-attributed content.
+tests, trivial/no-op diff, duplicated or plagiarized work, **conceptual redundancy** (a new
+module/metric that re-derives what existing code already produces over the same data shape —
+parametrize or extend instead), or AI-attributed content.
 
 ## Disagree with a decision?
 
