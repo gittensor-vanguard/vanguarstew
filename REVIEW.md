@@ -70,6 +70,32 @@ ordered value ladder, prepared now and active on registration:
 - Area labels (`agent`, `benchmark`, `leakage`) are organizational only and do **not** affect scoring.
 - No label ⇒ neutral (×1.0). Values may be tuned at registration.
 
+### Evidence requirement for `agent/` PRs
+
+A PR touching `agent/` (the scored, miner-editable surface) is **not** eligible for
+`mult:core-correctness` or `mult:capability` on the strength of its diff or description alone.
+The maintainer runs `scripts/score_pr_delta.py` — comparing the PR's `agent/` against the
+current baseline on the same benchmark repo-set — and the label tier follows the *measured*
+result, not a read of the change:
+
+- **Composite score must measurably improve** (past a small noise floor, since LLM sampling
+  wobbles run to run).
+- **Neither the judge component nor the objective component may regress** — trading one off for
+  the other (e.g. sounding better to the pairwise judge while the deterministic objective anchor
+  quietly drops) does not count as an improvement. This is the anti-Goodhart / Pareto floor: a PR
+  earns the top tier only when it is a genuine improvement on every measured axis, not a shift of
+  where the score comes from.
+- A PR with no measurable improvement, or a regression on either axis, is capped at
+  `mult:maintenance` regardless of its stated intent — code quality, tests, and refactors still
+  have real (lower-tier) value; they just aren't "core correctness" or "new capability" without
+  evidence.
+- CI runs a lightweight offline smoke check on every `agent/`-touching PR (`agent-benchmark-smoke.yml`)
+  — this catches crashes and output-shape regressions only. It is **not** the scoring evidence:
+  offline mode returns each file's own fixed stub regardless of the prompt, so it cannot measure
+  whether a PR changed the agent's actual reasoning. The real score-delta is a maintainer-run
+  live comparison, ideally against a held-out repo set the PR author has not seen, to keep the
+  measurement itself resistant to being tuned against.
+
 ## Rejections
 
 Common reasons a PR is closed rather than merged: no linked issue, out of scope, missing
