@@ -478,3 +478,173 @@ def test_generalization_partition_stats_override_stale_report_counts():
         },
     }
     assert _disagreement(gen) == pytest.approx(9 / 15)
+
+
+# --- #1257: a repo that failed to clone/freeze is recorded inside per_repo, not as a run error --
+# run_multi_replay does not abort on a bad repo: it stores {"error": ..., "tasks": 0} in
+# per_repo[i] and counts it in `skipped`, so headline_score reads a composite averaged over a
+# partial, biased subset. both_scored must scan the compared (headline) partition of BOTH runs —
+# a dirty candidate is not safe to accept, and a dirty baseline makes the comparison meaningless —
+# via the same acceptance._partition_error the promotion gate reuses (#1056/#1254).
+
+
+def _multi(composite=0.66, per_repo=None, **overrides):
+    run = {"composite_mean": composite, "scored_repos": 2, "repos": 3, "skipped": 1}
+    if per_repo is not None:
+        run["per_repo"] = per_repo
+    run.update(overrides)
+    return run
+
+
+_BAD_ROW = {"repo": "bad-clone", "error": "failed to clone repo-set source 'owner/missing'", "tasks": 0}
+_CLEAN_ROWS = [{"repo": "good-a", "composite_mean": 0.70, "tasks": 4},
+               {"repo": "good-b", "composite_mean": 0.62, "tasks": 3}]
+
+
+def test_issue_1257_repro_candidate_per_repo_clone_error_is_blocked():
+    # The exact artifacts from #1257: the candidate "improved" to 0.66 but one repo never cloned.
+    # Before the fix both_scored and no_composite_regression passed on the partial composite.
+    baseline = {"composite_mean": 0.60, "scored_repos": 3, "repos": 3}
+    candidate = _multi(per_repo=_CLEAN_ROWS + [_BAD_ROW])
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is False
+    assert set(failed_checks(result)) == {"both_scored", "no_composite_regression"}
+    assert result["composite_delta"] is None       # a partial composite is not a comparable delta
+
+
+def test_baseline_per_repo_error_blocks_a_clean_candidate():
+    # The gate compares against the baseline; if the baseline itself was computed over a partial
+    # subset, the comparison is meaningless — a candidate must not pass against a dirty floor.
+    baseline = _multi(composite=0.60, per_repo=_CLEAN_ROWS + [_BAD_ROW])
+    candidate = _multi(per_repo=list(_CLEAN_ROWS), scored_repos=2, repos=2, skipped=0)
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_per_repo_error_detail_names_the_erroring_side():
+    result = check_regression(_multi(per_repo=[_BAD_ROW]), _multi(composite=0.60))
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "both_scored")
+    assert "failed to clone" in detail and "candidate" in detail and "baseline error None" in detail
+
+
+def test_top_level_error_fails_and_is_not_masked_by_per_repo_errors():
+    # A run-level error is checked first and surfaced by name even when per_repo rows also carry
+    # errors (mirrors check_promotion's ordering, #1254).
+    candidate = _multi(per_repo=[_BAD_ROW], error="run aborted")
+    result = check_regression(candidate, _multi(composite=0.60))
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "both_scored")
+    assert result["passed"] is False and "run aborted" in detail
+
+
+def test_clean_runs_with_per_repo_rows_still_pass():
+    # Control: per_repo rows on both sides but no errors -> no false positive from the scan.
+    baseline = _multi(composite=0.60, per_repo=list(_CLEAN_ROWS), scored_repos=2, repos=2, skipped=0)
+    candidate = _multi(per_repo=list(_CLEAN_ROWS), scored_repos=2, repos=2, skipped=0)
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+    assert result["composite_delta"] == 0.06
+
+
+def test_empty_and_missing_per_repo_are_clean():
+    # An empty per_repo list and no per_repo key at all both mean "nothing errored", on either side.
+    assert check_regression(_multi(per_repo=[]), _multi(composite=0.60, per_repo=[]))["passed"] is True
+    assert check_regression(_multi(), _multi(composite=0.60))["passed"] is True
+
+
+def test_falsy_per_repo_error_values_are_not_errors():
+    # Only a truthy error marks a failed row (the #1056 _partition_error semantics): an empty
+    # string, 0, None, or False error field is not a failure record, on either side.
+    for falsy in ("", 0, None, False):
+        run = _multi(per_repo=[{"repo": "a", "tasks": 4, "error": falsy}])
+        assert check_regression(run, _multi(composite=0.60))["passed"] is True, falsy
+        assert check_regression(_multi(), _multi(composite=0.60, per_repo=[{"repo": "a", "tasks": 4, "error": falsy}]))["passed"] is True, falsy
+
+
+def test_malformed_per_repo_shapes_never_raise():
+    # Non-dict/non-string rows (ints, None, lists) are ignored; a non-list per_repo container is
+    # ignored entirely; blank string rows are not errors. None of these crash the gate.
+    assert check_regression(_multi(per_repo=[42, None, [1, 2]]), _multi(composite=0.60))["passed"] is True
+    assert check_regression(_multi(per_repo="oops"), _multi(composite=0.60))["passed"] is True
+    assert check_regression(_multi(), _multi(composite=0.60, per_repo=["", "   "]))["passed"] is True
+
+
+def test_a_per_repo_row_that_is_an_error_string_fails_closed():
+    # A malformed per-repo entry that is itself a non-empty string is treated as an error record
+    # (matches acceptance's no_partition_error, #1056): a corrupt artifact fails closed.
+    result = check_regression(_multi(per_repo=[_CLEAN_ROWS[0], "fatal: not a git repository"]),
+                              _multi(composite=0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_generalization_candidate_tuned_per_repo_error_is_blocked():
+    # The compared (tuned) partition of the candidate carries the failed row -> blocked.
+    candidate = _gen(0.66)
+    candidate["tuned"]["per_repo"] = [_CLEAN_ROWS[0], _BAD_ROW]
+    result = check_regression(candidate, _gen(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_generalization_baseline_tuned_per_repo_error_is_blocked():
+    baseline = _gen(0.60)
+    baseline["tuned"]["per_repo"] = [_BAD_ROW]
+    result = check_regression(_gen(0.66), baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_generalization_held_out_per_repo_error_is_ignored_on_both_sides():
+    # Only the compared (tuned) partition is scanned — headline_score never reads held_out, so a
+    # per-repo error confined there does not block (same scope as check_promotion, #1254).
+    baseline, candidate = _gen(0.60), _gen(0.66)
+    baseline["held_out"]["per_repo"] = [_BAD_ROW]
+    candidate["held_out"]["per_repo"] = [_BAD_ROW]
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+
+
+def test_missing_held_out_is_scanned_at_the_top_level():
+    # An artifact with a lone tuned block and no held_out key is NOT a generalization pair:
+    # headline_score reads its top level, so the error scan must too — a per-repo error hidden in
+    # the ignored tuned block does not block, while a top-level per-repo error does.
+    from benchmark.regression import _headline_source
+
+    lone_tuned = {"tuned": {"composite_mean": 0.9, "per_repo": [_BAD_ROW]},
+                  "composite_mean": 0.66, "per_repo": list(_CLEAN_ROWS)}
+    assert _headline_source(lone_tuned) is lone_tuned
+    assert check_regression(lone_tuned, _multi(composite=0.60))["passed"] is True
+
+    dirty_top = dict(lone_tuned, per_repo=[_BAD_ROW])
+    result = check_regression(dirty_top, _multi(composite=0.60))
+    assert result["passed"] is False and "both_scored" in failed_checks(result)
+
+
+def test_headline_source_selects_the_partition_headline_score_reads():
+    from benchmark.regression import _headline_source
+    from benchmark.trend import headline_score
+
+    tuned = {"composite_mean": 0.7}
+    gen = {"tuned": tuned, "held_out": {"composite_mean": 0.5}}
+    assert _headline_source(gen) is tuned                                  # real generalization pair
+    for flat in (
+        {"tuned": tuned},                                                  # held_out absent
+        {"tuned": tuned, "held_out": None},                                # held_out non-dict
+        {"tuned": "oops", "held_out": {"composite_mean": 0.5}},            # tuned non-dict
+        {"composite_mean": 0.6},                                           # plain artifact
+    ):
+        assert _headline_source(flat) is flat
+        # the scan and the score always read the same partition
+        assert headline_score(flat) == _headline_source(flat).get("composite_mean")
+
+
+def test_run_error_tolerates_malformed_artifacts():
+    from benchmark.regression import _run_error
+
+    assert _run_error({"error": "boom"}) == "boom"
+    assert _run_error(_multi(per_repo=[_BAD_ROW])).startswith("failed to clone")
+    for clean in (None, "not a dict", 42, {}, _multi(), _multi(per_repo=[])):
+        assert _run_error(clean) is None
