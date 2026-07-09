@@ -22,6 +22,11 @@ The criteria (each a named, independently-reported check):
 5. ``gap_within_bound`` - ``generalization_gap <= max_gap``: held-out performance did not
    collapse relative to tuned (a *reasonable* gap).
 
+The gap is recomputed from the two partition composites (rounded to three decimals) rather than
+trusting a possibly-stale top-level ``generalization_gap`` field — mirroring
+``check_generalization`` and ``check_gap_integrity`` — so a drifted gap cannot pass acceptance
+while integrity fails.
+
 Pure evaluation: no I/O, never mutates the report, and a malformed/non-dict report simply fails
 the relevant checks rather than raising.
 """
@@ -80,6 +85,28 @@ def _partition_error(partition):
             elif isinstance(row, str) and row.strip():
                 return row
     return None
+
+
+def _composite(partition: dict):
+    """The partition's real composite score, or ``None`` when it did not score a repo.
+
+    Mirrors ``generalization_gate._composite``: an unscored partition reports a placeholder
+    ``composite_mean`` of ``0.0`` that must not masquerade as a real score.
+    """
+    partition = _dict(partition)
+    scored = partition.get("scored_repos")
+    if _is_number(scored) and not scored:
+        return None
+    value = partition.get("composite_mean")
+    return value if _is_number(value) else None
+
+
+def _recomputed_gap(tuned: dict, held_out: dict) -> float | None:
+    tuned_composite = _composite(tuned)
+    held_composite = _composite(held_out)
+    if tuned_composite is None or held_composite is None:
+        return None
+    return round(tuned_composite - held_composite, 3)
 
 
 _CHECK_ROW_KEYS = ("name", "passed")
@@ -153,7 +180,7 @@ def check_acceptance(report, max_gap: float = DEFAULT_MAX_GAP,
     report = _dict(report)
     tuned = _dict(report.get("tuned"))
     held_out = _dict(report.get("held_out"))
-    gap = report.get("generalization_gap")
+    gap = _recomputed_gap(tuned, held_out)
     checks = []
 
     def add(name, passed, detail):

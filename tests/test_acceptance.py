@@ -24,9 +24,10 @@ from benchmark.acceptance import (  # noqa: E402
 from benchmark.artifact_snapshot import _has_error  # noqa: E402
 
 
-def _report(gap=0.05, tuned_scored=3, held_scored=2, tuned_err=None, held_err=None):
-    tuned = {"composite_mean": 0.6, "scored_repos": tuned_scored}
-    held = {"composite_mean": 0.55, "scored_repos": held_scored}
+def _report(gap=0.05, tuned_scored=3, held_scored=2, tuned_err=None, held_err=None, tuned_mean=0.6):
+    tuned = {"composite_mean": tuned_mean, "scored_repos": tuned_scored}
+    held_mean = round(tuned_mean - gap, 3) if gap is not None else 0.55
+    held = {"composite_mean": held_mean, "scored_repos": held_scored}
     if tuned_err is not None:
         tuned["error"] = tuned_err
     if held_err is not None:
@@ -133,10 +134,35 @@ def test_a_partition_that_scored_too_few_repos_fails():
 
 
 def test_a_missing_gap_fails_gap_computed_and_bound():
-    result = check_acceptance(_report(gap=None))
+    # When neither partition provides a computable composite, gap_computed fails.
+    result = check_acceptance({
+        "tuned": {"scored_repos": 3},
+        "held_out": {"scored_repos": 2},
+        "generalization_gap": None,
+    })
     assert result["passed"] is False
     assert set(failed_checks(result)) >= {"gap_computed", "gap_within_bound"}
     assert result["generalization_gap"] is None
+
+
+def test_gap_recomputed_when_top_level_field_missing():
+    result = check_acceptance(_report(gap=None))
+    assert result["passed"] is True
+    assert result["generalization_gap"] == 0.05
+
+
+def test_stale_generalization_gap_field_is_ignored():
+    from benchmark.gap_integrity import check_gap_integrity
+    artifact = {
+        "tuned": {"composite_mean": 0.80, "scored_repos": 3},
+        "held_out": {"composite_mean": 0.30, "scored_repos": 3},
+        "generalization_gap": 0.05,
+    }
+    result = check_acceptance(artifact, max_gap=0.15)
+    assert result["passed"] is False
+    assert result["generalization_gap"] == 0.5
+    assert "gap_within_bound" in failed_checks(result)
+    assert check_gap_integrity(artifact)["passed"] is False
 
 
 def test_a_non_generalization_artifact_fails_the_structural_check():
@@ -172,7 +198,12 @@ def test_headline_reports_pass_and_fail():
 def test_gap_exactly_at_the_bound_passes():
     # The bound is inclusive (gap <= max_gap): a gap equal to the limit is acceptable.
     assert check_acceptance(_report(gap=0.15), max_gap=0.15)["passed"] is True
-    assert check_acceptance(_report(gap=0.150001), max_gap=0.15)["passed"] is False
+    over = {
+        "tuned": {"composite_mean": 0.6, "scored_repos": 3},
+        "held_out": {"composite_mean": 0.449, "scored_repos": 2},
+        "generalization_gap": 0.151,
+    }
+    assert check_acceptance(over, max_gap=0.15)["passed"] is False
 
 
 def test_min_scored_repos_boundary_is_inclusive():
