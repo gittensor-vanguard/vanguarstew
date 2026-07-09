@@ -128,7 +128,13 @@ def _pr_queue_note(context: dict) -> str:
     prs = [p for p in _safe_prs(context) if _pr_title(p)]
     if not prs:
         return ""
-    lines = [f"- #{p.get('number', '?')}: {_pr_title(p)}" for p in prs]
+    # Normalize the number through _pr_number so a malformed queue entry (``number`` as a
+    # bool/list/dict) renders ``#?`` instead of leaking ``#True``/``#[7]`` into the prompt —
+    # matching the numberless handling used by reconcile, dedup, and the offline stub.
+    lines = []
+    for p in prs:
+        number = _pr_number(p)
+        lines.append(f"- #{number if number is not None else '?'}: {_pr_title(p)}")
     return (
         f"\nOpen pull requests awaiting review ({len(lines)}):\n"
         + "\n".join(lines)

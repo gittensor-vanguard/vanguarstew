@@ -587,6 +587,22 @@ def test_pr_queue_note_tolerates_non_list_open_prs():
         assert _pr_queue_note({"open_prs": bad}) == ""
 
 
+def test_pr_queue_note_normalizes_unusable_pr_numbers():
+    # A malformed ``number`` (bool/list/dict) must render ``#?`` in the prompt, matching how
+    # _pr_number/_pr_dedup_key/_offline_plan_stub treat it as numberless — never ``#True``/``#[7]``.
+    note = _pr_queue_note({"open_prs": [
+        {"number": True, "title": "Fix bug"},
+        {"number": [7], "title": "Listy"},
+        {"number": {"n": 7}, "title": "Dicty"},
+        {"number": 42, "title": "Good"},
+    ]})
+    assert "- #?: Fix bug" in note
+    assert "- #?: Listy" in note
+    assert "- #?: Dicty" in note
+    assert "- #42: Good" in note
+    assert "#True" not in note and "#[7]" not in note
+
+
 _TRUNCATED_CTX = {
     "_issues_truncated": True,
     "open_prs": [{"number": 2, "title": "partial pr awaiting review"}],
