@@ -45,16 +45,16 @@ A *general* maintainer, not one tuned to a single repo.
 - [x] **Acceptance run:** `run_eval --generalization` on curated set → `generalization_gap = 0.097`, zero crashes. Held-out performance does not collapse.
 - **Status:** ✅ complete. Acceptance run passed. See `m3_acceptance_result.json` and `blog/m3-milestone.md`.
 
-## M4 — Hardening & release readiness
+## M4 — Hardening & release readiness ✅
 
 Close the crash-and-correctness gap so a full benchmark run completes clean.
 
 - [x] **Agent hardening:** every field the LLM emits is guarded against non-string types. #297, #313, #317 closed.
 - [x] **Benchmark scoring:** module-recall farming fixed (#289), backlog threshold reachable for single-word titles (#308), composite-score wiring (#341).
 - [x] **Leakage lockout:** tag-creation-date filter for frozen releases (#332), release-tag scrubbing in `scrub_context` (#330), forward-reference masking in git-only fallback (#312).
-- [x] **Tooling:** `compare_eval` CLI for diffing replay artifacts (#306). `--fail-under` score floor for CI gating (#315 — remaining).
+- [x] **Tooling:** `compare_eval` CLI for diffing replay artifacts (#306), `--fail-under` score floor for CI gating (#318, #367).
 - [x] **Acceptance run:** M3 acceptance completed clean with `generalization_gap = 0.097`, zero crashes across 5 repos.
-- **Acceptance:** benchmark runs clean on 5 diverse repos; no agent crashes from malformed LLM output; leakage audit clean.
+- **Status:** ✅ complete. Benchmark runs clean on 5 repos; no agent crashes from malformed LLM output; leakage audit clean; full test suite green (3659 passed).
 
 ## M5 — gittensor integration / subnet launch
 
