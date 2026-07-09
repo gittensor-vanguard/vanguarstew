@@ -19,6 +19,13 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Leakage (`agent/context.py`): the git-only fallback forward-ref scrubber's `_SHA` regex
+  matched only 7-40-char (SHA-1) hashes, so a full 64-char **SHA-256** commit hash in a commit
+  subject, README, or tag passed through unmasked — leaking a forward reference. Its sibling
+  `benchmark/leakage.py` was fixed for this in #1204; `context.py` (which the module docstring
+  requires to stay aligned) was missed. The regex now mirrors the sibling
+  (`[0-9a-f]{7,40}|[0-9a-f]{64}`); `_looks_like_sha` still requires a hex letter, so bare
+  numeric tokens are preserved.
 - Benchmark reporting (`benchmark/dual_order_coverage.py`): `_task_total` read only the
   top-level `tasks` field, which a multi-repo run and each generalization partition never emit
   (task counts live under `per_repo[*].tasks`), so coverage was `n/a` for every aggregate run —

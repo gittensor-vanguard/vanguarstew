@@ -557,6 +557,19 @@ def test_mask_forward_refs_masks_github_links_and_shas():
     assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
 
 
+def test_mask_forward_refs_masks_full_sha256_hash():
+    # Git supports the SHA-256 object format; a full 64-char hash referencing a future commit
+    # leaks just like a SHA-1, so it must be masked — mirroring benchmark/leakage.py (#1204), as
+    # this module's docstring requires the git-only fallback to stay aligned with the scorer.
+    sha256 = "abc123" + "0" * 58                 # 64 hex chars, contains a hex letter
+    assert len(sha256) == 64
+    out = _mask_forward_refs(f"regressed by commit {sha256} upstream")
+    assert sha256 not in out and "<sha>" in out
+    # Lengths between SHA-1 (40) and SHA-256 (64) are not object hashes and stay put, as in leakage.
+    between = "a" * 50
+    assert _mask_forward_refs(f"token {between} here") == f"token {between} here"
+
+
 def test_mask_forward_refs_masks_scheme_less_github_links():
     # A scheme-less github.com deep-link is still a forward-reference and must be masked (regression
     # for #996); a look-alike host must not be, and an explicit-scheme link keeps working.

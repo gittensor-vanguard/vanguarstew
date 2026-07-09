@@ -45,7 +45,10 @@ _GH_LINK = re.compile(
 _TRAILING_PUNCT = ".,;!"
 
 _ISSUE_REF = re.compile(r"#\d+")
-_SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
+# Match a SHA-1 (7-40 hex) or a full SHA-256 (64 hex) object hash — git has supported SHA-256
+# since 2.29. Mirrors ``benchmark/leakage.py`` (SHA-256 arm added in #1204); `_looks_like_sha`
+# still requires a hex letter so bare numeric tokens of any length are preserved.
+_SHA = re.compile(r"\b(?:[0-9a-f]{7,40}|[0-9a-f]{64})\b", re.I)
 
 
 def _mask_link(match) -> str:
