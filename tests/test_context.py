@@ -573,6 +573,28 @@ def test_mask_forward_refs_preserves_plain_numbers():
     assert "<sha>" not in out
 
 
+def test_mask_forward_refs_masks_full_sha256_hash():
+    # Git supports the SHA-256 object format; a full 64-char hash referencing a future commit
+    # is as much a forward-reference leak as a 40-char SHA-1 and must be masked too.
+    sha256 = "abc123" + "0" * 58  # 64 hex chars, contains a hex letter
+    assert len(sha256) == 64
+    out = _mask_forward_refs(f"regressed by commit {sha256} upstream")
+    assert sha256 not in out and "<sha>" in out
+    assert _mask_forward_refs("see " + "a" * 40) == "see <sha>"
+    assert _mask_forward_refs("see " + "a" * 7) == "see <sha>"
+
+
+def test_mask_forward_refs_leaves_non_hash_length_hex_runs_untouched():
+    # Only real hash lengths (7-40 SHA-1, exactly 64 SHA-256) are masked; 41-63 char hex runs
+    # are not valid full hashes, and a 64-char all-numeric token is preserved by the hex-letter gate.
+    hex41 = "a" * 41
+    hex63 = "b" * 63
+    num64 = "1" * 64
+    out = _mask_forward_refs(f"blob {hex41} and {hex63} and count {num64}")
+    assert hex41 in out and hex63 in out and num64 in out
+    assert "<sha>" not in out
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_masks_github_links_in_subjects_and_readme():
     repo = tempfile.mkdtemp()
