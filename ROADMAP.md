@@ -56,7 +56,32 @@ Close the crash-and-correctness gap so a full benchmark run completes clean.
 - [x] **Acceptance run:** M3 acceptance completed clean with `generalization_gap = 0.097`, zero crashes across 5 repos.
 - **Status:** ✅ complete. Benchmark runs clean on 5 repos; no agent crashes from malformed LLM output; leakage audit clean; full test suite green (3659 passed).
 
-## M5 — gittensor integration / subnet launch
+## M5 — Measured, anti-gaming contribution scoring ✅
+
+A PR's value label is earned by a measured benchmark delta, not a maintainer's read of the
+diff — closing the "label reflects a guess" gap the reward mechanism would otherwise be
+vulnerable to.
+
+- [x] `scripts/score_pr_delta.py`: diffs two `run_eval` artifacts (baseline vs. PR's agent,
+  same repo-set) and applies a **Pareto floor** — composite score must measurably improve
+  AND neither the judge nor the objective component may regress. Trading one axis for the
+  other (sounding better to the judge while the objective anchor quietly drops) is
+  rejected, not counted as improvement. #1295
+- [x] Merge-block + ceiling label: a measured regression is a hard merge block for
+  `agent/` PRs, not just a label cap; a large, clean win on every axis (≥5× the noise
+  floor, both components improving) earns a new ceiling label, `mult:breakthrough`
+  (×3.0), above `mult:core-correctness` (×2.0). #1302
+- [x] `REVIEW.md` "Evidence requirement for `agent/` PRs": documents the full tier ladder
+  (blocked/neutral/eligible/breakthrough) and what each requires.
+- [x] Public CI smoke check (`agent-benchmark-smoke.yml`): crash/output-shape check on
+  every `agent/`-touching PR, offline-safe (no secrets, safe on fork PRs) — explicitly
+  documented as *not* the scoring evidence itself.
+- **Status:** ✅ complete. `score_pr_delta.py` verified against the Goodhart-trap case
+  (composite rises only because one axis was sacrificed for the other → correctly
+  rejected) and against real `run_eval` artifacts, not just synthetic test dicts. Full
+  suite green (3675 passed).
+
+## M6 — gittensor integration / subnet launch
 
 Fully on-chain, 66-style.
 
