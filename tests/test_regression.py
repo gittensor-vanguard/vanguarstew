@@ -92,6 +92,31 @@ def test_rising_judge_instability_is_blocked():
     assert result["disagreement_delta"] == 0.4
 
 
+def test_stale_judge_report_disagreement_rate_is_recomputed_from_stats():
+    def art(rate, stats_dis):
+        return {
+            "composite_mean": 0.6,
+            "judge_report": {"disagreement_rate": rate, "dual_order_tasks": 10},
+            "judge_order_stats": {
+                "dual_order_tasks": 10, "disagree": stats_dis, "agree": 2, "tie": 0,
+            },
+        }
+
+    baseline = art(0.1, 1)
+    candidate = art(0.05, 8)
+    result = check_regression(candidate, baseline, max_disagreement_increase=0.1)
+    assert result["passed"] is False
+    assert result["disagreement_delta"] == 0.7
+    assert "no_judge_instability_increase" in failed_checks(result)
+
+
+def test_disagreement_falls_back_to_report_when_stats_absent():
+    from benchmark.regression import _disagreement
+
+    art = {"judge_report": {"disagreement_rate": 0.25, "dual_order_tasks": 4}}
+    assert _disagreement(art) == 0.25
+
+
 def test_judge_instability_only_compared_when_both_report_it():
     # One run judged single-order (no disagreement rate) -> the judge check passes vacuously.
     result = check_regression(_run(0.60, disagreement=0.9), _run(0.60))   # baseline has none
@@ -434,3 +459,22 @@ def test_disagreement_returns_none_when_partitions_lack_dual_order():
         "held_out": {"judge_report": {}, "composite_mean": 0.5, "scored_repos": 1},
     }
     assert _disagreement(gen) is None
+
+
+def test_generalization_partition_stats_override_stale_report_counts():
+    from benchmark.regression import _disagreement
+
+    gen = {
+        "tuned": {
+            "judge_report": {"disagreements": 0, "dual_order_tasks": 10},
+            "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+            "composite_mean": 0.7,
+            "scored_repos": 2,
+        },
+        "held_out": {
+            "judge_report": {"disagreements": 1, "dual_order_tasks": 5},
+            "composite_mean": 0.5,
+            "scored_repos": 1,
+        },
+    }
+    assert _disagreement(gen) == pytest.approx(9 / 15)

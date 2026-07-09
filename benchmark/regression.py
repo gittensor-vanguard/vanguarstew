@@ -6,7 +6,8 @@ This does: given a ``baseline`` artifact (the last accepted run) and a ``candida
 (this run), ``check_regression`` decides whether the candidate is safe to accept — it must not
 drop the headline composite by more than ``max_composite_drop``, and must not make the pairwise
 judge materially less stable (order-``disagreement_rate`` rising by more than
-``max_disagreement_increase``).
+``max_disagreement_increase``). Disagreement rates are recomputed from ``judge_order_stats`` when
+available, falling back to ``judge_report`` only when stats are absent — mirroring ``check_judge``.
 
 The companion ``scripts/regression.py`` exits non-zero when a regression is found, so a run can
 be gated against the previous baseline the way ``--fail-under`` gates against a fixed floor —
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.judge_gate import _disagreement_rate_from_telemetry, _is_int
 from benchmark.trend import headline_score
 
 logger = logging.getLogger(__name__)
@@ -100,6 +102,39 @@ def _round(value):
     return round(float(value), 3) if _is_number(value) else None
 
 
+def _partition_disagreement_counts(part: dict) -> tuple[int, int] | None:
+    """Disagree/dual-order counts from one partition, preferring ``judge_order_stats``."""
+    part = _dict(part)
+    for telemetry in (_dict(part.get("judge_order_stats")), _dict(part.get("judge_report"))):
+        if not telemetry:
+            continue
+        dual = telemetry.get("dual_order_tasks")
+        if not _is_number(dual):
+            agree, disagree, tie = telemetry.get("agree"), telemetry.get("disagree"), telemetry.get("tie")
+            if all(_is_int(v) for v in (agree, disagree, tie)):
+                dual = agree + disagree + tie
+            else:
+                dual = None
+        disagreements = telemetry.get("disagree")
+        if disagreements is None:
+            disagreements = telemetry.get("disagreements")
+        if _is_int(dual) and dual > 0 and _is_int(disagreements) and disagreements >= 0:
+            return int(disagreements), int(dual)
+    return None
+
+
+def _flat_disagreement(artifact: dict) -> float | None:
+    """Order-disagreement rate for a flat artifact, preferring ``judge_order_stats``."""
+    artifact = _dict(artifact)
+    for telemetry in (_dict(artifact.get("judge_order_stats")), _dict(artifact.get("judge_report"))):
+        if not telemetry:
+            continue
+        rate = _disagreement_rate_from_telemetry(telemetry)
+        if rate is not None:
+            return rate
+    return None
+
+
 def _disagreement(artifact) -> float | None:
     artifact = _dict(artifact)
     # Generalization artifacts nest telemetry under tuned/held_out — sum the
@@ -109,19 +144,16 @@ def _disagreement(artifact) -> float | None:
         total_dis = 0
         total_dual = 0
         for label in ("tuned", "held_out"):
-            part = _dict(artifact.get(label))
-            jr = _dict(part.get("judge_report"))
-            disagreements = jr.get("disagreements", jr.get("disagree"))
-            dual = jr.get("dual_order_tasks")
-            if not _is_number(disagreements) or not _is_number(dual):
+            counts = _partition_disagreement_counts(_dict(artifact.get(label)))
+            if counts is None:
                 continue
-            total_dis += int(disagreements)
-            total_dual += int(dual)
+            dis, dual = counts
+            total_dis += dis
+            total_dual += dual
         if total_dual > 0:
             return total_dis / total_dual
         return None
-    rate = _dict(artifact.get("judge_report")).get("disagreement_rate")
-    return float(rate) if _is_number(rate) else None
+    return _flat_disagreement(artifact)
 
 
 def check_regression(candidate, baseline,
