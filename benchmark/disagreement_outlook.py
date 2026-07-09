@@ -1,7 +1,10 @@
 """Report pairwise judge disagreement outlook from a replay artifact.
 
 ``judge_gate`` pass/fails judge robustness; this read-only utility exposes ``disagreement_rate``
-and ``dual_order_tasks`` for CI dashboards with a simple stable/unstable verdict.
+and ``dual_order_tasks`` for CI dashboards with a simple stable/unstable verdict. Rates are
+derived from ``judge_order_stats`` when available (``disagree`` / ``dual_order_tasks``), falling
+back to ``judge_report`` only when stats are absent — mirroring ``check_judge``, ``check_regression``,
+and ``check_promotion``.
 
 Pure analysis: no I/O, never mutates its input, and non-finite or missing telemetry yields
 ``None`` fields rather than raising.
@@ -37,10 +40,15 @@ def _dict(value) -> dict:
 
 
 def _judge_telemetry(slice_) -> dict:
-    """Return judge telemetry from a replay slice (``judge_report`` preferred over stats)."""
+    """Return the first telemetry block that carries usable disagreement counts.
+
+    Prefer ``judge_order_stats`` over ``judge_report`` so a stale report rate cannot override
+    authoritative disagree/dual_order_tasks counts.
+    """
     slice_ = _dict(slice_)
-    for source in (slice_.get("judge_report"), slice_.get("judge_order_stats")):
-        if isinstance(source, dict):
+    for source in (slice_.get("judge_order_stats"), slice_.get("judge_report")):
+        source = _dict(source)
+        if source and _disagreement_counts(source) is not None:
             return source
     return {}
 
@@ -85,6 +93,14 @@ def _slice_summary(slice_) -> dict:
     elif dual == 0:
         out_rate = None
     else:
+        out_rate = round(disagreements / dual, 3)
+    # When counts came from explicit disagree/disagreements, prefer the derived rate over a
+    # co-located stale disagreement_rate field (stats-first telemetry selection handles the
+    # cross-block case; this covers disagree+stale-rate in the same block).
+    explicit = telemetry.get("disagree")
+    if explicit is None:
+        explicit = telemetry.get("disagreements")
+    if _is_int(explicit) and dual > 0:
         out_rate = round(disagreements / dual, 3)
     return {
         "dual_order_tasks": dual,

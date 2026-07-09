@@ -72,6 +72,48 @@ def test_falls_back_to_judge_order_stats():
     assert out["dual_order_tasks"] == 2
 
 
+# --- #1253: stale judge_report.disagreement_rate must not override judge_order_stats --------
+
+
+def test_stale_judge_report_rate_is_recomputed_from_stats():
+    art = {
+        "composite_mean": 0.7,
+        "decisive_margin": 5,
+        "judge_report": {"disagreement_rate": 0.05, "dual_order_tasks": 10},
+        "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["disagreement_rate"] == 0.8
+    assert out["disagreements"] == 8
+    assert out["verdict"] == "unstable"
+
+
+def test_disagreement_outlook_falls_back_to_report_when_stats_absent():
+    art = {
+        "composite_mean": 0.7,
+        "judge_report": {"disagreement_rate": 0.25, "dual_order_tasks": 4},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["disagreement_rate"] == 0.25
+    assert out["verdict"] == "stable"
+
+
+def test_generalization_stale_disagreement_is_recomputed_on_tuned_partition():
+    art = {
+        "generalization_gap": 0.1,
+        "tuned": {
+            "judge_report": {"disagreement_rate": 0.05, "dual_order_tasks": 10},
+            "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+        },
+        "held_out": _partition_report(disagreements=1, dual=4),
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["partitions"]["tuned"]["disagreement_rate"] == 0.8
+    assert out["partitions"]["tuned"]["disagreements"] == 8
+    assert out["disagreement_rate"] == round(9 / 14, 3)
+    assert out["verdict"] == "unstable"
+
+
 def test_generalization_overall_sums_partitions_when_no_top_level_telemetry():
     art = {
         "generalization_gap": 0.0,
