@@ -461,6 +461,76 @@ def test_disagreement_returns_none_when_partitions_lack_dual_order():
     assert _disagreement(gen) is None
 
 
+def test_incoherent_partition_withholds_the_pooled_disagreement_rate():
+    from benchmark.regression import _disagreement
+
+    # tuned is impossible (8 disagreements over 5 dual-order tasks). Pooling it lets the coherent
+    # held_out partition dilute it to a plausible 0.6, which a rate-range check cannot catch.
+    gen = {
+        "tuned": {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},
+        "held_out": {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 1}},
+    }
+    assert _disagreement(gen) is None
+
+
+def test_partition_without_dual_order_telemetry_still_pools_the_other():
+    from benchmark.regression import _disagreement
+
+    # A partition with no dual-order telemetry contributes nothing to the pool; the rate over the
+    # dual-order tasks that do exist is still correct and must not be withheld.
+    gen = {
+        "tuned": {"judge_report": {"disagreements": 2, "dual_order_tasks": 10}},
+        "held_out": {"judge_report": {}},
+    }
+    assert _disagreement(gen) == pytest.approx(0.2)
+
+
+def test_flat_incoherent_counts_withhold_the_rate():
+    from benchmark.regression import _flat_disagreement
+
+    # 8 disagreements over 5 dual-order tasks would yield 1.6 -- an impossible rate.
+    assert _flat_disagreement({"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}}) is None
+
+
+def test_incoherent_counts_do_not_fall_back_to_a_stale_reported_rate():
+    from benchmark.regression import _flat_disagreement
+
+    # A reported rate must not paper over corrupt counts in the authoritative block.
+    assert _flat_disagreement({
+        "judge_order_stats": {"dual_order_tasks": 5, "disagree": 8},
+        "judge_report": {"disagreement_rate": 0.1},
+    }) is None
+
+
+def test_zero_dual_order_stats_do_not_fall_back_to_judge_report():
+    from benchmark.regression import _flat_disagreement
+
+    # judge_order_stats is authoritative whenever present: a zero-task stats block means "no
+    # disagreements to report", not "consult judge_report", whose rate may be stale.
+    assert _flat_disagreement({
+        "judge_order_stats": {"dual_order_tasks": 0, "disagree": 0},
+        "judge_report": {"disagreement_rate": 0.9},
+    }) is None
+    # ... while a genuinely absent stats block still falls back to the reported rate.
+    assert _flat_disagreement({"judge_report": {"disagreement_rate": 0.9}}) == pytest.approx(0.9)
+
+
+def test_incoherent_candidate_partition_does_not_fabricate_an_instability_rise():
+    # End to end: a candidate whose only defect is an impossible partition must not be blocked on a
+    # fabricated disagreement rise. With no comparable rate, the judge check passes vacuously.
+    baseline = {
+        "tuned": {"composite_mean": 0.60, "judge_order_stats": {"dual_order_tasks": 50, "disagree": 2}},
+        "held_out": {"composite_mean": 0.60, "judge_order_stats": {"dual_order_tasks": 50, "disagree": 3}},
+    }
+    candidate = {
+        "tuned": {"composite_mean": 0.60, "judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},
+        "held_out": {"composite_mean": 0.60, "judge_order_stats": {"dual_order_tasks": 10, "disagree": 1}},
+    }
+    result = check_regression(candidate, baseline, max_disagreement_increase=0.1)
+    assert result["disagreement_delta"] is None
+    assert "no_judge_instability_increase" not in failed_checks(result)
+
+
 def test_generalization_partition_stats_override_stale_report_counts():
     from benchmark.regression import _disagreement
 

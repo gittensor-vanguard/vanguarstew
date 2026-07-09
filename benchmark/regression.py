@@ -8,6 +8,9 @@ drop the headline composite by more than ``max_composite_drop``, and must not ma
 judge materially less stable (order-``disagreement_rate`` rising by more than
 ``max_disagreement_increase``). Disagreement rates are recomputed from ``judge_order_stats`` when
 available, falling back to ``judge_report`` only when stats are absent — mirroring ``check_judge``.
+That one block is authoritative: counts that cannot both be true (``disagreements >
+dual_order_tasks``) withhold the rate rather than yield a value above 1.0 or fall through to a
+stale reported rate, and a partition with an impossible pair withholds the pooled rate too.
 
 The companion ``scripts/regression.py`` exits non-zero when a regression is found, so a run can
 be gated against the previous baseline the way ``--fail-under`` gates against a fixed floor —
@@ -21,7 +24,7 @@ from __future__ import annotations
 
 import logging
 
-from benchmark.judge_gate import _disagreement_rate_from_telemetry, _is_int
+from benchmark.judge_gate import _is_int
 from benchmark.trend import headline_score
 
 logger = logging.getLogger(__name__)
@@ -102,37 +105,60 @@ def _round(value):
     return round(float(value), 3) if _is_number(value) else None
 
 
-def _partition_disagreement_counts(part: dict) -> tuple[int, int] | None:
-    """Disagree/dual-order counts from one partition, preferring ``judge_order_stats``."""
-    part = _dict(part)
-    for telemetry in (_dict(part.get("judge_order_stats")), _dict(part.get("judge_report"))):
-        if not telemetry:
-            continue
-        dual = telemetry.get("dual_order_tasks")
-        if not _is_number(dual):
-            agree, disagree, tie = telemetry.get("agree"), telemetry.get("disagree"), telemetry.get("tie")
-            if all(_is_int(v) for v in (agree, disagree, tie)):
-                dual = agree + disagree + tie
-            else:
-                dual = None
-        disagreements = telemetry.get("disagree")
-        if disagreements is None:
-            disagreements = telemetry.get("disagreements")
-        if _is_int(dual) and dual > 0 and _is_int(disagreements) and disagreements >= 0:
-            return int(disagreements), int(dual)
+def _order_telemetry(source) -> dict:
+    """The one authoritative order-telemetry block of an artifact or partition.
+
+    ``judge_order_stats`` wins whenever it is present, and is then the *only* block consulted: a
+    stale ``judge_report`` must never override it, rescue it when its counts are unusable, or
+    supply a rate behind its back (mirroring ``check_judge``; see #1235). ``judge_report`` is read
+    only when ``judge_order_stats`` is absent or empty.
+    """
+    source = _dict(source)
+    stats = _dict(source.get("judge_order_stats"))
+    return stats if stats else _dict(source.get("judge_report"))
+
+
+def _order_counts(telemetry) -> tuple[int, int] | None:
+    """``(disagreements, dual_order_tasks)`` from one telemetry block.
+
+    ``None`` when the block carries no usable dual-order counts — including a zero-task block,
+    which simply has no disagreements to report. The counts are returned as declared and may be
+    internally inconsistent (``disagreements > dual_order_tasks``); callers decide what an
+    impossible pair means for the rate they are deriving.
+    """
+    telemetry = _dict(telemetry)
+    dual = telemetry.get("dual_order_tasks")
+    if not _is_number(dual):
+        agree, disagree, tie = telemetry.get("agree"), telemetry.get("disagree"), telemetry.get("tie")
+        if all(_is_int(v) for v in (agree, disagree, tie)):
+            dual = agree + disagree + tie
+        else:
+            dual = None
+    disagreements = telemetry.get("disagree")
+    if disagreements is None:
+        disagreements = telemetry.get("disagreements")
+    if _is_int(dual) and dual > 0 and _is_int(disagreements) and disagreements >= 0:
+        return int(disagreements), int(dual)
     return None
 
 
-def _flat_disagreement(artifact: dict) -> float | None:
-    """Order-disagreement rate for a flat artifact, preferring ``judge_order_stats``."""
-    artifact = _dict(artifact)
-    for telemetry in (_dict(artifact.get("judge_order_stats")), _dict(artifact.get("judge_report"))):
-        if not telemetry:
-            continue
-        rate = _disagreement_rate_from_telemetry(telemetry)
-        if rate is not None:
-            return rate
-    return None
+def _flat_disagreement(artifact) -> float | None:
+    """Order-disagreement rate for a flat artifact, from its authoritative telemetry block.
+
+    Counts that cannot both be true (``disagreements > dual_order_tasks``, which would yield a rate
+    above 1.0) withhold the rate entirely: a reported ``disagreement_rate`` must not paper over
+    corrupt counts. That reported rate is used only when the authoritative block carries no
+    dual-order counts to recompute from.
+    """
+    telemetry = _order_telemetry(artifact)
+    counts = _order_counts(telemetry)
+    if counts is not None:
+        disagreements, dual = counts
+        if disagreements > dual:
+            return None
+        return round(disagreements / dual, 3)
+    rate = telemetry.get("disagreement_rate")
+    return round(float(rate), 3) if _is_number(rate) else None
 
 
 def _disagreement(artifact) -> float | None:
@@ -144,11 +170,17 @@ def _disagreement(artifact) -> float | None:
         total_dis = 0
         total_dual = 0
         for label in ("tuned", "held_out"):
-            counts = _partition_disagreement_counts(_dict(artifact.get(label)))
+            counts = _order_counts(_order_telemetry(artifact.get(label)))
             if counts is None:
+                # No dual-order telemetry: this partition contributes nothing to the pool, and the
+                # rate over the dual-order tasks that do exist stays correct.
                 continue
-            dis, dual = counts
-            total_dis += dis
+            disagreements, dual = counts
+            if disagreements > dual:
+                # An impossible partition, which the coherent one would dilute into a
+                # plausible-but-wrong pooled rate that a range check cannot catch.
+                return None
+            total_dis += disagreements
             total_dual += dual
         if total_dual > 0:
             return total_dis / total_dual
