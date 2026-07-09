@@ -76,23 +76,25 @@ def _slice_summary(slice_) -> dict:
 
 
 def _combined(*slices: dict) -> dict:
-    """Overall skip share across partitions — only when every partition has both counts."""
-    if all(_is_int(s["repos"]) and _is_int(s["scored_repos"]) for s in slices):
+    """Overall skip share across partitions — only when every partition has a coherent skip share.
+
+    Each slice is a :func:`_slice_summary` result, whose ``skip_share`` is a number only when that
+    partition's counts are coherent (whole ``repos > 0`` and ``0 <= scored_repos <= repos``) and
+    ``None`` otherwise. Gating on ``skip_share is not None`` — rather than merely on the raw counts
+    being integers — keeps an incoherent partition (``scored > repos``, a zero-repo slice, negative
+    or missing counts) from being summed into a plausible-but-wrong overall share, per the module's
+    "malformed accounting yields ``None``" contract.
+    """
+    if all(s["skip_share"] is not None for s in slices):
+        # Every partition is coherent, so the summed counts are coherent too
+        # (repos > 0, 0 <= scored <= repos) and _skip_share never returns None here.
         repos = sum(s["repos"] for s in slices)
         scored = sum(s["scored_repos"] for s in slices)
-        share = _skip_share(repos, scored)
-        if share is None:
-            return {
-                "repos": repos if _is_int(repos) else None,
-                "scored_repos": scored if _is_int(scored) else None,
-                "skipped": None,
-                "skip_share": None,
-            }
         return {
             "repos": repos,
             "scored_repos": scored,
             "skipped": repos - scored,
-            "skip_share": share,
+            "skip_share": _skip_share(repos, scored),
         }
     return {
         "repos": None,

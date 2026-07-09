@@ -84,6 +84,35 @@ def test_generalization_overall_sums_partitions_when_no_top_level_counts():
     assert summary["partitions"]["held_out"]["skip_share"] == 0.5
 
 
+def test_generalization_overall_is_none_when_a_partition_is_incoherent():
+    # An over-scored partition (scored > repos) is malformed: its own skip_share is None. The
+    # overall must not sum the raw counts back into a plausible share (here 8 scored of 8 -> 0.0)
+    # and contradict the partition — per the module's "malformed accounting yields None" contract.
+    summary = summarize_skip_share({
+        "generalization_gap": 0.0,
+        "tuned": {"repos": 4, "scored_repos": 6},   # incoherent: 6 scored > 4 repos
+        "held_out": {"repos": 4, "scored_repos": 2},
+    })
+    assert summary["skip_share"] is None
+    assert summary["skipped"] is None
+    assert summary["repos"] is None and summary["scored_repos"] is None
+    assert summary["partitions"]["tuned"]["skip_share"] is None       # partition flagged malformed
+    assert summary["partitions"]["held_out"]["skip_share"] == 0.5     # the coherent one still shown
+
+
+def test_generalization_overall_is_none_when_a_partition_has_zero_repos():
+    # A zero-repo slice is malformed too (skip_share undefined), so it must null the overall rather
+    # than let the other partition's share pass through as if it were the whole picture.
+    summary = summarize_skip_share({
+        "generalization_gap": 0.0,
+        "tuned": {"repos": 0, "scored_repos": 0},   # zero-repo slice -> skip_share None
+        "held_out": {"repos": 4, "scored_repos": 2},
+    })
+    assert summary["skip_share"] is None
+    assert summary["partitions"]["tuned"]["skip_share"] is None
+    assert summary["partitions"]["held_out"]["skip_share"] == 0.5
+
+
 def test_generalization_missing_partition_keys():
     summary = summarize_skip_share({
         "generalization_gap": 0.0,
