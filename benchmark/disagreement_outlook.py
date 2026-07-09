@@ -79,13 +79,25 @@ def _slice_summary(slice_) -> dict:
             "disagreement_rate": None,
         }
     disagreements, dual = counts
-    rate = telemetry.get("disagreement_rate")
-    if _is_number(rate):
-        out_rate = round(float(rate), 3)
-    elif dual == 0:
-        out_rate = None
+    # Recompute the rate from the authoritative ``disagree``/``disagreements`` count over
+    # ``dual_order_tasks`` when that count is present, so a stale ``disagreement_rate`` field
+    # cannot override the real counts (mirroring ``judge_gate._disagreement_rate_from_telemetry``
+    # and the recompute-from-stats posture of ``_combined`` below — otherwise a slice and the
+    # overall it feeds can disagree on the same artifact). Only when no authoritative count is
+    # available does it fall back to the telemetry's stored ``disagreement_rate``.
+    count = telemetry.get("disagreements")
+    if count is None:
+        count = telemetry.get("disagree")
+    if _is_int(count) and count >= 0 and dual > 0:
+        out_rate = round(count / dual, 3)
     else:
-        out_rate = round(disagreements / dual, 3)
+        rate = telemetry.get("disagreement_rate")
+        if _is_number(rate):
+            out_rate = round(float(rate), 3)
+        elif dual == 0:
+            out_rate = None
+        else:
+            out_rate = round(disagreements / dual, 3)
     return {
         "dual_order_tasks": dual,
         "disagreements": disagreements,

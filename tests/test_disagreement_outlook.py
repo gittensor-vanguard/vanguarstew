@@ -88,6 +88,63 @@ def test_generalization_overall_sums_partitions_when_no_top_level_telemetry():
     assert out["partitions"]["held_out"]["disagreement_rate"] == 0.5
 
 
+def test_authoritative_count_overrides_stale_disagreement_rate():
+    # judge_order_stats carries the authoritative disagree/dual counts (9/10 = 0.9, unstable);
+    # a stale disagreement_rate=0.1 must not override them and false-pass as "stable".
+    art = {
+        "composite_mean": 0.6,
+        "judge_order_stats": {
+            "dual_order_tasks": 10,
+            "disagree": 9,
+            "disagreement_rate": 0.1,
+        },
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["disagreement_rate"] == 0.9
+    assert out["disagreements"] == 9
+    assert out["verdict"] == "unstable"
+
+
+def test_stored_rate_used_when_no_authoritative_count():
+    # No disagree/disagreements count present -> the stored disagreement_rate is the only signal
+    # and is honored as-is (the fallback path stays intact).
+    art = {
+        "composite_mean": 0.6,
+        "judge_order_stats": {"dual_order_tasks": 5, "disagreement_rate": 0.2},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["disagreement_rate"] == 0.2
+    assert out["verdict"] == "stable"
+
+
+def test_generalization_partition_rate_recomputed_from_counts():
+    # Each partition carries an authoritative count with a stale rate field; the per-partition
+    # rate must be recomputed (not trust the stale field), and stay consistent with the overall.
+    art = {
+        "generalization_gap": 0.0,
+        "tuned": {
+            "judge_report": {
+                "dual_order_tasks": 10,
+                "disagreements": 9,
+                "disagreement_rate": 0.1,
+            }
+        },
+        "held_out": {
+            "judge_report": {
+                "dual_order_tasks": 10,
+                "disagreements": 1,
+                "disagreement_rate": 0.1,
+            }
+        },
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["partitions"]["tuned"]["disagreement_rate"] == 0.9
+    assert out["partitions"]["held_out"]["disagreement_rate"] == 0.1
+    # Overall is (9 + 1) / (10 + 10) = 0.5, matching the recomputed partitions.
+    assert out["disagreement_rate"] == 0.5
+    assert out["verdict"] == "unstable"
+
+
 def test_generalization_missing_partition_telemetry_yields_none_overall():
     art = {
         "generalization_gap": None,
