@@ -70,8 +70,8 @@ jobs:
               f"- Ran clean: yes\n"
               f"- Composite deltas: `{json.dumps(report.get('composite_deltas'))}`\n\n"
               "This does not determine label eligibility. `mult:core-correctness` / "
-              "`mult:capability` require a maintainer-run live benchmark comparison — "
-              "see REVIEW.md."
+              "`mult:capability` / `mult:breakthrough` require a maintainer-run live "
+              "benchmark comparison — see REVIEW.md."
           )
           open("/tmp/comment.md", "w").write(body)
           PY

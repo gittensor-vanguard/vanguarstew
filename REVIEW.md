@@ -59,6 +59,7 @@ ordered value ladder, prepared now and active on registration:
 
 | Label | Multiplier | Applies to |
 | ----- | ---------- | ---------- |
+| `mult:breakthrough` | ×3.0 | The ceiling label — a rare, high-magnitude improvement: `scripts/score_pr_delta.py` reports `tier: "breakthrough"`, meaning composite score rose by at least 5× the noise floor (≥0.05) with **both** the judge and objective components individually improving (not merely non-regressing). Most solid wins land at `core-correctness` or `capability` below; this is reserved for the rare PR that measurably wins on every axis by a wide margin. |
 | `mult:core-correctness` | ×2.0 | A fix to a bug that **materially skews a score, judge verdict, or gate outcome** — i.e. without it, a real run produces a wrong number or a wrong pass/fail. Reserved for the top tier: the bug must change an outcome, not merely be "in the scoring code." A partition-handling fix to a metric module counts **only** if that metric feeds a live gate or the composite; a fix to an unwired/redundant helper does not. |
 | `mult:leakage-integrity` | ×1.8 | Anti-leakage / task-integrity work — the benchmark's trust depends on it. |
 | `mult:capability` | ×1.5 | New agent capability or a **genuinely new** benchmark dimension / task-gen improvement — not a re-slice of a metric an existing module already computes. |
@@ -73,35 +74,44 @@ ordered value ladder, prepared now and active on registration:
 ### Evidence requirement for `agent/` PRs
 
 A PR touching `agent/` (the scored, miner-editable surface) is **not** eligible for
-`mult:core-correctness` or `mult:capability` on the strength of its diff or description alone.
-The maintainer runs `scripts/score_pr_delta.py` — comparing the PR's `agent/` against the
-current baseline on the same benchmark repo-set — and the label tier follows the *measured*
-result, not a read of the change:
+`mult:core-correctness`, `mult:capability`, or `mult:breakthrough` on the strength of its
+diff or description alone. The maintainer runs `scripts/score_pr_delta.py` — comparing the
+PR's `agent/` against the current baseline on the same benchmark repo-set — and the label
+tier follows the *measured* result (`report["tier"]`), not a read of the change:
 
-- **Composite score must measurably improve** (past a small noise floor, since LLM sampling
-  wobbles run to run).
-- **Neither the judge component nor the objective component may regress** — trading one off for
-  the other (e.g. sounding better to the pairwise judge while the deterministic objective anchor
-  quietly drops) does not count as an improvement. This is the anti-Goodhart / Pareto floor: a PR
-  earns the top tier only when it is a genuine improvement on every measured axis, not a shift of
-  where the score comes from.
-- A PR with no measurable improvement, or a regression on either axis, is capped at
-  `mult:maintenance` regardless of its stated intent — code quality, tests, and refactors still
-  have real (lower-tier) value; they just aren't "core correctness" or "new capability" without
-  evidence.
-- CI runs a lightweight offline smoke check on every `agent/`-touching PR (`agent-benchmark-smoke.yml`)
-  — this catches crashes and output-shape regressions only. It is **not** the scoring evidence:
-  offline mode returns each file's own fixed stub regardless of the prompt, so it cannot measure
-  whether a PR changed the agent's actual reasoning. The real score-delta is a maintainer-run
-  live comparison, ideally against a held-out repo set the PR author has not seen, to keep the
-  measurement itself resistant to being tuned against.
+- **`tier: "blocked"` — regression, hard merge block.** If either the judge or the
+  objective component regresses past the noise floor, the PR **is not mergeable**, full
+  stop — this is no longer just a label cap. Trading one axis off for the other (e.g.
+  sounding better to the pairwise judge while the deterministic objective anchor quietly
+  drops) counts as a regression, not an improvement. The author must revise until the
+  regression clears, or the PR is closed. (This gate applies only to PRs touching
+  `agent/`, since that's the only surface a live benchmark delta measures — `benchmark/`
+  and other PRs are governed by the usual automated gates + human review, unaffected.)
+- **`tier: "neutral"` — no measurable change.** Capped at `mult:maintenance`; code
+  quality, tests, and refactors still have real (lower-tier) value, they just aren't
+  "core correctness" or "new capability" without evidence.
+- **`tier: "eligible"` — real improvement, no regression.** Composite score measurably
+  improved (past the noise floor) with neither axis regressing. Supports
+  `mult:core-correctness` or `mult:capability`.
+- **`tier: "breakthrough"` — large improvement on every axis.** Composite improved by at
+  least 5× the noise floor (≥0.05) with *both* judge and objective components
+  individually improving. Supports the ceiling label, `mult:breakthrough`.
+
+CI runs a lightweight offline smoke check on every `agent/`-touching PR
+(`agent-benchmark-smoke.yml`) — this catches crashes and output-shape regressions only. It
+is **not** the scoring evidence and cannot trigger the merge block above: offline mode
+returns each file's own fixed stub regardless of the prompt, so it cannot measure whether a
+PR changed the agent's actual reasoning, let alone regressed it. The real score-delta is a
+maintainer-run live comparison, ideally against a held-out repo set the PR author has not
+seen, to keep the measurement itself resistant to being tuned against.
 
 ## Rejections
 
 Common reasons a PR is closed rather than merged: no linked issue, out of scope, missing
 tests, trivial/no-op diff, duplicated or plagiarized work, **conceptual redundancy** (a new
 module/metric that re-derives what existing code already produces over the same data shape —
-parametrize or extend instead), or AI-attributed content.
+parametrize or extend instead), AI-attributed content, or (for `agent/` PRs) a maintainer-run
+`scripts/score_pr_delta.py` regression (`tier: "blocked"` — see § Evidence requirement above).
 
 ## Disagree with a decision?
 

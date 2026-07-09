@@ -10,6 +10,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from scripts.score_pr_delta import (  # noqa: E402
+    DEFAULT_BREAKTHROUGH_MULTIPLE,
     DEFAULT_NOISE_FLOOR,
     _improved,
     _pareto_axes,
@@ -36,11 +37,40 @@ def test_regressed_and_improved_respect_the_noise_floor():
 
 
 def test_real_improvement_with_no_regression_is_eligible():
+    """A modest, real improvement on both axes — past the noise floor but below the
+    breakthrough floor — lands at plain "eligible", not the ceiling tier."""
+    baseline = _artifact(0.60, 0.55, 0.65)
+    candidate = _artifact(0.63, 0.57, 0.68)
+    report = score_pr_delta(baseline, candidate)
+    assert report["eligible_for_high_tier"] is True
+    assert report["tier"] == "eligible"
+    assert report["blocks_merge"] is False
+    assert "improved" in report["reason"]
+
+
+def test_large_improvement_on_both_axes_is_breakthrough():
+    """Composite improves by well past the breakthrough floor (>= 5x noise floor) AND
+    both judge and objective individually improve — the ceiling tier."""
     baseline = _artifact(0.60, 0.55, 0.65)
     candidate = _artifact(0.68, 0.60, 0.72)
     report = score_pr_delta(baseline, candidate)
     assert report["eligible_for_high_tier"] is True
-    assert "improved" in report["reason"]
+    assert report["tier"] == "breakthrough"
+    assert report["blocks_merge"] is False
+    assert "breakthrough" not in report["reason"]  # reason describes the measurement, not the label name
+    assert "both judge and objective" in report["reason"]
+
+
+def test_breakthrough_requires_both_axes_to_improve_not_just_composite():
+    """A large composite jump driven by only ONE axis improving (the other flat within
+    noise) must NOT reach breakthrough — that's still a single-axis win, not a genuine
+    win on every measured dimension."""
+    baseline = _artifact(0.60, 0.55, 0.65)
+    # objective_mean barely moves (within noise); judge_mean carries the whole composite rise.
+    candidate = _artifact(0.68, 0.75, 0.652)
+    report = score_pr_delta(baseline, candidate)
+    assert report["composite_deltas"]["composite_mean"] >= report["breakthrough_floor"]
+    assert report["tier"] == "eligible"  # not "breakthrough" — objective_mean didn't really move
 
 
 def test_goodhart_trade_off_is_rejected_even_though_composite_rose():
@@ -52,6 +82,8 @@ def test_goodhart_trade_off_is_rejected_even_though_composite_rose():
     report = score_pr_delta(baseline, candidate)
     assert report["composite_deltas"]["composite_mean"] > 0  # composite really did rise
     assert report["eligible_for_high_tier"] is False
+    assert report["tier"] == "blocked"
+    assert report["blocks_merge"] is True
     assert "regressed" in report["reason"]
 
 
@@ -60,6 +92,8 @@ def test_within_noise_floor_is_not_eligible():
     candidate = _artifact(0.605, 0.552, 0.651)
     report = score_pr_delta(baseline, candidate)
     assert report["eligible_for_high_tier"] is False
+    assert report["tier"] == "neutral"
+    assert report["blocks_merge"] is False
     assert "no measurable improvement" in report["reason"]
 
 
@@ -68,6 +102,8 @@ def test_outright_regression_is_not_eligible():
     candidate = _artifact(0.40, 0.35, 0.45)
     report = score_pr_delta(baseline, candidate)
     assert report["eligible_for_high_tier"] is False
+    assert report["tier"] == "blocked"
+    assert report["blocks_merge"] is True
 
 
 def test_generalization_shaped_artifacts_are_scored_per_partition():
@@ -83,6 +119,7 @@ def test_generalization_shaped_artifacts_are_scored_per_partition():
     }
     report = score_pr_delta(baseline, candidate)
     assert report["eligible_for_high_tier"] is True
+    assert report["tier"] == "eligible"  # breakthrough is never reached at this shape
     assert report["pareto_axes"] == {}  # no judge/objective split at this shape
 
 
@@ -101,6 +138,8 @@ def test_generalization_shaped_artifact_catches_a_held_out_regression():
     }
     report = score_pr_delta(baseline, candidate)
     assert report["eligible_for_high_tier"] is False
+    assert report["tier"] == "blocked"
+    assert report["blocks_merge"] is True
 
 
 def test_missing_composite_parts_excludes_pareto_axis_rather_than_failing_open_or_closed():
@@ -111,6 +150,7 @@ def test_missing_composite_parts_excludes_pareto_axis_rather_than_failing_open_o
     report = score_pr_delta(baseline, candidate)
     assert report["pareto_axes"] == {"judge_mean": None, "objective_mean": None}
     assert report["eligible_for_high_tier"] is True  # composite improved, no axis data to fail on
+    assert report["tier"] == "eligible"  # can't confirm both axes improved -> never breakthrough
 
 
 def test_custom_noise_floor_is_honored():
@@ -123,11 +163,30 @@ def test_custom_noise_floor_is_honored():
     assert strict_report["eligible_for_high_tier"] is False  # 0.02 < 0.05 floor
 
 
+def test_custom_breakthrough_multiple_is_honored():
+    baseline = _artifact(0.60, 0.55, 0.65)
+    candidate = _artifact(0.63, 0.57, 0.68)  # composite +0.03, both axes improve past noise floor
+    default_report = score_pr_delta(baseline, candidate)
+    assert default_report["tier"] == "eligible"  # 0.03 < default breakthrough floor (5x0.01=0.05)
+
+    lenient_report = score_pr_delta(baseline, candidate, breakthrough_multiple=2.0)
+    assert lenient_report["breakthrough_floor"] == 0.02
+    assert lenient_report["tier"] == "breakthrough"  # 0.03 >= 2x0.01=0.02, both axes improve
+
+
+def test_default_breakthrough_multiple_constant_is_five():
+    assert DEFAULT_BREAKTHROUGH_MULTIPLE == 5.0
+
+
 def test_headline_reports_eligibility_verdict():
-    eligible = {"eligible_for_high_tier": True, "reason": "composite_mean improved"}
-    not_eligible = {"eligible_for_high_tier": False, "reason": "no measurable improvement"}
+    eligible = {"tier": "eligible", "eligible_for_high_tier": True, "reason": "composite_mean improved"}
+    not_eligible = {"tier": "neutral", "eligible_for_high_tier": False, "reason": "no measurable improvement"}
+    blocked = {"tier": "blocked", "eligible_for_high_tier": False, "reason": "a scored dimension regressed"}
+    breakthrough = {"tier": "breakthrough", "eligible_for_high_tier": True, "reason": "large real improvement"}
     assert "ELIGIBLE" in headline(eligible)
     assert "not eligible" in headline(not_eligible)
+    assert "BLOCKED" in headline(blocked)
+    assert "BREAKTHROUGH" in headline(breakthrough)
 
 
 def test_cli_end_to_end_writes_a_report(tmp_path):
@@ -145,4 +204,5 @@ def test_cli_end_to_end_writes_a_report(tmp_path):
     assert result.returncode == 0
     report = json.loads(out_path.read_text())
     assert report["eligible_for_high_tier"] is True
-    assert "score_pr_delta: ELIGIBLE" in result.stderr
+    assert report["tier"] == "breakthrough"
+    assert "score_pr_delta: BREAKTHROUGH" in result.stderr
