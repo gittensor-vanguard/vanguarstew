@@ -268,6 +268,61 @@ def test_check_skip_budget_does_not_mutate_the_result():
     assert run == snapshot
 
 
+# --- generalization: sum tuned/held_out tallies (mirrors skip_share) --------------------
+
+
+def _gen(tuned, held_out, gap=0.1):
+    return {"tuned": tuned, "held_out": held_out, "generalization_gap": gap}
+
+
+def test_generalization_well_covered_run_passes():
+    gen = _gen(
+        {"repos": 8, "scored_repos": 7, "skipped": 1},
+        {"repos": 6, "scored_repos": 5, "skipped": 1},
+    )
+    result = check_skip_budget(gen, min_scored=3, max_skip_rate=0.25)
+    assert result["passed"] is True
+    assert result["repos"] == 14 and result["scored_repos"] == 12
+    assert result["skipped"] == 2 and result["skip_rate"] == round(2 / 14, 3)
+
+
+def test_generalization_held_out_skip_blowout_fails():
+    gen = _gen(
+        {"repos": 8, "scored_repos": 7, "skipped": 1},
+        {"repos": 6, "scored_repos": 2, "skipped": 4},
+    )
+    result = check_skip_budget(gen, min_scored=3, max_skip_rate=0.25)
+    assert result["passed"] is False
+    assert "skip_within_budget" in failed_checks(result)
+    assert result["skip_rate"] == round(5 / 14, 3)
+
+
+def test_generalization_agrees_with_skip_share_overall():
+    from benchmark.skip_share import summarize_skip_share
+    gen = _gen(
+        {"repos": 8, "scored_repos": 7, "skipped": 1},
+        {"repos": 6, "scored_repos": 2, "skipped": 4},
+    )
+    result = check_skip_budget(gen, min_scored=1, max_skip_rate=0.5)
+    share = summarize_skip_share(gen)
+    assert result["repos"] == share["repos"]
+    assert result["scored_repos"] == share["scored_repos"]
+    assert result["skip_rate"] == share["skip_share"]
+
+
+def test_generalization_without_partition_counts_fails_accounting():
+    gen = {"tuned": {"composite_mean": 0.6}, "held_out": {}, "generalization_gap": 0.1}
+    result = check_skip_budget(gen)
+    assert result["passed"] is False
+    assert "multi_repo_accounting" in failed_checks(result)
+
+
+def test_non_generalization_unchanged():
+    result = check_skip_budget(_multi(8, 7), min_scored=3)
+    assert result["passed"] is True
+    assert result["repos"] == 8
+
+
 # --- CLI ---
 
 def _write(tmp_path, name, data):
