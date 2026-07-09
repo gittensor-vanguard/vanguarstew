@@ -205,12 +205,16 @@ def context_for_agent(context: dict) -> dict:
 def _context_from_git(repo_path: str) -> dict:
     head = _git(repo_path, "rev-parse", "HEAD")
     freeze_date = _git(repo_path, "show", "-s", "--format=%cI", head).strip() or None
-    log = _git(repo_path, "log", "--pretty=format:%H%x09%s", "-n", "50")
+    # Include the committer ISO date (%cI) so the fallback's recent_commits match the frozen
+    # file's shape from ``benchmark.freeze.build_context`` ({sha, date, subject}); the two
+    # git-only builders must produce the same context regardless of which path runs.
+    log = _git(repo_path, "log", "--pretty=format:%H%x09%cI%x09%s", "-n", "50")
     commits = []
     for line in log.splitlines():
-        if "\t" in line:
-            h, subj = line.split("\t", 1)
-            commits.append({"sha": h[:10], "subject": _mask_forward_refs(subj)})
+        parts = line.split("\t", 2)
+        if len(parts) == 3:
+            h, date, subj = parts
+            commits.append({"sha": h[:10], "date": date, "subject": _mask_forward_refs(subj)})
     # `git tag --merged` selects tags whose target commit is reachable from T; it does NOT
     # filter by when the tag was created. An annotated tag cut after T from a commit already
     # present at T would leak a future release into knowable-at-T context. Filter to tags

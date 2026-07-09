@@ -450,6 +450,34 @@ def test_context_from_git_excludes_tags_created_after_head():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_recent_commits_match_build_context_shape():
+    # The two git-only builders must produce the same recent_commits: same length, same keys
+    # ({sha, date, subject}), and matching sha/date. Subjects here carry no forward-refs, so
+    # the fallback's inline masking is an identity and the entries compare equal outright.
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        d1, d2 = "2024-01-10T12:00:00+00:00", "2024-02-11T09:30:00+00:00"
+        _write(repo, "a.txt")
+        _git(repo, "add", "-A", date=d1)
+        _git(repo, "commit", "-q", "-m", "first commit", date=d1)
+        _write(repo, "b.txt")
+        _git(repo, "add", "-A", date=d2)
+        _git(repo, "commit", "-q", "-m", "second commit", date=d2)
+
+        fallback = _context_from_git(repo)["recent_commits"]
+        harness = build_context(repo, "HEAD")["recent_commits"]
+        assert len(fallback) == len(harness) == 2
+        for fb, hn in zip(fallback, harness):
+            assert set(fb) == set(hn) == {"sha", "date", "subject"}
+            assert fb["sha"] == hn["sha"]
+            assert fb["date"] == hn["date"]
+            assert fb["subject"] == hn["subject"]  # no refs -> masking is identity
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 @pytest.mark.parametrize("readme_path,content", [
     ("README.txt", "Plain-text project overview.\n"),
     ("docs/README.md", "Monorepo docs overview.\n"),
