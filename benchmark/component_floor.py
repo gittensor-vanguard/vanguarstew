@@ -85,6 +85,39 @@ def _floor_source(result: dict) -> dict:
     return result
 
 
+def _partition_error(partition):
+    """The first error the evaluated partition carries, or ``None`` when it completed clean.
+
+    Returns the error *value* (not a bool) so the ``no_partition_error`` detail can name the exact
+    failure. Scans the same places as ``benchmark.acceptance._partition_error`` (#1056) so a run
+    that did not complete clean cannot be signed off on its component floors:
+
+    1. the partition's top-level ``error`` — a whole-partition ``RepoSetError``;
+    2. a ``per_repo`` row's ``error`` — a single repo that failed to clone/freeze does **not** abort
+       the batch; ``run_multi_replay`` records it inside ``per_repo[i]`` as
+       ``{"error": ..., "tasks": 0}`` and counts it in ``skipped``, so the top-level ``error`` stays
+       absent. Reading only the component means (the previous behavior) let the floor gate sign off
+       a run whose means were computed over a biased, partial repo subset;
+    3. a ``per_repo`` row that is itself a non-empty error string — a malformed entry, failed closed.
+
+    Non-dict/non-string rows and a non-list ``per_repo`` are ignored; a non-dict partition yields
+    ``None`` rather than raising.
+    """
+    if not isinstance(partition, dict):
+        return None
+    if partition.get("error"):
+        return partition["error"]
+    per_repo = partition.get("per_repo")
+    if isinstance(per_repo, list):
+        for row in per_repo:
+            if isinstance(row, dict):
+                if row.get("error"):
+                    return row["error"]
+            elif isinstance(row, str) and row.strip():
+                return row
+    return None
+
+
 def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
                            min_judge: float = DEFAULT_MIN_JUDGE,
                            min_objective: float = DEFAULT_MIN_OBJECTIVE) -> dict:
@@ -105,10 +138,19 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     judge = _scored_metric(source, "judge_mean", nested_key="composite_parts")
     objective = _scored_metric(source, "objective_mean", nested_key="composite_parts")
 
+    partition_error = _partition_error(source)
+
     checks = [
         _floor_check("composite_floor", composite, min_composite),
         _floor_check("judge_floor", judge, min_judge),
         _floor_check("objective_floor", objective, min_objective),
+        {
+            "name": "no_partition_error",
+            "passed": partition_error is None,
+            "detail": ("the evaluated partition completed without error"
+                       if partition_error is None
+                       else f"partition error: {partition_error!r}"),
+        },
     ]
 
     return {

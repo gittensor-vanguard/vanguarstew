@@ -13,6 +13,7 @@ if ROOT not in sys.path:
 from benchmark.component_floor import (  # noqa: E402
     DEFAULT_MIN_COMPOSITE,
     _check_rows_list,
+    _partition_error,
     check_component_floors,
     component_floor_headline,
     failed_checks,
@@ -31,7 +32,7 @@ def _names(result):
 def test_all_components_above_floors_passes():
     result = check_component_floors(_result(0.62, 0.7, 0.55))
     assert result["passed"] is True
-    assert _names(result) == ["composite_floor", "judge_floor", "objective_floor"]
+    assert _names(result) == ["composite_floor", "judge_floor", "objective_floor", "no_partition_error"]
     assert result["composite_mean"] == 0.62 and result["judge_mean"] == 0.7
 
 
@@ -156,7 +157,7 @@ def test_check_rows_list_warns_on_non_list(caplog):
 
 def test_every_floor_reported_even_when_all_fail():
     result = check_component_floors(_result(0.1, 0.1, 0.1))
-    assert len(result["checks"]) == 3
+    assert len(result["checks"]) == 4
     assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
 
 
@@ -332,3 +333,71 @@ def test_held_out_weak_components_do_not_affect_tuned_gate():
     )
     result = check_component_floors(art, min_composite=0.5, min_judge=0.4, min_objective=0.4)
     assert result["passed"] is True
+
+
+# --- #1263: the floor gate must not sign off a run with per-repo clone/freeze errors ---
+
+
+def _result_with_per_repo(composite, judge, objective, per_repo):
+    r = _result(composite, judge, objective)
+    r["per_repo"] = per_repo
+    return r
+
+
+def test_a_per_repo_error_fails_the_gate_even_when_every_floor_clears():
+    # Component means clear every floor, but one repo failed to clone/freeze (recorded in
+    # per_repo[i] as {"error": ..., "tasks": 0}, not a top-level error). Before #1263 the gate
+    # signed off this partial run; it must now fail on no_partition_error.
+    result = _result_with_per_repo(0.62, 0.7, 0.55, [
+        {"repo": "ok", "tasks": 3, "composite_mean": 0.62},
+        {"repo": "bad", "tasks": 0, "error": "clone failed"},
+    ])
+    result = check_component_floors(result)
+    assert result["passed"] is False
+    assert failed_checks(result) == ["no_partition_error"]
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "no_partition_error")
+    assert "clone failed" in detail
+
+
+def test_a_top_level_partition_error_fails_the_gate():
+    result = check_component_floors({"composite_mean": 0.62,
+                                     "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.55},
+                                     "error": "RepoSetError: no repos"})
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+
+
+def test_a_clean_run_passes_no_partition_error():
+    result = check_component_floors(_result_with_per_repo(0.62, 0.7, 0.55, [
+        {"repo": "a", "tasks": 3, "composite_mean": 0.6},
+        {"repo": "b", "tasks": 3, "composite_mean": 0.64},
+    ]))
+    assert result["passed"] is True
+    assert "no_partition_error" not in failed_checks(result)
+
+
+def test_generalization_gate_reads_the_tuned_partition_for_errors():
+    # A generalization artifact is floored on its tuned partition, so a tuned per-repo error must
+    # fail the gate; a held_out-only error does not (held_out is not the evaluated partition).
+    tuned_bad = {
+        "tuned": {"composite_mean": 0.62, "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.55},
+                  "per_repo": [{"repo": "x", "tasks": 0, "error": "freeze failed"}]},
+        "held_out": {"composite_mean": 0.6, "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.5}},
+    }
+    assert "no_partition_error" in failed_checks(check_component_floors(tuned_bad))
+    held_bad = copy.deepcopy(tuned_bad)
+    held_bad["tuned"]["per_repo"] = [{"repo": "x", "tasks": 3, "composite_mean": 0.62}]
+    held_bad["held_out"]["per_repo"] = [{"repo": "y", "tasks": 0, "error": "clone failed"}]
+    assert "no_partition_error" not in failed_checks(check_component_floors(held_bad))
+
+
+def test_partition_error_helper_scans_top_level_per_repo_and_malformed_rows():
+    assert _partition_error({"error": "boom"}) == "boom"
+    assert _partition_error({"per_repo": [{"repo": "a"}, {"repo": "b", "error": "x"}]}) == "x"
+    assert _partition_error({"per_repo": ["corrupt-row"]}) == "corrupt-row"
+    # clean / ignorable shapes
+    assert _partition_error({"per_repo": [{"repo": "a", "tasks": 3}]}) is None
+    assert _partition_error({"per_repo": "not a list"}) is None
+    assert _partition_error({"per_repo": [42, {"repo": "a"}]}) is None
+    assert _partition_error("not a dict") is None
+    assert _partition_error({}) is None
