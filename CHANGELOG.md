@@ -7,6 +7,103 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Repo-set tooling: **freeze-window value validation** (`min_history >= 1`, non-empty
+  `after`/`before`) and `scripts/validate_repo_set.py` CLI to check a repo-set JSON before
+  replay (#325).
+- Generalization (M3): **tuned vs held-out generalization report** — `run_generalization_report`
+  / `scripts/run_eval.py --repo-set <cfg> --generalization` replays both the tuned and held-out
+  partitions of a repo set in one call and reports a `generalization_gap` (tuned minus held-out
+  composite mean). This is the M3 acceptance signal — held-out performance should not collapse
+  relative to tuned — which the per-partition `run_multi_replay` left to manual comparison. A
+  partition the config does not define is recorded with its error, so the report never aborts
+  and the gap is reported only when both partitions scored a repo (#208).
+
+### Fixed
+- Benchmark gates (`benchmark/repeatability.py`): `assess_repeatability` computed the
+  coefficient of variation from the *population* standard deviation (`pstdev`) rather than the
+  *sample* standard deviation. The repeats are a sample of a noisy run, so the CV must use the
+  Bessel-corrected sample stddev; `pstdev` underestimates run-to-run spread by
+  `sqrt(n/(n-1))` (~1.41x at n=2), biasing the reproducibility gate too lenient and flipping the
+  `stable` verdict near the `max_cv` boundary (e.g. runs `[0.96, 1.04]` scored a CV of 0.04 and
+  passed at `max_cv=0.05`, when the true sample CV is 0.057 and should fail).
+- Benchmark gates (`benchmark/sample_adequacy.py`): `_partition_entries` collected the
+  top-level `per_repo` list **and** the `tuned`/`held_out` partition lists additively, so an
+  artifact carrying both shapes had every task counted twice (`_total_tasks` returned 14 for a
+  7-task run), which then failed `all_tasks_decided` even when the tally accounted for every
+  real task. It is now mutually exclusive — top-level `per_repo` wins, else the partitions —
+  mirroring the sibling gates (`coverage`, `tally_integrity`, `weight_integrity`, ...). Stock
+  multi-repo and generalization artifacts are unaffected.
+- Leakage / fail-closed (`benchmark/github_context.py`): `_issue_timeline` swallowed a
+  transient error on a page *after* the first and returned the partial events with
+  `truncated=False`, so `_issue_record_at` trusted an incomplete timeline and reported
+  `labels_as_of_t=True` — potentially asserting an as-of-T label that a later (unfetched)
+  `unlabeled` event removed before T. A mid-pagination error now marks the timeline
+  `truncated`, so the caller fails closed (omits labels) exactly like the page-cap case; a
+  first-page error still yields `([], False)`. Extends the fail-closed guard from #345 (#865).
+- Scoring correctness (`benchmark/score.py`): the objective anchor now recognizes the
+  version-cut commit that release tooling authors under a chore/build Conventional-Commit type,
+  such as `chore(release): 1.4.0` (standard-version), `chore(main): release 1.2.3`
+  (release-please), and `build(release): 2.0.0`. The #431 "CC prefix is authoritative" rule
+  had dropped these as plain chores, so `is_release_subject` returned False, `commit_kind`
+  returned `chore`, and `released_version` returned None on a real release: a challenger that
+  correctly anticipated the release, its bump level, and the `release` kind earned zero credit
+  on all three axes of `objective_component`. Recognition is body-gated (the text after the
+  prefix must itself be a release-tag subject), so `ci(release): update pipeline` and
+  `docs: changelog` edits remain non-releases and the #431 posture is preserved (#753).
+- Leakage: ``agent/context.py::_mask_forward_refs`` (the git-only fallback used when
+  ``.vanguarstew_context.json`` is absent) now masks GitHub deep-links and raw commit SHAs
+  in README/commit text, matching ``benchmark/leakage.strip_forward_refs`` — completing the
+  remaining scope of #283 after #312 added ``#N`` masking only.
+- Tooling: ``scripts/compare_eval`` no longer diffs a placeholder ``composite_mean`` of
+  ``0.0`` on partitions or multi-repo runs with ``scored_repos: 0`` as if it were a real
+  score — the delta is ``None`` instead of a misleading ``+0.600``-style swing, mirroring
+  the unscored guard already used by ``benchmark/trend.py`` and ``benchmark/report.py``.
+- Leakage / context completeness (`benchmark/github_context.py`): the as-of-T `milestones`
+  and `releases` were read from only the first API page, so a repo with more than 100 of
+  either silently dropped the rest — which can hide a milestone that was open at T or an
+  older release that sets the frozen base version. Both now paginate (bounded by
+  `max_list_pages`), matching how issues/PRs already walk their history (#209).
+- Leakage: `agent/context.py::_context_from_git` (the fallback context builder used when
+  `.vanguarstew_context.json` is absent) now filters tags with `--merged HEAD`, so a tag
+  reachable only from an unmerged branch can no longer leak into `releases` as knowable-at-T.
+  Mirrors the reachability guard `benchmark/freeze.py::build_context` already applies (#256).
+- `agent/philosophy.py::infer_philosophy` now coerces a non-dict LLM response (e.g. a
+  top-level JSON array) back to the offline stub, mirroring the guard already used by
+  `decider.decide` and `review.review_pr`. Previously a substantive-but-list philosophy
+  silently forfeited the offline judge's `philosophy_signal` tiebreaker (#190).
+- Benchmark hygiene: `benchmark/taskgen.py::revealed_window` now parses changed-file
+  lists from NUL-delimited `git show --name-only -z` output via a reusable
+  `benchmark.freeze.parse_path_list` helper, instead of whitespace `.split()`. Filenames
+  containing spaces or shell-sensitive characters are no longer corrupted (which would
+  mis-attribute file-weighted scoring); first-parent merges still yield an empty file
+  list as before. Adds `tests/test_taskgen.py` regression coverage (#137).
+
+## [0.3.0] - 2026-07-03
+
+### Added
+- Objective anchor: open-issue **backlog recall** (`benchmark/score.py`) — when frozen
+  `open_issues` are knowable at T, `objective_score` reports `backlog_recall`,
+  `addressed_issue_numbers`, and `matched_issue_numbers`, scoring whether a plan anticipated
+  issues the revealed window actually addressed (title ↔ commit-subject overlap). Also reports
+  `addressed_backlog_diagnostics` — the issue number, title, and matched commit subject behind
+  each addressed issue — for maintainer-facing inspection; purely additive, doesn't change
+  scoring. Git-only runs or an empty backlog degrade gracefully (#44, #135).
+- Generalization (M3): **multi-repo replay** — `run_multi_replay` / `scripts/run_eval.py --repos`
+  runs several repos and averages each repo's own `composite_mean` into one cross-repo number
+  (per-repo results retained; too-small repos skipped), so the agent is scored on breadth rather
+  than a single tuned repo (#51).
+- Generalization (M3): **leakage-safe repo-set config + loader** (`benchmark/repo_set.py`,
+  `benchmark/repo_sets/`) — the replay repo list is a checked-in, strictly-validated JSON config
+  (recent/obscure tier, `held_out`, freeze-window hints) instead of a hardcoded array, so the
+  curated selection is reviewable and versioned (#55).
+- Composite: **file-weighted module recall** now feeds the composite score — the objective anchor
+  weights modules by how much of the revealed maintainer effort landed in each, so the blended
+  score better reflects where the work actually concentrated (#91).
+- Judge integrity: the pairwise judge now defends against LLM **position bias** with dual-order
+  consistency — it asks both presentation orders and awards a win only if it survives the swap,
+  otherwise a tie. A position-biased judge can no longer earn a spurious win, and per-task
+  variance drops. Default on; opt out via `run_replay(dual_order_judge=False)` /
+  `--single-order-judge`; the replay result reports `judge_dual_order` (#87).
 - Planner queue reconciliation (`agent/planner.py`): a deterministic pass makes the plan honor
   the open-PR queue even when the LLM disregards it — an item that restates an open PR's work
   is down-weighted to a `triage` review item and flagged with `restates_pr`, redundant items
@@ -38,6 +135,17 @@ All notable changes to this project are documented here. The format is based on
   is read only from genuine release subjects, so a dependency bump can't skew the bump level.
 
 ### Fixed
+- Planner PR matching (`agent/planner.py`): when several open-PR titles are quoted in a
+  plan and one nests inside another (e.g. `Add streaming export` inside `Add streaming
+  export docs`), `_matched_pr` now prefers the longest matching title instead of the first
+  in queue order, so the more specific PR wins regardless of queue order. Explicit `#N`
+  references still take priority (#104).
+- Judge robustness (follow-up to #54): the offline substance heuristic keyed only on
+  `title`/`theme` *presence*, so a plan stuffed with generic filler titles (`misc`, `updates`,
+  `various`, …) could still out-rank a shorter, concrete one. Substance is now a weighted score
+  — filler/blank items count for nothing, and each structured action field (`kind`, `files`,
+  per-item `rationale`) beyond a real title adds weight — so length/filler never beats
+  substance (#70).
 - Judge robustness: the offline pairwise stand-in ranked submissions by raw plan **length**,
   so a plan padded with empty-of-substance items could beat a shorter, substantive one. It now
   ranks by the count of items that actually name something (non-empty `title`/`theme`), so
@@ -46,6 +154,16 @@ All notable changes to this project are documented here. The format is based on
   version mentioned mid-subject (e.g. `chore(deps): bump lodash to v4.17.21`, `fix crash in
   v1.2.0 parser`). Release detection now requires explicit release wording or a version-tag
   subject, so dependency bumps no longer inflate the release-prediction signal (#57).
+- Task generation: `revealed_window` (`benchmark/taskgen.py`) reported **zero changed files**
+  for merge commits (a plain `git show` of a clean merge yields an empty combined diff),
+  silently depressing module-recall scoring for any repo that merges via PRs (#113). It also
+  split file lists on whitespace, corrupting attribution for paths containing spaces (#116).
+  Both are fixed by diffing merges against their first parent and splitting on lines instead.
+  Regression coverage added in `tests/test_taskgen.py` via a reusable merge-history fixture
+  (#117).
+- Leakage: frozen milestone `state` is now computed as-of-T from `closed_at` instead of copying
+  the milestone's present-day state, so a milestone that existed at T but was closed *after* T
+  is no longer leaked into the context as completed (#77).
 
 ## [0.2.0] - 2026-07-03
 

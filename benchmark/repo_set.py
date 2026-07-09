@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import date
 
 TIERS = ("recent", "obscure")
 
@@ -34,6 +35,16 @@ _FREEZE_KEYS = {
 # A checked-in *starter* config with placeholder sources — replace with vetted repos before
 # real scoring. Named "example" (not "default") so it can't be mistaken for an operational set.
 EXAMPLE_REPO_SET = os.path.join(os.path.dirname(__file__), "repo_sets", "example.json")
+CURATED_REPO_SET = os.path.join(os.path.dirname(__file__), "repo_sets", "curated.json")
+
+# Starter configs use this exact GitHub owner placeholder — not a substring search, so real
+# repos whose names happen to contain "OWNER" are not misclassified.
+PLACEHOLDER_SOURCE_PREFIX = "https://github.com/OWNER/"
+
+
+def is_placeholder_source(source: str) -> bool:
+    """Return True when ``source`` is the shipped starter's ``OWNER/...`` placeholder URL."""
+    return isinstance(source, str) and source.startswith(PLACEHOLDER_SOURCE_PREFIX)
 
 
 class RepoSetError(ValueError):
@@ -82,6 +93,33 @@ class RepoSet:
             raise RepoSetError(f"unknown tier {tier!r}; expected one of {TIERS}")
         return [e for e in self.entries if e.tier == tier]
 
+    def partition(self, which: str = "tuned"):
+        """Return entries for ``tuned``, ``held_out``, or ``all``."""
+        if which == "tuned":
+            return self.tuned()
+        if which == "held_out":
+            return self.held_out()
+        if which == "all":
+            return list(self.entries)
+        raise RepoSetError(f"unknown partition {which!r}; expected 'tuned', 'held_out', or 'all'")
+
+
+def replay_kwargs(entry: RepoEntry) -> dict:
+    """Map a repo-set entry's freeze_window hints onto ``run_replay`` keyword args."""
+    fw = entry.freeze_window or {}
+    kwargs = {}
+    if "recent_bias" in fw:
+        kwargs["recent_bias"] = fw["recent_bias"]
+    if "rotation_seed" in fw:
+        kwargs["rotation_seed"] = fw["rotation_seed"]
+    if "min_history" in fw:
+        kwargs["min_history"] = fw["min_history"]
+    if "after" in fw:
+        kwargs["after"] = fw["after"]
+    if "before" in fw:
+        kwargs["before"] = fw["before"]
+    return kwargs
+
 
 def _require(cond, message):
     if not cond:
@@ -96,11 +134,44 @@ def _validate_freeze_window(fw, where):
         expected = _FREEZE_KEYS[key]
         if expected == "str":
             _require(isinstance(value, str), f"{where}: freeze_window.{key} must be a string")
+            _require(value.strip(), f"{where}: freeze_window.{key} must be non-empty")
+            # `after`/`before` bound freeze-point selection and are parsed with
+            # `date.fromisoformat(value[:10])` in taskgen. A non-empty-but-unparseable value
+            # (a typo like "2023-13-01", a non-ISO format) passes the string check but then
+            # crashes task generation with an opaque ValueError mid-run, so validate that it
+            # parses as an ISO date here — fail-fast at config load, like every other field.
+            if key in ("after", "before"):
+                try:
+                    date.fromisoformat(value[:10])
+                except ValueError:
+                    _require(
+                        False,
+                        f"{where}: freeze_window.{key} must be an ISO date (YYYY-MM-DD), "
+                        f"got {value!r}",
+                    )
         elif expected == "bool":
             _require(isinstance(value, bool), f"{where}: freeze_window.{key} must be a boolean")
         elif expected == "int":
             _require(isinstance(value, int) and not isinstance(value, bool),
                      f"{where}: freeze_window.{key} must be an integer")
+            if key == "min_history":
+                _require(value >= 1, f"{where}: freeze_window.min_history must be >= 1")
+    # Cross-field: a window whose `after` is later than its `before` can never contain a
+    # commit, so taskgen silently yields zero tasks and the repo is quietly dropped from the
+    # (leakage-safe, curated) benchmark with no error — a config typo that erodes the set
+    # instead of failing loudly. Reject reversed bounds at load time.
+    after, before = fw.get("after"), fw.get("before")
+    if isinstance(after, str) and isinstance(before, str):
+        try:
+            lo, hi = date.fromisoformat(after[:10]), date.fromisoformat(before[:10])
+        except ValueError:
+            lo = hi = None  # already reported field-by-field above
+        if lo is not None and hi is not None:
+            _require(
+                lo <= hi,
+                f"{where}: freeze_window.after ({after!r}) must be on or before "
+                f"freeze_window.before ({before!r})",
+            )
     return dict(fw)
 
 
@@ -166,7 +237,7 @@ def load_repo_set(path) -> RepoSet:
 
     `path` is required — there is no implicit default, so a config is always chosen on purpose
     (never the placeholder starter by accident). Pass `EXAMPLE_REPO_SET` to load the shipped
-    example, or a curated config's path for a real scoring run.
+    example, or `CURATED_REPO_SET` / a custom path for operational scoring runs.
     """
     _require(os.path.exists(path), f"repo-set config not found: {path}")
     try:

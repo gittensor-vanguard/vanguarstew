@@ -1,0 +1,59 @@
+{
+  "id": "philosophy-breaks-plan-tie",
+  "description": "Equal plan length; philosophy signal breaks the tie",
+  "tags": [
+    "philosophy",
+    "tie-break"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Harden parser edge case"
+      }
+    ],
+    "rationale": "weighed risk"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "Harden parser edge case"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

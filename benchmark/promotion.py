@@ -12,6 +12,7 @@ a single-repo (``run_replay``) or multi-repo (``run_multi_replay``) result again
    ``error`` buried in ``per_repo`` (a repo that failed to clone/freeze does not abort a
    ``run_multi_replay`` batch, so its failure never surfaces as a top-level error), and a
    numeric composite;
+1. ``run_completed`` - the run produced a scored result (no ``error``, a numeric composite);
 2. ``composite_floor`` - ``composite_mean`` is at least ``min_composite``;
 3. ``beats_baseline`` - the challenger **decisively** beat the baseline: ``decisive_margin``
    (challenger wins minus baseline wins) is at least ``min_decisive_margin``, so a memorized-tie
@@ -188,6 +189,10 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
         "run produced a scored composite" if completed
         else f"no scored composite (error={top_error!r}, per_repo_error={repo_error!r}, "
              f"composite={composite!r})")
+    completed = not result.get("error") and composite is not None
+    add("run_completed", completed,
+        "run produced a scored composite" if completed
+        else f"no scored composite (error={result.get('error')!r}, composite={composite!r})")
 
     floor_ok = composite is not None and composite >= min_composite
     add("composite_floor", floor_ok,

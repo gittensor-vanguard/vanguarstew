@@ -1,0 +1,60 @@
+{
+  "id": "symmetric-strong-a",
+  "description": "Strong submission A wins; symmetry check verifies swap",
+  "tags": [
+    "symmetry"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "title": "Fix race",
+        "kind": "bugfix",
+        "rationale": "crash"
+      }
+    ],
+    "rationale": "yes"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "title": "misc"
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}

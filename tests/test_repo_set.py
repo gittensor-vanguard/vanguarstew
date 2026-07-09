@@ -15,9 +15,12 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.repo_set import (  # noqa: E402
+    CURATED_REPO_SET,
     EXAMPLE_REPO_SET,
     RepoSetError,
+    is_placeholder_source,
     load_repo_set,
+    replay_kwargs,
     validate_repo_set,
 )
 
@@ -111,6 +114,38 @@ def test_freeze_window_validation():
         validate_repo_set(_mutate(freeze_window={"rotation_seed": True}))
 
 
+@pytest.mark.parametrize("bad_fw, match", [
+    ({"min_history": 0}, "min_history must be >= 1"),
+    ({"min_history": -3}, "min_history must be >= 1"),
+    ({"after": ""}, "after must be non-empty"),
+    ({"before": "   "}, "before must be non-empty"),
+    # Non-empty but unparseable date bounds pass the string check yet crash task generation
+    # with an opaque ValueError; reject them at load time with a clear message instead.
+    ({"after": "not-a-date"}, "after must be an ISO date"),
+    ({"before": "2023-13-01"}, "before must be an ISO date"),   # month 13 -> invalid
+    ({"after": "01/02/2023"}, "after must be an ISO date"),      # non-ISO format
+])
+def test_freeze_window_value_validation(bad_fw, match):
+    with pytest.raises(RepoSetError, match=match):
+        validate_repo_set(_mutate(freeze_window=bad_fw))
+
+
+def test_freeze_window_accepts_valid_iso_date_bounds():
+    # A well-formed ISO date (optionally with a time suffix taskgen truncates) still loads.
+    rs = validate_repo_set(_mutate(freeze_window={"after": "2023-01-01", "before": "2024-12-31"}))
+    assert rs.entries[0].freeze_window["after"] == "2023-01-01"
+    assert validate_repo_set(_mutate(freeze_window={"after": "2023-06-15T00:00:00Z"}))
+
+
+def test_freeze_window_rejects_reversed_date_bounds():
+    # after later than before => an empty window => the repo silently produces zero tasks and
+    # is dropped from the curated set. Reject the reversed bounds at load time instead.
+    with pytest.raises(RepoSetError, match="must be on or before"):
+        validate_repo_set(_mutate(freeze_window={"after": "2024-01-01", "before": "2023-01-01"}))
+    # Equal bounds are a valid (single-day) window and must still load.
+    assert validate_repo_set(_mutate(freeze_window={"after": "2023-05-01", "before": "2023-05-01"}))
+
+
 def test_unknown_entry_key_rejected():
     with pytest.raises(RepoSetError, match="unknown keys"):
         validate_repo_set(_mutate(extra="x"))
@@ -135,3 +170,26 @@ def test_example_json_is_parseable_directly():
     # sanity: the shipped file is literally valid JSON
     with open(EXAMPLE_REPO_SET, "r", encoding="utf-8") as f:
         json.load(f)
+
+
+def test_curated_config_loads_and_has_real_sources():
+    rs = load_repo_set(CURATED_REPO_SET)
+    assert rs.name == "curated"
+    assert len(rs) >= 3
+    assert all(not is_placeholder_source(e.source) for e in rs)
+    assert all(e.source.startswith("https://github.com/") for e in rs)
+    assert rs.tuned() and rs.held_out()
+    assert rs.by_tier("recent") and rs.by_tier("obscure")
+
+
+def test_partition_and_replay_kwargs():
+    rs = validate_repo_set(VALID)
+    assert [e.name for e in rs.partition("tuned")] == ["a"]
+    assert [e.name for e in rs.partition("held_out")] == ["b"]
+    assert len(rs.partition("all")) == 2
+    with pytest.raises(RepoSetError, match="unknown partition"):
+        rs.partition("weekly")
+    assert replay_kwargs(rs.entries[0]) == {
+        "recent_bias": True, "min_history": 30, "after": "2025-09-01",
+    }
+    assert replay_kwargs(rs.entries[1]) == {"rotation_seed": 5}

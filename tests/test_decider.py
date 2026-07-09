@@ -1,0 +1,208 @@
+"""Tests for the maintainer decider (offline, deterministic)."""
+
+import logging
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+os.environ["VANGUARSTEW_OFFLINE"] = "1"
+
+from agent.decider import (  # noqa: E402
+    VALID_ACTIONS,
+    _normalize_action,
+    _normalize_labels,
+    _normalize_patch,
+    _normalize_rationale,
+    _normalize_reviewer,
+    _normalize_version_bump,
+    decide,
+)
+from agent.llm import LLM  # noqa: E402
+
+
+def test_normalize_action_passes_valid_actions_through():
+    for action in VALID_ACTIONS:
+        assert _normalize_action(action) == action
+        assert _normalize_action(action.upper()) == action  # case-insensitive
+        assert _normalize_action(f"  {action}  ") == action  # whitespace-tolerant
+
+
+def test_normalize_action_maps_common_synonyms():
+    assert _normalize_action("approve") == "merge"
+    assert _normalize_action("LGTM") == "merge"
+    assert _normalize_action("request changes") == "request-changes"
+    assert _normalize_action("request_changes") == "request-changes"
+    assert _normalize_action("closed") == "close"
+    assert _normalize_action("triaged") == "triage"
+    assert _normalize_action("labeled") == "label"
+
+
+def test_normalize_action_falls_back_to_plan_for_unknown_or_missing():
+    assert _normalize_action("do-the-thing") == "plan"
+    assert _normalize_action("") == "plan"
+    assert _normalize_action(None) == "plan"
+
+
+def test_normalize_action_tolerates_empty_and_whitespace_strings():
+    assert _normalize_action("") == "plan"
+    assert _normalize_action("   ") == "plan"
+    assert _normalize_action("\t\n") == "plan"
+
+
+def test_normalize_action_tolerates_non_string_input():
+    assert _normalize_action(["merge"]) == "plan"
+    assert _normalize_action({"value": "merge"}) == "plan"
+    assert _normalize_action(42) == "plan"
+    assert _normalize_action(4.2) == "plan"
+    assert _normalize_action(True) == "plan"
+    assert _normalize_action(b"merge") == "plan"
+
+
+def test_normalize_action_logs_a_warning_for_non_string_input(caplog):
+    with caplog.at_level(logging.WARNING, logger="agent.decider"):
+        assert _normalize_action(["merge"]) == "plan"
+    assert any("non-string action" in r.message for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="agent.decider"):
+        assert _normalize_action("approve") == "merge"
+    assert not caplog.records
+
+
+def test_decide_offline_returns_a_valid_action():
+    llm = LLM(api_key="offline")
+    out = decide({}, {}, "review PR #1", llm)
+    assert out["action"] in VALID_ACTIONS
+    assert out["action"] == "plan"  # the offline stub's default
+
+
+def test_decide_tolerates_non_dict_llm_output():
+    class _FakeLLM:
+        offline = False
+
+        def chat_json(self, system, user, stub=None):
+            return "not a dict"
+
+    out = decide({}, {}, "review PR #1", _FakeLLM())
+    assert out["action"] in VALID_ACTIONS
+
+
+def test_normalize_labels_coerces_to_string_list():
+    assert _normalize_labels(None) == []
+    assert _normalize_labels("bug") == ["bug"]
+    assert _normalize_labels("  enhancement  ") == ["enhancement"]
+    assert _normalize_labels(["bug", "", None, "  docs  "]) == ["bug", "docs"]
+    assert _normalize_labels(42) == []
+
+
+def test_normalize_reviewer_coerces_to_string_or_none():
+    assert _normalize_reviewer(None) is None
+    assert _normalize_reviewer("alice") == "alice"
+    assert _normalize_reviewer("  ") is None
+    assert _normalize_reviewer(123) == "123"
+    assert _normalize_reviewer(["alice"]) is None
+
+
+def test_normalize_rationale_never_returns_none():
+    assert _normalize_rationale(None) == ""
+    assert _normalize_rationale("ship it") == "ship it"
+    assert _normalize_rationale(7) == "7"
+
+
+def test_normalize_patch_accepts_string_or_none():
+    assert _normalize_patch(None) is None
+    assert _normalize_patch("diff --git a/x b/x") == "diff --git a/x b/x"
+    assert _normalize_patch("  ") is None
+    assert _normalize_patch({"not": "a diff"}) is None
+
+
+def test_decide_normalizes_malformed_structured_fields():
+    class _FakeLLM:
+        offline = False
+
+        def chat_json(self, system, user, stub=None):
+            return {
+                "action": "label",
+                "labels": "bug",
+                "reviewer": 123,
+                "version_bump": None,
+                "patch": {"bad": True},
+                "rationale": None,
+            }
+
+    out = decide({}, {}, "triage issue #1", _FakeLLM())
+    assert out["labels"] == ["bug"]
+    assert out["reviewer"] == "123"
+    assert out["rationale"] == ""
+    assert out["patch"] is None
+
+
+class _NonStringActionLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return {
+            "action": ["merge", "reject"],
+            "labels": ["bug", "core"],
+            "reviewer": "alice",
+            "version_bump": "minor",
+            "patch": None,
+            "rationale": "needs a regression test",
+        }
+
+
+def test_decide_survives_non_string_action_field():
+    out = decide({}, {}, "triage issue #1", _NonStringActionLLM())
+    # the malformed field degrades safely...
+    assert out["action"] == "plan"
+    # ...and every other field is still normalized correctly, unaffected by the bad action.
+    assert out["labels"] == ["bug", "core"]
+    assert out["reviewer"] == "alice"
+    assert out["version_bump"] == "minor"
+    assert out["patch"] is None
+    assert out["rationale"] == "needs a regression test"
+
+
+def test_normalize_version_bump_accepts_canonical_levels():
+    for level in ("major", "minor", "patch"):
+        assert _normalize_version_bump(level) == level
+    assert _normalize_version_bump("  MINOR ") == "minor"
+    assert _normalize_version_bump("PATCH") == "patch"
+
+
+def test_normalize_version_bump_maps_nullish_and_unknown_to_none():
+    assert _normalize_version_bump(None) is None
+    assert _normalize_version_bump("") is None
+    assert _normalize_version_bump("none") is None
+    assert _normalize_version_bump("null") is None
+    assert _normalize_version_bump("n/a") is None
+    assert _normalize_version_bump("micro") is None
+    for bad in (123, True, ["minor"], {"level": "patch"}):
+        assert _normalize_version_bump(bad) is None
+
+
+class _VersionBumpLLM:
+    offline = False
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def chat_json(self, system, user, stub=None):
+        return dict(self.payload)
+
+
+def test_decide_normalizes_version_bump_from_llm_output():
+    ctx = {"recent_commits": [{"subject": "init"}]}
+    out = decide(ctx, {}, "should we cut a release?", _VersionBumpLLM({"version_bump": "MINOR"}))
+    assert out["version_bump"] == "minor"
+
+    cleared = decide(ctx, {}, "no release", _VersionBumpLLM({"version_bump": "none"}))
+    assert cleared["version_bump"] is None
+
+    junk = decide(ctx, {}, "decide", _VersionBumpLLM({"version_bump": "yolo"}))
+    assert junk["version_bump"] is None
+
+    non_string = decide(ctx, {}, "decide", _VersionBumpLLM({"version_bump": 2}))
+    assert non_string["version_bump"] is None

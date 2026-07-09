@@ -8,7 +8,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import benchmark.taskgen as taskgen  # noqa: E402
-from benchmark.leakage import scrub_context, strip_forward_refs  # noqa: E402
+from benchmark.leakage import _scrub_list, scrub_context, strip_forward_refs  # noqa: E402
 
 
 def test_strip_forward_refs_masks_refs_links_and_shas():
@@ -20,26 +20,199 @@ def test_strip_forward_refs_masks_refs_links_and_shas():
     assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
 
 
+def test_strip_forward_refs_masks_scheme_less_github_deeplinks():
+    # GitHub/markdown auto-link a scheme-less `github.com/...`, so a deep-link written without
+    # `https://` (in a commit subject, issue title, or README) is an equal forward-ref leak —
+    # e.g. a `releases/tag/vX` link hands over the next version.
+    for text in (
+        "see github.com/o/r/pull/900 next",
+        "tracked at github.com/o/r/issues/900",
+        "cut in github.com/o/r/releases/tag/v9.9.9",
+        "see www.github.com/o/r/pull/900 next",
+    ):
+        out = strip_forward_refs(text)
+        assert "<link>" in out and "github.com" not in out, text
+    # A bare owner/repo URL (no forward-referencing `/type/` segment) is not a leak; it stays.
+    assert strip_forward_refs("clone from github.com/o/r to start") == "clone from github.com/o/r to start"
+    # The host boundary: a look-alike host must not be masked.
+    assert strip_forward_refs("notgithub.com/o/r/pull/900") == "notgithub.com/o/r/pull/900"
+
+
+def test_strip_forward_refs_preserves_plain_numbers():
+    # 0-9a-f matches bare digits too (0-9 is a subset) -- a plain count/stat/year
+    # is not a SHA and must survive the scrub.
+    text = "supports 2500000 requests per second, up from 1200000 last year"
+    out = strip_forward_refs(text)
+    assert "2500000" in out and "1200000" in out
+    assert "<sha>" not in out
+
+
+def test_strip_forward_refs_still_masks_hex_shas_among_plain_numbers():
+    text = "supports 2500000 requests per second; see commit 1a2b3c4d5e6f7a8b"
+    out = strip_forward_refs(text)
+    assert "2500000" in out
+    assert "1a2b3c4d5e6f7a8b" not in out and "<sha>" in out
+
+
+def test_strip_forward_refs_preserves_bare_numeric_tokens_at_sha_length():
+    text = "Supports 123456 requests/s, 1234567 active users, and 2500000 cached rows."
+    out = strip_forward_refs(text)
+    assert out == text
+    assert "<sha>" not in out
+
+
+def test_strip_forward_refs_masks_mixed_case_sha_like_tokens_only():
+    text = "See AbC1234 and deadBEEF1234, but keep incident 1234567 visible."
+    out = strip_forward_refs(text)
+    assert "AbC1234" not in out and "deadBEEF1234" not in out
+    assert out.count("<sha>") == 2
+    assert "1234567" in out
+
+
 def test_scrub_context_scrubs_nested_fields_only():
     ctx = {
-        "readme_excerpt": "roadmap toward plugins; tracked in #101",
-        "recent_commits": [{"sha": "x", "subject": "start work, part of #200"}],
-        "open_issues": [{"number": 1, "title": "bug, dup of #300"}],
+        "readme_excerpt": "roadmap toward plugins; tracked in #101 after commit aBc1234; "
+                          "supports 2500000 requests/s",
+        "recent_commits": [{"sha": "x", "subject": "start work, part of #200 via deadBEEF"}],
+        "open_issues": [{"number": 1, "title": "bug, dup of #300 after a1b2c3d4"}],
         "releases": [
             {"tag": "v1.0"},
-            {"tag": "v1.1", "name": "Release v1.1 — fixes #512, see https://github.com/o/r/pull/900"},
+            {"tag": "v1.1", "name": "Release v1.1 — fixes #512, see "
+                                   "https://github.com/o/r/pull/900 at f00ba47"},
         ],
     }
     out = scrub_context(ctx)
     assert "#101" not in out["readme_excerpt"]
+    assert "aBc1234" not in out["readme_excerpt"] and "<sha>" in out["readme_excerpt"]
+    assert "2500000" in out["readme_excerpt"]  # numeric prose is intentionally preserved
     assert "#200" not in out["recent_commits"][0]["subject"]
+    assert "deadBEEF" not in out["recent_commits"][0]["subject"]
     assert "#300" not in out["open_issues"][0]["title"]
+    assert "a1b2c3d4" not in out["open_issues"][0]["title"]
     assert out["releases"][0] == {"tag": "v1.0"}  # tag-only entries unchanged
     name = out["releases"][1]["name"]
     assert "#512" not in name and "github.com" not in name and "#ref" in name and "<link>" in name
+    assert "f00ba47" not in name and "<sha>" in name
     assert out["releases"][1]["tag"] == "v1.1"
     assert out["_forward_signal_scrubbed"] is True
     assert ctx.get("_forward_signal_scrubbed") is None  # original not mutated
+
+
+# --- #467: a non-list context list field must not abort scrub_context ----------------------
+
+_MALFORMED_LIST_FIELDS = [42, 3.14, True, {"title": "Fix bug"}, "not a list", None]
+
+
+def test_scrub_list_accepts_only_real_lists():
+    items = [{"title": "Fix bug"}]
+    assert _scrub_list(items) == items
+    assert _scrub_list(None) == []
+    for bad in _MALFORMED_LIST_FIELDS:
+        assert _scrub_list(bad) == [], bad
+
+
+def test_scrub_context_tolerates_non_list_list_fields():
+    base = {
+        "readme_excerpt": "roadmap",
+        "recent_commits": [{"subject": "work on loader"}],
+    }
+    for field in ("recent_commits", "open_issues", "open_prs", "milestones", "releases"):
+        ctx = dict(base, **{field: 42})
+        out = scrub_context(ctx)
+        assert out[field] == [], field
+        assert out["_forward_signal_scrubbed"] is True
+
+
+def test_scrub_context_honors_valid_rows_when_list_contains_junk_entries():
+    ctx = {
+        "open_issues": [
+            42,
+            {"title": "Fix crash in #900"},
+            None,
+        ],
+    }
+    out = scrub_context(ctx)
+    assert len(out["open_issues"]) == 3
+    assert "#900" not in out["open_issues"][1]["title"]
+    assert "#ref" in out["open_issues"][1]["title"]
+
+
+def test_strip_forward_refs_returns_empty_for_non_string_input():
+    for bad in (["Fix #900"], {"x": 1}, 42, None, True):
+        assert strip_forward_refs(bad) == ""
+
+
+def test_scrub_context_tolerates_non_string_text_fields():
+    ctx = {
+        "readme_excerpt": ["see #900"],
+        "recent_commits": [{"sha": "x", "subject": ["part of #200"]}],
+        "open_issues": [{"number": 1, "title": ["Fix #300"]}],
+        "open_prs": [{"number": 2, "title": 123}],
+        "releases": [{"tag": ["v2.0-fixes-#900"]}],
+    }
+    out = scrub_context(ctx)
+    assert out["readme_excerpt"] == ""
+    assert out["recent_commits"][0]["subject"] == ""
+    assert out["open_issues"][0]["title"] == ""
+    assert out["open_prs"][0]["title"] == ""
+    assert out["releases"][0]["tag"] == ""
+    assert out["_forward_signal_scrubbed"] is True
+
+
+def test_strip_forward_refs_preserves_surrounding_punctuation():
+    # Trailing sentence punctuation must stay in the prose, not vanish into <link>.
+    assert strip_forward_refs("see https://github.com/o/r/issues/5, next") == "see <link>, next"
+    assert strip_forward_refs("see https://github.com/o/r/issues/5.") == "see <link>."
+    assert strip_forward_refs("see https://github.com/o/r/pull/9; done") == "see <link>; done"
+    assert strip_forward_refs("see https://github.com/o/r/pull/9!") == "see <link>!"
+
+
+def test_strip_forward_refs_masks_www_github_deep_links():
+    # github.com is also served at www.github.com; a www-prefixed deep link must be masked too,
+    # or a forward PR/issue/release reference leaks past the filter.
+    assert strip_forward_refs("see https://www.github.com/o/r/pull/500 next") == "see <link> next"
+    assert strip_forward_refs("http://www.github.com/o/r/releases/tag/v9.9.9") == "<link>"
+    assert strip_forward_refs("(https://www.github.com/o/r/issues/3)") == "(<link>)"
+    # A bare www owner/repo URL (no forward-referencing path) stays intact, like the non-www case.
+    assert strip_forward_refs("https://www.github.com/o/r") == "https://www.github.com/o/r"
+
+
+def test_strip_forward_refs_preserves_markdown_and_bracket_delimiters():
+    # Parentheses, square brackets, and angle brackets around a link survive.
+    assert strip_forward_refs("(https://github.com/o/r/issues/3)") == "(<link>)"
+    assert strip_forward_refs("[x](https://github.com/o/r/pull/7)") == "[x](<link>)"
+    # An inline #N backref inside the label is scrubbed too, independently.
+    assert strip_forward_refs("[see #1](https://github.com/o/r/commit/abc1234)") == (
+        "[see #ref](<link>)"
+    )
+    # Angle-bracketed: the enclosing brackets are preserved as a pair around the mask.
+    assert strip_forward_refs("<https://github.com/o/r/issues/5>") == "<<link>>"
+
+
+def test_strip_forward_refs_masks_query_strings_and_fragments():
+    # Query strings and fragments are part of the URL and must be masked with it.
+    for url in (
+        "https://github.com/o/r/issues/5?foo=bar",
+        "https://github.com/o/r/pull/9#discussion_r123",
+        "https://github.com/o/r/commit/abc1234?diff=split",
+        "https://github.com/o/r/compare/v1.0...v2.0",
+    ):
+        out = strip_forward_refs(f"see {url} now")
+        assert "github.com" not in out
+        assert "<link>" in out
+        assert out.startswith("see ") and out.endswith(" now")  # prose intact
+
+
+def test_strip_forward_refs_keeps_bare_owner_and_repo_urls():
+    # A bare owner/repo URL carries no specific forward reference and must survive.
+    for url in (
+        "https://github.com/o/r",
+        "https://github.com/o",
+        "https://github.com/o/r/tree-sitter",   # a repo literally named tree-sitter
+        "https://github.com/o/r/graphs",         # an insights tab, not a deep-link
+        "https://github.com/o/r/issues",         # the issue list, not a specific issue
+    ):
+        assert strip_forward_refs(url) == url, url
 
 
 def _fake_history(n):
@@ -63,3 +236,56 @@ def test_rotation_seed_is_deterministic(monkeypatch):
     c = taskgen.generate_tasks("x", num_tasks=4, horizon=5, rotation_seed=99)
     assert [t["freeze_index"] for t in a] == [t["freeze_index"] for t in b]
     assert [t["freeze_index"] for t in a] != [t["freeze_index"] for t in c]
+
+
+def test_strip_forward_refs_masks_release_tag_link_hiding_next_version():
+    # A link to a future release tag hands the agent the next version outright, which would
+    # defeat the release/bump scoring; both the link and the version must be scrubbed.
+    out = strip_forward_refs("cut it in https://github.com/o/r/releases/tag/v2.0.0 next")
+    assert "github.com" not in out and "v2.0.0" not in out and "<link>" in out
+
+
+def test_strip_forward_refs_masks_ref_and_milestone_deeplinks():
+    # tree/blob (a future ref), milestone, and discussion links all point at where the repo
+    # went next and must be masked, not just issues/pull/commit/compare.
+    for url in (
+        "https://github.com/o/r/tree/9f8e7d6",
+        "https://github.com/o/r/blob/feature-branch/src/app.py",
+        "https://github.com/o/r/milestone/5",
+        "https://github.com/o/r/discussions/42",
+    ):
+        out = strip_forward_refs(f"see {url} for details")
+        assert "github.com" not in out and "<link>" in out, url
+
+
+def test_strip_forward_refs_preserves_bare_repo_url():
+    # The bare repo/owner URL carries no forward reference; masking it would destroy
+    # legitimate context (badges, "see the repo"), so it must survive untouched.
+    for url in ("https://github.com/o/r", "https://github.com/o"):
+        out = strip_forward_refs(f"project home: {url}")
+        assert url in out and "<link>" not in out
+
+
+def test_scrub_context_scrubs_release_tag_on_git_freeze_shape():
+    # The default git-freeze path emits releases as {"tag": t} with no "name" key, so a
+    # forward-reference in the tag is a release's only identifier and must still be scrubbed.
+    out = scrub_context({"releases": [{"tag": "v2.0-fixes-#900"}]})
+    assert out["releases"][0]["tag"] == "v2.0-fixes-#ref"
+    assert "#900" not in out["releases"][0]["tag"]
+
+
+def test_generate_tasks_respects_after_before_bounds(monkeypatch):
+    monkeypatch.setattr(taskgen, "linear_history", lambda repo: _fake_history(20))
+    monkeypatch.setattr(taskgen, "revealed_window", lambda *a, **k: [])
+    monkeypatch.setattr(taskgen, "_commit_dates", lambda repo: {
+        f"sha{i:03d}": f"2026-01-{i + 1:02d}T00:00:00+00:00" for i in range(20)
+    })
+    tasks = taskgen.generate_tasks(
+        "x", num_tasks=10, horizon=2, min_history=2, after="2026-01-05", before="2026-01-08")
+    assert [t["freeze_index"] for t in tasks] == [4, 5, 6, 7]
+
+def test_scrub_context_handles_non_dict():
+    """scrub_context must not crash on non-dict input."""
+    assert scrub_context(None)["_forward_signal_scrubbed"]
+    assert scrub_context("not a dict")["_forward_signal_scrubbed"]
+    assert scrub_context(42)["_forward_signal_scrubbed"]

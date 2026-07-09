@@ -1,0 +1,65 @@
+"""CLI: print a compact JSON summary of a replay artifact.
+
+  python -m scripts.artifact_snapshot result.json
+  python -m scripts.artifact_snapshot tuned.json held_out.json   # one snapshot per file
+
+Loads each ``run_eval --out`` JSON artifact and prints a stable machine-readable snapshot to
+stdout (kind, headline score, task/repo counts, error/offline flags). A one-line headline is
+written to stderr for quick CI logging.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+from benchmark.artifact_snapshot import snapshot, snapshot_headline
+
+
+def load_artifact(path: str) -> dict:
+    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except json.JSONDecodeError as exc:
+        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    if not isinstance(data, dict):
+        print(f"artifact must be a JSON object: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    return data
+
+
+def run(argv=None) -> int:
+    """Parse ``argv``, print snapshot(s), and return the intended exit code."""
+    ap = argparse.ArgumentParser(description="Print a compact JSON summary of replay artifact(s)")
+    ap.add_argument("artifacts", nargs="+", help="one or more run_eval --out JSON artifacts")
+    args = ap.parse_args(argv)
+
+    outputs = []
+    for path in args.artifacts:
+        try:
+            artifact = load_artifact(path)
+        except SystemExit as exc:
+            return int(exc.code)
+        summary = snapshot(artifact)
+        print(snapshot_headline(summary), file=sys.stderr)
+        if len(args.artifacts) == 1:
+            print(json.dumps(summary, indent=2))
+            return 0
+        outputs.append({"path": path, "snapshot": summary})
+
+    print(json.dumps(outputs, indent=2))
+    return 0
+
+
+def main() -> None:
+    raise SystemExit(run())
+
+
+if __name__ == "__main__":
+    main()

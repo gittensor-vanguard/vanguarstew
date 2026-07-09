@@ -10,15 +10,23 @@ picks the better submission on two equally-weighted axes:
    maintainer would think (tradeoffs, priority, risk). Two submissions can propose the same
    action for opposite reasons; the sounder reasoning wins.
 
-Order is randomized to avoid position bias; a submission that tries to instruct the judge
-auto-loses, mirroring ninja's judge.
+To defend against LLM position bias, the judge asks BOTH presentation orders and awards a win
+only if the verdict survives the swap; if the two orders disagree it returns a tie (see
+`pairwise_judge`, `dual_order`). A submission that tries to instruct the judge auto-loses,
+mirroring ninja's judge.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
+from collections.abc import Iterable
+
+from benchmark.score import _plan_list
+
+logger = logging.getLogger(__name__)
 
 _WINNER = re.compile(r'"?winner"?\s*[:=]\s*"?(A|B|tie)\b', re.I)
 
@@ -40,7 +48,7 @@ SYSTEM = (
 
 def _parse_winner(text: str) -> str:
     """Extract the winner tolerantly — survives truncated JSON, smart quotes, extra prose."""
-    match = _WINNER.search(text or "")
+    match = _WINNER.search(text if isinstance(text, str) else "")
     if not match:
         return "tie"
     value = match.group(1).upper()
@@ -48,6 +56,8 @@ def _parse_winner(text: str) -> str:
 
 
 def _render(submission: dict) -> str:
+    if not isinstance(submission, dict):
+        return json.dumps({"error": "non-dict submission"})
     return json.dumps({
         "philosophy": submission.get("philosophy"),
         "plan": submission.get("plan"),
@@ -55,43 +65,93 @@ def _render(submission: dict) -> str:
     }, indent=1)[:4500]
 
 
-def _substantive_plan_size(plan) -> int:
-    """Count plan items that carry real content.
+# Generic, content-free titles/themes that pad a plan without proposing real work.
+_FILLER_TITLES = frozenset({
+    "misc", "miscellaneous", "tbd", "todo", "various", "stuff", "things", "work",
+    "task", "tasks", "update", "updates", "improvement", "improvements", "cleanup",
+    "chore", "chores", "changes", "general", "other", "etc",
+})
 
-    An item is substantive only if it names something — a non-empty ``title`` or
-    ``theme``. Blank/filler items do not count, so padding a plan with empty entries
-    cannot inflate its rank: length alone never beats substance.
+
+def _text(value) -> str:
+    """A field's stripped text when it is a string; any non-string (or None) yields ''.
+
+    Plan-item fields come straight from an LLM and are not guaranteed to be strings — a model
+    may emit a list/dict/number for `title`, `theme`, `kind`, or `rationale`. Guarding here
+    keeps the `.strip()` calls below from raising `AttributeError` and aborting the whole run.
     """
-    count = 0
-    for item in plan or []:
-        if isinstance(item, dict):
-            if (item.get("title") or item.get("theme") or "").strip():
-                count += 1
-        elif str(item).strip():
-            count += 1
-    return count
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _has_structured_files(files) -> bool:
+    """True when ``files`` names at least one path (list or scalar string)."""
+    if isinstance(files, str):
+        return bool(files.strip())
+    if isinstance(files, list):
+        return any(isinstance(f, str) and f.strip() for f in files)
+    return False
+
+
+def _item_substance(item) -> int:
+    """Substance weight of a single plan item.
+
+    A blank item, or one whose whole title/theme is a generic filler word, scores 0 —
+    so stuffing a plan with content-free entries cannot inflate its rank. Scalar (non-dict)
+    items are normalized through the same filler check on their text, so `"misc"` /
+    `"updates"` never count. A concrete item earns 1 for a real title/theme plus 1 for each
+    structured action field it backs it with (`kind`, `files`, per-item `rationale`),
+    rewarding substance over the mere presence of a title.
+    """
+    if isinstance(item, dict):
+        title = (_text(item.get("title")) or _text(item.get("theme"))).lower()
+    else:
+        # A non-string scalar plan item carries no real title text: a JSON `null`/`false`/`0`
+        # stringifies to "none"/"false"/"0" — none blank, none a filler word — so it would
+        # slip past the guard below and score 1, letting a padded plan inflate its rank. Only
+        # genuine scalar (string) items count; every other scalar is treated as blank.
+        title = item.strip().lower() if isinstance(item, str) else ""
+    if not title or title in _FILLER_TITLES:
+        return 0
+    weight = 1
+    if isinstance(item, dict):
+        if _text(item.get("kind")):
+            weight += 1
+        if _has_structured_files(item.get("files")):
+            weight += 1
+        if _text(item.get("rationale")):
+            weight += 1
+    return weight
+
+
+def _plan_substance(plan) -> int:
+    """Total substance across a plan (sum of `_item_substance`).
+
+    Length alone never wins: filler/blank items contribute nothing, and concrete,
+    structured items are rewarded — so a shorter plan of real actions outranks a longer
+    plan of generic filler.
+    """
+    return sum(_item_substance(item) for item in _plan_list(plan))
 
 
 def _offline_rank(submission: dict) -> tuple:
     """Deterministic stand-in ordering: reward a substantive plan plus real reasoning."""
+    if not isinstance(submission, dict):
+        return (0, 0, 0)  # non-dict submission (LLM emitted a list/string/number) — no substance
     philosophy = submission.get("philosophy") or {}
-    plan = submission.get("plan") or []
-    rationale = (submission.get("rationale") or "").strip()
+    plan = _plan_list(submission.get("plan"))
+    rationale = _text(submission.get("rationale"))
     philosophy_signal = 1 if isinstance(philosophy, dict) and any(
         philosophy.get(k) for k in ("summary", "direction", "values")) else 0
-    return (_substantive_plan_size(plan), philosophy_signal, 1 if rationale else 0)
+    return (_plan_substance(plan), philosophy_signal, 1 if rationale else 0)
 
 
-def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng=None) -> str:
-    """Return 'A' (submission_a wins), 'B' (submission_b wins), or 'tie'."""
-    rng = rng or random.Random(0)
+def _judge_order(context: dict, first, second, revealed, llm) -> str:
+    """One judgment for a fixed presentation order.
 
-    if llm.offline:
-        ra, rb = _offline_rank(submission_a), _offline_rank(submission_b)
-        return "A" if ra > rb else ("B" if rb > ra else "tie")
-
-    swap = rng.random() < 0.5  # if True, submission_b is shown FIRST
-    first, second = (submission_b, submission_a) if swap else (submission_a, submission_b)
+    Returns 'first', 'second', or 'tie' — which of the two shown positions the judge picked.
+    """
+    if not isinstance(context, dict):
+        context = {}
     user = (
         f"Repository frozen at: {json.dumps(context.get('frozen_at'))}\n\n"
         f"SUBMISSION ONE:\n{_render(first)}\n\n"
@@ -100,9 +160,140 @@ def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng
         'Which submission is better overall? "winner": "A" for ONE, "B" for TWO, or "tie".'
     )
     w = _parse_winner(llm.chat(SYSTEM, user))
-    if w not in ("A", "B"):
-        return "tie"
+    return {"A": "first", "B": "second"}.get(w, "tie")
+
+
+def judge_verbose(context: dict, submission_a, submission_b, revealed, llm, rng=None,
+                  dual_order: bool = True) -> tuple[str, str]:
+    """Return ``(winner, judge_order)`` for a pairwise judgment.
+
+    With ``dual_order`` (default), the judge is asked both presentation orders and a win is
+    awarded only if it survives the swap — a position-biased judge that just picks whichever
+    submission is shown first then resolves to a tie instead of a spurious win. With
+    ``dual_order=False`` a single randomized-order call is made (cheaper, higher variance).
+
+    ``judge_order`` records how the verdict arose:
+    - ``agree``: both orders agreed on the same decisive winner
+    - ``disagree``: the two orders disagreed, so the final verdict was forced to ``tie``
+    - ``tie``: both orders independently tied
+    - ``single``: dual-order was disabled
+    - ``offline``: deterministic offline fallback, so no order-sensitivity check ran
+    """
+    rng = rng or random.Random(0)
+
+    if llm.offline:
+        ra, rb = _offline_rank(submission_a), _offline_rank(submission_b)
+        winner = "A" if ra > rb else ("B" if rb > ra else "tie")
+        return winner, "offline"
+
+    if dual_order:
+        # A shown first: 'first'->A, 'second'->B. B shown first: 'first'->B, 'second'->A.
+        v_ab = _judge_order(context, submission_a, submission_b, revealed, llm)
+        w_ab = {"first": "A", "second": "B"}.get(v_ab, "tie")
+        v_ba = _judge_order(context, submission_b, submission_a, revealed, llm)
+        w_ba = {"first": "B", "second": "A"}.get(v_ba, "tie")
+        # Only a verdict consistent across both orders stands; otherwise it's a tie.
+        if w_ab == w_ba and w_ab in ("A", "B"):
+            return w_ab, "agree"
+        if w_ab == w_ba == "tie":
+            return "tie", "tie"
+        return "tie", "disagree"
+
+    swap = rng.random() < 0.5  # if True, submission_b is shown FIRST
+    first, second = (submission_b, submission_a) if swap else (submission_a, submission_b)
+    v = _judge_order(context, first, second, revealed, llm)
+    if v == "tie":
+        return "tie", "single"
+    winner_is_first = v == "first"
     first_is_a = not swap
-    if w == "A":
-        return "A" if first_is_a else "B"
-    return "B" if first_is_a else "A"
+    return ("A" if winner_is_first == first_is_a else "B"), "single"
+
+
+def pairwise_judge(context: dict, submission_a, submission_b, revealed, llm, rng=None,
+                   dual_order: bool = True) -> str:
+    """Return 'A' (submission_a wins), 'B' (submission_b wins), or 'tie'."""
+    winner, _ = judge_verbose(
+        context, submission_a, submission_b, revealed, llm, rng, dual_order=dual_order)
+    return winner
+
+
+def _order_categories_list(categories) -> list:
+    """Return judge-order category strings when ``categories`` is a proper container.
+
+    ``run_replay`` passes a generator of per-task ``judge_order`` values, so real iterables
+    (generators, tuples) are accepted. Scalars and strings must not be iterated — a bare
+    ``"agree"`` would count characters, and ``42`` raises ``TypeError``.
+    """
+    if isinstance(categories, list):
+        return categories
+    if isinstance(categories, tuple):
+        return list(categories)
+    if categories is None:
+        return []
+    if isinstance(categories, (str, bytes, dict, int, float, bool)):
+        logger.warning(
+            "judge: judge_order categories is %s, not a list; treating as empty",
+            type(categories).__name__,
+        )
+        return []
+    if isinstance(categories, Iterable):
+        try:
+            return list(categories)
+        except TypeError:
+            pass
+    logger.warning(
+        "judge: judge_order categories is %s, not a list; treating as empty",
+        type(categories).__name__,
+    )
+    return []
+
+
+def summarize_judge_orders(categories) -> dict:
+    """Aggregate order-sensitivity telemetry for replay artifacts.
+
+    A rising ``disagreement_rate`` means more verdicts depend on presentation order, which is
+    a judge-stability warning. Treat that as prompt/model drift or scoring noise to inspect,
+    not as evidence that challenger and baseline are closer in quality.
+    """
+    stats = {key: 0 for key in ("agree", "disagree", "tie", "single", "offline")}
+    for category in _order_categories_list(categories):
+        if category in stats:
+            stats[category] += 1
+    dual_order_tasks = stats["agree"] + stats["disagree"] + stats["tie"]
+    stats["dual_order_tasks"] = dual_order_tasks
+    stats["disagreement_rate"] = (
+        round(stats["disagree"] / dual_order_tasks, 3) if dual_order_tasks else None
+    )
+    return stats
+
+
+def build_judge_report(tally: dict | None, stats: dict | None) -> dict | None:
+    """Compact, artifact-friendly judge summary for replay history/reporting.
+
+    Keeps the raw `judge_order_stats` as the source of truth, but adds a stable summary that
+    makes it easy to trend disagreement alongside win/loss/tie outcomes across saved results.
+    Returns ``None`` when no order stats are available (for example, a zero-task replay).
+    """
+    if not isinstance(stats, dict):
+        return None
+    tally = tally or {}
+    wins = int(tally.get("challenger", 0))
+    losses = int(tally.get("baseline", 0))
+    ties = int(tally.get("tie", 0))
+    dual_order_tasks = int(stats.get("dual_order_tasks", 0))
+    disagreements = int(stats.get("disagree", 0))
+    rate = stats.get("disagreement_rate")
+    rate_text = "n/a" if rate is None else f"{rate:.1%}"
+    summary = (
+        f"judge W-L-T {wins}-{losses}-{ties}; "
+        f"disagreement_rate={rate_text} ({disagreements}/{dual_order_tasks} dual-order tasks)"
+    )
+    return {
+        "wins": wins,
+        "losses": losses,
+        "ties": ties,
+        "dual_order_tasks": dual_order_tasks,
+        "disagreements": disagreements,
+        "disagreement_rate": rate,
+        "summary": summary,
+    }

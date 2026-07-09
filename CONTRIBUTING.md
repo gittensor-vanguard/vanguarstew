@@ -3,6 +3,19 @@
 Thanks for your interest in improving vanguarstew. This guide covers how the repo is
 organized, how to set up a dev environment, and what a good pull request looks like.
 
+## Powered by Gittensor
+
+This repository is built and continuously improved through **[Gittensor](https://gittensor.io)** — a
+[Bittensor](https://bittensor.com) subnet (**SN74**) that directs and rewards a network of contributors
+to make real, merged improvements to open-source repositories. Development here is **powered by
+Gittensor**: contributors are rewarded through the subnet for merged work, and that incentive network is
+what drives the project forward.
+
+- **Get involved (and earn) through Gittensor** — see [how OSS contributions
+  work](https://docs.gittensor.io/oss-contributions.html) and the [Gittensor docs](https://docs.gittensor.io).
+- You can also open a PR the normal way (below); everything that lands here flows through the same
+  Gittensor-scored review process either way.
+
 ## Project layout
 
 Two halves with different rules:
@@ -49,7 +62,7 @@ full loop without an inference endpoint.
 
 ## Pull requests
 
-1. Branch off `main`, keep the change focused and small.
+1. Branch off **`test`** and **target `test`** — never `main` (see [Branches](#branches) below). Keep the change focused and small.
 2. Make sure `ruff check .` and the offline test suite pass locally.
 3. Reference the issue you're addressing (e.g. `Fixes #12`).
 4. Fill in the PR template; describe what you changed and how you verified it.
@@ -57,6 +70,15 @@ full loop without an inference endpoint.
 CI must be green before a PR can merge. See [REVIEW.md](REVIEW.md) for exactly how
 contributions are gated, reviewed, and scored — the process is designed to be predictable and
 reproducible.
+
+## Branches
+
+**Open every PR against `test`, never `main`.** This is a strong rule (see #221).
+
+- **`test`** — staging and validation for `main`. Branch off `test`, target `test`; requires a PR and green CI.
+- **`main`** — production, **maintainer-only**. A CI check (`pr-source-check`) rejects any PR into `main` that doesn't come from `test`, and the maintainer (**@matedev01**) promotes `test` → `main`.
+
+This mirrors how [Gittensor](https://gittensor.io) itself runs its repository (`entrius/gittensor`).
 
 ## Reporting bugs and security issues
 

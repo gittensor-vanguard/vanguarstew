@@ -1,0 +1,61 @@
+{
+  "id": "theme-filler-word-loses",
+  "description": "Theme field filler words do not count as substance",
+  "tags": [
+    "filler",
+    "theme"
+  ],
+  "context": {
+    "frozen_at": {
+      "commit": "abc1234567"
+    },
+    "recent_commits": [
+      {
+        "subject": "Fix crash in parser"
+      }
+    ],
+    "open_issues": [
+      {
+        "title": "Memory leak under load"
+      }
+    ]
+  },
+  "revealed": {
+    "commits": [
+      {
+        "subject": "Fix race in loader",
+        "files": [
+          "core/loader.py"
+        ]
+      }
+    ]
+  },
+  "expect_symmetric": true,
+  "submission_a": {
+    "philosophy": {
+      "summary": "Conservative maintainer prioritizing stability",
+      "values": [
+        "stability-over-features"
+      ],
+      "direction": "stabilize before shipping"
+    },
+    "plan": [
+      {
+        "theme": "bugfix loader race",
+        "title": "Fix race"
+      }
+    ],
+    "rationale": "x"
+  },
+  "submission_b": {
+    "philosophy": {},
+    "plan": [
+      {
+        "theme": "misc",
+        "title": ""
+      }
+    ],
+    "rationale": ""
+  },
+  "expected_winner": "A"
+}
