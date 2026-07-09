@@ -33,7 +33,7 @@ def _names(result):
 def test_all_components_above_floors_passes():
     result = check_component_floors(_result(0.62, 0.7, 0.55))
     assert result["passed"] is True
-    assert _names(result) == ["composite_floor", "judge_floor", "objective_floor"]
+    assert _names(result) == ["no_partition_error", "composite_floor", "judge_floor", "objective_floor"]
     assert result["composite_mean"] == 0.62 and result["judge_mean"] == 0.7
 
 
@@ -158,7 +158,7 @@ def test_check_rows_list_warns_on_non_list(caplog):
 
 def test_every_floor_reported_even_when_all_fail():
     result = check_component_floors(_result(0.1, 0.1, 0.1))
-    assert len(result["checks"]) == 3
+    assert len(result["checks"]) == 4
     assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
 
 
@@ -450,7 +450,7 @@ def test_cli_runs_the_gate_and_emits_the_result_for_a_well_formed_artifact(tmp_p
     payload = json.loads(result.stdout)
     assert payload["passed"] is True
     assert [c["name"] for c in payload["checks"]] == [
-        "composite_floor", "judge_floor", "objective_floor",
+        "no_partition_error", "composite_floor", "judge_floor", "objective_floor",
     ]
     assert payload["composite_mean"] == 0.62 and payload["judge_mean"] == 0.7
     assert "[PASS] composite_floor" in result.stderr
@@ -472,3 +472,172 @@ def test_cli_without_strict_exits_zero_even_when_a_floor_is_missed(tmp_path):
     result = _run_cli(weak)
     assert result.returncode == 0
     assert json.loads(result.stdout)["passed"] is False
+
+
+# --- #1263: a repo that failed to clone/freeze is recorded inside per_repo, not as a run error --
+# run_multi_replay does not abort on a bad repo: it stores {"error": ..., "tasks": 0} in
+# per_repo[i] and counts it in `skipped`, so the component means are averaged over a partial,
+# biased subset while every floor still reads a clean number. no_partition_error must scan the
+# evaluated partition's per_repo rows (via the same acceptance._partition_error the promotion gate
+# reuses, #1056/#1254) or the gate signs off a run that did not complete clean.
+
+
+def _multi(per_repo=None, **overrides):
+    run = {
+        "repos": 3, "scored_repos": 2, "skipped": 1, "composite_mean": 0.65,
+        "composite_parts": {"judge_mean": 0.70, "objective_mean": 0.55},
+    }
+    if per_repo is not None:
+        run["per_repo"] = per_repo
+    run.update(overrides)
+    return run
+
+
+def test_issue_1263_repro_per_repo_clone_error_fails_the_gate():
+    # The exact artifact from #1263: every floor clears on the partial means, but one repo failed
+    # to clone. Before the fix this passed with failed_checks == [].
+    result = check_component_floors({
+        "composite_mean": 0.65,
+        "composite_parts": {"judge_mean": 0.70, "objective_mean": 0.55},
+        "scored_repos": 2,
+        "repos": 3,
+        "skipped": 1,
+        "per_repo": [
+            {"repo": "good-a", "composite_mean": 0.70, "tasks": 4},
+            {"repo": "good-b", "composite_mean": 0.60, "tasks": 3},
+            {"repo": "bad-clone", "error": "failed to clone repo-set source 'owner/missing'", "tasks": 0},
+        ],
+    })
+    assert result["passed"] is False
+    assert failed_checks(result) == ["no_partition_error"]
+    # the floors themselves still clear -- only the new completeness check catches the bad run
+    assert {c["name"]: c["passed"] for c in result["checks"]} == {
+        "no_partition_error": False, "composite_floor": True,
+        "judge_floor": True, "objective_floor": True,
+    }
+
+
+def test_per_repo_error_detail_names_the_failure():
+    result = check_component_floors(_multi(per_repo=[
+        {"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 0, "error": "not a git repository"},
+    ]))
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "no_partition_error")
+    assert "not a git repository" in detail
+
+
+def test_per_repo_error_is_not_rescued_by_permissive_floors():
+    # Even with every floor at 0.0 an incomplete run must stay blocked: completeness is a
+    # precondition, not a score.
+    result = check_component_floors(
+        _multi(per_repo=[{"repo": "b", "tasks": 0, "error": "clone failed"}]),
+        min_composite=0.0, min_judge=0.0, min_objective=0.0,
+    )
+    assert result["passed"] is False
+    assert failed_checks(result) == ["no_partition_error"]
+
+
+def test_top_level_error_fails_and_is_not_masked_by_per_repo_errors():
+    # A whole-partition error is checked first and surfaced by name, even when per_repo rows also
+    # carry errors (mirrors check_promotion's ordering, #1254).
+    result = check_component_floors(_multi(
+        per_repo=[{"repo": "b", "tasks": 0, "error": "clone failed"}],
+        error="partition boom",
+    ))
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "no_partition_error")
+    assert "partition boom" in detail
+
+
+def test_clean_run_with_per_repo_rows_still_passes():
+    # Control: per_repo rows present but none carry an error -> no false positive from the scan.
+    result = check_component_floors(_multi(
+        per_repo=[{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 3}],
+        scored_repos=2, repos=2, skipped=0,
+    ))
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+
+
+def test_empty_and_missing_per_repo_are_clean():
+    # An empty per_repo list and no per_repo key at all both mean "nothing errored".
+    assert check_component_floors(_multi(per_repo=[], scored_repos=2))["passed"] is True
+    assert check_component_floors(_multi())["passed"] is True
+
+
+def test_falsy_per_repo_error_values_are_not_errors():
+    # Only a truthy error marks a failed row (the #1056 _partition_error semantics): an empty
+    # string, 0, None, or False error field is not a failure record.
+    for falsy in ("", 0, None, False):
+        run = _multi(per_repo=[{"repo": "a", "tasks": 4, "error": falsy}])
+        assert check_component_floors(run)["passed"] is True, falsy
+
+
+def test_malformed_per_repo_shapes_never_raise():
+    # Non-dict/non-string rows (ints, None, lists) are ignored; a non-list per_repo container is
+    # ignored entirely; blank string rows are not errors. None of these crash the gate.
+    assert check_component_floors(_multi(per_repo=[42, None, [1, 2]]))["passed"] is True
+    assert check_component_floors(_multi(per_repo="oops"))["passed"] is True
+    assert check_component_floors(_multi(per_repo=["", "   "]))["passed"] is True
+
+
+def test_a_per_repo_row_that_is_an_error_string_fails_closed():
+    # A malformed per-repo entry that is itself a non-empty string is treated as an error record
+    # (matches acceptance's no_partition_error, #1056): a corrupt artifact fails closed.
+    result = check_component_floors(_multi(per_repo=[{"repo": "a", "tasks": 4}, "fatal: not a git repository"]))
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+
+
+def test_generalization_tuned_per_repo_error_fails_the_gate():
+    # The evaluated (tuned) partition carries the failed row -> blocked, even though its means
+    # clear every floor.
+    art = _generalization({
+        "scored_repos": 2,
+        "composite_mean": 0.65,
+        "composite_parts": {"judge_mean": 0.70, "objective_mean": 0.55},
+        "per_repo": [{"repo": "a", "tasks": 5},
+                     {"repo": "b", "tasks": 0, "error": "not a git repository"}],
+    })
+    result = check_component_floors(art)
+    assert result["passed"] is False
+    assert failed_checks(result) == ["no_partition_error"]
+
+
+def test_generalization_held_out_per_repo_error_is_ignored_when_tuned_is_clean():
+    # Only the evaluated (tuned) partition is scanned; a per-repo error confined to held_out does
+    # not block the floor gate (same scope as check_promotion.run_completed, #1254).
+    art = _generalization(
+        {"scored_repos": 2, "composite_mean": 0.65,
+         "composite_parts": {"judge_mean": 0.70, "objective_mean": 0.55},
+         "per_repo": [{"repo": "a", "tasks": 5}, {"repo": "b", "tasks": 4}]},
+        {"scored_repos": 1, "composite_mean": 0.5,
+         "per_repo": [{"repo": "c", "tasks": 0, "error": "clone failed"}]},
+    )
+    result = check_component_floors(art)
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+
+
+def test_generalization_report_level_error_fails_the_gate():
+    # A top-level error on the report itself (outside both partitions) also blocks.
+    art = _generalization({
+        "scored_repos": 2, "composite_mean": 0.65,
+        "composite_parts": {"judge_mean": 0.70, "objective_mean": 0.55},
+    })
+    art["error"] = "report aborted"
+    result = check_component_floors(art)
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+
+
+def test_non_dict_source_shapes_never_raise():
+    # A non-dict tuned is not a generalization pair -> evaluated at the top level; a fully
+    # malformed result still fails on the floors without the error scan crashing.
+    art = {"tuned": None, "held_out": {"composite_mean": 0.5},
+           "composite_mean": 0.62, "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.55}}
+    assert check_component_floors(art)["passed"] is True
+    for bad in (None, "not a dict", 42):
+        result = check_component_floors(bad)
+        assert result["passed"] is False
+        assert "no_partition_error" not in failed_checks(result)
