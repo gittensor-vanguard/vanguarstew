@@ -90,6 +90,43 @@ def test_high_disagreement_is_not_trustworthy():
     assert "judge_trustworthy" in failed_checks(result)
 
 
+# --- #1249: stale judge_report.disagreement_rate must not false-pass judge_trustworthy -------
+
+
+def test_stale_judge_report_disagreement_rate_is_recomputed_from_stats():
+    art = {
+        "composite_mean": 0.7,
+        "decisive_margin": 3,
+        "judge_report": {"disagreement_rate": 0.05, "dual_order_tasks": 10},
+        "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+    }
+    result = check_promotion(art, max_disagreement=0.3)
+    assert result["passed"] is False
+    assert result["disagreement_rate"] == 0.8
+    assert "judge_trustworthy" in failed_checks(result)
+
+
+def test_disagreement_falls_back_to_report_when_stats_absent():
+    art = {"composite_mean": 0.7, "decisive_margin": 3,
+           "judge_report": {"disagreement_rate": 0.25, "dual_order_tasks": 4}}
+    result = check_promotion(art, max_disagreement=0.3)
+    assert result["passed"] is True
+    assert result["disagreement_rate"] == 0.25
+
+
+def test_generalization_stale_disagreement_is_recomputed_on_tuned_partition():
+    art = _generalization({
+        "composite_mean": 0.7,
+        "scored_repos": 3,
+        "judge_report": {"wins": 9, "losses": 2, "disagreement_rate": 0.05, "dual_order_tasks": 10},
+        "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+    })
+    result = check_promotion(art, max_disagreement=0.3)
+    assert result["passed"] is False
+    assert result["disagreement_rate"] == 0.8
+    assert "judge_trustworthy" in failed_checks(result)
+
+
 def test_single_order_run_passes_judge_trustworthy():
     # No disagreement_rate (single-order judge) -> the trust check passes (no instability signal).
     result = check_promotion(_result(disagreement=None))
@@ -308,7 +345,9 @@ def test_non_numeric_fields_do_not_crash():
              "judge_report": {"disagreement_rate": "some"}}
     result = check_promotion(weird)
     assert result["passed"] is False
-    assert {"composite_floor", "beats_baseline", "judge_trustworthy"} <= set(failed_checks(result))
+    # Non-numeric disagreement_rate with no derivable stats -> None -> judge_trustworthy passes
+    # (no dual-order signal), matching _disagreement_rate / single-order semantics.
+    assert {"composite_floor", "beats_baseline"} <= set(failed_checks(result))
 
 
 def test_headline_reports_promote_and_hold():

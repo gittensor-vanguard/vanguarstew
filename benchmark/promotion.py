@@ -19,7 +19,10 @@ its merits instead of failing every check vacuously. The criteria:
    agent that does not actually out-decide the reference does not pass;
 4. ``judge_trustworthy`` - the pairwise judge's order-``disagreement_rate`` is at most
    ``max_disagreement`` (a run whose verdicts flip on presentation order isn't a trustworthy
-   basis for promotion). A run judged single-order carries no disagreement rate and passes this
+   basis for promotion). The rate is recomputed from ``judge_order_stats`` when available
+   (``disagree`` / ``dual_order_tasks``), falling back to ``judge_report.disagreement_rate``
+   only when stats are absent — mirroring ``check_judge`` and ``check_regression`` — so a stale report field cannot
+   false-pass the gate. A run judged single-order carries no disagreement rate and passes this
    check, since there is no instability signal to fail on.
 
 The companion ``scripts/promotion.py`` exits non-zero when the gate fails, so promotion can be
@@ -32,6 +35,8 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+
+from benchmark.judge_gate import _disagreement_rate
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +183,7 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     source = _promotion_source(result)
     composite = _scored_composite(source)
     margin = _decisive_margin(source)
-    disagreement = _dict(source.get("judge_report")).get("disagreement_rate")
+    disagreement = _disagreement_rate(source)
     error = result.get("error") or source.get("error")
     checks = []
 
