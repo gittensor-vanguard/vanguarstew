@@ -118,16 +118,35 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
     return result
 
 
+def _usable_run_count(value, field: str) -> int | None:
+    """Return a non-negative integer run count from a repeatability result field."""
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    if value is not None:
+        logger.warning(
+            "repeatability: %s is %s, not a usable run count; treating as absent",
+            field,
+            type(value).__name__ if not isinstance(value, (int, float)) else value,
+        )
+    return None
+
+
 def repeatability_headline(result: dict) -> str:
     """A one-line human summary of an :func:`assess_repeatability` result."""
-    if not isinstance(result, dict) or not result.get("runs"):
+    if not isinstance(result, dict):
         return "repeatability: no scored runs"
-    if result.get("runs", 0) < result.get("min_runs", DEFAULT_MIN_RUNS):
-        return f"repeatability: inconclusive ({result['runs']} run(s))"
+    runs = _usable_run_count(result.get("runs"), "runs")
+    if runs is None or runs == 0:
+        return "repeatability: no scored runs"
+    min_runs = _usable_run_count(result.get("min_runs"), "min_runs")
+    if min_runs is None:
+        min_runs = DEFAULT_MIN_RUNS
+    if runs < min_runs:
+        return f"repeatability: inconclusive ({runs} run(s))"
     verdict = "STABLE" if result.get("stable") else "UNSTABLE"
     cv = result.get("cv")
     cv_txt = f"{cv:.1%}" if isinstance(cv, (int, float)) and not isinstance(cv, bool) else "n/a"
     return (
-        f"repeatability: {verdict} over {result['runs']} runs "
+        f"repeatability: {verdict} over {runs} runs "
         f"(mean {result.get('mean')}, cv {cv_txt})"
     )

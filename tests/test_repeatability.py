@@ -118,6 +118,20 @@ def test_headline_reports_stable_unstable_and_inconclusive():
     assert DEFAULT_MAX_CV == 0.05
 
 
+def test_headline_survives_truthy_non_integer_runs(caplog):
+    import logging
+
+    malformed = [
+        {"runs": "2", "min_runs": 2, "stable": True, "mean": 1.0, "cv": 0.01},
+        {"runs": {"n": 2}, "min_runs": 2},
+        {"runs": True, "min_runs": 2},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.repeatability"):
+        for result in malformed:
+            assert repeatability_headline(result) == "repeatability: no scored runs"
+    assert any("runs is" in record.message for record in caplog.records)
+
+
 def test_cv_uses_sample_standard_deviation():
     # The CV of a sample of repeated runs uses the sample (Bessel-corrected) standard deviation,
     # so run-to-run spread is not underestimated. Population stddev (pstdev) would give sd=0.04,
