@@ -18,6 +18,10 @@ evaluates named criteria, each failing closed:
 2. ``enough_scored`` - at least ``min_scored`` repos produced a score.
 3. ``skip_within_budget`` - the skipped fraction (``skipped / repos``) is at most ``max_skip_rate``.
 
+A ``--generalization`` artifact nests ``repos``/``scored_repos`` under ``tuned`` and ``held_out`` rather
+than at the top level. Counts are summed across both partitions (mirroring ``skip_share``) so a
+held-out skip blowout is gated instead of failing vacuously on missing top-level tallies.
+
 The companion ``scripts/skip_budget.py`` exits non-zero when too many repos were skipped.
 
 Pure evaluation: no I/O, never mutates the result, and a malformed/non-dict result (including one
@@ -27,6 +31,8 @@ with a non-list ``checks``) simply fails the relevant checks rather than raising
 from __future__ import annotations
 
 import logging
+
+from benchmark.comparability import artifact_kind
 
 logger = logging.getLogger(__name__)
 
@@ -109,13 +115,39 @@ def _check_rows_list(checks) -> list[dict]:
     return rows
 
 
+def _slice_counts(slice_) -> tuple[int, int] | None:
+    """``(repos, scored)`` for one replay partition when its tally is coherent."""
+    slice_ = _dict(slice_)
+    repos = slice_.get("repos")
+    scored = slice_.get("scored_repos")
+    if not (_is_int(repos) and _is_int(scored)):
+        return None
+    if repos <= 0 or scored < 0 or scored > repos:
+        return None
+    skipped = slice_.get("skipped")
+    if skipped is not None and not (_is_int(skipped) and skipped == repos - scored):
+        return None
+    return repos, scored
+
+
 def _counts(result: dict):
     """``(repos, scored)`` when the result is a coherent multi-repo tally, else ``None``.
 
-    Requires whole-number ``repos`` and ``scored_repos`` with ``repos > 0`` and
-    ``0 <= scored <= repos``, and - when a ``skipped`` field is present - that it is a whole number
-    equal to ``repos - scored`` (otherwise the accounting is internally inconsistent).
+    For a ``--generalization`` artifact, tallies live under ``tuned`` and ``held_out``; both
+    partitions must carry coherent counts, which are summed (mirroring ``skip_share._combined``).
+    Every other artifact is evaluated at the top level.
     """
+    result = _dict(result)
+    if artifact_kind(result) == "generalization":
+        tuned = _slice_counts(result.get("tuned"))
+        held_out = _slice_counts(result.get("held_out"))
+        if tuned is None or held_out is None:
+            return None
+        repos = tuned[0] + held_out[0]
+        scored = tuned[1] + held_out[1]
+        if repos <= 0 or scored < 0 or scored > repos:
+            return None
+        return repos, scored
     repos = result.get("repos")
     scored = result.get("scored_repos")
     if not (_is_int(repos) and _is_int(scored)):
