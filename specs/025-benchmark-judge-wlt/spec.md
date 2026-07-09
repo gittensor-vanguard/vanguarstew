@@ -37,8 +37,12 @@ verify dashboard and CLI changes against intent.
 
 ### W-L-T extraction
 
-- The function SHALL read `wins`, `losses`, and `ties` from `artifact["judge_report"]` when that
-  value is a `dict`.
+- For a single- or multi-repo artifact the function SHALL read `wins`, `losses`, and `ties` from
+  the top-level `artifact["judge_report"]` when that value is a `dict`.
+- WHEN `kind == "generalization"` THEN the artifact has no top-level `judge_report`, so the
+  overall SHALL be summed from the `tuned` and `held_out` partition reports — `None` unless both
+  partitions carry a usable report — and the summary SHALL include a `partitions` map with each
+  partition's W-L-T summary. For a non-generalization artifact `partitions` SHALL be `None`.
 - Each count SHALL be a non-negative `int` (booleans and floats SHALL be rejected).
 - WHEN all three counts are valid THEN the function SHALL return them and set `total` to
   `wins + losses + ties`.

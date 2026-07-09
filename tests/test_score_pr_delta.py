@@ -11,9 +11,7 @@ if ROOT not in sys.path:
 
 from scripts.score_pr_delta import (  # noqa: E402
     DEFAULT_BREAKTHROUGH_MULTIPLE,
-    DEFAULT_NOISE_FLOOR,
     _improved,
-    _pareto_axes,
     _regressed,
     headline,
     score_pr_delta,

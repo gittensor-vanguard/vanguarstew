@@ -33,26 +33,44 @@ def _wlt(report) -> tuple[int, int, int] | None:
     return counts[0], counts[1], counts[2]
 
 
-def summarize_judge_wlt(artifact) -> dict:
-    """Return judge W-L-T counts from ``judge_report`` when available."""
-    artifact = _dict(artifact)
-    counts = _wlt(artifact.get("judge_report"))
+_NONE_SLICE = {"wins": None, "losses": None, "ties": None, "total": None}
+
+
+def _slice_summary(slice_) -> dict:
+    """W-L-T counts + total for one slice's ``judge_report``, or ``None`` fields when malformed."""
+    counts = _wlt(_dict(slice_).get("judge_report"))
     if counts is None:
-        return {
-            "kind": artifact_kind(artifact),
-            "wins": None,
-            "losses": None,
-            "ties": None,
-            "total": None,
-        }
+        return dict(_NONE_SLICE)
     wins, losses, ties = counts
-    return {
-        "kind": artifact_kind(artifact),
-        "wins": wins,
-        "losses": losses,
-        "ties": ties,
-        "total": wins + losses + ties,
-    }
+    return {"wins": wins, "losses": losses, "ties": ties, "total": wins + losses + ties}
+
+
+def summarize_judge_wlt(artifact) -> dict:
+    """Return judge W-L-T counts from ``judge_report``.
+
+    Single- and multi-repo artifacts read the top-level ``judge_report``. A ``generalization``
+    artifact has no top-level report — each ``tuned``/``held_out`` partition carries its own — so
+    the overall is summed from the partitions (mirroring the sibling ``win_rate``); it also adds a
+    ``partitions`` map. A missing or malformed report yields ``None`` counts, and a generalization
+    overall is ``None`` unless both partitions carry a usable report.
+    """
+    artifact = _dict(artifact)
+    kind = artifact_kind(artifact)
+    if kind == "generalization":
+        tuned = _slice_summary(artifact.get("tuned"))
+        held = _slice_summary(artifact.get("held_out"))
+        if all(_is_int(slice_["total"]) for slice_ in (tuned, held)):
+            wins = tuned["wins"] + held["wins"]
+            losses = tuned["losses"] + held["losses"]
+            ties = tuned["ties"] + held["ties"]
+            overall = {"wins": wins, "losses": losses, "ties": ties,
+                       "total": wins + losses + ties}
+        else:
+            overall = dict(_NONE_SLICE)
+        return {"kind": kind, **overall, "partitions": {"tuned": tuned, "held_out": held}}
+    summary = {"kind": kind, **_slice_summary(artifact)}
+    summary["partitions"] = None
+    return summary
 
 
 def judge_wlt_headline(summary: dict) -> str:
