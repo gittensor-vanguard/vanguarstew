@@ -46,6 +46,52 @@ def test_multi_repo_kind_when_per_repo_present():
     assert out["kind"] == "multi"
 
 
+def test_single_repo_has_partitions_none():
+    out = summarize_judge_wlt(_run(5, 3, 2))
+    assert out["partitions"] is None
+
+
+# --- generalization: sum the tuned/held_out partition reports (mirrors win_rate) -------------
+
+def _gen(tuned_wlt, held_wlt):
+    art = {"generalization_gap": 0.0}
+    if tuned_wlt is not None:
+        art["tuned"] = {"judge_report": dict(zip(("wins", "losses", "ties"), tuned_wlt))}
+    if held_wlt is not None:
+        art["held_out"] = {"judge_report": dict(zip(("wins", "losses", "ties"), held_wlt))}
+    return art
+
+
+def test_generalization_sums_partition_reports():
+    out = summarize_judge_wlt(_gen((6, 3, 1), (5, 4, 1)))
+    assert out["kind"] == "generalization"
+    assert (out["wins"], out["losses"], out["ties"], out["total"]) == (11, 7, 2, 20)
+    assert out["partitions"]["tuned"]["total"] == 10
+    assert out["partitions"]["held_out"]["total"] == 10
+    assert "11-7-2 over 20" in judge_wlt_headline(out)
+
+
+def test_generalization_missing_partition_yields_none_overall_but_keeps_partitions():
+    out = summarize_judge_wlt({"generalization_gap": 0.0,
+                               "tuned": {"judge_report": {"wins": 6, "losses": 3, "ties": 1}},
+                               "held_out": {}})                         # no judge_report
+    assert out["total"] is None                                        # can't combine a partial set
+    assert out["partitions"]["tuned"]["total"] == 10                   # valid partition still reported
+    assert out["partitions"]["held_out"]["total"] is None
+
+
+def test_generalization_malformed_partition_report_yields_none_overall():
+    out = summarize_judge_wlt(_gen((6, 3, 1), (5, -4, 1)))             # negative count
+    assert out["total"] is None
+    assert out["partitions"]["held_out"]["total"] is None
+
+
+def test_generalization_zero_total_reports_zero():
+    out = summarize_judge_wlt(_gen((0, 0, 0), (0, 0, 0)))
+    assert out["total"] == 0
+    assert out["wins"] == 0 and out["losses"] == 0 and out["ties"] == 0
+
+
 def test_missing_judge_report_yields_none():
     out = summarize_judge_wlt({"composite_mean": 0.5})
     assert out["total"] is None

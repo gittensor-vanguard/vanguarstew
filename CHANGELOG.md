@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Benchmark reporting (`benchmark/judge_wlt.py`): `summarize_judge_wlt` read only the top-level
+  `judge_report`, so a `--generalization` artifact (which nests a report under `tuned`/`held_out`
+  and emits none at the top level) reported `unavailable` for every generalization run — while its
+  sibling `win_rate` sums the partitions. It now sums the `tuned`/`held_out` W-L-T reports for the
+  overall and exposes a `partitions` map (Spec 025 updated to match). Single- and multi-repo
+  artifacts are unchanged.
 - Benchmark reporting (`benchmark/dual_order_coverage.py`): `_task_total` read only the
   top-level `tasks` field, which a multi-repo run and each generalization partition never emit
   (task counts live under `per_repo[*].tasks`), so coverage was `n/a` for every aggregate run —

@@ -98,6 +98,25 @@ def test_kind_from_artifact_kind():
     assert summarize_judge_wlt(gen)["kind"] == "generalization"
 
 
+def test_generalization_sums_partition_reports():
+    # A generalization artifact has no top-level judge_report; the overall W-L-T is summed from
+    # the tuned/held_out partition reports (with a partitions map, mirroring win_rate), and is
+    # None unless both partitions carry a usable report.
+    out = summarize_judge_wlt({
+        "generalization_gap": 0.0,
+        "tuned": {"judge_report": {"wins": 6, "losses": 3, "ties": 1}},
+        "held_out": {"judge_report": {"wins": 5, "losses": 4, "ties": 1}},
+    })
+    assert (out["wins"], out["losses"], out["ties"], out["total"]) == (11, 7, 2, 20)
+    assert out["partitions"]["tuned"]["total"] == 10
+    partial = summarize_judge_wlt({
+        "generalization_gap": 0.0,
+        "tuned": {"judge_report": {"wins": 6, "losses": 3, "ties": 1}},
+        "held_out": {},
+    })
+    assert partial["total"] is None and partial["partitions"]["held_out"]["total"] is None
+
+
 # --- Headline — unavailable ---------------------------------------------------------------
 
 
