@@ -13,6 +13,7 @@ import logging
 import math
 
 from benchmark.comparability import artifact_kind
+from benchmark.judge_telemetry import disagreement_counts, disagreement_rate
 
 logger = logging.getLogger(__name__)
 
@@ -36,42 +37,9 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _judge_telemetry(slice_) -> dict:
-    """Return judge telemetry from a replay slice (``judge_report`` preferred over stats)."""
-    slice_ = _dict(slice_)
-    for source in (slice_.get("judge_report"), slice_.get("judge_order_stats")):
-        if isinstance(source, dict):
-            return source
-    return {}
-
-
-def _disagreement_counts(telemetry: dict) -> tuple[int, int] | None:
-    """Return ``(disagreements, dual_order_tasks)`` when both are valid non-negative ints."""
-    dual = telemetry.get("dual_order_tasks")
-    if not _is_int(dual):
-        agree = telemetry.get("agree")
-        disagree = telemetry.get("disagree")
-        tie = telemetry.get("tie")
-        if not all(_is_int(value) and value >= 0 for value in (agree, disagree, tie)):
-            return None
-        dual = agree + disagree + tie
-    disagreements = telemetry.get("disagreements")
-    if disagreements is None:
-        disagreements = telemetry.get("disagree")
-    if disagreements is None:
-        rate = telemetry.get("disagreement_rate")
-        if _is_number(rate) and _is_int(dual):
-            disagreements = round(rate * dual)
-        else:
-            return None
-    if not _is_int(disagreements) or disagreements < 0 or not _is_int(dual) or dual < 0:
-        return None
-    return disagreements, dual
-
-
 def _slice_summary(slice_) -> dict:
-    telemetry = _judge_telemetry(slice_)
-    counts = _disagreement_counts(telemetry)
+    """Disagreement telemetry for one replay slice, preferring ``judge_order_stats``."""
+    counts = disagreement_counts(slice_)
     if counts is None:
         return {
             "dual_order_tasks": None,
@@ -79,17 +47,11 @@ def _slice_summary(slice_) -> dict:
             "disagreement_rate": None,
         }
     disagreements, dual = counts
-    rate = telemetry.get("disagreement_rate")
-    if _is_number(rate):
-        out_rate = round(float(rate), 3)
-    elif dual == 0:
-        out_rate = None
-    else:
-        out_rate = round(disagreements / dual, 3)
+    rate = disagreement_rate(slice_)
     return {
         "dual_order_tasks": dual,
         "disagreements": disagreements,
-        "disagreement_rate": out_rate,
+        "disagreement_rate": rate,
     }
 
 

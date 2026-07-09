@@ -72,6 +72,18 @@ def test_falls_back_to_judge_order_stats():
     assert out["dual_order_tasks"] == 2
 
 
+def test_stale_judge_report_rate_corrected_from_stats():
+    art = {
+        "composite_mean": 0.6,
+        "judge_report": {"disagreement_rate": 0.05, "dual_order_tasks": 10},
+        "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["disagreement_rate"] == 0.8
+    assert out["disagreements"] == 8
+    assert out["verdict"] == "unstable"
+
+
 def test_generalization_overall_sums_partitions_when_no_top_level_telemetry():
     art = {
         "generalization_gap": 0.0,

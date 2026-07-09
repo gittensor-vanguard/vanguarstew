@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.judge_telemetry import disagreement_rate as _telemetry_disagreement_rate
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_COMPOSITE = 0.5
@@ -178,7 +180,13 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     source = _promotion_source(result)
     composite = _scored_composite(source)
     margin = _decisive_margin(source)
-    disagreement = _dict(source.get("judge_report")).get("disagreement_rate")
+    disagreement = _telemetry_disagreement_rate(source)
+    if disagreement is None:
+        for key in ("judge_report", "judge_order_stats"):
+            raw = _dict(source.get(key)).get("disagreement_rate")
+            if raw is not None:
+                disagreement = raw
+                break
     error = result.get("error") or source.get("error")
     checks = []
 
