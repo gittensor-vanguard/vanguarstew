@@ -110,6 +110,23 @@ def _check_rows_list(checks) -> list[dict]:
     return rows
 
 
+def _findings_list(findings) -> list:
+    """Return ``findings`` when it is a list; otherwise treat as no error findings.
+
+    ``None`` and an empty list are silent. A truthy non-list (``42``, a bare dict) must not
+    reach ``len(findings)`` in :func:`run_clean_headline` or malformed saved gate output
+    aborts the CLI headline path.
+    """
+    if isinstance(findings, list):
+        return findings
+    if findings is not None:
+        logger.warning(
+            "run_clean: findings is %s, not a list; treating as empty",
+            type(findings).__name__,
+        )
+    return []
+
+
 def _partition_errors(artifact: dict) -> list[str]:
     findings = []
     if artifact.get("error"):
@@ -170,5 +187,5 @@ def run_clean_headline(result: dict) -> str:
     result = _dict(result)
     if result.get("passed"):
         return f"run clean: OK ({result.get('artifact_kind')})"
-    findings = result.get("findings") or []
+    findings = _findings_list(result.get("findings"))
     return f"run clean: ERRORS ({len(findings)} finding(s))"

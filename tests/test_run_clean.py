@@ -19,6 +19,7 @@ except ImportError:
 
 from benchmark.run_clean import (  # noqa: E402
     _check_rows_list,
+    _findings_list,
     check_run_clean,
     failed_checks,
     run_clean_headline,
@@ -67,6 +68,34 @@ def test_partition_error_in_generalization():
 def test_headline():
     assert "OK" in run_clean_headline(check_run_clean(_multi("a")))
     assert "ERRORS" in run_clean_headline(check_run_clean({"error": "x"}))
+
+
+def test_headline_survives_truthy_non_list_findings(caplog):
+    malformed = [
+        {"passed": False, "findings": 42},
+        {"passed": False, "findings": {"error": "x"}},
+        {"passed": False, "findings": "one error"},
+        {"passed": False, "findings": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        for result in malformed:
+            assert run_clean_headline(result) == "run clean: ERRORS (0 finding(s))"
+    assert any("findings is" in record.message for record in caplog.records)
+
+
+def test_findings_list_passes_real_lists_and_warns_on_non_list(caplog):
+    findings = ["top-level error: 'x'"]
+    assert _findings_list(findings) == findings
+    assert _findings_list(None) == []
+    assert _findings_list([]) == []
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _findings_list(42) == []
+    assert any("findings is int" in record.message for record in caplog.records)
+
+
+def test_headline_counts_a_real_findings_list():
+    result = check_run_clean({"error": "clone failed"})
+    assert run_clean_headline(result) == "run clean: ERRORS (1 finding(s))"
 
 
 @pytest.fixture
