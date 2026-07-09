@@ -661,6 +661,26 @@ def _objective_for_component(objective: dict) -> dict:
     return {k: objective[k] for k in _COMPONENT_SCORE_KEYS if k in objective}
 
 
+def _recall_for_component(obj: dict) -> float:
+    """Return a numeric module-recall value for :func:`objective_component`.
+
+  ``float(True)`` / ``float(False)`` would silently score bool recalls as 1.0 / 0.0; reject
+  booleans and other non-numeric values (falling back from a bool weighted recall to plain
+  ``module_recall`` when present).
+    """
+    recall = obj.get("weighted_module_recall")
+    if recall is None:
+        recall = obj.get("module_recall", 0.0)
+    elif isinstance(recall, bool):
+        recall = obj.get("module_recall", 0.0)
+    if isinstance(recall, bool) or not isinstance(recall, (int, float)):
+        return 0.0
+    try:
+        return float(recall)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def objective_component(objective: dict) -> float:
     """Collapse the objective anchor into a single value in [0, 1].
 
@@ -677,15 +697,17 @@ def objective_component(objective: dict) -> float:
     if not isinstance(objective, dict):
         return 0.0
     obj = _objective_for_component(objective)
-    recall = obj.get("weighted_module_recall")
-    if recall is None:
-        recall = obj.get("module_recall", 0.0)
-    try:
-        parts = [float(recall)]
-    except (ValueError, TypeError):
-        parts = [0.0]
+    recall = _recall_for_component(obj)
+    parts = [recall]
     if obj.get("actual_kinds"):
-        parts.append(float(obj.get("kind_recall", 0.0)))
+        kind = obj.get("kind_recall", 0.0)
+        if isinstance(kind, bool) or not isinstance(kind, (int, float)):
+            parts.append(0.0)
+        else:
+            try:
+                parts.append(float(kind))
+            except (ValueError, TypeError):
+                parts.append(0.0)
     if obj.get("release_signaled"):
         parts.append(1.0 if obj.get("release_predicted") else 0.0)
     if obj.get("bump_actual") is not None:
