@@ -21,7 +21,10 @@ check vacuously. The criteria:
 2. ``enough_dual_order_tasks`` - at least ``min_dual_order_tasks`` tasks were judged in both
    orders, so the disagreement rate is measured on a meaningful sample;
 3. ``low_disagreement`` - the order-``disagreement_rate`` is at most ``max_disagreement`` (the
-   judge's verdicts are stable across order, not flipping on presentation).
+   judge's verdicts are stable across order, not flipping on presentation). The rate is
+   recomputed from ``judge_order_stats`` when available (``disagree`` / ``dual_order_tasks``),
+   falling back to ``judge_report.disagreement_rate`` only when stats are absent — mirroring
+   ``_dual_order_tasks`` — so a stale report field cannot false-pass the gate.
 
 The companion ``scripts/judge_gate.py`` exits non-zero when the judge isn't robust, so a run's
 verdicts can be gated in CI before they're trusted.
@@ -42,6 +45,10 @@ DEFAULT_MIN_DUAL_ORDER_TASKS = 2
 
 def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _dict(value) -> dict:
@@ -151,6 +158,41 @@ def _dual_order_tasks(result: dict):
     return None
 
 
+def _disagreement_rate_from_telemetry(telemetry: dict) -> float | None:
+    """Disagreement rate from one telemetry block, or ``None`` when it cannot be derived."""
+    telemetry = _dict(telemetry)
+    dual = telemetry.get("dual_order_tasks")
+    if not _is_number(dual):
+        agree, disagree, tie = telemetry.get("agree"), telemetry.get("disagree"), telemetry.get("tie")
+        if all(_is_int(v) for v in (agree, disagree, tie)):
+            dual = agree + disagree + tie
+        else:
+            dual = None
+    disagreements = telemetry.get("disagree")
+    if disagreements is None:
+        disagreements = telemetry.get("disagreements")
+    if _is_int(dual) and dual > 0 and _is_int(disagreements) and disagreements >= 0:
+        return round(disagreements / dual, 3)
+    rate = telemetry.get("disagreement_rate")
+    return round(float(rate), 3) if _is_number(rate) else None
+
+
+def _disagreement_rate(source: dict) -> float | None:
+    """Order-disagreement rate, preferring ``judge_order_stats`` over ``judge_report``.
+
+    A stale ``judge_report.disagreement_rate`` must not false-pass ``low_disagreement`` when
+    ``judge_order_stats`` carries authoritative disagree/dual_order_tasks counts.
+    """
+    source = _dict(source)
+    for telemetry in (_dict(source.get("judge_order_stats")), _dict(source.get("judge_report"))):
+        if not telemetry:
+            continue
+        rate = _disagreement_rate_from_telemetry(telemetry)
+        if rate is not None:
+            return rate
+    return None
+
+
 def _judge_source(result: dict) -> dict:
     """The partition whose judge telemetry the gate evaluates.
 
@@ -186,7 +228,7 @@ def check_judge(result, max_disagreement: float = DEFAULT_MAX_DISAGREEMENT,
     source = _judge_source(result)
     dual_order = source.get("judge_dual_order")
     dual_tasks = _dual_order_tasks(source)
-    disagreement = _dict(source.get("judge_report")).get("disagreement_rate")
+    disagreement = _disagreement_rate(source)
     checks = []
 
     def add(name, passed, detail):

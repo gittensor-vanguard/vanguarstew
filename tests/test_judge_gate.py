@@ -70,6 +70,18 @@ def test_dual_order_tasks_falls_back_to_judge_order_stats():
     assert result["dual_order_tasks"] == 4 and result["passed"] is True
 
 
+def test_stale_judge_report_disagreement_rate_is_recomputed_from_stats():
+    r = {
+        "judge_dual_order": True,
+        "judge_report": {"disagreement_rate": 0.05, "dual_order_tasks": 10, "disagreements": 1},
+        "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+    }
+    result = check_judge(r, max_disagreement=0.3)
+    assert result["passed"] is False
+    assert result["disagreement_rate"] == 0.8
+    assert "low_disagreement" in failed_checks(result)
+
+
 # --- multi-repo aggregates omit the top-level judge_dual_order flag -----------------------
 # A single-repo run states judge_dual_order directly; a run_multi_replay aggregate does not, so
 # the status is derived from the pooled dual-order task count (judge_report, else
