@@ -680,10 +680,15 @@ def objective_component(objective: dict) -> float:
     recall = obj.get("weighted_module_recall")
     if recall is None:
         recall = obj.get("module_recall", 0.0)
-    try:
-        parts = [float(recall)]
-    except (ValueError, TypeError):
+    elif isinstance(recall, bool):
+        recall = obj.get("module_recall", 0.0)
+    if isinstance(recall, bool) or not isinstance(recall, (int, float)):
         parts = [0.0]
+    else:
+        try:
+            parts = [float(recall)]
+        except (ValueError, TypeError):
+            parts = [0.0]
     if obj.get("actual_kinds"):
         parts.append(float(obj.get("kind_recall", 0.0)))
     if obj.get("release_signaled"):
