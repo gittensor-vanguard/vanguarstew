@@ -203,14 +203,20 @@ def context_for_agent(context: dict) -> dict:
 
 
 def _context_from_git(repo_path: str) -> dict:
-    head = _git(repo_path, "rev-parse", "HEAD")
+    # `--verify --quiet` keeps a repo with no commits from resolving to a bogus id: plain
+    # `git rev-parse HEAD` prints the literal "HEAD" on *stdout* (rc 128) there, and this
+    # wrapper takes stdout verbatim, so the context would claim to be frozen at "HEAD".
+    head = _git(repo_path, "rev-parse", "--verify", "--quiet", "HEAD")
     freeze_date = _git(repo_path, "show", "-s", "--format=%cI", head).strip() or None
-    log = _git(repo_path, "log", "--pretty=format:%H%x09%s", "-n", "50")
+    # Record the committer ISO date (%cI) so recent_commits matches the frozen file's shape
+    # from ``benchmark.freeze.build_context`` ({sha, date, subject}).
+    log = _git(repo_path, "log", "--pretty=format:%H%x09%cI%x09%s", "-n", "50")
     commits = []
     for line in log.splitlines():
-        if "\t" in line:
-            h, subj = line.split("\t", 1)
-            commits.append({"sha": h[:10], "subject": _mask_forward_refs(subj)})
+        parts = line.split("\t", 2)
+        if len(parts) == 3:
+            h, date, subj = parts
+            commits.append({"sha": h[:10], "date": date, "subject": _mask_forward_refs(subj)})
     # `git tag --merged` selects tags whose target commit is reachable from T; it does NOT
     # filter by when the tag was created. An annotated tag cut after T from a commit already
     # present at T would leak a future release into knowable-at-T context. Filter to tags
@@ -254,5 +260,9 @@ def _context_from_git(repo_path: str) -> dict:
         "milestones": [],
         "releases": [{"tag": _mask_forward_refs(t)} for t in tags[-10:]],
         "readme_excerpt": readme,
+        # Every free-text field above went through ``_mask_forward_refs``, so this context is
+        # scrubbed just as ``benchmark.leakage.scrub_context`` marks the frozen file. Without
+        # the flag a consumer would read the fallback context as never having been scrubbed.
+        "_forward_signal_scrubbed": True,
         "_source": "git",
     }
