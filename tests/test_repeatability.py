@@ -118,6 +118,14 @@ def test_headline_reports_stable_unstable_and_inconclusive():
     assert DEFAULT_MAX_CV == 0.05
 
 
+def test_headline_tolerates_truthy_non_integer_runs():
+    """A truthy non-integer runs value must not crash."""
+    assert repeatability_headline({"runs": "2", "min_runs": 2}) == "repeatability: no scored runs"
+    assert repeatability_headline({"runs": {"x": 1}, "min_runs": 2}) == "repeatability: no scored runs"
+    assert repeatability_headline({"runs": True, "min_runs": 2}) == "repeatability: no scored runs"
+    assert repeatability_headline({"runs": [1, 2], "min_runs": 2}) == "repeatability: no scored runs"
+
+
 def test_cv_uses_sample_standard_deviation():
     # The CV of a sample of repeated runs uses the sample (Bessel-corrected) standard deviation,
     # so run-to-run spread is not underestimated. Population stddev (pstdev) would give sd=0.04,

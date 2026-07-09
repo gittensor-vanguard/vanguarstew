@@ -120,10 +120,16 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
 
 def repeatability_headline(result: dict) -> str:
     """A one-line human summary of an :func:`assess_repeatability` result."""
-    if not isinstance(result, dict) or not result.get("runs"):
+    if not isinstance(result, dict):
         return "repeatability: no scored runs"
-    if result.get("runs", 0) < result.get("min_runs", DEFAULT_MIN_RUNS):
-        return f"repeatability: inconclusive ({result['runs']} run(s))"
+    runs = result.get("runs")
+    if not isinstance(runs, int) or isinstance(runs, bool) or runs <= 0:
+        return "repeatability: no scored runs"
+    min_runs = result.get("min_runs", DEFAULT_MIN_RUNS)
+    if not isinstance(min_runs, int) or isinstance(min_runs, bool):
+        min_runs = DEFAULT_MIN_RUNS
+    if runs < min_runs:
+        return f"repeatability: inconclusive ({runs} run(s))"
     verdict = "STABLE" if result.get("stable") else "UNSTABLE"
     cv = result.get("cv")
     cv_txt = f"{cv:.1%}" if isinstance(cv, (int, float)) and not isinstance(cv, bool) else "n/a"
