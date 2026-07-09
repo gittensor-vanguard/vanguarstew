@@ -148,6 +148,13 @@ def _disagreement(artifact) -> float | None:
             if counts is None:
                 continue
             dis, dual = counts
+            if dis > dual:
+                # More disagreements than dual-order tasks is impossible in a coherent
+                # artifact. Summing such a partition yields a plausible-but-wrong pooled
+                # rate that can flip check_regression's instability verdict, so surface None
+                # and let the gate abstain rather than mask the corruption — mirroring
+                # dual_order_coverage._combined.
+                return None
             total_dis += dis
             total_dual += dual
         if total_dual > 0:

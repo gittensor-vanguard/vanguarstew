@@ -478,3 +478,51 @@ def test_generalization_partition_stats_override_stale_report_counts():
         },
     }
     assert _disagreement(gen) == pytest.approx(9 / 15)
+
+
+def test_incoherent_partition_poisons_generalization_disagreement():
+    from benchmark.regression import _disagreement
+
+    # 8 disagreements among only 5 dual-order tasks is impossible; the pooled rate must not be
+    # a plausible-but-wrong 9/15 -> surface None so the gate abstains instead of misfiring.
+    gen = {
+        "tuned": {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},
+        "held_out": {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 1}},
+    }
+    assert _disagreement(gen) is None
+
+
+def test_a_coherent_held_out_does_not_rescue_an_incoherent_tuned():
+    from benchmark.regression import _disagreement
+
+    # The incoherent partition poisons the whole pooled rate; a coherent held_out is not
+    # silently reported in its place (which would mask the corrupt tuned partition).
+    gen = {
+        "tuned": {"judge_order_stats": {"dual_order_tasks": 3, "disagree": 9}},
+        "held_out": {"judge_order_stats": {"dual_order_tasks": 20, "disagree": 2}},
+    }
+    assert _disagreement(gen) is None
+
+
+def test_incoherent_candidate_partition_does_not_fabricate_a_regression_block():
+    # A candidate whose only defect is an impossible partition (more disagreements than
+    # dual-order tasks) must not be BLOCKED on a fabricated instability rate. With the pooled
+    # rate None the instability check abstains, so a real regression isn't invented from junk.
+    baseline = {
+        "tuned": {"composite_mean": 0.60, "scored_repos": 3,
+                  "judge_order_stats": {"dual_order_tasks": 50, "disagree": 2}},
+        "held_out": {"composite_mean": 0.60, "scored_repos": 2,
+                     "judge_order_stats": {"dual_order_tasks": 50, "disagree": 3}},
+        "generalization_gap": 0.0,
+    }
+    candidate = {
+        "tuned": {"composite_mean": 0.60, "scored_repos": 3,
+                  "judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},
+        "held_out": {"composite_mean": 0.60, "scored_repos": 2,
+                     "judge_order_stats": {"dual_order_tasks": 10, "disagree": 1}},
+        "generalization_gap": 0.0,
+    }
+    result = check_regression(candidate, baseline, max_disagreement_increase=0.1)
+    assert result["disagreement_delta"] is None
+    assert "no_judge_instability_increase" not in failed_checks(result)
+    assert result["passed"] is True
