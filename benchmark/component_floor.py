@@ -9,9 +9,12 @@ anchor exists to catch (see M2: "the objective anchor grounds the judge").
 
 This gates **each component independently**. ``check_component_floors(result)`` evaluates:
 
-1. ``composite_floor`` - ``composite_mean`` is at least ``min_composite``;
-2. ``judge_floor`` - the judge component mean is at least ``min_judge``;
-3. ``objective_floor`` - the objective anchor mean is at least ``min_objective``.
+1. ``no_partition_error`` - the evaluated partition completed clean: no whole-partition ``error``
+   and no ``per_repo`` row that failed to clone/freeze, so the component means were not computed
+   over a partial, biased subset of the repo set;
+2. ``composite_floor`` - ``composite_mean`` is at least ``min_composite``;
+3. ``judge_floor`` - the judge component mean is at least ``min_judge``;
+4. ``objective_floor`` - the objective anchor mean is at least ``min_objective``.
 
 The companion ``scripts/component_floor.py`` exits non-zero when any floor is missed, a stricter
 CI gate than ``--fail-under`` alone.
@@ -23,6 +26,8 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+
+from benchmark.acceptance import _partition_error
 
 logger = logging.getLogger(__name__)
 
@@ -98,14 +103,29 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     top-level ``composite_mean``/``composite_parts``) is evaluated on its ``tuned`` partition via
     :func:`_floor_source`, so a strong generalization run is gated on its merits instead of failing
     every floor vacuously; every other artifact is evaluated at the top level.
+
+    ``no_partition_error`` fails when the evaluated partition carries an error — whole-partition
+    **or** inside a ``per_repo`` row — so component means computed over a partial subset (a repo
+    that failed to clone/freeze) can never clear the floors.
     """
     result = _dict(result)
     source = _floor_source(result)
     composite = _scored_metric(source, "composite_mean")
     judge = _scored_metric(source, "judge_mean", nested_key="composite_parts")
     objective = _scored_metric(source, "objective_mean", nested_key="composite_parts")
+    # Scan the evaluated partition's per_repo rows, not just its top-level error: a repo that
+    # failed to clone/freeze is recorded in per_repo[i] as {"error": ..., "tasks": 0} and does not
+    # surface a partition-level error, so the component means were averaged over a partial, biased
+    # subset that must not clear the floors. Mirrors check_acceptance / check_promotion /
+    # artifact_snapshot._has_error (#1050/#1056/#1254). A failed held_out partition stays
+    # intentionally ignored — only the evaluated source is scanned.
+    error = result.get("error") or _partition_error(source)
+    no_error = error is None
 
     checks = [
+        {"name": "no_partition_error", "passed": no_error,
+         "detail": "run completed without a partition or per-repo error" if no_error
+         else f"partition/per-repo error: {error!r}"},
         _floor_check("composite_floor", composite, min_composite),
         _floor_check("judge_floor", judge, min_judge),
         _floor_check("objective_floor", objective, min_objective),
