@@ -79,8 +79,14 @@ def _materialize_repo_source(source: str, checkout_root: str | None) -> tuple[st
         raise RepoSetError(f"repo-set source not found locally: {source}")
     dest = os.path.join(checkout_root, f"repo_{len(os.listdir(checkout_root))}")
     try:
-        subprocess.run(["git", "clone", "-q", source, dest], check=True, capture_output=True,
-                       text=True)
+        subprocess.run(
+            ["git", "clone", "-q", "--", source, dest],
+            check=True, capture_output=True, text=True, timeout=300,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RepoSetError(
+            f"repo-set source {source!r} clone timed out after 300s"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         raise RepoSetError(f"failed to clone repo-set source {source!r}: {exc.stderr.strip()}") from exc
     return dest, True
