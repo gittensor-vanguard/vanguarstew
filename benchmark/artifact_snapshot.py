@@ -11,6 +11,7 @@ returning ``None`` for unavailable values rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.comparability import artifact_kind
 from benchmark.trend import headline_score
@@ -19,7 +20,17 @@ logger = logging.getLogger(__name__)
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats survive a save/load round trip (json.dump writes NaN/Infinity and
+    # json.load parses them back), but int() raises on them and a NaN/Infinity count is not
+    # a usable value anyway -- treat them as malformed, like a missing or wrong-typed field,
+    # matching row_integrity.py (#616/#927). math.isfinite also raises OverflowError for ints
+    # too large for a float, which would crash int()/formatting the same way.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _is_int(value) -> bool:

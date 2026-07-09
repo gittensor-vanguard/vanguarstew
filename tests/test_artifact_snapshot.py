@@ -118,6 +118,59 @@ def test_malformed_per_repo_still_counts_valid_rows():
     assert out["tasks"] == 4
 
 
+def test_non_finite_top_level_tasks_snapshots_none_instead_of_raising():
+    # Previously ValueError/OverflowError from int(float("nan"))/int(float("inf")) in _task_total.
+    # A NaN/Infinity count survives a JSON round trip but is not usable -- report None, don't crash.
+    for bad in (float("nan"), float("inf")):
+        out = snapshot({"composite_mean": 0.5, "tasks": bad})   # must not raise
+        assert out["tasks"] is None, bad
+
+
+def test_non_finite_per_repo_tasks_are_skipped_not_crashing():
+    # A non-finite per_repo tasks row is skipped like any malformed row; a coherent row still counts.
+    art = {"per_repo": [{"repo": "a", "tasks": float("inf")}, _repo("b", tasks=4)],
+           "composite_mean": 0.5, "repos": 1, "scored_repos": 1, "skipped": 0}
+    out = snapshot(art)          # must not raise
+    assert out["tasks"] == 4
+
+
+def test_non_finite_tasks_never_raise_for_any_variant():
+    # NaN, +/-Infinity, and an int too large for a float all survive a JSON round trip and would
+    # crash int(); none may raise, at the top level or inside a per_repo/generalization slice.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        assert isinstance(snapshot({"composite_mean": 0.5, "tasks": bad}), dict), bad
+        assert isinstance(snapshot({"per_repo": [{"repo": "a", "tasks": bad}]}), dict), bad
+        gen = {"tuned": {"per_repo": [{"repo": "t", "tasks": bad}]},
+               "held_out": {"per_repo": [{"repo": "h", "tasks": 3}]},
+               "generalization_gap": 0.1}
+        assert isinstance(snapshot(gen), dict), bad
+
+
+def test_non_finite_generalization_gap_snapshots_none():
+    # A non-finite generalization_gap must not be emitted into the snapshot (NaN/Infinity are not
+    # valid JSON and not usable numbers); it degrades to None like any other unavailable value.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        art = {"tuned": {"composite_mean": 0.6, "scored_repos": 2, "per_repo": [{"tasks": 3}]},
+               "held_out": {"composite_mean": 0.5, "scored_repos": 1, "per_repo": [{"tasks": 2}]},
+               "generalization_gap": bad}
+        assert snapshot(art)["generalization_gap"] is None, bad
+
+
+def test_non_finite_decisive_margin_snapshots_none():
+    # decisive_margin is likewise withheld when non-finite rather than propagated into the snapshot.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        out = snapshot({"composite_mean": 0.6, "tasks": 3, "decisive_margin": bad})
+        assert out["decisive_margin"] is None, bad
+
+
+def test_non_finite_composite_is_unscored_without_raising():
+    # A non-finite headline composite is treated as unscored (via the hardened trend reader); the
+    # snapshot and its headline never raise.
+    out = snapshot({"composite_mean": float("inf"), "tasks": 3})
+    assert out["scored"] is False and out["headline_score"] is None
+    snapshot_headline(out)   # must not raise
+
+
 def test_invalid_artifact_kind():
     out = snapshot("not-a-dict")
     assert out["kind"] == "invalid"
