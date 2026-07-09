@@ -3,6 +3,14 @@
 Covers the point-in-time calls that have a hard ground truth (merge/request-changes/
 reject, triage labels + priority, reviewer, release/bump) and, when implementation is
 the right action, a patch. The `rationale` is what the decision-process judge evaluates.
+
+A real maintainer weighs a call from more than one angle at once — is it correct, does
+it fit where the project is going, is it safe to land now. Collapsing all of that into
+one prompt lets the model average the angles away instead of weighing them. `decide()`
+runs three focused specialist lenses first (correctness, direction-fit, risk/timing),
+each a separate call reasoning about ONE question, then synthesizes the final call from
+their verdicts. Costs more calls per decision; the tradeoff is a rationale the judge can
+actually hold to account on each axis, not one blended guess.
 """
 
 from __future__ import annotations
@@ -19,6 +27,27 @@ SYSTEM = (
     "maintainers of THIS repo would, given its philosophy. Explain the tradeoffs, priority, "
     "and risk you weighed — the reasoning matters as much as the call. Respond ONLY with JSON."
 )
+
+# One system prompt per specialist lens: each asks a single, narrow question about the
+# same request, independent of the others, so its verdict isn't averaged away by the rest.
+_LENS_SYSTEMS = {
+    "correctness": (
+        "You are a code-correctness reviewer. Given ONLY the repository state and the request, "
+        "judge whether the underlying work is technically sound on its own merits — ignore "
+        "timing, scope-fit, or project direction; those are not your job. Respond ONLY with JSON."
+    ),
+    "direction": (
+        "You are the project's direction-fit reviewer. Given ONLY the repository's inferred "
+        "philosophy and the request, judge whether it moves the project the way its maintainers "
+        "actually want to go — ignore correctness and risk; those are not your job. "
+        "Respond ONLY with JSON."
+    ),
+    "risk": (
+        "You are a release-safety reviewer. Given ONLY the repository state and the request, "
+        "judge whether NOW is a safe time to act on it — stability, blast radius, rollback cost. "
+        "Ignore correctness and direction-fit; those are not your job. Respond ONLY with JSON."
+    ),
+}
 
 VALID_ACTIONS = (
     "merge", "request-changes", "reject", "triage", "assign-reviewer",
@@ -130,11 +159,62 @@ def _normalize_version_bump(bump) -> str | None:
     return level if level in _BUMP_LEVELS else None
 
 
+def _normalize_lens_verdict(out) -> dict:
+    """Coerce one lens's raw output to ``{"verdict": str, "reasoning": str}``.
+
+    Reuses the same defensive coercions as the final decision fields: a malformed or
+    missing verdict must never propagate as anything but a plain string, and must never
+    raise (M4: no agent crash from malformed LLM output applies to every LLM call, not
+    just the last one).
+    """
+    out = out if isinstance(out, dict) else {}
+    return {
+        "verdict": _normalize_rationale(out.get("verdict")) or "unclear",
+        "reasoning": _normalize_rationale(out.get("reasoning")),
+    }
+
+
+def _run_lens(name: str, context: dict, philosophy: dict, request: str, llm) -> dict:
+    """Run one specialist lens and return its normalized verdict.
+
+    Each lens sees only what its question needs (repo state + request; philosophy only
+    for the direction lens) so it can't quietly reuse another lens's reasoning instead of
+    forming its own.
+    """
+    system = _LENS_SYSTEMS[name]
+    if name == "direction":
+        user = (
+            f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:3000]}\n\n"
+            f"Decision request: {request}\n\n"
+            'Return JSON: {"verdict": "one short sentence", "reasoning": "why"}'
+        )
+    else:
+        user = (
+            f"Repository state:\n{_render(context)}\n\n"
+            f"Decision request: {request}\n\n"
+            'Return JSON: {"verdict": "one short sentence", "reasoning": "why"}'
+        )
+    stub = {"verdict": f"{name} lens unavailable offline", "reasoning": ""}
+    return _normalize_lens_verdict(llm.chat_json(system, user, stub=stub))
+
+
 def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
+    lenses = {
+        name: _run_lens(name, context, philosophy, request, llm)
+        for name in ("correctness", "direction", "risk")
+    }
+    lens_block = "\n".join(
+        f'- {name}: {verdict["verdict"]} ({verdict["reasoning"]})'
+        for name, verdict in lenses.items()
+    )
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:3000]}\n\n"
         f"Repository state:\n{_render(context)}\n\n"
         f"Decision request: {request}\n\n"
+        f"Specialist perspectives already weighed (correctness, direction-fit, risk/timing):\n"
+        f"{lens_block}\n\n"
+        "Synthesize these into ONE final call. If the perspectives conflict, say which one "
+        "wins and why — that tradeoff IS the rationale.\n\n"
         "Return JSON with keys:\n"
         f'  "action": one of {list(VALID_ACTIONS)},\n'
         '  "labels": list of labels if triaging (else []),\n'

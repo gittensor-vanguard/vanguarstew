@@ -11,13 +11,17 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.decider import (  # noqa: E402
+    SYSTEM,
     VALID_ACTIONS,
+    _LENS_SYSTEMS,
     _normalize_action,
     _normalize_labels,
+    _normalize_lens_verdict,
     _normalize_patch,
     _normalize_rationale,
     _normalize_reviewer,
     _normalize_version_bump,
+    _run_lens,
     decide,
 )
 from agent.llm import LLM  # noqa: E402
@@ -206,3 +210,80 @@ def test_decide_normalizes_version_bump_from_llm_output():
 
     non_string = decide(ctx, {}, "decide", _VersionBumpLLM({"version_bump": 2}))
     assert non_string["version_bump"] is None
+
+
+# ── specialist lenses: correctness / direction / risk, synthesized into one call ──────────
+
+def test_normalize_lens_verdict_defaults_and_coerces():
+    assert _normalize_lens_verdict({"verdict": "sound", "reasoning": "tests pass"}) == {
+        "verdict": "sound", "reasoning": "tests pass",
+    }
+    # missing/malformed verdict never raises and never returns None
+    assert _normalize_lens_verdict({}) == {"verdict": "unclear", "reasoning": ""}
+    assert _normalize_lens_verdict("not a dict") == {"verdict": "unclear", "reasoning": ""}
+    assert _normalize_lens_verdict({"verdict": None, "reasoning": 7}) == {
+        "verdict": "unclear", "reasoning": "7",
+    }
+
+
+def test_run_lens_covers_all_three_named_lenses():
+    # every lens named in _LENS_SYSTEMS must be runnable and return the same normalized shape
+    llm = LLM(api_key="offline")
+    for name in _LENS_SYSTEMS:
+        out = _run_lens(name, {}, {}, "review PR #1", llm)
+        assert set(out) == {"verdict", "reasoning"}
+        assert isinstance(out["verdict"], str) and out["verdict"]
+
+
+class _LensCountingLLM:
+    """Records every system prompt it's asked, so a test can prove decide() actually
+    consults each specialist lens (not just the final synthesis) before deciding."""
+
+    offline = False
+
+    def __init__(self):
+        self.systems_seen = []
+
+    def chat_json(self, system, user, stub=None):
+        self.systems_seen.append(system)
+        if system == SYSTEM:  # the final synthesis call
+            return {
+                "action": "merge", "labels": [], "reviewer": None,
+                "version_bump": None, "patch": None,
+                "rationale": "correctness and direction agreed; risk lens flagged timing "
+                             "but the fix is small enough to land now",
+            }
+        # each lens gets a distinguishable verdict so we can confirm all 3 ran
+        return {"verdict": f"{system[:20]}-verdict", "reasoning": "because"}
+
+
+def test_decide_consults_every_specialist_lens_before_synthesizing():
+    llm = _LensCountingLLM()
+    out = decide({}, {}, "merge PR #9", llm)
+
+    # all 3 lenses were asked (their system prompts are the 3 distinct _LENS_SYSTEMS values)
+    lens_calls = [s for s in llm.systems_seen if s in _LENS_SYSTEMS.values()]
+    assert len(lens_calls) == 3
+    assert len(set(lens_calls)) == 3  # each lens's system prompt is genuinely distinct
+
+    # the final synthesis call happened AFTER all 3 lenses (last in call order)
+    assert llm.systems_seen[-1] == SYSTEM
+
+    # the final decision is still shaped exactly like every other decide() call
+    assert out["action"] == "merge"
+    assert "risk" in out["rationale"] or "timing" in out["rationale"]
+
+
+def test_decide_offline_runs_lenses_without_network_and_keeps_stub_shape():
+    # offline: every chat_json call (3 lenses + synthesis) must short-circuit to its stub,
+    # and the FINAL decision shape must be byte-for-byte what it was before the lens split.
+    llm = LLM(api_key="offline")
+    out = decide({}, {}, "review PR #1", llm)
+    assert out == {
+        "action": "plan",
+        "labels": [],
+        "reviewer": None,
+        "version_bump": None,
+        "patch": None,
+        "rationale": "offline stub decision",
+    }
