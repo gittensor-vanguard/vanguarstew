@@ -373,7 +373,12 @@ def test_check_rows_list_rejects_empty_name(caplog):
 
 def test_check_rows_list_accepts_numpy_bool_when_available():
     np = pytest.importorskip("numpy")
-    for factory in (np.bool_, np.bool8):
+    # np.bool8 was removed in numpy 2.0; use it only when present so the test
+    # passes on both numpy 1.x and 2.x.
+    factories = [np.bool_]
+    if hasattr(np, "bool8"):
+        factories.append(np.bool8)
+    for factory in factories:
         rows = [{"name": "dual_order_judging", "passed": factory(True)}]
         assert _check_rows_list(rows) == rows
 

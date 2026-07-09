@@ -210,7 +210,7 @@ def _failed_ids_list(failed) -> list[str]:
 
 _SYMMETRY_ROW_KEYS = ("id", "passed")
 
-_NUMPY_BOOL_TYPENAMES = frozenset({"bool_", "bool8"})
+_NUMPY_BOOL_TYPENAMES = frozenset({"bool_", "bool8", "bool"})  # "bool" = numpy 2.x
 
 
 def _is_passed(value) -> bool:
