@@ -83,6 +83,67 @@ def test_regression_compares_generalization_tuned_scores():
     assert result["passed"] is True
 
 
+# --- #1257: a candidate that did not complete clean (a repo failed to clone/freeze) must not
+# false-pass. run_multi_replay records the failure in per_repo[i] as {"error": ..., "tasks": 0}
+# and keeps scoring the rest, so the headline composite reflects a partial, biased subset.
+
+
+def test_candidate_per_repo_error_fails_both_scored():
+    candidate = {"composite_mean": 0.66, "scored_repos": 2, "repos": 3, "skipped": 1,
+                 "per_repo": [{"repo": "a", "composite_mean": 0.70, "tasks": 4},
+                              {"repo": "b", "composite_mean": 0.62, "tasks": 3},
+                              {"repo": "bad", "error": "failed to clone", "tasks": 0}]}
+    result = check_regression(candidate, _run(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    # A partial candidate must not slip past no_composite_regression on its biased subset either.
+    assert "no_composite_regression" in failed_checks(result)
+
+
+def test_generalization_candidate_tuned_per_repo_error_fails():
+    candidate = {"tuned": {"composite_mean": 0.66, "scored_repos": 2,
+                           "per_repo": [{"repo": "a", "tasks": 4},
+                                        {"repo": "bad", "error": "clone failed", "tasks": 0}]},
+                 "held_out": {"composite_mean": 0.5, "scored_repos": 2}, "generalization_gap": 0.1}
+    result = check_regression(candidate, _gen(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_generalization_candidate_held_out_only_error_is_ignored():
+    # Only the tuned partition is the headline (mirrors headline_score); a failed held_out repo
+    # is not the compared score, so it does not block — consistent with the promotion gate.
+    candidate = {"tuned": {"composite_mean": 0.66, "scored_repos": 2,
+                           "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 4}]},
+                 "held_out": {"composite_mean": 0.5, "scored_repos": 1,
+                              "per_repo": [{"repo": "c", "error": "clone failed", "tasks": 0}]},
+                 "generalization_gap": 0.1}
+    result = check_regression(candidate, _gen(0.60))
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+
+
+def test_baseline_per_repo_error_does_not_block_a_clean_candidate():
+    # The gate is scoped to the candidate (the run under test); the baseline is the last accepted
+    # run. A per-repo error confined to the baseline does not fail a clean candidate.
+    baseline = {"composite_mean": 0.60, "scored_repos": 2,
+                "per_repo": [{"repo": "a", "composite_mean": 0.6, "tasks": 3},
+                             {"repo": "bad", "error": "clone failed", "tasks": 0}]}
+    result = check_regression(_run(0.66), baseline)
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+
+
+def test_regression_tolerates_missing_or_malformed_per_repo():
+    # No AttributeError/KeyError when per_repo is absent, a non-list, or the candidate is not a
+    # dict: a clean candidate still passes; malformed shapes never raise.
+    assert check_regression({"composite_mean": 0.66}, _run(0.60))["passed"] is True
+    assert check_regression({"composite_mean": 0.66, "per_repo": "oops"}, _run(0.60))["passed"] is True
+    for bad in (None, "x", 42):
+        result = check_regression(bad, _run(0.60))  # no raise
+        assert "both_scored" in failed_checks(result)
+
+
 def test_rising_judge_instability_is_blocked():
     # Composite held, but the judge got much less stable -> block.
     result = check_regression(_run(0.60, disagreement=0.5), _run(0.60, disagreement=0.1),

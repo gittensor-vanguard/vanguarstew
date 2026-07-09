@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
 from benchmark.judge_gate import _disagreement_rate_from_telemetry, _is_int
 from benchmark.trend import headline_score
 
@@ -102,6 +103,19 @@ def _round(value):
     return round(float(value), 3) if _is_number(value) else None
 
 
+def _headline_source(artifact) -> dict:
+    """The partition ``headline_score`` reads: the ``tuned`` partition of a generalization
+    artifact (both ``tuned`` and ``held_out`` are dicts), else the artifact itself.
+
+    Scanning this exact source for errors keeps the completed-clean check aligned with the
+    composite the gate compares — a per-repo failure in the scored partition is caught, while a
+    failed ``held_out`` (not the headline) is left alone, mirroring ``headline_score``.
+    """
+    artifact = _dict(artifact)
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    return tuned if isinstance(tuned, dict) and isinstance(held_out, dict) else artifact
+
+
 def _partition_disagreement_counts(part: dict) -> tuple[int, int] | None:
     """Disagree/dual-order counts from one partition, preferring ``judge_order_stats``."""
     part = _dict(part)
@@ -174,10 +188,20 @@ def check_regression(candidate, baseline,
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    both_scored = base_score is not None and cand_score is not None
-    add("both_scored", both_scored,
-        f"baseline composite {base_score}, candidate composite {cand_score}"
-        if both_scored else "a composite score is missing from one artifact")
+    # A candidate whose scored partition had a repo fail to clone/freeze did not complete clean:
+    # run_multi_replay records it in per_repo[i] as {"error": ..., "tasks": 0} and keeps scoring
+    # the rest, so headline_score reflects a partial, biased subset. Fold that into both_scored so
+    # a partial candidate can't false-pass no_composite_regression, mirroring check_acceptance
+    # (#1050/#1056), check_promotion (#1254), and artifact_snapshot._has_error.
+    cand_error = _partition_error(_headline_source(candidate))
+    both_scored = base_score is not None and cand_score is not None and cand_error is None
+    if cand_error is not None:
+        both_scored_detail = f"candidate did not complete clean: {cand_error!r}"
+    elif base_score is not None and cand_score is not None:
+        both_scored_detail = f"baseline composite {base_score}, candidate composite {cand_score}"
+    else:
+        both_scored_detail = "a composite score is missing from one artifact"
+    add("both_scored", both_scored, both_scored_detail)
 
     # Round the delta to the scores' 3-decimal precision before comparing, so a drop equal to
     # the tolerance isn't tipped over it by floating-point noise (0.58 - 0.60 == -0.02000...018).
