@@ -12,7 +12,8 @@ no top-level ``composite_mean``/``judge_report``; it is evaluated on its **tuned
 headline figure, mirroring ``benchmark.trend.headline_score``), so a generalization run is gated on
 its merits instead of failing every check vacuously. The criteria:
 
-1. ``run_completed`` - the run produced a scored result (no ``error``, a numeric composite);
+1. ``run_completed`` - the run produced a scored result: a numeric composite and no ``error`` —
+   whole-partition **or** a per-repo row that failed to clone/freeze — in the evaluated partition;
 2. ``composite_floor`` - ``composite_mean`` is at least ``min_composite``;
 3. ``beats_baseline`` - the challenger **decisively** beat the baseline: ``decisive_margin``
    (challenger wins minus baseline wins) is at least ``min_decisive_margin``, so a memorized-tie
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
 from benchmark.judge_gate import _disagreement_rate
 
 logger = logging.getLogger(__name__)
@@ -203,7 +205,12 @@ def check_promotion(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     composite = _scored_composite(source)
     margin = _decisive_margin(source)
     disagreement = _promotion_disagreement_rate(source)
-    error = result.get("error") or source.get("error")
+    # Scan the evaluated partition's per_repo rows, not just its top-level error: a repo that
+    # failed to clone/freeze is recorded in per_repo[i] as {"error": ..., "tasks": 0} and does not
+    # surface a partition-level error, so reading only the top level would sign off a run that did
+    # not complete clean. Mirrors check_acceptance / artifact_snapshot._has_error (#1050/#1056). A
+    # failed held_out partition stays intentionally ignored — only the evaluated source is scanned.
+    error = result.get("error") or _partition_error(source)
     checks = []
 
     def add(name, passed, detail):

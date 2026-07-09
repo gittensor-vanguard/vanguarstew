@@ -238,6 +238,35 @@ def test_held_out_error_is_ignored_when_tuned_is_strong():
     assert failed_checks(result) == []
 
 
+def test_tuned_per_repo_error_fails_run_completed():
+    # A repo that failed to clone/freeze in the evaluated (tuned) partition is recorded in
+    # per_repo[i], not as a partition-level error. run_completed must still fail — promotion to
+    # main must not sign off a run that did not complete clean (mirrors check_acceptance #1056).
+    art = _generalization(
+        {"composite_mean": 0.8, "scored_repos": 2, "decisive_margin": 5,
+         "judge_report": {"disagreement_rate": 0.1},
+         "per_repo": [{"repo": "a", "tasks": 5},
+                      {"repo": "b", "tasks": 0, "error": "not a git repository"}]},
+        held_out={"composite_mean": 0.7, "scored_repos": 2,
+                  "per_repo": [{"repo": "c", "tasks": 4}, {"repo": "e", "tasks": 4}]},
+    )
+    result = check_promotion(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+
+
+def test_multi_repo_per_repo_error_fails_run_completed():
+    # Same gap for a plain (non-generalization) multi-repo run: a per_repo clone error must fail
+    # run_completed even though the aggregate composite is above the floor.
+    art = {"composite_mean": 0.8, "decisive_margin": 5, "scored_repos": 2,
+           "judge_report": {"disagreement_rate": 0.1},
+           "per_repo": [{"repo": "a", "tasks": 5},
+                        {"repo": "b", "tasks": 0, "error": "clone failed"}]}
+    result = check_promotion(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+
+
 def test_partial_partition_without_held_out_is_not_generalization():
     # Only a both-dict tuned/held_out pair is a generalization artifact. A lone tuned block (no
     # held_out) is evaluated at the top level, where there is no composite -> the run is unscored.
