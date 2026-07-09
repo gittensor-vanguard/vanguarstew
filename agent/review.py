@@ -129,6 +129,21 @@ def _normalize_review(out: dict, stub: dict) -> dict:
     }
 
 
+def _pr_number(pr: dict):
+    """Return ``number`` when it is a usable scalar int, else None.
+
+    Frozen PR JSON can carry a non-int ``number`` (bool, list, dict). Formatting it
+    verbatim into the review prompt would emit garbage like ``#True``; treat such values
+    as numberless, matching ``agent.planner._pr_number``.
+    """
+    if not isinstance(pr, dict):
+        return None
+    number = pr.get("number")
+    if isinstance(number, bool) or not isinstance(number, int):
+        return None
+    return number
+
+
 def _clip_text(value, limit: int) -> str:
     """A string field clipped to ``limit`` chars; **any** non-string value clips to "".
 
@@ -160,9 +175,10 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         for path in raw_files:
             if isinstance(path, str) and path.strip():
                 files.append(path.strip())
+    number = _pr_number(pr)
     user = (
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy is not None else "")
-        + f"PULL REQUEST #{pr.get('number')}: {pr.get('title')}\n"
+        + f"PULL REQUEST #{number if number is not None else '?'}: {pr.get('title')}\n"
         + f"by @{pr.get('author')}  (+{pr.get('additions', 0)}/-{pr.get('deletions', 0)})\n\n"
         + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
         + f"changed files: {', '.join(files[:30])}\n\n"

@@ -19,6 +19,7 @@ from agent.review import (  # noqa: E402
     _normalize_concerns,
     _normalize_review_action,
     _normalize_value_label,
+    _pr_number,
     review_pr,
 )
 
@@ -282,3 +283,30 @@ def test_review_pr_omits_none_philosophy():
     llm = _CaptureUserLLM()
     review_pr(pr, None, llm)
     assert "Repository philosophy" not in llm.last_user
+
+
+def test_pr_number_normalizes_non_scalar_and_bool():
+    assert _pr_number({"number": 7}) == 7
+    assert _pr_number({"number": [7]}) is None
+    assert _pr_number({"number": {"n": 7}}) is None
+    assert _pr_number({"number": True}) is None
+    assert _pr_number({"number": None}) is None
+    assert _pr_number({}) is None
+
+
+def test_review_pr_prompt_uses_pr_number_not_raw_number_field():
+    llm = _CaptureUserLLM()
+    review_pr({"number": 7, "title": "Fix bug", "author": "a", "files": []}, None, llm)
+    assert llm.last_user.startswith("PULL REQUEST #7: Fix bug")
+    assert "#True" not in llm.last_user
+
+    llm = _CaptureUserLLM()
+    review_pr({"number": True, "title": "Fix bug", "author": "a", "files": []}, None, llm)
+    assert llm.last_user.startswith("PULL REQUEST #?: Fix bug")
+    assert "#True" not in llm.last_user
+
+    llm = _CaptureUserLLM()
+    review_pr({"number": [7], "title": "Add streaming export", "author": "a", "files": []},
+              None, llm)
+    assert llm.last_user.startswith("PULL REQUEST #?: Add streaming export")
+    assert "#True" not in llm.last_user
