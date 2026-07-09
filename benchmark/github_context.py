@@ -291,15 +291,21 @@ def _title_at(events, until: datetime, live_title):
 def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
     """Fetch an issue/PR's timeline events (paginated).
 
-    Returns ``(events, truncated)``. ``truncated`` is True when the timeline is known to be
-    incomplete — either the page cap was hit with a full final page, or a page *after* the
-    first errored out mid-pagination — because a label reconstruction from partial ``events``
-    could then be *confidently wrong* (a later ``unlabeled`` that was never fetched is never
-    applied) and the caller must not trust it. Returns ``([], False)`` on a missing number or a
-    first-page error: nothing was collected, so the empty timeline already omits labels safely.
+    Returns ``(events, truncated)``. ``truncated`` is True whenever the timeline is *not known to
+    be complete* — the page cap was hit with a full final page, a page errored out mid-pagination,
+    or nothing could be fetched at all (a missing number or a first-page error). In every such
+    case a reconstruction from ``events`` could be wrong or absent, so the caller must fail closed
+    on *both* labels and title.
+
+    An *unavailable* timeline (nothing collected) is deliberately reported as ``truncated=True``,
+    not ``([], False)``: an empty ``events`` already omits labels safely, but the title path reads
+    a no-rename timeline as "title never changed" and falls back to the live REST title — so
+    reporting ``truncated=False`` there would leak a post-T-renamed title as if it were as-of-T.
+    Only a timeline that was actually fetched and came back empty (a complete, event-less issue)
+    returns ``([], False)``, where using the live title is correct.
     """
     if number is None:
-        return [], False
+        return [], True
     events = []
     truncated = False
     for page in range(1, max_pages + 1):
@@ -307,12 +313,12 @@ def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
             batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
                          token, timeout)
         except Exception:
-            # A failure *after* a page was already collected leaves an incomplete timeline;
-            # flag it truncated so the caller fails closed rather than trusting a partial
-            # (possibly wrong) reconstruction. A first-page failure keeps ``([], False)`` —
-            # there is nothing to trust and the empty timeline already omits labels.
-            if events:
-                truncated = True
+            # Any fetch error leaves an incomplete/unavailable timeline; flag it truncated so the
+            # caller fails closed rather than trusting a partial (possibly wrong) reconstruction or
+            # letting the title fall back to the live value. This includes a *first-page* error
+            # (``events`` still empty): an empty timeline omits labels safely but would otherwise
+            # leak the live title, so it must be truncated, not ``([], False)``.
+            truncated = True
             break
         if not batch:
             break

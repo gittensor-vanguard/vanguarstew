@@ -782,12 +782,14 @@ def test_issue_timeline_signals_truncation(monkeypatch):
     events, truncated = gc._issue_timeline("base", 1, None, 20, max_pages=3)
     assert truncated is False and len(events) == 10
 
-    # An error or missing number degrades to the safe ([], False) fallback.
+    # An error or missing number yields an *unavailable* timeline: nothing was collected, so it is
+    # reported as ([], True) -- truncated -- and the caller fails both labels and title closed. A
+    # bare ([], False) there would leak the live title (an empty timeline reads as "never renamed").
     def err_get(url, token, timeout=20):
         raise RuntimeError("boom")
     monkeypatch.setattr(gc, "_get", err_get)
-    assert gc._issue_timeline("base", 1, None, 20) == ([], False)
-    assert gc._issue_timeline("base", None, None, 20) == ([], False)
+    assert gc._issue_timeline("base", 1, None, 20) == ([], True)
+    assert gc._issue_timeline("base", None, None, 20) == ([], True)
 
 
 def test_issue_timeline_marks_truncated_on_error_after_first_page(monkeypatch):
@@ -829,6 +831,40 @@ def test_open_issue_labels_omitted_when_timeline_errors_after_first_page(monkeyp
     iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
     assert iss["labels"] == []
     assert iss["labels_as_of_t"] is False
+
+
+def test_open_issue_title_omitted_when_timeline_errors_on_first_page(monkeypatch):
+    # A first-page timeline error leaves the timeline unavailable. The title must fail closed
+    # (title=""/title_as_of_t=False), exactly as labels do -- not fall back to the live REST
+    # title, which may have been renamed after T to reveal forward signal (a version, a fix,
+    # a future issue ref). The empty timeline would otherwise read as "never renamed" and leak it.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 7, "title": "Parser crash - fixed in v2.4 (#900)",
+               "created_at": "2023-01-01T00:00:00Z", "closed_at": None}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            raise RuntimeError("simulated transient error on page 1")
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["title"] == ""
+    assert iss["title_as_of_t"] is False
+    assert iss["labels_as_of_t"] is False  # both fields fail closed on an unavailable timeline
+
+
+def test_issue_record_fails_title_closed_when_timeline_unavailable(monkeypatch):
+    # Direct unit on the guard: an unavailable timeline (([], True) from a missing number or a
+    # first-page error) omits the title, mirroring the labels posture -- never the live value.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(gc, "_issue_timeline", lambda *a, **k: ([], True))
+    rec = gc._issue_record_at("base", {"number": 5, "title": "live title"}, T, None, 20)
+    assert rec["title"] == ""
+    assert rec["title_as_of_t"] is False
+    assert rec["labels_as_of_t"] is False
 
 
 def test_open_issue_labels_omitted_when_timeline_truncated(monkeypatch):
