@@ -82,6 +82,25 @@ def _scored_repo(entry: dict) -> bool:
     return _is_number(tasks) and int(tasks) > 0
 
 
+def _partition_scored(partition: dict) -> bool:
+    """True when a partition carries at least one scored slice to verify.
+
+    A partition may omit ``scored_repos`` while still recording scored work under ``per_repo``;
+    treating a missing key as unscored (the previous truthy ``scored_repos`` guard) skipped
+    entire partitions and let invalid per-repo weights pass unchecked.
+    """
+    partition = _dict(partition)
+    per_repo = partition.get("per_repo")
+    if isinstance(per_repo, list):
+        if any(_scored_repo(entry) for entry in _per_repo_list(per_repo)):
+            return True
+    scored = partition.get("scored_repos")
+    if _is_number(scored):
+        return int(scored) > 0
+    tasks = partition.get("tasks")
+    return _is_number(tasks) and int(tasks) > 0
+
+
 def _expand_slice(label: str, part: dict) -> list[tuple[str, dict]]:
     """Scored weight-bearing slices under a partition: its scored ``per_repo`` rows, else itself."""
     per_repo = part.get("per_repo")
@@ -105,7 +124,7 @@ def _weight_slices(result: dict) -> list[tuple[str, dict]]:
     if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
         slices: list[tuple[str, dict]] = []
         for label, part in (("tuned", tuned), ("held_out", held_out)):
-            if isinstance(part, dict) and part.get("scored_repos"):
+            if isinstance(part, dict) and _partition_scored(part):
                 slices.extend(_expand_slice(label, part))
         return slices
     if "per_repo" in result:

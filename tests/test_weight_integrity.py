@@ -176,10 +176,33 @@ def test_generalization_partition_without_per_repo_checks_itself():
     assert "tuned:weights_present" in _names(result)
 
 
-def test_generalization_missing_scored_repos_yields_no_slices():
+def test_generalization_partition_without_scored_repos_but_scored_per_repo_is_checked():
     result = check_weight_integrity({
         "generalization_gap": 0.1,
-        "tuned": {"per_repo": [_slice({"judge": 0.6, "objective": 0.4})]},  # no scored_repos
+        "tuned": {"per_repo": [_slice({"judge": 0.6, "objective": 0.4})]},
+        "held_out": {"scored_repos": 0},
+    })
+    assert result["passed"] is True
+    assert "tuned:repo-0:weights_present" in _names(result)
+
+
+def test_generalization_invalid_per_repo_without_scored_repos_is_caught():
+    result = check_weight_integrity({
+        "generalization_gap": 0.0,
+        "tuned": {"per_repo": [
+            _slice({"judge": -1, "objective": 0.5}),
+            _slice({"judge": 0.5, "objective": 0.5}),
+        ]},
+        "held_out": {"scored_repos": 1, "weights": {"judge": 0.5, "objective": 0.5}},
+    })
+    assert result["passed"] is False
+    assert "tuned:repo-0:weights_non_negative" in failed_checks(result)
+
+
+def test_generalization_unscored_partitions_with_no_per_repo_yield_no_slices():
+    result = check_weight_integrity({
+        "generalization_gap": 0.1,
+        "tuned": {"composite_mean": 0.6},
         "held_out": {"scored_repos": 0},
     })
     assert _names(result) == {"artifact_shape": False}
