@@ -19,6 +19,7 @@ Pure analysis: no I/O, never mutates its inputs, and an artifact with no usable 
 from __future__ import annotations
 
 import logging
+import math
 from statistics import mean, stdev
 
 from benchmark.trend import headline_score
@@ -31,6 +32,35 @@ DEFAULT_MIN_RUNS = 2
 
 def _round(value):
     return round(float(value), 3) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _usable_score(value) -> float | None:
+    """Return a finite headline score, or ``None`` when ``value`` is not usable."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _repeatability_scores(artifacts) -> list[float]:
+    """Extract finite headline scores from repeat-run artifacts, skipping junk."""
+    scores = []
+    for artifact in _repeatability_artifacts(artifacts):
+        raw = headline_score(artifact)
+        score = _usable_score(raw)
+        if score is None:
+            if raw is not None:
+                logger.warning(
+                    "repeatability: skipping non-numeric headline score (%s: %r)",
+                    type(raw).__name__,
+                    raw,
+                )
+            continue
+        scores.append(score)
+    return scores
 
 
 def _repeatability_artifacts(artifacts) -> list:
@@ -63,12 +93,10 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
       and ``None`` when the mean is 0 but the spread is not (a CV that can't be normalized);
     - ``stable``: True only when there are at least ``min_runs`` scored repeats and ``cv`` is a
       number ``<= max_cv``;
-    - ``reason``: a short explanation when ``stable`` is False.
+    - ``reason``: a short explanation when ``stable`` is False (including ``"no scored runs"``
+      when every artifact is unscored and ``min_runs <= 0`` would otherwise reach ``mean()``).
     """
-    scores = [
-        s for s in (headline_score(a) for a in _repeatability_artifacts(artifacts))
-        if s is not None
-    ]
+    scores = _repeatability_scores(artifacts)
     runs = len(scores)
     result = {
         "stable": False,
@@ -87,6 +115,10 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
 
     if runs < min_runs:
         result["reason"] = f"insufficient runs: {runs} scored < min_runs {min_runs}"
+        return result
+
+    if not scores:
+        result["reason"] = "no scored runs"
         return result
 
     mu = round(mean(scores), 3)

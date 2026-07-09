@@ -233,3 +233,28 @@ def test_cli_still_reports_stable_for_well_formed_artifacts(tmp_path):
     assert result.returncode == 0
     assert "STABLE" in result.stderr
     assert json.loads(result.stdout)["stable"] is True
+
+
+# --- #1222: empty scored set must not reach mean() when min_runs <= 0 --------------------
+
+
+def test_no_scored_runs_is_inconclusive_when_min_runs_is_zero():
+    for min_runs in (0, -1):
+        result = assess_repeatability([], min_runs=min_runs)
+        assert result["stable"] is False
+        assert result["runs"] == 0
+        assert result["scores"] == []
+        assert result["mean"] is None
+        assert result["reason"] == "no scored runs"
+
+
+def test_all_unscored_repeats_are_inconclusive_when_min_runs_is_zero():
+    artifacts = [{"error": "no tasks"}, "not-a-dict", {"composite_mean": "bad"}]
+    result = assess_repeatability(artifacts, min_runs=0)
+    assert result["runs"] == 0
+    assert result["reason"] == "no scored runs"
+
+
+def test_empty_artifact_set_with_positive_min_runs_keeps_insufficient_reason():
+    result = assess_repeatability([], min_runs=2)
+    assert result["reason"] == "insufficient runs: 0 scored < min_runs 2"
