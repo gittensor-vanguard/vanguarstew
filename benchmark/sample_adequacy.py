@@ -11,10 +11,10 @@ evaluates named criteria across single-repo (``run_replay``) and multi-repo (``r
 / ``--generalization``) results, and every check **fails closed** - a check never passes without
 positively verifying its condition:
 
-1. ``run_scored`` - the run produced a trustworthy task total: no ``error``, a positive count, and
-   (for a multi-repo result) *every* per-repo entry is a well-formed dict with a numeric task
-   count. A single malformed per-repo entry makes the total untrustworthy and fails this check
-   rather than being silently skipped.
+1. ``run_scored`` - the run produced a trustworthy task total: no ``error`` (and for a
+   ``--generalization`` artifact, no partition-level or per-repo error under ``tuned``/``held_out``,
+   mirroring ``check_acceptance``), a positive count, and (for a multi-repo result) *every*
+   per-repo entry is a well-formed dict with a numeric task count.
 2. ``enough_tasks`` - the total number of tasks judged is at least ``min_tasks``.
 3. ``all_tasks_decided`` - a challenger/baseline/tie tally is present and sums to the task total,
    so no task was dropped between judging and tallying. A missing tally, a tally missing a key, or
@@ -30,6 +30,8 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+
+from benchmark.acceptance import _partition_error
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +168,30 @@ def _decided(result: dict):
     return total
 
 
+def _uses_generalization_partitions(result: dict) -> bool:
+    """True when task/tally totals are summed from ``tuned``/``held_out`` (not top-level ``per_repo``)."""
+    if "per_repo" in result:
+        return False
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    return isinstance(tuned, dict) and isinstance(held_out, dict)
+
+
+def _run_scored(result: dict, tasks) -> tuple[bool, str]:
+    """Whether the artifact produced a trustworthy scored sample, and a detail string."""
+    if _uses_generalization_partitions(result):
+        tuned_err = _partition_error(result.get("tuned"))
+        held_err = _partition_error(result.get("held_out"))
+        if tuned_err is not None or held_err is not None:
+            return False, f"partition error(s): tuned={tuned_err!r}, held_out={held_err!r}"
+    elif result.get("error"):
+        return False, (
+            f"no trustworthy task total (error={result.get('error')!r}, tasks={tasks!r})"
+        )
+    if _is_number(tasks) and tasks > 0:
+        return True, f"{tasks} task(s)"
+    return False, f"no trustworthy task total (error={result.get('error')!r}, tasks={tasks!r})"
+
+
 def check_sample_adequacy(result, min_tasks: int = DEFAULT_MIN_TASKS) -> dict:
     """Evaluate whether a run ``result`` judged and accounted for enough tasks to be trustworthy.
 
@@ -181,10 +207,8 @@ def check_sample_adequacy(result, min_tasks: int = DEFAULT_MIN_TASKS) -> dict:
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    scored = not result.get("error") and _is_number(tasks) and tasks > 0
-    add("run_scored", scored,
-        f"{tasks} task(s)" if scored
-        else f"no trustworthy task total (error={result.get('error')!r}, tasks={tasks!r})")
+    scored, scored_detail = _run_scored(result, tasks)
+    add("run_scored", scored, scored_detail)
 
     add("enough_tasks", _is_number(tasks) and tasks >= min_tasks,
         f"{tasks} task(s) >= {min_tasks}" if _is_number(tasks) else "task total unavailable")

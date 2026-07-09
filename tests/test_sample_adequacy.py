@@ -127,6 +127,29 @@ def _repo(tasks, ch, ba, ti):
     return {"repo": "r", "tasks": tasks, "tally": {"challenger": ch, "baseline": ba, "tie": ti}}
 
 
+def test_generalization_partition_error_fails_run_scored():
+    gen = {
+        "tuned": {"error": "repo set test has no tuned repos to replay", "scored_repos": 0},
+        "held_out": {"per_repo": [_repo(5, 4, 1, 0), _repo(7, 5, 1, 1)]},
+        "generalization_gap": None,
+    }
+    result = check_sample_adequacy(gen, min_tasks=10)
+    assert result["passed"] is False
+    assert "run_scored" in failed_checks(result)
+    assert "tuned=" in next(c["detail"] for c in result["checks"] if c["name"] == "run_scored")
+
+
+def test_generalization_per_repo_error_on_tuned_fails_run_scored():
+    gen = {
+        "tuned": {"per_repo": [{"repo": "bad", "error": "clone failed", "tasks": 0}]},
+        "held_out": {"per_repo": [_repo(6, 4, 1, 1), _repo(6, 3, 2, 1)]},
+        "generalization_gap": None,
+    }
+    result = check_sample_adequacy(gen, min_tasks=10)
+    assert result["passed"] is False
+    assert "run_scored" in failed_checks(result)
+
+
 def test_real_multi_repo_run_with_per_repo_tallies_is_adequate():
     result = check_sample_adequacy({"per_repo": [_repo(5, 4, 1, 0), _repo(5, 3, 1, 1)]}, min_tasks=6)
     assert result["tasks"] == 10 and result["decided"] == 10
