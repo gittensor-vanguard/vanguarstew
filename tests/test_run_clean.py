@@ -19,6 +19,7 @@ except ImportError:
 
 from benchmark.run_clean import (  # noqa: E402
     _check_rows_list,
+    _findings_list,
     check_run_clean,
     failed_checks,
     run_clean_headline,
@@ -242,3 +243,35 @@ def test_failed_checks_integration_with_check_rows_list(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
         assert failed_checks({"checks": checks}) == ["no_errors"]
     assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+# --- #1219: findings list guard for run_clean_headline -----------------------------
+
+_MALFORMED_FINDINGS = [42, 3.14, True, {"detail": "x"}, "not a list", (["a"],)]
+
+
+def test_findings_list_accepts_only_real_lists():
+    findings = ["top-level error: 'x'"]
+    for bad in _MALFORMED_FINDINGS:
+        assert _findings_list(bad) == [], bad
+    assert _findings_list(findings) == findings
+    assert _findings_list(None) == []
+    assert _findings_list([]) == []
+
+
+def test_run_clean_headline_tolerates_non_list_findings():
+    assert run_clean_headline({"passed": False, "findings": 42}) == "run clean: ERRORS (0 finding(s))"
+
+
+def test_run_clean_headline_honors_valid_findings_list():
+    headline = run_clean_headline({
+        "passed": False,
+        "findings": ["top-level error: 'clone failed'"],
+    })
+    assert headline == "run clean: ERRORS (1 finding(s))"
+
+
+def test_findings_list_warns_for_non_list_container(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _findings_list(42) == []
+    assert any("findings is int" in r.message for r in caplog.records)
