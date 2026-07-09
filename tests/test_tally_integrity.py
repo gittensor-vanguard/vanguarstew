@@ -185,6 +185,21 @@ def test_generalization_skips_unscored_partitions():
     assert failed_checks(result) == ["artifact_shape"]
 
 
+def test_generalization_per_repo_without_scored_repos_is_checked():
+    held = _artifact()
+    held["scored_repos"] = 1
+    bad = _artifact(tasks=3, challenger=2, baseline=1, tie=0)
+    bad["tally"] = {"challenger": 0, "baseline": 3, "tie": 0}
+    report = {
+        "generalization_gap": 0.0,
+        "tuned": {"per_repo": [bad]},
+        "held_out": held,
+    }
+    result = check_tally_integrity(report)
+    assert result["passed"] is False
+    assert any(name.startswith("tuned:repo-0:") for name in failed_checks(result))
+
+
 def test_tally_counts_rejects_malformed_values():
     assert _tally_counts({"challenger": 1, "baseline": "x", "tie": 0}) is None
     assert _tally_counts("not a dict") is None

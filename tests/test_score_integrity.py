@@ -154,6 +154,21 @@ def test_generalization_skips_unscored_partitions():
     assert failed_checks(result) == ["artifact_shape"]
 
 
+def test_generalization_composite_without_scored_repos_is_checked():
+    report = {
+        "generalization_gap": 0.0,
+        "tuned": {
+            "composite_mean": 0.99,
+            "composite_parts": {"judge_mean": 0.5, "objective_mean": 0.5},
+            "weights": {"judge": 0.6, "objective": 0.4},
+        },
+        "held_out": _artifact(composite=0.6, judge=0.6, objective=0.6),
+    }
+    result = check_score_integrity(report)
+    assert result["passed"] is False
+    assert "tuned:blend_consistent" in failed_checks(result)
+
+
 def test_multi_repo_weights_from_per_repo():
     art = {
         "composite_mean": 0.62,

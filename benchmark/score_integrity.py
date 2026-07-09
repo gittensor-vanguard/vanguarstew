@@ -234,6 +234,19 @@ def _in_unit_interval(value) -> bool:
     return _is_number(value) and 0.0 <= float(value) <= 1.0
 
 
+def _partition_scored(part: dict) -> bool:
+    """True when a partition carries a composite score to verify.
+
+    A partition may omit ``scored_repos`` while still reporting ``composite_mean``; the previous
+    truthy ``scored_repos`` guard skipped those slices entirely.
+    """
+    part = _dict(part)
+    scored = part.get("scored_repos")
+    if _is_number(scored):
+        return int(scored) > 0
+    return _is_number(part.get("composite_mean"))
+
+
 def _scoring_slices(result: dict) -> list[tuple[str, dict]]:
     """Return labeled scoring slices to verify (generalization partitions or the run itself)."""
     tuned = result.get("tuned")
@@ -241,7 +254,7 @@ def _scoring_slices(result: dict) -> list[tuple[str, dict]]:
     if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
         slices = []
         for label, part in (("tuned", tuned), ("held_out", held_out)):
-            if isinstance(part, dict) and part.get("scored_repos"):
+            if isinstance(part, dict) and _partition_scored(part):
                 slices.append((label, part))
         return slices
     return [("run", result)]

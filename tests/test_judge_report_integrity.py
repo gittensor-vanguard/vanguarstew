@@ -149,6 +149,21 @@ def test_generalization_skips_unscored_partitions():
     assert failed_checks(result) == ["artifact_shape"]
 
 
+def test_generalization_per_repo_without_scored_repos_is_checked():
+    held = _artifact()
+    held["scored_repos"] = 1
+    bad = _artifact()
+    bad["judge_report"]["wins"] = 999
+    report = {
+        "generalization_gap": 0.0,
+        "tuned": {"per_repo": [bad]},
+        "held_out": held,
+    }
+    result = check_judge_report_integrity(report)
+    assert result["passed"] is False
+    assert any("tuned:repo-0:" in name for name in failed_checks(result))
+
+
 def test_report_slices_expands_partition_per_repo():
     entry = _artifact()
     part = {"scored_repos": 1, "per_repo": [entry]}

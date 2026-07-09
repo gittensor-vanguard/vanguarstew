@@ -147,12 +147,17 @@ def _expand_slice(label: str, part: dict) -> list[tuple[str, dict]]:
     return slices
 
 
+def _partition_scored(part: dict) -> bool:
+    """True when a partition carries at least one tally slice to verify."""
+    return bool(_expand_slice("_probe", part))
+
+
 def _integrity_slices(result: dict) -> list[tuple[str, dict]]:
     tuned, held_out = result.get("tuned"), result.get("held_out")
     if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
         slices: list[tuple[str, dict]] = []
         for label, part in (("tuned", tuned), ("held_out", held_out)):
-            if isinstance(part, dict) and part.get("scored_repos"):
+            if isinstance(part, dict) and _partition_scored(part):
                 slices.extend(_expand_slice(label, part))
         return slices
     if "per_repo" in result:

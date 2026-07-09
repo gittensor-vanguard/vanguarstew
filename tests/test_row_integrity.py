@@ -174,6 +174,22 @@ def test_generalization_skips_unscored_partitions():
     assert failed_checks(result) == ["artifact_shape"]
 
 
+def test_generalization_per_repo_without_scored_repos_is_checked():
+    import copy
+    held = _artifact()
+    held["scored_repos"] = 1
+    bad_rows = copy.deepcopy(ROWS)
+    bad_rows[0]["composite"] = 0.99
+    report = {
+        "generalization_gap": 0.0,
+        "tuned": {"per_repo": [_artifact(rows=bad_rows)]},
+        "held_out": held,
+    }
+    result = check_row_integrity(report)
+    assert result["passed"] is False
+    assert "tuned:repo-0:row_composites_consistent" in failed_checks(result)
+
+
 def test_row_slices_expands_partition_rows():
     part = {"scored_repos": 1, "rows": ROWS, **_artifact(rows=ROWS)}
     slices = _row_slices({"tuned": part, "held_out": part, "generalization_gap": 0.0})
