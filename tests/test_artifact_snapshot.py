@@ -215,4 +215,4 @@ def test_cli_multiple_artifacts_wraps_paths(tmp_artifact, capsys):
 def test_cli_missing_file_exits_two(tmp_artifact, capsys):
     good = tmp_artifact("good.json", _single())
     assert cli.run([good, "missing.json"]) == 2
-    assert "not found" in capsys.readouterr().err
+    assert "cannot read artifact" in capsys.readouterr().err

@@ -363,7 +363,7 @@ def test_cli_strict_passes_for_comparable_artifacts(tmp_artifacts, capsys):
 def test_cli_missing_file_exits_two(tmp_artifacts, capsys):
     good = tmp_artifacts("good.json", _multi("a"))
     assert cli.run([good, "missing.json"]) == 2
-    assert "not found" in capsys.readouterr().err
+    assert "cannot read artifact" in capsys.readouterr().err
 
 
 def test_cli_rejects_non_object_json(tmp_artifacts, capsys):

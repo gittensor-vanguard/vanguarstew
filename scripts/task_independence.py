@@ -26,8 +26,8 @@ def load_tasks(path: str):
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except FileNotFoundError:
-        print(f"task file not found: {path}", file=sys.stderr)
+    except OSError as exc:
+        print(f"cannot read task file ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except json.JSONDecodeError as exc:
         print(f"task file is not valid JSON ({path}): {exc}", file=sys.stderr)
