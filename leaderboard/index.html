@@ -146,9 +146,12 @@
   <section>
     <div class="wrap pad">
       <p class="eyebrow head-eyebrow">Full record</p>
-      <h2 class="sec-title">Every evaluated PR.</h2>
+      <h2 class="sec-title">Every merged or regression-blocked PR.</h2>
       <p class="sec-lead">The bot's label, and the measured delta on each target, for every
-        <code>agent/</code> PR it has scored — merged, unlabeled, or closed.</p>
+        <code>agent/</code> PR that either merged (any outcome, including no measurable
+        change) or was closed because it measurably regressed the agent. A PR closed for
+        any other reason doesn't appear here — this table is evidence, not a scoreboard of
+        every review the bot has ever made.</p>
 
       <p id="prs-empty" class="empty" style="display:none">No real scores published yet.</p>
 
@@ -252,7 +255,13 @@
     }
 
     function renderJourney(data, anchor){
-      var scored = data.filter(function(d){ return d.since_anchor; });
+      // Bar chart = merged AND genuinely improved only. Every scored PR now carries
+      // since_anchor (merged-flat and blocked-close entries too, since M5's full-record
+      // rule), so filtering on since_anchor alone is no longer enough -- explicitly
+      // require merged=true and a real positive band.
+      var scored = data.filter(function(d){
+        return d.since_anchor && d.merged === true && d.band && d.band !== 'none' && d.band !== 'blocked';
+      });
       var anchorPoint = null;
       if(anchor && anchor.anchor){
         var anchorScore = worse(anchor.public_score, anchor.private_score);
