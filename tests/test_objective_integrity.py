@@ -278,6 +278,18 @@ def test_cli_missing_file_exits_two():
     assert proc.returncode == 2
 
 
+def test_cli_directory_artifact_exits_two_without_traceback(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(tmp_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "cannot read artifact" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
 def test_weighted_recall_preferred_when_valid():
     obj = {"weighted_module_recall": 0.8, "module_recall": 0.2}
     assert objective_component(obj) == 0.8
