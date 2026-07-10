@@ -291,7 +291,7 @@ def test_both_composites_none_fails_gracefully():
     assert result["disagreement_delta"] is None
     assert failed_checks(result) == ["both_scored", "no_composite_regression"]
     assert _row(result, "no_judge_instability_increase")["passed"] is True
-    assert _row(result, "both_scored")["detail"] == "a composite score is missing from one artifact"
+    assert _row(result, "both_scored")["detail"] == "baseline error: 'b'"
     assert _row(result, "no_composite_regression")["detail"] == "cannot compare composites"
 
 
