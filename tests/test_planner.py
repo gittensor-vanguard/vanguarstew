@@ -14,6 +14,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
+    COMMIT_KIND_HINT_GUIDANCE,
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
@@ -26,8 +27,11 @@ from agent.planner import (  # noqa: E402
     _pr_number,
     _pr_queue_note,
     _pr_title,
+    _recent_commit_kind_hints,
+    _recent_commit_kinds_note,
     _safe_prs,
     _significant_tokens,
+    _subject_plan_kind,
     plan_next_actions,
     reconcile_plan_with_queue,
 )
@@ -728,3 +732,48 @@ def test_review_verb_governs_number_across_an_action_verb():
     out = reconcile_plan_with_queue([{"title": "Merge and land #7", "kind": "triage"}],
                                     {"open_prs": prs}, 5)
     assert [o["title"] for o in out] == ["Merge and land #7"]
+
+
+def test_subject_plan_kind_maps_conventional_commits():
+    assert _subject_plan_kind("fix: race in loader") == "bugfix"
+    assert _subject_plan_kind("feat(api): add streaming export") == "feature"
+    assert _subject_plan_kind("docs: update README") == "docs"
+    assert _subject_plan_kind("chore(release): 1.4.0") == "release"
+    assert _subject_plan_kind("Release v2.0.0") == "release"
+    assert _subject_plan_kind(42) is None
+
+
+def test_recent_commit_kind_hints_dedupes_newest_first():
+    ctx = {
+        "recent_commits": [
+            {"subject": "fix: loader race"},
+            {"subject": "docs: changelog"},
+            {"subject": "fix: another bug"},
+            {"subject": "feat: new endpoint"},
+        ],
+    }
+    assert _recent_commit_kind_hints(ctx) == ["bugfix", "docs", "feature"]
+
+
+def test_recent_commit_kinds_note_empty_without_commits():
+    assert _recent_commit_kinds_note({}) == ""
+    assert _recent_commit_kinds_note({"recent_commits": []}) == ""
+
+
+class _PromptCaptureLLM:
+    def __init__(self, payload):
+        self.payload = payload
+        self.last_user = ""
+
+    def chat_json(self, system, user, stub=None):
+        self.last_user = user
+        return self.payload
+
+
+def test_plan_prompt_includes_recent_commit_kind_hints():
+    ctx = {"recent_commits": [{"subject": "fix: race"}, {"subject": "docs: readme"}]}
+    llm = _PromptCaptureLLM([{"title": "Fix race", "kind": "bugfix"}])
+    plan_next_actions(ctx, {}, 1, llm)
+    assert "Recent maintainer commit kinds" in llm.last_user
+    assert "bugfix, docs" in llm.last_user
+    assert COMMIT_KIND_HINT_GUIDANCE in llm.last_user

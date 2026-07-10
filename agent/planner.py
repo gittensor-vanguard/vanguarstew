@@ -66,6 +66,23 @@ SYSTEM = (
     "Stay consistent with the philosophy. Respond ONLY with JSON."
 )
 
+# Conventional-commit prefix -> planner `kind` vocabulary (mirrors benchmark scoring's
+# commit_kind/plan_kind mapping enough for prompt hints; agent/ must not import benchmark/).
+_CC_PREFIX = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
+_CC_TO_PLAN_KIND = {
+    "feat": "feature", "feature": "feature",
+    "fix": "bugfix", "bugfix": "bugfix", "bug": "bugfix",
+    "docs": "docs", "doc": "docs",
+    "refactor": "refactor",
+    "dep": "dep", "deps": "dep", "chore": "dep",
+    "release": "release",
+}
+_RELEASE_KW = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
+
+COMMIT_KIND_HINT_GUIDANCE = (
+    "Prefer matching plan item `kind` to these patterns when proposing similar work."
+)
+
 
 def _pr_title(pr: dict) -> str:
     """Return a stripped PR title when it is a string; else empty."""
@@ -482,13 +499,67 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     return out[:n]
 
 
+def _subject_plan_kind(subject) -> str | None:
+    """Map a recent commit subject to a planner ``kind``, when recognizable."""
+    if not isinstance(subject, str):
+        return None
+    text = subject.strip()
+    if not text:
+        return None
+    match = _CC_PREFIX.match(text)
+    if match:
+        prefix = match.group(1).lower()
+        body = text[match.end():].lstrip(" :\t")
+        if prefix in ("chore", "build"):
+            header = text[: match.end()].lower()
+            if "release" in header or _RELEASE_KW.search(body):
+                return "release"
+        return _CC_TO_PLAN_KIND.get(prefix)
+    if _RELEASE_KW.search(text):
+        return "release"
+    return None
+
+
+def _recent_commit_kind_hints(context: dict, limit: int = 8) -> list[str]:
+    """Distinct planner kinds seen in recent commit subjects (newest first)."""
+    if not isinstance(context, dict):
+        return []
+    ctx = context_for_agent(context)
+    commits = ctx.get("recent_commits")
+    if not isinstance(commits, list):
+        return []
+    hints: list[str] = []
+    for row in commits:
+        if not isinstance(row, dict):
+            continue
+        kind = _subject_plan_kind(row.get("subject", ""))
+        if kind and kind not in hints:
+            hints.append(kind)
+        if len(hints) >= limit:
+            break
+    return hints
+
+
+def _recent_commit_kinds_note(context: dict) -> str:
+    """Prompt block listing maintainer commit-kind patterns from recent history."""
+    hints = _recent_commit_kind_hints(context)
+    if not hints:
+        return ""
+    return (
+        f"\nRecent maintainer commit kinds in history (newest first): "
+        f"{', '.join(hints)}.\n"
+        f"{COMMIT_KIND_HINT_GUIDANCE}\n"
+    )
+
+
 def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
-        f"{_pr_queue_note(context)}\n"
+        f"{_pr_queue_note(context)}"
+        f"{_recent_commit_kinds_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         '  "title": short imperative title,\n'
         '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
