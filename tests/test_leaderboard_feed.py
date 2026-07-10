@@ -126,15 +126,19 @@ def test_since_anchor_carries_anchor_name_and_both_deltas():
     since = _since_anchor_report()
     entry = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor=since)
     assert entry["since_anchor"]["anchor"] == "v0.5.0"
-    assert entry["since_anchor"]["public"] == {"composite_delta": 0.12}
-    assert entry["since_anchor"]["private"] == {"composite_delta": 0.04}
+    assert entry["since_anchor"]["public"] == {
+        "composite_delta": 0.12, "composite_score": 0.72, "anchor_score": 0.6,
+    }
+    assert entry["since_anchor"]["private"] == {
+        "composite_delta": 0.04, "composite_score": 0.64, "anchor_score": 0.6,
+    }
 
 
 def test_since_anchor_never_leaks_private_per_repo_data():
     combined = _real_combined_report()
     since = _since_anchor_report()
     entry = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor=since)
-    assert set(entry["since_anchor"]["private"]) == {"composite_delta"}
+    assert set(entry["since_anchor"]["private"]) == {"composite_delta", "composite_score", "anchor_score"}
     assert "hidden-repo" not in json.dumps(entry)
 
 
@@ -143,12 +147,23 @@ def test_since_anchor_tolerates_malformed_input():
     entry = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor={"anchor": "v0.5.0"})
     assert entry["since_anchor"] == {
         "anchor": "v0.5.0",
-        "public": {"composite_delta": None},
-        "private": {"composite_delta": None},
+        "public": {"composite_delta": None, "composite_score": None, "anchor_score": None},
+        "private": {"composite_delta": None, "composite_score": None, "anchor_score": None},
     }
     # a non-dict since_anchor is treated the same as not passing one at all
     entry2 = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor="not a dict")
     assert "since_anchor" not in entry2
+
+
+def test_since_anchor_score_is_consistent_with_delta():
+    """composite_score - anchor_score should equal composite_delta -- the bar chart on the
+    leaderboard page relies on these three numbers being internally consistent."""
+    combined = _real_combined_report()
+    since = _since_anchor_report()
+    entry = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor=since)
+    for side in ("public", "private"):
+        fields = entry["since_anchor"][side]
+        assert round(fields["composite_score"] - fields["anchor_score"], 4) == fields["composite_delta"]
 
 
 def test_append_entry_creates_file_when_missing(tmp_path):

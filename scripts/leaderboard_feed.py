@@ -20,7 +20,9 @@ Two DIFFERENT deltas can appear on one entry:
   - ``since_anchor`` (optional) is against a FIXED, named release (e.g. v0.5.0) that never
     moves until the anchor itself is rolled forward. This answers "how much better is the
     agent now than at our last tagged release" -- the cumulative-progress line, not a
-    per-PR eligibility check. See _since_anchor_fields().
+    per-PR eligibility check. Carries both ``composite_delta`` AND the absolute
+    ``composite_score``/``anchor_score`` scalars, so the leaderboard page can draw a
+    growing bar per PR, not just a signed delta. See _since_anchor_fields().
 
 Pure data transformation: no I/O, no network, no repo-set opinions of its own.
 """
@@ -57,21 +59,35 @@ def _since_anchor_fields(since_anchor: dict | None) -> dict | None:
     """The public-safe subset of a since-anchor comparison (candidate vs. a FIXED, named
     release -- e.g. v0.5.0 -- rather than the shifting `test`-branch baseline every per-PR
     score already uses). Same privacy rule as the per-PR public/private split: the private
-    target contributes only its composite_delta, never a diff or per-repo breakdown.
+    target contributes only scalar composite figures, never a per-repo breakdown.
 
     ``since_anchor`` is expected to carry ``{"anchor": <name>, "public": <score_pr_delta
     result>, "private": <score_pr_delta result>}`` -- the same shape score_pr_delta() already
     returns for each target, just diffed against the cached anchor baseline instead of the
     current base branch. ``None`` (no anchor comparison was run) passes through as ``None``.
+
+    Besides ``composite_delta``, this also surfaces ``composite_score`` (the candidate's own
+    absolute composite mean) and ``anchor_score`` (the anchor's absolute composite mean, i.e.
+    ``diff.composite_mean.candidate``/``.baseline``) -- both are scalar aggregates, not a
+    per-repo breakdown, so publishing them carries the same privacy profile as the delta
+    already published; they're what let the leaderboard page draw an absolute, growing bar
+    per PR (like sparkinfer's optimization-journey chart) instead of only a signed delta.
     """
     if not isinstance(since_anchor, dict):
         return None
-    public = since_anchor.get("public") or {}
-    private = since_anchor.get("private") or {}
+
+    def _scores(report):
+        composite = ((report or {}).get("diff") or {}).get("composite_mean") or {}
+        return {
+            "composite_delta": _round(composite.get("delta")),
+            "composite_score": _round(composite.get("candidate")),
+            "anchor_score": _round(composite.get("baseline")),
+        }
+
     return {
         "anchor": since_anchor.get("anchor"),
-        "public": {"composite_delta": _round((public.get("composite_deltas") or {}).get("composite_mean"))},
-        "private": {"composite_delta": _round((private.get("composite_deltas") or {}).get("composite_mean"))},
+        "public": _scores(since_anchor.get("public")),
+        "private": _scores(since_anchor.get("private")),
     }
 
 
