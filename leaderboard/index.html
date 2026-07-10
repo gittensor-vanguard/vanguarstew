@@ -208,21 +208,27 @@
       return Math.min(a, b);
     }
 
-    fetch('../results.json', {cache: 'no-store'})
-      .then(function(r){ if(!r.ok) throw new Error('no feed'); return r.json(); })
-      .then(function(data){
-        if(!Array.isArray(data) || data.length === 0){
-          document.getElementById('jr-empty').style.display = 'block';
-          document.getElementById('prs-empty').style.display = 'block';
-          return;
-        }
-        renderTable(data);
-        renderJourney(data);
-      })
-      .catch(function(){
+    // anchor.json is fetched independently of results.json -- it's published once whenever
+    // the anchor is (re)generated (see codex-dev/anchor_baseline.sh), so the base bar has a
+    // real score from the moment the anchor exists, not only once a PR has been scored
+    // against it. Its absence (not yet generated, or the fetch fails) is tolerated: the
+    // journey chart then falls back to the empty state if no PR carries since_anchor either.
+    Promise.all([
+      fetch('../results.json', {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }),
+      fetch('../anchor.json', {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }),
+    ]).then(function(results){
+      var data = results[0], anchor = results[1];
+      if(!Array.isArray(data) || data.length === 0){
         document.getElementById('jr-empty').style.display = 'block';
         document.getElementById('prs-empty').style.display = 'block';
-      });
+        return;
+      }
+      renderTable(data);
+      renderJourney(data, anchor);
+    }).catch(function(){
+      document.getElementById('jr-empty').style.display = 'block';
+      document.getElementById('prs-empty').style.display = 'block';
+    });
 
     function renderTable(data){
       var rows = data.slice().reverse().map(function(d){
@@ -244,19 +250,32 @@
       document.getElementById('prs-content').style.display = 'block';
     }
 
-    function renderJourney(data){
+    function renderJourney(data, anchor){
       var scored = data.filter(function(d){ return d.since_anchor; });
-      if(!scored.length){
+      var anchorPoint = null;
+      if(anchor && anchor.anchor){
+        var anchorScore = worse(anchor.public_score, anchor.private_score);
+        anchorPoint = {
+          label: esc(anchor.anchor), sub: 'fixed anchor release · ' + fmtDate(anchor.timestamp),
+          value: anchorScore, kind: 'anchor',
+        };
+      } else if(scored.length){
+        // no anchor.json yet (older deploy) -- fall back to deriving it from the first
+        // since_anchor-carrying PR, same as before this file existed.
+        var first = scored[0].since_anchor;
+        anchorPoint = {
+          label: esc(first.anchor || 'anchor release'), sub: 'fixed anchor release',
+          value: worse(first.public && first.public.anchor_score, first.private && first.private.anchor_score),
+          kind: 'anchor',
+        };
+      }
+
+      if(!anchorPoint){
         document.getElementById('jr-empty').style.display = 'block';
         return;
       }
-      var anchorName = scored[0].since_anchor.anchor || 'anchor release';
-      var anchorScore = worse(scored[0].since_anchor.public && scored[0].since_anchor.public.anchor_score,
-                              scored[0].since_anchor.private && scored[0].since_anchor.private.anchor_score);
 
-      var points = [{
-        label: esc(anchorName), sub: 'fixed anchor release', value: anchorScore, kind: 'anchor',
-      }].concat(scored.map(function(d){
+      var points = [anchorPoint].concat(scored.map(function(d){
         var score = worse(d.since_anchor.public && d.since_anchor.public.composite_score,
                           d.since_anchor.private && d.since_anchor.private.composite_score);
         var b = bandInfo(d);
@@ -266,10 +285,11 @@
         };
       }));
 
-      var first = points[0].value, last = points[points.length - 1].value;
+      var firstVal = points[0].value, lastVal = points[points.length - 1].value;
       document.getElementById('jr-hint').textContent =
-        (typeof first === 'number' ? first.toFixed(3) : 'n/a') + ' → ' +
-        (typeof last === 'number' ? last.toFixed(3) : 'n/a') + ' composite (worse of public/private)';
+        (typeof firstVal === 'number' ? firstVal.toFixed(3) : 'n/a') + ' → ' +
+        (typeof lastVal === 'number' ? lastVal.toFixed(3) : 'n/a') + ' composite (worse of public/private)' +
+        (points.length === 1 ? ' · waiting on the first scored PR' : '');
       document.getElementById('jr-content').style.display = 'block';
       drawBars('jr-chart', points);
     }
