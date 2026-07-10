@@ -19,7 +19,7 @@ from benchmark.freeze_coverage import (  # noqa: E402
     _dict,
     _has_freeze_commit,
     _is_number,
-    _rows_from_per_repo,
+    _repo_freeze_flags,
     _slice_summary,
     freeze_coverage_headline,
     summarize_freeze_coverage,
@@ -81,21 +81,22 @@ def test_empty_or_missing_freeze_not_counted(entry):
 # --- Per-repo row parsing -------------------------------------------------------------------
 
 
-def test_per_repo_none_yields_empty_rows():
-    assert _rows_from_per_repo(None) == []
+def test_per_repo_none_yields_no_flags():
+    assert _repo_freeze_flags(None) == []
 
 
 def test_per_repo_non_list_warns_and_empty(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.freeze_coverage"):
-        assert _rows_from_per_repo(42, field="per_repo") == []
+        assert _repo_freeze_flags(42, field="per_repo") == []
     assert any("per_repo is int" in r.message for r in caplog.records)
 
 
-def test_malformed_row_skipped_with_warning(caplog):
+def test_corrupt_string_row_flagged_unfrozen_with_warning(caplog):
+    # A non-empty string row is corrupt: counted as an unfrozen repo (flag False), not skipped.
     with caplog.at_level(logging.WARNING, logger="benchmark.freeze_coverage"):
-        rows = _rows_from_per_repo(["bad", _repo("a", "sha1")], field="per_repo")
-    assert len(rows) == 1
-    assert any("per_repo[0] is str" in r.message for r in caplog.records)
+        flags = _repo_freeze_flags(["bad", _repo("a", "sha1")], field="per_repo")
+    assert flags == [False, True]
+    assert any("per_repo[0] is a corrupt string row" in r.message for r in caplog.records)
 
 
 # --- Slice summary --------------------------------------------------------------------------
