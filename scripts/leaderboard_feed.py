@@ -49,7 +49,10 @@ def _safe_per_repo(public_report: dict) -> list:
         if not isinstance(entry, dict):
             continue
         repo = entry.get("repo")
-        delta = _round((entry.get("composite_mean") or {}).get("delta"))
+        cm = entry.get("composite_mean")
+        # composite_mean is expected to be a dict ({"delta": ...}); a non-dict (scalar/list/
+        # string) is a malformed row -> skip the delta rather than call .get() on it and crash.
+        delta = _round(cm.get("delta")) if isinstance(cm, dict) else None
         if isinstance(repo, str) and repo:
             out.append({"repo": repo, "composite_delta": delta})
     return out
@@ -77,7 +80,9 @@ def _since_anchor_fields(since_anchor: dict | None) -> dict | None:
         return None
 
     def _scores(report):
-        composite = ((report or {}).get("diff") or {}).get("composite_mean") or {}
+        composite = ((report or {}).get("diff") or {}).get("composite_mean")
+        if not isinstance(composite, dict):  # non-dict composite_mean is malformed -> all None
+            composite = {}
         return {
             "composite_delta": _round(composite.get("delta")),
             "composite_score": _round(composite.get("candidate")),

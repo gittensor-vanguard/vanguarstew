@@ -7,11 +7,15 @@ import json
 import os
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from scripts.leaderboard_feed import (  # noqa: E402
+    _safe_per_repo,
+    _since_anchor_fields,
     append_entry,
     to_anchor_entry,
     to_leaderboard_entry,
@@ -239,3 +243,32 @@ def test_to_anchor_entry_never_includes_per_repo_or_repo_names():
     assert set(entry) == {"anchor", "timestamp", "public_score", "private_score"}
     assert "hidden-repo" not in json.dumps(entry)
     assert "hatch" not in json.dumps(entry)
+
+
+# --- #1381: a non-dict composite_mean is malformed data, skipped, never a crash ---------
+
+@pytest.mark.parametrize("bad_cm", [0.6, [1, 2], "x", 3])
+def test_safe_per_repo_skips_non_dict_composite_mean(bad_cm):
+    # composite_mean is expected to be a dict; a truthy non-dict must not reach .get() and
+    # raise AttributeError -- the row's delta is dropped (None), matching the "don't crash"
+    # contract, and a well-formed sibling row still resolves.
+    report = {"diff": {"per_repo": [
+        {"repo": "a", "composite_mean": bad_cm},
+        {"repo": "b", "composite_mean": {"delta": 0.2}},
+    ]}}
+    out = _safe_per_repo(report)
+    assert out == [{"repo": "a", "composite_delta": None},
+                   {"repo": "b", "composite_delta": 0.2}]
+
+
+@pytest.mark.parametrize("bad_cm", [0.6, [1, 2], "x", 3])
+def test_since_anchor_fields_handles_non_dict_composite_mean(bad_cm):
+    fields = _since_anchor_fields({
+        "anchor": "v0.5.0",
+        "public": {"diff": {"composite_mean": bad_cm}},
+        "private": {"diff": {"composite_mean": {"delta": 0.1, "candidate": 0.7, "baseline": 0.6}}},
+    })
+    assert fields["public"] == {"composite_delta": None, "composite_score": None,
+                                "anchor_score": None}
+    assert fields["private"] == {"composite_delta": 0.1, "composite_score": 0.7,
+                                 "anchor_score": 0.6}
