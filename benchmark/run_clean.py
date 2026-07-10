@@ -134,9 +134,16 @@ def _partition_errors(artifact: dict) -> list[str]:
         if not isinstance(per_repo, list):
             continue
         for idx, entry in enumerate(per_repo):
-            if isinstance(entry, dict) and entry.get("error"):
-                repo = entry.get("repo") or entry.get("repo_name") or idx
-                findings.append(f"{label}.per_repo[{repo}] error: {entry.get('error')!r}")
+            if isinstance(entry, dict):
+                if entry.get("error"):
+                    repo = entry.get("repo") or entry.get("repo_name") or idx
+                    findings.append(f"{label}.per_repo[{repo}] error: {entry.get('error')!r}")
+            elif isinstance(entry, str) and entry.strip():
+                # A per_repo row that is itself a non-empty string is a malformed/corrupt entry,
+                # not a well-formed result dict — fail closed so a broken artifact can't pass as
+                # clean, matching ``benchmark.acceptance._partition_error``. An empty/whitespace
+                # string, and any other non-dict/non-string entry, is ignored (same as there).
+                findings.append(f"{label}.per_repo[{idx}] malformed row: {entry!r}")
     return findings
 
 
