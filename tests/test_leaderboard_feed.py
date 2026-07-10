@@ -11,7 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from scripts.leaderboard_feed import append_entry, to_leaderboard_entry  # noqa: E402
+from scripts.leaderboard_feed import append_entry, to_anchor_entry, to_leaderboard_entry  # noqa: E402
 from scripts.score_pr_delta import combine_dual_target, score_pr_delta  # noqa: E402
 
 
@@ -196,3 +196,42 @@ def test_append_entry_raises_on_non_array_file(tmp_path):
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_to_anchor_entry_reads_composite_mean_directly_off_each_artifact():
+    """Anchor artifacts are raw run_eval outputs, not a score_pr_delta diff -- composite_mean
+    sits at the top level, not under diff.composite_mean."""
+    public_artifact = {"composite_mean": 0.717, "repos": 3, "scored_repos": 3}
+    private_artifact = {"composite_mean": 0.644, "repos": 3, "scored_repos": 3}
+    entry = to_anchor_entry("v0.5.0", public_artifact, private_artifact, timestamp="2026-07-10T09:00:00+00:00")
+    assert entry == {
+        "anchor": "v0.5.0",
+        "timestamp": "2026-07-10T09:00:00+00:00",
+        "public_score": 0.717,
+        "private_score": 0.644,
+    }
+
+
+def test_to_anchor_entry_defaults_timestamp_to_now():
+    entry = to_anchor_entry("v0.5.0", {"composite_mean": 0.6}, {"composite_mean": 0.6})
+    assert isinstance(entry["timestamp"], str) and entry["timestamp"]
+
+
+def test_to_anchor_entry_tolerates_missing_artifacts():
+    entry = to_anchor_entry("v0.5.0", None, None, timestamp="t")
+    assert entry == {"anchor": "v0.5.0", "timestamp": "t", "public_score": None, "private_score": None}
+
+
+def test_to_anchor_entry_never_includes_per_repo_or_repo_names():
+    public_artifact = {
+        "composite_mean": 0.717,
+        "per_repo": [{"repo": "https://github.com/pypa/hatch", "composite_mean": 0.8}],
+    }
+    private_artifact = {
+        "composite_mean": 0.644,
+        "per_repo": [{"repo": "https://github.com/some/hidden-repo", "composite_mean": 0.6}],
+    }
+    entry = to_anchor_entry("v0.5.0", public_artifact, private_artifact, timestamp="t")
+    assert set(entry) == {"anchor", "timestamp", "public_score", "private_score"}
+    assert "hidden-repo" not in json.dumps(entry)
+    assert "hatch" not in json.dumps(entry)

@@ -127,6 +127,30 @@ def to_leaderboard_entry(
     return entry
 
 
+def to_anchor_entry(
+    anchor_name: str, public_artifact: dict, private_artifact: dict, timestamp: str | None = None,
+) -> dict:
+    """Build the standalone anchor-baseline record for the leaderboard page: the anchor
+    release's OWN absolute composite score on each target, independent of any PR ever being
+    scored against it.
+
+    Unlike a leaderboard entry (which only exists once a real PR has been scored),
+    this is published once -- whenever the anchor is (re)generated, see
+    codex-dev/anchor_baseline.sh -- so the leaderboard's base bar has a real value to show
+    from the moment the anchor exists, not only after the first PR lands. Inputs are raw
+    ``run_eval --out`` artifacts (NOT a score_pr_delta result -- there's nothing to diff the
+    anchor against, it IS the reference point), so this reads ``composite_mean`` directly off
+    each artifact's top level. Both scores are scalar aggregates, same privacy profile as
+    everything else this module publishes -- no per-repo breakdown, no repo identities.
+    """
+    return {
+        "anchor": anchor_name,
+        "timestamp": timestamp or datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "public_score": _round((public_artifact or {}).get("composite_mean")),
+        "private_score": _round((private_artifact or {}).get("composite_mean")),
+    }
+
+
 def append_entry(path: str, entry: dict, max_entries: int = 500) -> list:
     """Append ``entry`` to the JSON array stored at ``path`` (creating it if missing), and
     return the updated list. Keeps at most ``max_entries`` (oldest dropped first) so the public
