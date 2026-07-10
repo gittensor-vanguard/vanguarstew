@@ -148,19 +148,6 @@
   footer a{color:var(--muted); text-decoration:none} footer a:hover{color:var(--brass)}
   footer .sp{margin-left:auto}
 
-  .lb-empty{color:var(--muted); font-family:var(--mono); font-size:.9rem; margin-top:34px}
-  .lb-chart-wrap{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; margin-top:36px}
-  .lb-chart-wrap canvas{width:100%; height:auto; display:block}
-  .lb-legend{display:flex; gap:20px; margin-top:12px; font-family:var(--mono); font-size:.74rem; color:var(--muted)}
-  .lb-legend span{display:inline-flex; align-items:center; gap:7px}
-  .lb-legend .dot{width:9px; height:9px; border-radius:50%; display:inline-block}
-  .lb-grid{display:grid; grid-template-columns:1.3fr .9fr; gap:28px; margin-top:32px}
-  @media(max-width:860px){ .lb-grid{grid-template-columns:1fr} }
-  .lb-grid h3{font-family:var(--serif); font-size:1.05rem; margin-bottom:12px; font-weight:600}
-  .lb-table{display:flex; flex-direction:column; gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); border-radius:10px; overflow:hidden}
-  .lb-row{background:var(--ink-2); display:grid; grid-template-columns:auto auto 1fr 1fr; gap:10px 14px; align-items:center; padding:11px 14px; font-family:var(--mono); font-size:.78rem}
-  .lb-row .pr{color:var(--brass); font-weight:600}
-  .lb-repo-row{background:var(--ink-2); display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; padding:11px 14px; font-family:var(--mono); font-size:.78rem}
 
   .rise{opacity:0; transform:translateY(16px); transition:opacity .7s ease, transform .7s ease}
   .rise.in{opacity:1; transform:none}
@@ -181,7 +168,7 @@
       <a href="#loop" class="hide-sm">The loop</a>
       <a href="#self" class="hide-sm">Self-maintenance</a>
       <a href="#bench" class="hide-sm">Benchmark</a>
-      <a href="#leaderboard" class="hide-sm">Leaderboard</a>
+      <a href="leaderboard/" class="hide-sm">Leaderboard</a>
       <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub&nbsp;↗</a>
     </nav>
   </div>
@@ -313,52 +300,21 @@
 
   <section id="leaderboard">
     <div class="wrap pad">
-      <p class="eyebrow head-eyebrow rise">Live evidence</p>
-      <h2 class="sec-title rise">Every perf:* label, measured — never claimed.</h2>
-      <p class="sec-lead rise">Each pull request touching <code>agent/</code> is scored against
-        <b>both</b> a public repo set and a private, undisclosed one the author has never seen —
-        the label follows the <b>worse</b> of the two. This feed updates automatically, straight
-        from the maintainer bot, after every real score.</p>
-
-      <p id="lb-empty" class="lb-empty rise" style="display:none">No real scores published yet —
-        check back after the next <code>agent/</code> pull request lands.</p>
-
-      <div id="lb-content" style="display:none">
-        <div class="lb-chart-wrap rise">
-          <canvas id="lb-canvas" width="1000" height="260" role="img"
-            aria-label="Composite score delta over time, public vs. private repo target"></canvas>
-        </div>
-        <div class="lb-legend rise">
-          <span><span class="dot" style="background:#CFA954"></span>public target</span>
-          <span><span class="dot" style="background:#7CBE90"></span>private target (undisclosed repos)</span>
-        </div>
-        <div class="lb-grid rise">
-          <div>
-            <h3>Recent scores</h3>
-            <div id="lb-table" class="lb-table"></div>
-          </div>
-          <div>
-            <h3>Per-repo · latest, public target</h3>
-            <div id="lb-repo-table" class="lb-table"></div>
+      <div class="close-card rise">
+        <div>
+          <p class="eyebrow" style="margin-bottom:14px">Live evidence</p>
+          <h2>Every <code>perf:*</code> label, measured — never claimed.</h2>
+          <p>One bar per pull request, on a fixed anchor release — every real
+            <code>agent/</code> score the maintainer bot has ever published, including the
+            ones that got closed. No line chart, no averages to squint at.</p>
+          <div class="close-cta">
+            <a class="btn btn-primary" href="leaderboard/">View the leaderboard <span class="arw">→</span></a>
           </div>
         </div>
-      </div>
-
-      <div id="lb-anchor-content" style="display:none; margin-top:56px">
-        <p class="eyebrow head-eyebrow rise" style="margin-top:0">Cumulative progress</p>
-        <h2 class="sec-title rise">How much better is the agent now than at <span id="lb-anchor-name">the last release</span>?</h2>
-        <p class="sec-lead rise">The chart above answers "was this one PR an improvement" — its
-          baseline shifts every time a PR merges, so points far apart aren't directly comparable.
-          This one is different: every point is the <b>current agent</b> at that moment, measured
-          against the <b>same fixed release</b>, so the line only moves when real cumulative
-          progress happens.</p>
-        <div class="lb-chart-wrap rise">
-          <canvas id="lb-anchor-canvas" width="1000" height="260" role="img"
-            aria-label="Cumulative composite score delta vs. a fixed anchor release, over time"></canvas>
-        </div>
-        <div class="lb-legend rise">
-          <span><span class="dot" style="background:#CFA954"></span>public target</span>
-          <span><span class="dot" style="background:#7CBE90"></span>private target (undisclosed repos)</span>
+        <div class="close-side">
+          <div class="row"><span class="k">measured on</span><span class="v">public + private targets</span></div>
+          <div class="row"><span class="k">label follows</span><span class="v">the worse of the two</span></div>
+          <div class="row"><span class="k">updated</span><span class="v">after every real score</span></div>
         </div>
       </div>
     </div>
@@ -412,137 +368,6 @@
       ents.forEach(function(en){ if(en.isIntersecting){ en.target.classList.add('in'); io.unobserve(en.target); } });
     }, {rootMargin:'0px 0px -8% 0px', threshold:.08});
     els.forEach(function(e,i){ if(i<7){ e.style.transitionDelay = (i*70)+'ms'; } io.observe(e); });
-  })();
-</script>
-<script>
-  // Live leaderboard: fetches results.json (same origin, published by the maintainer bot
-  // after every REAL agent/ PR score) and renders a composite-delta chart + tables. Fails
-  // gracefully to the empty state on any network/parse error or an empty feed.
-  (function(){
-    var canvas = document.getElementById('lb-canvas');
-    if(!canvas) return;
-    var emptyEl = document.getElementById('lb-empty');
-    var contentEl = document.getElementById('lb-content');
-    var anchorContentEl = document.getElementById('lb-anchor-content');
-    var anchorCanvas = document.getElementById('lb-anchor-canvas');
-
-    function esc(s){
-      return String(s).replace(/[&<>"']/g, function(c){
-        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-      });
-    }
-    function fmt(n){ return typeof n === 'number' && isFinite(n) ? n.toFixed(3) : 'n/a'; }
-
-    fetch('results.json', {cache: 'no-store'})
-      .then(function(r){ if(!r.ok) throw new Error('no feed'); return r.json(); })
-      .then(function(data){
-        if(!Array.isArray(data) || data.length === 0){ emptyEl.style.display = 'block'; return; }
-        contentEl.style.display = 'block';
-        renderChart(data);
-        renderRecent(data);
-        renderRepos(data[data.length - 1]);
-        renderAnchorChart(data);
-      })
-      .catch(function(){ emptyEl.style.display = 'block'; });
-
-    function renderChart(data){
-      var ctx = canvas.getContext('2d');
-      var w = canvas.width, h = canvas.height, pad = 38;
-      var pub = data.map(function(d){ return (d.public && d.public.composite_delta) || 0; });
-      var priv = data.map(function(d){ return (d.private && d.private.composite_delta) || 0; });
-      var all = pub.concat(priv, [0]);
-      var min = Math.min.apply(null, all), max = Math.max.apply(null, all);
-      if(max - min < 0.02){ max = min + 0.02; }  // avoid a degenerate flat-line scale
-      var n = data.length;
-      function x(i){ return pad + (n > 1 ? i / (n - 1) : 0) * (w - pad * 2); }
-      function y(v){ return h - pad - ((v - min) / (max - min)) * (h - pad * 2); }
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.strokeStyle = 'rgba(255,255,255,.14)';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(pad, y(0)); ctx.lineTo(w - pad, y(0)); ctx.stroke();
-
-      function line(values, color){
-        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
-        values.forEach(function(v, i){ i === 0 ? ctx.moveTo(x(i), y(v)) : ctx.lineTo(x(i), y(v)); });
-        ctx.stroke();
-        ctx.fillStyle = color;
-        values.forEach(function(v, i){
-          ctx.beginPath(); ctx.arc(x(i), y(v), 3, 0, Math.PI * 2); ctx.fill();
-        });
-      }
-      line(pub, '#CFA954');
-      line(priv, '#7CBE90');
-    }
-
-    function chipClass(band){
-      if(band === 'blocked') return 'changes';
-      if(band && band !== 'none') return 'tier';
-      return 'merge';
-    }
-
-    function renderRecent(data){
-      var recent = data.slice(-8).reverse();
-      document.getElementById('lb-table').innerHTML = recent.map(function(d){
-        var label = d.band === 'blocked' ? 'blocked' : (d.label || 'none');
-        return '<div class="lb-row">' +
-          '<span class="pr">#' + esc(d.pr_number) + '</span>' +
-          '<span class="chip ' + chipClass(d.band) + '">' + esc(label) + '</span>' +
-          '<span>public ' + fmt(d.public && d.public.composite_delta) + '</span>' +
-          '<span>private ' + fmt(d.private && d.private.composite_delta) + '</span>' +
-          '</div>';
-      }).join('');
-    }
-
-    function renderRepos(latest){
-      var rows = (latest && latest.public && latest.public.per_repo) || [];
-      var el = document.getElementById('lb-repo-table');
-      if(!rows.length){
-        el.innerHTML = '<div class="lb-repo-row"><span>no per-repo data on the latest score</span></div>';
-        return;
-      }
-      el.innerHTML = rows.map(function(r){
-        var name = esc(String(r.repo || '').replace('https://github.com/', ''));
-        return '<div class="lb-repo-row"><span>' + name + '</span><span>' + fmt(r.composite_delta) + '</span></div>';
-      }).join('');
-    }
-
-    function renderAnchorChart(data){
-      // Only entries that carry since_anchor (older feed entries, scored before an anchor
-      // existed, are silently skipped rather than plotted with a missing value).
-      var points = data.filter(function(d){ return d.since_anchor; });
-      if(!points.length || !anchorCanvas) return;
-      anchorContentEl.style.display = 'block';
-      document.getElementById('lb-anchor-name').textContent = points[points.length - 1].since_anchor.anchor || 'the last release';
-
-      var ctx = anchorCanvas.getContext('2d');
-      var w = anchorCanvas.width, h = anchorCanvas.height, pad = 38;
-      var pub = points.map(function(d){ return (d.since_anchor.public && d.since_anchor.public.composite_delta) || 0; });
-      var priv = points.map(function(d){ return (d.since_anchor.private && d.since_anchor.private.composite_delta) || 0; });
-      var all = pub.concat(priv, [0]);
-      var min = Math.min.apply(null, all), max = Math.max.apply(null, all);
-      if(max - min < 0.02){ max = min + 0.02; }
-      var n = points.length;
-      function x(i){ return pad + (n > 1 ? i / (n - 1) : 0) * (w - pad * 2); }
-      function y(v){ return h - pad - ((v - min) / (max - min)) * (h - pad * 2); }
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.strokeStyle = 'rgba(255,255,255,.14)';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(pad, y(0)); ctx.lineTo(w - pad, y(0)); ctx.stroke();
-
-      function line(values, color){
-        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
-        values.forEach(function(v, i){ i === 0 ? ctx.moveTo(x(i), y(v)) : ctx.lineTo(x(i), y(v)); });
-        ctx.stroke();
-        ctx.fillStyle = color;
-        values.forEach(function(v, i){
-          ctx.beginPath(); ctx.arc(x(i), y(v), 3, 0, Math.PI * 2); ctx.fill();
-        });
-      }
-      line(pub, '#CFA954');
-      line(priv, '#7CBE90');
-    }
   })();
 </script>
 </body>
