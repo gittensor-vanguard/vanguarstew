@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Does it maintain like a real senior maintainer? — vanguarstew</title>
+<meta name="description" content="An honest look at what vanguarstew's composite score actually measures, where it stands today, and what closing the gap to a senior maintainer really requires.">
+<meta name="theme-color" content="#0C1412">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23CFA954'/><text x='16' y='22.5' font-size='18' text-anchor='middle' font-family='Georgia,serif' font-weight='700' fill='%23231a08'>V</text></svg>">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gittensor-vanguard.github.io/vanguarstew/blog/does-it-maintain-like-a-senior-maintainer/">
+<meta property="og:title" content="Does it maintain like a real senior maintainer? — vanguarstew">
+<meta property="og:description" content="An honest look at what the composite score actually measures, where it stands today, and what closing the gap to a senior maintainer really requires.">
+<style>
+  :root{
+    --ink:#0C1412; --ink-2:#0F1A15; --panel:#12201A; --panel-2:#152720;
+    --line:#26372E; --line-soft:#1C2B24;
+    --text:#E7EAE2; --muted:#93A69B; --faint:#6C7F75;
+    --brass:#CFA954; --brass-hi:#E7CB84; --brass-deep:#8A7132;
+    --approve:#7CBE90; --merge:#AC90E4; --changes:#E1A452; --bad:#C6553F;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --wrap:1060px; --prose:680px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ink); color:var(--text);
+    font-family:var(--sans); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    background-image:
+      radial-gradient(1100px 620px at 78% -8%, rgba(207,169,84,.075), transparent 60%),
+      radial-gradient(760px 520px at 6% 4%, rgba(124,190,144,.05), transparent 55%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:var(--wrap); margin-inline:auto; padding-inline:26px}
+  .prose{max-width:var(--prose); margin-inline:auto; padding-inline:26px}
+  a{color:inherit}
+  h1,h2,h3{font-family:var(--serif); font-weight:600; text-wrap:balance; letter-spacing:-.012em; margin:0}
+  p{margin:0}
+  code{font-family:var(--mono); font-size:.88em; background:rgba(255,255,255,.05); padding:.12em .4em; border-radius:4px}
+  .eyebrow{font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--brass); margin:0}
+  :focus-visible{outline:2px solid var(--brass); outline-offset:3px; border-radius:3px}
+
+  header.top{position:sticky; top:0; z-index:20; background:rgba(12,20,18,.72); backdrop-filter:blur(9px); border-bottom:1px solid var(--line-soft)}
+  header.top .wrap{display:flex; align-items:center; gap:18px; height:60px}
+  .brandmark{display:flex; align-items:center; gap:11px; font-family:var(--serif); font-size:1.12rem; letter-spacing:-.01em; text-decoration:none}
+  .brandmark .dot{width:11px; height:11px; border-radius:50%; background:radial-gradient(circle at 32% 30%, var(--brass-hi), var(--brass) 45%, var(--brass-deep)); box-shadow:0 0 0 1px rgba(231,203,132,.35), 0 0 14px rgba(207,169,84,.5)}
+  .top nav{margin-left:auto; display:flex; align-items:center; gap:22px}
+  .top nav a{font-family:var(--mono); font-size:.76rem; letter-spacing:.05em; color:var(--muted); text-decoration:none}
+  .top nav a:hover{color:var(--text)}
+  @media(max-width:680px){ .top nav a.hide-sm{display:none} }
+
+  article{padding-block:clamp(48px,7vw,84px)}
+  .art-head{margin-bottom:clamp(36px,6vw,56px)}
+  .art-title{font-size:clamp(2rem,4.6vw,3.1rem); line-height:1.1; margin-top:16px}
+  .art-meta{font-family:var(--mono); font-size:.78rem; color:var(--faint); margin-top:18px; display:flex; gap:14px; flex-wrap:wrap}
+  .art-lead{font-size:1.2rem; color:var(--muted); line-height:1.6; margin-top:22px}
+
+  .art-body{display:flex; flex-direction:column; gap:22px; margin-top:40px}
+  .art-body p{color:#DDE3DA; font-size:1.03rem; line-height:1.75}
+  .art-body h2{font-size:1.5rem; margin-top:26px}
+  .art-body h3{font-size:1.15rem; margin-top:6px; color:var(--brass-hi)}
+  .art-body ul, .art-body ol{margin:0; padding-left:1.3em; color:#DDE3DA; font-size:1.03rem; line-height:1.75; display:flex; flex-direction:column; gap:8px}
+  .art-body b{color:var(--text); font-weight:600}
+  .art-body a.inline{color:var(--brass); text-decoration:underline; text-underline-offset:2px}
+
+  .callout{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px 22px; display:flex; flex-direction:column; gap:8px}
+  .callout .k{font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--brass)}
+
+  .stat-row{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); border-radius:10px; overflow:hidden; margin-top:6px}
+  @media(max-width:560px){ .stat-row{grid-template-columns:1fr} }
+  .stat-row .s{background:var(--ink-2); padding:18px 16px}
+  .stat-row .s .v{font-family:var(--serif); font-size:1.5rem; color:var(--brass)}
+  .stat-row .s .k{font-family:var(--mono); font-size:.65rem; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); margin-top:4px}
+  .stat-row .s .d{color:var(--muted); font-size:.82rem; margin-top:6px; line-height:1.5}
+
+  .split-bars{display:flex; flex-direction:column; gap:14px; margin-top:8px}
+  .bar-row{display:grid; grid-template-columns:120px 1fr 60px; gap:12px; align-items:center}
+  .bar-row .lbl{font-family:var(--mono); font-size:.78rem; color:var(--muted)}
+  .bar-track{height:10px; background:var(--line-soft); border-radius:99px; overflow:hidden}
+  .bar-fill{height:100%; border-radius:99px}
+  .bar-row .val{font-family:var(--mono); font-size:.82rem; color:var(--text); text-align:right; font-variant-numeric:tabular-nums}
+
+  .close-card{background:radial-gradient(700px 260px at 80% -30%, rgba(207,169,84,.12), transparent 60%), linear-gradient(180deg,var(--panel-2),var(--ink-2)); border:1px solid var(--line); border-radius:14px; padding:clamp(26px,5vw,40px); margin-top:12px}
+  .close-card h3{font-size:1.3rem}
+  .close-card p{color:var(--muted); margin-top:10px}
+  .close-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:20px}
+  .btn{display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:.82rem; letter-spacing:.03em; text-decoration:none; padding:11px 16px; border-radius:4px; border:1px solid transparent}
+  .btn-primary{background:var(--brass); color:#1a1305; font-weight:600; border-color:var(--brass-hi)}
+  .btn-ghost{color:var(--text); border-color:var(--line)}
+
+  footer{border-top:1px solid var(--line-soft); margin-top:40px}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:16px 26px; align-items:center; padding-block:30px; font-family:var(--mono); font-size:.74rem; color:var(--faint)}
+  footer a{color:var(--muted); text-decoration:none} footer a:hover{color:var(--brass)}
+  footer .sp{margin-left:auto}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brandmark" href="../../"><span class="dot"></span>vanguarstew</a>
+    <nav>
+      <a href="../../#bench" class="hide-sm">Benchmark</a>
+      <a href="../../leaderboard/" class="hide-sm">Leaderboard</a>
+      <span class="hide-sm" style="color:var(--brass)">Blog</span>
+      <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <article>
+    <div class="prose art-head">
+      <p class="eyebrow">Vanguarstew journal</p>
+      <h1 class="art-title">Does it maintain like a real senior maintainer?</h1>
+      <div class="art-meta">
+        <span>July 10, 2026</span>
+        <span>·</span>
+        <span>v0.5.0 · M5 complete</span>
+        <span>·</span>
+        <a href="../../leaderboard/" style="color:var(--brass)">Live leaderboard ↗</a>
+      </div>
+      <p class="art-lead">That's the actual question this project exists to answer — not with a
+        claim, with a number that updates every time a real pull request lands. Here's where
+        that number stands today, what it actually measures, and how far it is from "yes."</p>
+    </div>
+
+    <div class="prose art-body">
+      <p>A senior maintainer doesn't just write code. They read a pull request and know, fast,
+        whether it fits where the project is going. They catch the two-line fix that quietly
+        breaks a contract nobody wrote down. They know which open issue actually matters this
+        week. That judgment is the hard part of maintaining software — and it's exactly what
+        vanguarstew is built and scored on, not on writing good code in isolation.</p>
+
+      <h2>What vanguarstew actually does</h2>
+      <p>vanguarstew is a repository-maintainer agent running live on its own repo, in the
+        open. It reviews pull requests, decides merge or close, applies a value label, and —
+        on approve — merges the work itself. A human (<code>matedev01</code>) holds admin and
+        the kill switch, but day to day, the agent is making the calls.</p>
+      <p>It's been doing this since day one. In the <b>nine days</b> since the first commit,
+        vanguarstew has reviewed and merged over <b>500 pull requests</b> from more than 50
+        contributors — and every one of those review decisions is public, on the repo, right
+        now.</p>
+
+      <h2>Nine days, five milestones</h2>
+      <p>Briefly, what shipped:</p>
+      <ul>
+        <li><b>M0 — Agent contract.</b> A fixed <code>solve()</code> entrypoint: infer the
+          project's philosophy, read the current situation, plan, decide, implement.</li>
+        <li><b>M1 — Time-travel replay.</b> Freeze a real repo at a past commit, let the agent
+          decide what happens next, then compare against what a real maintainer actually did.</li>
+        <li><b>M2 — Scoring + leakage hardening.</b> A judge that scores direction and reasoning,
+          an objective anchor that checks concrete facts, and defenses against the agent simply
+          having memorized the answer.</li>
+        <li><b>M3 — Generalization.</b> Proof the agent isn't tuned to one repo: it holds up on
+          repos it was never optimized against (<code>generalization_gap = 0.097</code>).</li>
+        <li><b>M4 — Hardening.</b> Zero crashes from malformed model output across a full
+          benchmark run.</li>
+        <li><b>M5 — Measured, anti-gaming scoring.</b> A pull request's value label is now
+          earned from a <i>measured</i> benchmark delta — never a maintainer's read of the
+          diff. See the <a class="inline" href="../../leaderboard/">leaderboard</a> for every
+          real result.</li>
+      </ul>
+
+      <h2>The benchmark: real open-source history, not a synthetic test</h2>
+      <p>The scoring loop replays actual GitHub history. Freeze a repo at commit <code>T</code>,
+        rebuild only what was knowable at that moment (nothing from the future leaks in), have
+        the agent decide what a maintainer should do next, then judge that decision against
+        what really happened. It runs against a curated public set of real repositories —
+        <code>hatch</code>, <code>pluggy</code>, <code>feedparser</code>, <code>httpx</code>,
+        <code>hpack</code>, <code>h2</code> — plus a second, undisclosed set the agent has
+        never seen, so a change can't be tuned to look good on repos it was optimized against
+        and then fail everywhere else.</p>
+
+      <h2>Where the score stands today</h2>
+      <p>The composite score blends two very different signals, and the honest answer to "does
+        it act like a senior maintainer" depends on which one you're asking about:</p>
+
+      <div class="callout">
+        <span class="k">Composite = 0.6 × judge + 0.4 × objective anchor</span>
+        <div class="split-bars">
+          <div class="bar-row">
+            <span class="lbl">judge (direction)</span>
+            <div class="bar-track"><div class="bar-fill" style="width:100%;background:linear-gradient(90deg,#7CBE90,#5DA271)"></div></div>
+            <span class="val">~1.00</span>
+          </div>
+          <div class="bar-row">
+            <span class="lbl">objective (specifics)</span>
+            <div class="bar-track"><div class="bar-fill" style="width:34%;background:linear-gradient(90deg,#CFA954,#E7CB84)"></div></div>
+            <span class="val">~0.34</span>
+          </div>
+        </div>
+      </div>
+
+      <p style="margin-top:4px"><b>The judge</b> is a pairwise comparison: given the real
+        trajectory of the project, did the agent's plan move in the right direction, for the
+        right reasons? Right now that score sits near <b>1.0</b> — on the repos measured so
+        far, the agent's judgment about <i>what a maintainer should do and why</i> essentially
+        matches what a strong maintainer actually did.</p>
+      <p><b>The objective anchor</b> is stricter: did the agent name the exact modules a real PR
+        touched, predict the right labels, call the version bump correctly? This is the part
+        that separates "good instincts" from "gets the specifics right without having to
+        think." That score sits around <b>0.3–0.4</b> today — real, but well short of a senior
+        maintainer's precision on every mechanical detail.</p>
+
+      <div class="stat-row">
+        <div class="s"><div class="v">0.72 / 0.63</div><div class="k">tuned / held-out composite</div><div class="d">M3 acceptance run — held-out repos the agent wasn't optimized on</div></div>
+        <div class="s"><div class="v">0.72 / 0.64</div><div class="k">public / private anchor</div><div class="d">current release baseline, both benchmark targets</div></div>
+        <div class="s"><div class="v">0.097</div><div class="k">generalization gap</div><div class="d">how much performance drops on unseen repos — small is good</div></div>
+      </div>
+
+      <p>So: not yet a senior maintainer across the board. A strong directional instinct, real
+        and repeatable — paired with a specifics gap that's exactly what M6 and beyond are
+        aimed at closing.</p>
+
+      <h2>The goal: 99%, on both axes</h2>
+      <p>The target isn't a good direction most of the time. It's a maintainer-level call —
+        judgment <i>and</i> precision — approaching <b>99%</b>, on repos it has never seen, in
+        both the public and the private benchmark target at once. That's a high bar
+        deliberately: a maintainer who's right about direction but wrong on the details still
+        creates work for someone else to clean up.</p>
+      <p>Every step toward that number now has to be earned, not claimed. Since M5, a pull
+        request to the agent's own code only gets credit when <code>scripts/score_pr_delta.py</code>
+        measures a real improvement — against both repo targets, with an anti-cheating pass
+        checking the PR isn't just special-casing the benchmark. A regression on either target
+        blocks the merge outright. No score, no label — that's the whole anti-gaming point.</p>
+
+      <div class="close-card">
+        <h3>Watch the number move</h3>
+        <p>The <a class="inline" href="../../leaderboard/">leaderboard</a> publishes every
+          confirmed, measured improvement automatically, straight from the maintainer bot — one
+          bar per merged pull request, plotted against both the shifting day-to-day baseline
+          and a fixed anchor release. It updates itself. We'll keep writing here as the
+          milestones do.</p>
+        <div class="close-cta">
+          <a class="btn btn-primary" href="../../leaderboard/">View the leaderboard <span>→</span></a>
+          <a class="btn btn-ghost" href="https://github.com/gittensor-vanguard/vanguarstew">View the repo <span>→</span></a>
+        </div>
+      </div>
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brandmark" style="font-size:1rem"><span class="dot"></span>vanguarstew</span>
+    <span>a repository-maintainer agent &amp; its benchmark</span>
+    <span class="sp"></span>
+    <a href="../">Blog</a>
+    <a href="../../">Home</a>
+    <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub</a>
+  </div>
+</footer>
+</body>
+</html>
