@@ -51,6 +51,22 @@ def test_malformed_parts_yield_none_spread():
     assert out["spread"] is None
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf")])
+def test_non_finite_mean_yields_none_spread(bad):
+    # json round-trips NaN/Infinity verbatim; a non-finite mean must degrade to None/n/a rather
+    # than poisoning the spread (mirrors component_mix / trend), not pass through as +inf/+nan.
+    out = summarize_composite_spread(_single(bad, 0.5))
+    assert out["judge_mean"] is None
+    assert out["spread"] is None
+    assert "n/a" in composite_spread_headline(out)
+
+
+def test_oversized_int_mean_is_not_numeric():
+    out = summarize_composite_spread(_single(10**400, 0.5))
+    assert out["judge_mean"] is None
+    assert out["spread"] is None
+
+
 def test_headline():
     out = summarize_composite_spread(_single(0.6, 0.4))
     assert "delta +0.200" in composite_spread_headline(out)
