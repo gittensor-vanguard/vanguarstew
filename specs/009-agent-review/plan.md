@@ -44,7 +44,7 @@ _normalize_review(out, stub)
 | Field | Normalized type | Notes |
 | ----- | --------------- | ----- |
 | `action` | `str` ∈ `ACTIONS` | unknown/non-string → `comment` |
-| `value_label` | `str` ∈ `VALUE_LABELS` | unknown/non-string → `mult:maintenance` |
+| `value_label` | `str` ∈ `VALUE_LABELS` | unknown/non-string → `mult:contribution` |
 | `scope_ok` | `bool` | scope-fit signal |
 | `tests_present` | `bool` | stub derives from `tests/` paths when offline |
 | `summary` | `str` | one-sentence PR summary |
@@ -63,8 +63,10 @@ _normalize_review(out, stub)
 
 ### Value-label tiers
 
-`mult:core-correctness`, `mult:leakage-integrity`, `mult:capability`, `mult:enhancement`,
-`mult:maintenance`, `mult:docs` — anything else becomes `mult:maintenance`.
+`perf:pending` (the PR touches `agent/` — its real `perf:*` band awaits a live
+`scripts/score_pr_delta.py` run, this module never predicts it), `mult:contribution` (flat
+rate for everything else) — anything else, including a retired `mult:*` tier from the old
+ladder, becomes `mult:contribution`.
 
 ## EARS → test mapping
 
@@ -82,7 +84,7 @@ _normalize_review(out, stub)
 
 ## The invariants this pins
 
-- **Vocabulary safety:** only declared actions and `mult:*` tiers reach triage.
+- **Vocabulary safety:** only declared actions and value-label tiers reach triage.
 - **Stable shape:** seven keys, always present, always normalized types.
 - **Coercion not crash:** malformed LLM types degrade field-by-field.
 - **Offline CI:** stub path returns the same shape deterministically.

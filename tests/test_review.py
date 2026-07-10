@@ -83,6 +83,20 @@ def test_review_detects_no_tests():
     assert review_pr(pr, None, llm)["tests_present"] is False
 
 
+def test_review_offline_stub_value_label_reflects_agent_touch():
+    """The offline stub can't run a benchmark, but it CAN tell from the files list whether a
+    PR is even on the measured surface — perf:pending for agent/, mult:contribution otherwise."""
+    llm = LLM(api_key="offline")
+    agent_pr = {"number": 1, "title": "t", "files": ["agent/decider.py", "tests/test_decider.py"]}
+    assert review_pr(agent_pr, None, llm)["value_label"] == "perf:pending"
+
+    agent_entry_pr = {"number": 2, "title": "t", "files": ["agent.py"]}
+    assert review_pr(agent_entry_pr, None, llm)["value_label"] == "perf:pending"
+
+    non_agent_pr = {"number": 3, "title": "t", "files": ["benchmark/score.py", "docs/x.md"]}
+    assert review_pr(non_agent_pr, None, llm)["value_label"] == "mult:contribution"
+
+
 def test_review_tolerates_missing_fields():
     llm = LLM(api_key="offline")
     rev = review_pr({}, None, llm)
@@ -128,15 +142,15 @@ def test_normalize_review_action_logs_a_warning_for_non_string_input(caplog):
 
 
 def test_normalize_value_label_repairs_prefix_and_case():
-    assert _normalize_value_label("mult:core-correctness") == "mult:core-correctness"
-    assert _normalize_value_label("core-correctness") == "mult:core-correctness"
-    assert _normalize_value_label("core correctness") == "mult:core-correctness"
-    assert _normalize_value_label("core_correctness") == "mult:core-correctness"
-    assert _normalize_value_label("leakage integrity") == "mult:leakage-integrity"
-    assert _normalize_value_label("MULT:LEAKAGE-INTEGRITY") == "mult:leakage-integrity"
-    assert _normalize_value_label("maintenance") == "mult:maintenance"
-    assert _normalize_value_label("bogus") == "mult:maintenance"
-    assert _normalize_value_label(None) == "mult:maintenance"
+    assert _normalize_value_label("perf:pending") == "perf:pending"
+    assert _normalize_value_label("pending") == "perf:pending"
+    assert _normalize_value_label("PENDING") == "perf:pending"
+    assert _normalize_value_label("mult:contribution") == "mult:contribution"
+    assert _normalize_value_label("contribution") == "mult:contribution"
+    assert _normalize_value_label("MULT:CONTRIBUTION") == "mult:contribution"
+    assert _normalize_value_label("bogus") == "mult:contribution"
+    assert _normalize_value_label("mult:core-correctness") == "mult:contribution"  # retired tier
+    assert _normalize_value_label(None) == "mult:contribution"
 
 
 def test_normalize_bool_and_concerns():
@@ -153,7 +167,7 @@ class _MalformedReviewLLM:
     def chat_json(self, system, user, stub=None):
         return {
             "action": "approve",
-            "value_label": "core-correctness",
+            "value_label": "core-correctness",  # retired tier -> falls to default
             "scope_ok": "yes",
             "tests_present": 0,
             "summary": None,
@@ -166,7 +180,7 @@ def test_review_pr_normalizes_malformed_field_types():
     rev = review_pr({"files": []}, None, _MalformedReviewLLM())
     assert rev["action"] == "merge"
     assert rev["value_label"] in VALUE_LABELS
-    assert rev["value_label"] == "mult:core-correctness"
+    assert rev["value_label"] == "mult:contribution"
     assert rev["scope_ok"] is True
     assert rev["tests_present"] is False
     assert rev["summary"] == ""
@@ -180,7 +194,7 @@ class _NonStringActionReviewLLM:
     def chat_json(self, system, user, stub=None):
         return {
             "action": ["merge", "reject"],
-            "value_label": "mult:core-correctness",
+            "value_label": "perf:pending",
             "scope_ok": True,
             "tests_present": True,
             "summary": "adds a missing guard",
@@ -195,7 +209,7 @@ def test_review_pr_survives_non_string_action_field():
     # the malformed field degrades safely...
     assert rev["action"] == "comment"
     # ...and every other field is still normalized correctly, unaffected by the bad action.
-    assert rev["value_label"] == "mult:core-correctness"
+    assert rev["value_label"] == "perf:pending"
     assert rev["scope_ok"] is True
     assert rev["tests_present"] is True
     assert rev["summary"] == "adds a missing guard"
@@ -207,7 +221,7 @@ class _NearMissReviewLLM:
     offline = False
 
     def chat_json(self, system, user, stub=None):
-        return {"action": "approve", "value_label": "maintenance"}
+        return {"action": "approve", "value_label": "contribution"}
 
 
 def test_review_pr_maps_near_miss_action_and_value_label_to_canonical_vocab():
@@ -215,7 +229,7 @@ def test_review_pr_maps_near_miss_action_and_value_label_to_canonical_vocab():
     assert rev["action"] in ACTIONS
     assert rev["action"] == "merge"
     assert rev["value_label"] in VALUE_LABELS
-    assert rev["value_label"] == "mult:maintenance"
+    assert rev["value_label"] == "mult:contribution"
 
 
 # --- #414: non-list / non-string PR file paths must not abort review_pr --------------------

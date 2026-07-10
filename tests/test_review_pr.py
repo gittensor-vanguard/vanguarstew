@@ -227,7 +227,7 @@ def test_main_renders_ghost_author_for_deleted_account(capsys):
         "tests_present": True,
         "concerns": [],
         "action": "comment",
-        "value_label": "mult:maintenance",
+        "value_label": "mult:contribution",
         "recommendation": "ship it",
     }
     with patch("scripts.review_pr._gh", side_effect=_gh_json(payload)):

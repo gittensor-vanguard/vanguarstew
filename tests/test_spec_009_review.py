@@ -35,7 +35,7 @@ _REVIEW_KEYS = frozenset({
 
 _STUB = {
     "action": "comment",
-    "value_label": "mult:maintenance",
+    "value_label": "mult:contribution",
     "scope_ok": True,
     "tests_present": False,
     "summary": "offline stub review",
@@ -99,7 +99,7 @@ def test_review_pr_falls_back_when_llm_returns_non_dict():
 def test_review_pr_normalizes_every_field_from_a_rich_llm_payload():
     payload = {
         "action": "approve",
-        "value_label": "core-correctness",
+        "value_label": "core-correctness",  # retired tier -> falls to the flat default
         "scope_ok": "yes",
         "tests_present": 1,
         "summary": "Adds semver bump scoring.",
@@ -110,7 +110,7 @@ def test_review_pr_normalizes_every_field_from_a_rich_llm_payload():
     out = review_pr({"files": []}, None, _FakeLLM(payload))
     _assert_review_shape(out)
     assert out["action"] == "merge"
-    assert out["value_label"] == "mult:core-correctness"
+    assert out["value_label"] == "mult:contribution"
     assert out["scope_ok"] is True
     assert out["tests_present"] is True
     assert out["summary"] == "Adds semver bump scoring."
@@ -123,7 +123,7 @@ def test_non_dict_pr_returns_fixed_error_dict_without_llm(bad_pr):
     out = review_pr(bad_pr, None, _FakeLLM({"action": "merge"}))
     _assert_review_shape(out)
     assert out["action"] == "comment"
-    assert out["value_label"] == "mult:maintenance"
+    assert out["value_label"] == "mult:contribution"
     assert "non-dict" in out["summary"].lower() or "cannot review" in out["recommendation"].lower()
 
 
@@ -175,7 +175,7 @@ def test_unknown_or_non_string_action_defaults_to_comment(bad):
 def test_bad_action_does_not_block_other_field_normalization():
     payload = {
         "action": ["merge"],
-        "value_label": "mult:core-correctness",
+        "value_label": "perf:pending",
         "scope_ok": True,
         "tests_present": True,
         "summary": "adds a guard",
@@ -185,7 +185,7 @@ def test_bad_action_does_not_block_other_field_normalization():
     out = review_pr({"files": ["tests/test_x.py"]}, None, _FakeLLM(payload))
     _assert_review_shape(out)
     assert out["action"] == "comment"
-    assert out["value_label"] == "mult:core-correctness"
+    assert out["value_label"] == "perf:pending"
     assert out["scope_ok"] is True
     assert out["tests_present"] is True
     assert out["summary"] == "adds a guard"
@@ -196,22 +196,21 @@ def test_bad_action_does_not_block_other_field_normalization():
 # --- Value-label normalization ------------------------------------------------------------
 
 @pytest.mark.parametrize("raw,expected", [
-    ("mult:core-correctness", "mult:core-correctness"),
-    ("core-correctness", "mult:core-correctness"),
-    ("core correctness", "mult:core-correctness"),
-    ("core_correctness", "mult:core-correctness"),
-    ("MULT:LEAKAGE-INTEGRITY", "mult:leakage-integrity"),
-    ("leakage integrity", "mult:leakage-integrity"),
-    ("maintenance", "mult:maintenance"),
-    ("mult:docs", "mult:docs"),
+    ("perf:pending", "perf:pending"),
+    ("pending", "perf:pending"),
+    ("PENDING", "perf:pending"),
+    ("mult:contribution", "mult:contribution"),
+    ("contribution", "mult:contribution"),
+    ("MULT:CONTRIBUTION", "mult:contribution"),
+    ("mult:core-correctness", "mult:contribution"),  # retired tier -> flat default
 ])
 def test_value_label_maps_near_miss_forms_to_canonical_tiers(raw, expected):
     assert _normalize_value_label(raw) == expected
 
 
-@pytest.mark.parametrize("bad", [None, "", "   ", "bogus", 42, True, ["mult:docs"], {}])
-def test_unknown_or_non_string_value_label_defaults_to_maintenance(bad):
-    assert _normalize_value_label(bad) == "mult:maintenance"
+@pytest.mark.parametrize("bad", [None, "", "   ", "bogus", 42, True, ["mult:contribution"], {}])
+def test_unknown_or_non_string_value_label_defaults_to_contribution(bad):
+    assert _normalize_value_label(bad) == "mult:contribution"
 
 
 # --- Boolean normalization ----------------------------------------------------------------
@@ -328,7 +327,7 @@ def test_offline_review_is_deterministic():
     _assert_review_shape(first)
     assert first == second
     assert first["action"] == "comment"
-    assert first["value_label"] == "mult:maintenance"
+    assert first["value_label"] == "mult:contribution"  # _SAMPLE_PR doesn't touch agent/
     assert first["summary"] == "offline stub review"
     assert first["recommendation"] == "offline"
     assert first["concerns"] == []
@@ -351,7 +350,7 @@ def test_normalize_review_coerces_all_malformed_fields_without_crashing():
     _assert_review_shape(out)
     assert out == {
         "action": "comment",
-        "value_label": "mult:maintenance",
+        "value_label": "mult:contribution",
         "scope_ok": True,
         "tests_present": False,
         "summary": "",
@@ -373,7 +372,7 @@ def test_review_pr_end_to_end_malformed_llm_payload():
     out = review_pr({"files": []}, None, _FakeLLM(payload))
     _assert_review_shape(out)
     assert out["action"] == "comment"
-    assert out["value_label"] == "mult:maintenance"
+    assert out["value_label"] == "mult:contribution"
     assert out["scope_ok"] is False
     assert out["tests_present"] is False
     assert out["summary"] == ""

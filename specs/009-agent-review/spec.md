@@ -7,7 +7,8 @@
 - **Methodology:** [`blog/spec-driven-development.md`](../../blog/spec-driven-development.md)
 - **Related:** [`specs/001-solve-contract`](../001-solve-contract/spec.md) (entrypoint seam),
   [`specs/006-agent-decision`](../006-agent-decision/spec.md) (parallel action vocabulary),
-  [`REVIEW.md`](../../REVIEW.md) (maintainer rubric and `mult:*` value ladder)
+  [`REVIEW.md`](../../REVIEW.md) (maintainer rubric and the `perf:*`/`mult:contribution`
+  value labels)
 
 This spec makes the **existing, implicit** review contract explicit. It describes the as-built
 behavior of `agent/review.py`; it introduces **no behavior change**. The review step applies
@@ -24,8 +25,8 @@ making that contract explicit lets reviewers check review changes against intent
 ## User stories
 
 1. **As a maintainer-assist caller**, I receive a review dict with normalized `action` from a
-   fixed vocabulary and a canonical `mult:*` value label — so triage never sees arbitrary verbs
-   or unknown tiers.
+   fixed vocabulary and a canonical value label — so triage never sees arbitrary verbs or
+   unknown tiers.
 2. **As an agent developer**, I know how synonym/noise in LLM output is mapped (`approve` →
    `merge`, unknown action → `comment`) — so I optimize real maintainer reviews, not prompt luck.
 3. **As a reviewer**, action/value-label/bool/text/concerns normalization is written down — so a
@@ -55,11 +56,16 @@ making that contract explicit lets reviewers check review changes against intent
 
 ### Value-label normalization
 
-- `value_label` SHALL be coerced to one of `VALUE_LABELS` (the canonical `mult:*` tiers).
-- WHEN the model emits a near-miss form (missing `mult:` prefix, underscores, spaces, mixed
-  case) THE system SHALL map it to the matching canonical tier.
-- WHEN `value_label` is blank, unknown, or a non-string THEN the system SHALL default to
-  `mult:maintenance`.
+- `value_label` SHALL be coerced to one of `VALUE_LABELS` (`perf:pending`,
+  `mult:contribution`). This field is advisory only — `review_pr()` reads a diff, it never
+  runs a benchmark, so it can flag whether a PR is on the measured `agent/` surface
+  (`perf:pending`) or the flat-rate one (`mult:contribution`), but it can NOT predict a
+  `perf:xs`–`perf:xl` band; that requires an actual before/after
+  `scripts/score_pr_delta.py` run (see REVIEW.md).
+- WHEN the model emits a near-miss form (missing prefix, underscores, spaces, mixed case)
+  THE system SHALL map it to the matching canonical tier.
+- WHEN `value_label` is blank, unknown (including a retired tier like the old `mult:*`
+  ladder), or a non-string THEN the system SHALL default to `mult:contribution`.
 
 ### Boolean normalization
 
@@ -94,9 +100,11 @@ making that contract explicit lets reviewers check review changes against intent
 ### Offline determinism
 
 - WHEN the LLM is offline (`VANGUARSTEW_OFFLINE=1` / `api_key == "offline"`) THEN `review_pr()`
-  SHALL return the deterministic stub (`action = comment`, `value_label = mult:maintenance`,
-  stub summary/recommendation, `concerns = []`) after normalization, with `tests_present` derived
-  from visible `tests/` paths in the PR — exercisable in CI without a key.
+  SHALL return the deterministic stub (`action = comment`, stub summary/recommendation,
+  `concerns = []`) after normalization, with `tests_present` derived from visible `tests/`
+  paths in the PR, and `value_label` derived from visible `agent/` paths (`perf:pending` if
+  the PR touches `agent.py` or `agent/`, else `mult:contribution`) — exercisable in CI
+  without a key.
 
 ### Robustness (per constitution)
 

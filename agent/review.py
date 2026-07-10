@@ -2,7 +2,10 @@
 
 This applies the agent's maintainer judgment to real, current work — which is the whole point
 of the benchmark: to make that judgment trustworthy. The output maps to the project's review
-rubric (see REVIEW.md) and the `mult:*` value ladder, so it slots straight into triage.
+rubric (see REVIEW.md). ``value_label`` is advisory only: this module reads a diff, it never
+runs a benchmark, so it can only ever flag whether a PR is on the measured (`agent/`) surface
+or the flat-rate one — it can NOT predict a `perf:*` band, since that requires an actual
+before/after `scripts/score_pr_delta.py` run this code has no access to.
 """
 
 from __future__ import annotations
@@ -20,8 +23,10 @@ SYSTEM = (
 )
 
 ACTIONS = ["merge", "request-changes", "reject", "comment"]
-VALUE_LABELS = ["mult:core-correctness", "mult:leakage-integrity", "mult:capability",
-                "mult:enhancement", "mult:maintenance", "mult:docs"]
+# Advisory only — see module docstring. "perf:pending" flags a PR on the measured agent/
+# surface (its real tier awaits a live score_pr_delta run, not a guess); "mult:contribution"
+# is the flat-rate tier for everything else (benchmark/, tests/, docs/, ci/).
+VALUE_LABELS = ["perf:pending", "mult:contribution"]
 
 # Near-miss review verbs an LLM might answer with, mapped onto the canonical vocabulary.
 _ACTION_SYNONYMS = {
@@ -59,18 +64,19 @@ def _normalize_review_action(action) -> str:
 
 
 def _normalize_value_label(label) -> str:
-    """Map ``value_label`` onto ``VALUE_LABELS``; unknown values fall back to maintenance."""
-    default = "mult:maintenance"
+    """Map ``value_label`` onto ``VALUE_LABELS``; unknown values fall back to the flat,
+    non-agent tier (``mult:contribution``). Prefix-agnostic — matches whichever colon
+    prefix (``perf:``/``mult:``) or bare slug the model emits against each tier's own
+    canonical prefix, not a single hardcoded one."""
+    default = "mult:contribution"
     if not isinstance(label, str):
         return default
     raw = label.strip()
     if not raw:
         return default
     lowered = raw.lower()
-    slug = lowered.removeprefix("mult:").replace("_", "-").replace(" ", "-")
-    candidates = {lowered, slug, f"mult:{slug}"}
-    if not lowered.startswith("mult:"):
-        candidates.add(f"mult:{lowered}")
+    slug = lowered.split(":", 1)[-1].replace("_", "-").replace(" ", "-")
+    candidates = {lowered, slug}
     for tier in VALUE_LABELS:
         tier_slug = tier.split(":", 1)[-1].lower()
         if tier.lower() in candidates or tier_slug in candidates:
@@ -162,7 +168,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     if not isinstance(pr, dict):
         return {
             "action": "comment",
-            "value_label": "mult:maintenance",
+            "value_label": "mult:contribution",
             "scope_ok": True,
             "tests_present": True,
             "summary": "non-dict PR payload",
@@ -175,6 +181,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         for path in raw_files:
             if isinstance(path, str) and path.strip():
                 files.append(path.strip())
+    touches_agent = any(f == "agent.py" or f.startswith("agent/") for f in files)
     number = _pr_number(pr)
     user = (
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy is not None else "")
@@ -185,7 +192,9 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n\n"
         + "Return JSON with keys:\n"
         + f'  "action": one of {ACTIONS},\n'
-        + f'  "value_label": the single best-fit tier from {VALUE_LABELS},\n'
+        + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
+        + 'agent/ (its real value tier needs a live benchmark run, not a guess); '
+        + '"mult:contribution" for everything else,\n'
         + '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
         + '  "tests_present": boolean — does it add or update tests,\n'
         + '  "summary": one sentence on what the PR does,\n'
@@ -194,7 +203,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     )
     stub = {
         "action": "comment",
-        "value_label": "mult:maintenance",
+        "value_label": "perf:pending" if touches_agent else "mult:contribution",
         "scope_ok": True,
         "tests_present": any(f.startswith("tests/") for f in files),
         "summary": "offline stub review",
