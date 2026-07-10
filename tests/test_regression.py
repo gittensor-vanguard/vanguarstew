@@ -117,6 +117,40 @@ def test_disagreement_falls_back_to_report_when_stats_absent():
     assert _disagreement(art) == 0.25
 
 
+def test_incoherent_partition_makes_pooled_disagreement_none():
+    # #1283: `disagree` is a subset of `dual_order_tasks`, so `disagree > dual` is impossible
+    # telemetry. Pooling it (8/5) would fabricate a rate; the whole pooled rate must be None so
+    # the gate fails closed rather than block a candidate on invented instability.
+    from benchmark.regression import _INCOHERENT, _disagreement, _partition_disagreement_counts
+    gen = {"tuned":    {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},   # impossible
+           "held_out": {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 1}}}
+    assert _disagreement(gen) is None
+    # A coherent generalization artifact still pools correctly (6 / 20 = 0.3).
+    ok = {"tuned":    {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 2}},
+          "held_out": {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 4}}}
+    assert _disagreement(ok) == 0.3
+    # The three return states of the partition helper.
+    assert _partition_disagreement_counts({"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}}) is _INCOHERENT
+    assert _partition_disagreement_counts({"judge_order_stats": {"dual_order_tasks": 10, "disagree": 2}}) == (2, 10)
+    assert _partition_disagreement_counts({}) is None
+    # Boundary: disagree == dual is coherent (rate exactly 1.0), not incoherent.
+    assert _partition_disagreement_counts({"judge_order_stats": {"dual_order_tasks": 5, "disagree": 5}}) == (5, 5)
+
+
+def test_incoherent_partition_does_not_block_a_candidate():
+    # End-to-end: a candidate whose only defect is an impossible partition is NOT failed on a
+    # fabricated instability rise — no_judge_instability_increase passes vacuously (rate is None).
+    baseline = {"tuned": {"composite_mean": 0.60, "scored_repos": 2,
+                          "judge_order_stats": {"dual_order_tasks": 50, "disagree": 2}},
+                "held_out": {"composite_mean": 0.55, "scored_repos": 2}}
+    candidate = {"tuned": {"composite_mean": 0.70, "scored_repos": 2,
+                           "judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},  # impossible
+                 "held_out": {"composite_mean": 0.65, "scored_repos": 2}}
+    result = check_regression(candidate, baseline, max_disagreement_increase=0.1)
+    trust = next(c for c in result["checks"] if c["name"] == "no_judge_instability_increase")
+    assert trust["passed"] is True
+
+
 def test_judge_instability_only_compared_when_both_report_it():
     # One run judged single-order (no disagreement rate) -> the judge check passes vacuously.
     result = check_regression(_run(0.60, disagreement=0.9), _run(0.60))   # baseline has none
