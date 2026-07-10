@@ -1,0 +1,28 @@
+[
+  {
+    "timestamp": "2026-07-10T02:52:41.128978+00:00",
+    "pr_number": 1331,
+    "band": "none",
+    "label": null,
+    "public": {
+      "composite_delta": 0.0,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.0
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.0
+    }
+  }
+]
