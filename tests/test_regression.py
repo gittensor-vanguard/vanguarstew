@@ -369,6 +369,120 @@ def test_failed_checks_logs_warning_for_skipped_rows(caplog):
     assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
+def test_candidate_per_repo_error_fails_both_scored():
+    # #1257: a candidate whose per_repo has a clone/freeze error must not pass both_scored,
+    # even when the headline composite looks good -- the score was computed over a partial,
+    # biased subset.
+    baseline = {"composite_mean": 0.60, "scored_repos": 3, "repos": 3}
+    candidate = {
+        "composite_mean": 0.66,
+        "scored_repos": 2,
+        "repos": 3,
+        "skipped": 1,
+        "per_repo": [
+            {"repo": "good-a", "composite_mean": 0.70, "tasks": 4},
+            {"repo": "good-b", "composite_mean": 0.62, "tasks": 3},
+            {"repo": "bad-clone", "error": "failed to clone", "tasks": 0},
+        ],
+    }
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    assert "candidate error" in result["checks"][0]["detail"]
+    assert result["composite_delta"] is None
+
+
+def test_baseline_per_repo_error_fails_both_scored():
+    # A baseline with a per-repo error is also invalid -- the comparison is not trustworthy.
+    baseline = {
+        "composite_mean": 0.60,
+        "scored_repos": 2,
+        "repos": 3,
+        "skipped": 1,
+        "per_repo": [
+            {"repo": "good-a", "composite_mean": 0.60, "tasks": 4},
+            {"repo": "bad-freeze", "error": "freeze failed", "tasks": 0},
+        ],
+    }
+    candidate = {"composite_mean": 0.66, "scored_repos": 3}
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    assert "baseline error" in result["checks"][0]["detail"]
+
+
+def test_tuned_per_repo_error_fails_both_scored():
+    # A generalization artifact's tuned partition per-repo error must fail the gate;
+    # held_out per-repo errors are intentionally ignored (only the headline partition
+    # is evaluated).
+    baseline = _gen(0.60)
+    candidate = {
+        "tuned": {
+            "composite_mean": 0.66,
+            "scored_repos": 1,
+            "per_repo": [
+                {"repo": "good", "composite_mean": 0.66, "tasks": 4},
+                {"repo": "bad", "error": "clone failed", "tasks": 0},
+            ],
+        },
+        "held_out": {"composite_mean": 0.55, "scored_repos": 2},
+        "generalization_gap": 0.06,
+    }
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    assert "candidate error" in result["checks"][0]["detail"]
+
+
+def test_held_out_per_repo_error_does_not_fail():
+    # held_out per-repo errors are ignored: only the tuned (headline) partition is evaluated
+    # for the regression comparison.
+    baseline = _gen(0.60)
+    candidate = {
+        "tuned": {"composite_mean": 0.66, "scored_repos": 2},
+        "held_out": {
+            "composite_mean": 0.55,
+            "scored_repos": 2,
+            "per_repo": [
+                {"repo": "good", "composite_mean": 0.55, "tasks": 3},
+                {"repo": "bad", "error": "clone failed", "tasks": 0},
+            ],
+        },
+        "generalization_gap": 0.06,
+    }
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is True
+    assert result["candidate_composite"] == 0.66
+
+
+def test_top_level_error_fails_both_scored():
+    # A top-level partition error (e.g. RepoSetError) should also fail both_scored.
+    baseline = {"composite_mean": 0.60, "scored_repos": 3}
+    candidate = {"composite_mean": 0.66, "scored_repos": 2, "error": "RepoSetError: no repos"}
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    assert "candidate error" in result["checks"][0]["detail"]
+
+
+def test_both_candidate_and_baseline_errors_report_candidate_first():
+    # When both artifacts have errors, the candidate error is reported first in the detail
+    # (matching check_improvement's priority order).
+    baseline = {"composite_mean": 0.60, "error": "baseline failed"}
+    candidate = {"composite_mean": 0.66, "error": "candidate failed"}
+    result = check_regression(candidate, baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    assert "candidate error" in result["checks"][0]["detail"]
+
+
+def test_clean_artifacts_still_pass():
+    # Regression: artifacts without any per-repo errors should still pass normally.
+    result = check_regression(_run(0.66), _run(0.60))
+    assert result["passed"] is True
+    assert result["composite_delta"] == 0.06
+
+
 def _run_cli(*args):
     return subprocess.run(
         [sys.executable, "-m", "scripts.regression", *args],
