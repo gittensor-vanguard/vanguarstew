@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_COMPOSITE = 0.5
@@ -85,6 +87,17 @@ def _floor_source(result: dict) -> dict:
     return result
 
 
+def _artifact_error(result: dict) -> str | None:
+    """The first error on the evaluated partition, or ``None`` when clean.
+
+    Scans the top-level ``error`` and every ``per_repo[i].error`` in the floor partition via
+    :func:`benchmark.acceptance._partition_error`, so a partial multi-repo run cannot pass the
+    floors. A failed ``held_out`` partition is intentionally not scanned.
+    """
+    result = _dict(result)
+    return result.get("error") or _partition_error(_floor_source(result))
+
+
 def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
                            min_judge: float = DEFAULT_MIN_JUDGE,
                            min_objective: float = DEFAULT_MIN_OBJECTIVE) -> dict:
@@ -104,12 +117,23 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     composite = _scored_metric(source, "composite_mean")
     judge = _scored_metric(source, "judge_mean", nested_key="composite_parts")
     objective = _scored_metric(source, "objective_mean", nested_key="composite_parts")
+    error = _artifact_error(result)
+    run_completed = composite is not None and error is None
 
-    checks = [
+    checks = [{
+        "name": "run_completed",
+        "passed": bool(run_completed),
+        "detail": (
+            "run produced a scored composite"
+            if run_completed
+            else f"no scored composite (error={error!r}, composite={composite!r})"
+        ),
+    }]
+    checks.extend([
         _floor_check("composite_floor", composite, min_composite),
         _floor_check("judge_floor", judge, min_judge),
         _floor_check("objective_floor", objective, min_objective),
-    ]
+    ])
 
     return {
         "passed": all(c["passed"] for c in checks),
