@@ -111,6 +111,77 @@ def test_non_numeric_composite_fails_gracefully():
     assert "composite_numeric" in failed_checks(result)
 
 
+def _gen_slice(scored_repos=1, composite=0.62, judge=0.7, objective=0.5):
+    return {"scored_repos": scored_repos, "composite_mean": composite,
+            "composite_parts": {"judge_mean": judge, "objective_mean": objective},
+            "weights": {"judge": 0.6, "objective": 0.4}}
+
+
+def test_non_finite_scored_repos_does_not_crash_the_gate():
+    # Previously ValueError/OverflowError from int(scored) in _partition_scored (generalization
+    # slicing). A NaN/Infinity scored_repos survives a JSON round trip but is not a usable count --
+    # fall back to composite detection and still return a verdict, don't crash the gate.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        art = {"tuned": _gen_slice(scored_repos=bad), "held_out": _gen_slice(),
+               "generalization_gap": 0.0}
+        result = check_score_integrity(art)          # must not raise
+        assert isinstance(result["passed"], bool), bad
+
+
+def test_non_finite_composite_fails_composite_numeric():
+    # A non-finite composite is not a usable number: it fails composite_numeric instead of being
+    # read as real (Infinity would otherwise slip past an isinstance-only check).
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        result = check_score_integrity(_artifact(composite=bad))
+        assert result["passed"] is False
+        assert "composite_numeric" in failed_checks(result), bad
+
+
+def test_non_finite_component_means_fail_components_present():
+    # Non-finite component means are withheld (None) rather than trusted, failing components_present.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert "components_present" in failed_checks(check_score_integrity(_artifact(judge=bad))), bad
+        assert "components_present" in failed_checks(check_score_integrity(_artifact(objective=bad))), bad
+
+
+def test_non_finite_weights_fall_back_to_default_blend():
+    # Non-finite weights are ignored (like any malformed weights) and the default 0.6/0.4 blend is
+    # used, rather than producing a non-finite expected composite that fails the blend check.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert check_score_integrity(_artifact(w_judge=bad))["passed"] is True, bad
+
+
+def test_non_finite_numeric_fields_never_raise_for_any_variant():
+    # NaN, +/-Infinity, and an int too large for a float all survive a JSON round trip; none may
+    # raise, for a flat run slice or a generalization partition's scored_repos.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        for field in ("composite", "judge", "objective", "w_judge", "w_objective"):
+            assert isinstance(check_score_integrity(_artifact(**{field: bad}))["passed"], bool), (field, bad)
+        gen = {"tuned": _gen_slice(scored_repos=bad), "held_out": _gen_slice(),
+               "generalization_gap": 0.0}
+        assert isinstance(check_score_integrity(gen)["passed"], bool), ("scored_repos", bad)
+
+
+def test_oversized_and_non_finite_composite_actually_fail_the_numeric_check():
+    # Not merely "does not raise": an int too large for a float and a non-finite composite are not
+    # usable numbers and must FAIL composite_numeric.
+    for bad in (10**400, float("nan"), float("inf"), float("-inf")):
+        result = check_score_integrity(_artifact(composite=bad))
+        assert result["passed"] is False
+        assert "composite_numeric" in failed_checks(result), bad
+
+
+def test_non_finite_generalization_gap_is_handled_gracefully():
+    # generalization_gap is used only to *detect* a generalization artifact (key presence); its
+    # value is never converted, so a non-finite gap must not crash, and the partitions are still
+    # sliced and verified.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        art = {"tuned": _gen_slice(), "held_out": _gen_slice(), "generalization_gap": bad}
+        result = check_score_integrity(art)          # must not raise
+        assert isinstance(result["passed"], bool), bad
+        assert any(c["name"].startswith("tuned:") for c in result["checks"]), bad
+
+
 def test_non_dict_artifact_fails_gracefully():
     for bad in (None, "not a dict", 42, [1, 2]):
         result = check_score_integrity(bad)
