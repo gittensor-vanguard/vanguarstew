@@ -343,6 +343,24 @@
           </div>
         </div>
       </div>
+
+      <div id="lb-anchor-content" style="display:none; margin-top:56px">
+        <p class="eyebrow head-eyebrow rise" style="margin-top:0">Cumulative progress</p>
+        <h2 class="sec-title rise">How much better is the agent now than at <span id="lb-anchor-name">the last release</span>?</h2>
+        <p class="sec-lead rise">The chart above answers "was this one PR an improvement" — its
+          baseline shifts every time a PR merges, so points far apart aren't directly comparable.
+          This one is different: every point is the <b>current agent</b> at that moment, measured
+          against the <b>same fixed release</b>, so the line only moves when real cumulative
+          progress happens.</p>
+        <div class="lb-chart-wrap rise">
+          <canvas id="lb-anchor-canvas" width="1000" height="260" role="img"
+            aria-label="Cumulative composite score delta vs. a fixed anchor release, over time"></canvas>
+        </div>
+        <div class="lb-legend rise">
+          <span><span class="dot" style="background:#CFA954"></span>public target</span>
+          <span><span class="dot" style="background:#7CBE90"></span>private target (undisclosed repos)</span>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -405,6 +423,8 @@
     if(!canvas) return;
     var emptyEl = document.getElementById('lb-empty');
     var contentEl = document.getElementById('lb-content');
+    var anchorContentEl = document.getElementById('lb-anchor-content');
+    var anchorCanvas = document.getElementById('lb-anchor-canvas');
 
     function esc(s){
       return String(s).replace(/[&<>"']/g, function(c){
@@ -421,6 +441,7 @@
         renderChart(data);
         renderRecent(data);
         renderRepos(data[data.length - 1]);
+        renderAnchorChart(data);
       })
       .catch(function(){ emptyEl.style.display = 'block'; });
 
@@ -484,6 +505,43 @@
         var name = esc(String(r.repo || '').replace('https://github.com/', ''));
         return '<div class="lb-repo-row"><span>' + name + '</span><span>' + fmt(r.composite_delta) + '</span></div>';
       }).join('');
+    }
+
+    function renderAnchorChart(data){
+      // Only entries that carry since_anchor (older feed entries, scored before an anchor
+      // existed, are silently skipped rather than plotted with a missing value).
+      var points = data.filter(function(d){ return d.since_anchor; });
+      if(!points.length || !anchorCanvas) return;
+      anchorContentEl.style.display = 'block';
+      document.getElementById('lb-anchor-name').textContent = points[points.length - 1].since_anchor.anchor || 'the last release';
+
+      var ctx = anchorCanvas.getContext('2d');
+      var w = anchorCanvas.width, h = anchorCanvas.height, pad = 38;
+      var pub = points.map(function(d){ return (d.since_anchor.public && d.since_anchor.public.composite_delta) || 0; });
+      var priv = points.map(function(d){ return (d.since_anchor.private && d.since_anchor.private.composite_delta) || 0; });
+      var all = pub.concat(priv, [0]);
+      var min = Math.min.apply(null, all), max = Math.max.apply(null, all);
+      if(max - min < 0.02){ max = min + 0.02; }
+      var n = points.length;
+      function x(i){ return pad + (n > 1 ? i / (n - 1) : 0) * (w - pad * 2); }
+      function y(v){ return h - pad - ((v - min) / (max - min)) * (h - pad * 2); }
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = 'rgba(255,255,255,.14)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pad, y(0)); ctx.lineTo(w - pad, y(0)); ctx.stroke();
+
+      function line(values, color){
+        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+        values.forEach(function(v, i){ i === 0 ? ctx.moveTo(x(i), y(v)) : ctx.lineTo(x(i), y(v)); });
+        ctx.stroke();
+        ctx.fillStyle = color;
+        values.forEach(function(v, i){
+          ctx.beginPath(); ctx.arc(x(i), y(v), 3, 0, Math.PI * 2); ctx.fill();
+        });
+      }
+      line(pub, '#CFA954');
+      line(priv, '#7CBE90');
     }
   })();
 </script>
