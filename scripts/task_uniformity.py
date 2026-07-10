@@ -28,6 +28,9 @@ def load_tasks(path: str):
     except FileNotFoundError:
         print(f"task file not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
+    except OSError as exc:
+        print(f"cannot read task file ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     except json.JSONDecodeError as exc:
         print(f"task file is not valid JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
