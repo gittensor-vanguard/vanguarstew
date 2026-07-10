@@ -24,5 +24,31 @@
     "private": {
       "composite_delta": 0.0
     }
+  },
+  {
+    "timestamp": "2026-07-10T03:12:28.589041+00:00",
+    "pr_number": 1311,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.027,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.017
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.1
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.014
+    }
   }
 ]
