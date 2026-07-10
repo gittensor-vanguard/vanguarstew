@@ -38,7 +38,9 @@ def _names(result):
 def test_a_run_that_generalizes_passes():
     result = check_generalization(_gen(0.68, 0.63), max_gap=0.1)   # gap 0.05
     assert result["passed"] is True
-    assert _names(result) == ["has_partitions", "enough_held_out_repos", "gap_within_tolerance"]
+    assert _names(result) == [
+        "no_partition_error", "has_partitions", "enough_held_out_repos", "gap_within_tolerance",
+    ]
     assert result["gap"] == 0.05 and result["held_out_repos"] == 3
 
 
@@ -47,6 +49,65 @@ def test_a_large_gap_fails_gap_within_tolerance():
     assert result["passed"] is False
     assert failed_checks(result) == ["gap_within_tolerance"]
     assert result["gap"] == 0.30
+
+
+def test_tuned_per_repo_error_fails_no_partition_error():
+    art = {
+        "generalization_gap": 0.05,
+        "tuned": {
+            "composite_mean": 0.7, "scored_repos": 2,
+            "per_repo": [
+                {"repo": "a", "tasks": 4},
+                {"repo": "b", "tasks": 0, "error": "failed to clone"},
+            ],
+        },
+        "held_out": {
+            "composite_mean": 0.65, "scored_repos": 3,
+            "per_repo": [{"repo": "c", "tasks": 3}, {"repo": "d", "tasks": 3}, {"repo": "e", "tasks": 3}],
+        },
+    }
+    result = check_generalization(art)
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "no_partition_error")
+    assert "failed to clone" in detail
+
+
+def test_held_out_per_repo_error_fails_no_partition_error():
+    art = _gen(0.68, 0.63)
+    art["held_out"]["per_repo"] = [
+        {"repo": "a", "tasks": 3},
+        {"repo": "b", "tasks": 0, "error": "freeze failed"},
+        {"repo": "c", "tasks": 3},
+    ]
+    result = check_generalization(art)
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "no_partition_error")
+    assert "held_out partition error" in detail
+
+
+def test_partition_level_error_is_surfaced_before_per_repo_errors():
+    art = _gen(0.68, 0.63)
+    art["tuned"]["error"] = "partition boom"
+    art["tuned"]["per_repo"] = [{"repo": "b", "tasks": 0, "error": "clone failed"}]
+    result = check_generalization(art)
+    assert "no_partition_error" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "no_partition_error")
+    assert "partition boom" in detail
+
+
+def test_no_partition_error_tolerates_missing_per_repo_and_non_list_per_repo():
+    assert check_generalization(_gen(0.68, 0.63))["passed"] is True
+    art = _gen(0.68, 0.63)
+    art["tuned"]["per_repo"] = "oops"
+    assert check_generalization(art)["passed"] is True
+
+
+def test_falsy_per_repo_error_is_not_a_failure_record():
+    art = _gen(0.68, 0.63)
+    art["tuned"]["per_repo"] = [{"repo": "a", "tasks": 4, "error": ""}]
+    assert check_generalization(art)["passed"] is True
 
 
 def test_the_gap_bound_is_inclusive():
