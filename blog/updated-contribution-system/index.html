@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The contribution system just changed — vanguarstew</title>
+<meta name="description" content="agent/ pull requests are no longer labeled by a maintainer reading the diff. Here's exactly how the new perf:* measured-scoring system works.">
+<meta name="theme-color" content="#0C1412">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23CFA954'/><text x='16' y='22.5' font-size='18' text-anchor='middle' font-family='Georgia,serif' font-weight='700' fill='%23231a08'>V</text></svg>">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gittensor-vanguard.github.io/vanguarstew/blog/updated-contribution-system/">
+<meta property="og:title" content="The contribution system just changed — vanguarstew">
+<meta property="og:description" content="agent/ pull requests are no longer labeled by a maintainer reading the diff. Here's exactly how the new perf:* measured-scoring system works.">
+<style>
+  :root{
+    --ink:#0C1412; --ink-2:#0F1A15; --panel:#12201A; --panel-2:#152720;
+    --line:#26372E; --line-soft:#1C2B24;
+    --text:#E7EAE2; --muted:#93A69B; --faint:#6C7F75;
+    --brass:#CFA954; --brass-hi:#E7CB84; --brass-deep:#8A7132;
+    --approve:#7CBE90; --merge:#AC90E4; --changes:#E1A452; --bad:#C6553F;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --wrap:1060px; --prose:680px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ink); color:var(--text);
+    font-family:var(--sans); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    background-image:
+      radial-gradient(1100px 620px at 78% -8%, rgba(207,169,84,.075), transparent 60%),
+      radial-gradient(760px 520px at 6% 4%, rgba(124,190,144,.05), transparent 55%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:var(--wrap); margin-inline:auto; padding-inline:26px}
+  .prose{max-width:var(--prose); margin-inline:auto; padding-inline:26px}
+  a{color:inherit}
+  h1,h2,h3{font-family:var(--serif); font-weight:600; text-wrap:balance; letter-spacing:-.012em; margin:0}
+  p{margin:0}
+  code{font-family:var(--mono); font-size:.88em; background:rgba(255,255,255,.05); padding:.12em .4em; border-radius:4px}
+  .eyebrow{font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--brass); margin:0}
+  :focus-visible{outline:2px solid var(--brass); outline-offset:3px; border-radius:3px}
+
+  header.top{position:sticky; top:0; z-index:20; background:rgba(12,20,18,.72); backdrop-filter:blur(9px); border-bottom:1px solid var(--line-soft)}
+  header.top .wrap{display:flex; align-items:center; gap:18px; height:60px}
+  .brandmark{display:flex; align-items:center; gap:11px; font-family:var(--serif); font-size:1.12rem; letter-spacing:-.01em; text-decoration:none}
+  .brandmark .dot{width:11px; height:11px; border-radius:50%; background:radial-gradient(circle at 32% 30%, var(--brass-hi), var(--brass) 45%, var(--brass-deep)); box-shadow:0 0 0 1px rgba(231,203,132,.35), 0 0 14px rgba(207,169,84,.5)}
+  .top nav{margin-left:auto; display:flex; align-items:center; gap:22px}
+  .top nav a{font-family:var(--mono); font-size:.76rem; letter-spacing:.05em; color:var(--muted); text-decoration:none}
+  .top nav a:hover{color:var(--text)}
+  @media(max-width:680px){ .top nav a.hide-sm{display:none} }
+
+  article{padding-block:clamp(48px,7vw,84px)}
+  .art-head{margin-bottom:clamp(36px,6vw,56px)}
+  .art-title{font-size:clamp(2rem,4.6vw,3.1rem); line-height:1.1; margin-top:16px}
+  .art-meta{font-family:var(--mono); font-size:.78rem; color:var(--faint); margin-top:18px; display:flex; gap:14px; flex-wrap:wrap}
+  .art-lead{font-size:1.2rem; color:var(--muted); line-height:1.6; margin-top:22px}
+
+  .art-body{display:flex; flex-direction:column; gap:22px; margin-top:40px}
+  .art-body p{color:#DDE3DA; font-size:1.03rem; line-height:1.75}
+  .art-body h2{font-size:1.5rem; margin-top:26px}
+  .art-body h3{font-size:1.15rem; margin-top:6px; color:var(--brass-hi)}
+  .art-body ul, .art-body ol{margin:0; padding-left:1.3em; color:#DDE3DA; font-size:1.03rem; line-height:1.75; display:flex; flex-direction:column; gap:8px}
+  .art-body b{color:var(--text); font-weight:600}
+  .art-body a.inline{color:var(--brass); text-decoration:underline; text-underline-offset:2px}
+
+  .callout{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px 22px; display:flex; flex-direction:column; gap:8px}
+  .callout .k{font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--brass)}
+
+  table.labels{width:100%; border-collapse:collapse; margin-top:4px; font-size:.94rem}
+  table.labels th{font-family:var(--mono); font-size:.66rem; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); text-align:left; padding:10px 12px; border-bottom:1px solid var(--line)}
+  table.labels td{padding:11px 12px; border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:.9rem}
+  table.labels tr:last-child td{border-bottom:0}
+  table.labels .lbl{color:var(--brass); font-weight:600}
+  .wrap-x{overflow-x:auto}
+
+  .close-card{background:radial-gradient(700px 260px at 80% -30%, rgba(207,169,84,.12), transparent 60%), linear-gradient(180deg,var(--panel-2),var(--ink-2)); border:1px solid var(--line); border-radius:14px; padding:clamp(26px,5vw,40px); margin-top:12px}
+  .close-card h3{font-size:1.3rem}
+  .close-card p{color:var(--muted); margin-top:10px}
+  .close-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:20px}
+  .btn{display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:.82rem; letter-spacing:.03em; text-decoration:none; padding:11px 16px; border-radius:4px; border:1px solid transparent}
+  .btn-primary{background:var(--brass); color:#1a1305; font-weight:600; border-color:var(--brass-hi)}
+  .btn-ghost{color:var(--text); border-color:var(--line)}
+
+  footer{border-top:1px solid var(--line-soft); margin-top:40px}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:16px 26px; align-items:center; padding-block:30px; font-family:var(--mono); font-size:.74rem; color:var(--faint)}
+  footer a{color:var(--muted); text-decoration:none} footer a:hover{color:var(--brass)}
+  footer .sp{margin-left:auto}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brandmark" href="../../"><span class="dot"></span>vanguarstew</a>
+    <nav>
+      <a href="../../#bench" class="hide-sm">Benchmark</a>
+      <a href="../../leaderboard/" class="hide-sm">Leaderboard</a>
+      <span class="hide-sm" style="color:var(--brass)">Blog</span>
+      <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <article>
+    <div class="prose art-head">
+      <p class="eyebrow">Vanguarstew journal</p>
+      <h1 class="art-title">The contribution system just changed — here's what it means for your next PR</h1>
+      <div class="art-meta">
+        <span>July 10, 2026</span>
+        <span>·</span>
+        <span>M5 · REVIEW.md update</span>
+        <span>·</span>
+        <a href="../../leaderboard/" style="color:var(--brass)">Live leaderboard ↗</a>
+      </div>
+      <p class="art-lead">Short version: <b><code>agent/</code> pull requests are no longer
+        labeled by a maintainer reading the diff. They're labeled by a real benchmark run —
+        and every measured result, good or bad, is public.</b> Here's exactly how it works now.</p>
+    </div>
+
+    <div class="prose art-body">
+      <h2>The old way had a real gap</h2>
+      <p>Every contribution used to get one of six value labels —
+        <code>core-correctness</code>, <code>capability</code>, <code>enhancement</code>, and
+        so on — applied by a maintainer's judgment call on the diff. That's honest work, but
+        it's still a <i>story</i> about the change, not a <i>measurement</i> of it. Two PRs
+        that read equally well on paper can have completely different effects on the agent's
+        actual behavior.</p>
+
+      <h2>The new way: <code>perf:*</code>, earned by measurement</h2>
+      <p>If your PR touches <code>agent/</code> — the scored, contributor-editable surface —
+        its label now comes from one thing only: <b>a real before/after benchmark run.</b></p>
+
+      <div class="callout wrap-x">
+        <span class="k">perf:* label bands — scripts/score_pr_delta.py</span>
+        <table class="labels">
+          <thead><tr><th>Label</th><th>Multiplier</th><th>What it took</th></tr></thead>
+          <tbody>
+            <tr><td class="lbl">perf:xl</td><td>×4.0</td><td>Composite score up ≥ 0.15</td></tr>
+            <tr><td class="lbl">perf:l</td><td>×2.5</td><td>Composite score up ≥ 0.08</td></tr>
+            <tr><td class="lbl">perf:m</td><td>×1.5</td><td>Composite score up ≥ 0.04</td></tr>
+            <tr><td class="lbl">perf:s</td><td>×1.0</td><td>Composite score up ≥ 0.02</td></tr>
+            <tr><td class="lbl">perf:xs</td><td>×0.5</td><td>Composite score up ≥ 0.01</td></tr>
+            <tr><td style="color:var(--muted)">(no label)</td><td>—</td><td>Below the noise floor — still mergeable, just no multiplier</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>These thresholds are deliberately conservative starting points, not fixed forever —
+        we have very few real data points so far, and they'll be recalibrated as more real
+        deltas accumulate. The bands live in <code>scripts/score_pr_delta.py</code>, in the
+        open, if you want to see exactly where the lines are drawn.</p>
+
+      <h2>Two independent repo sets, and it takes the worse of the two</h2>
+      <p>Here's the part that actually matters if you're optimizing for a label: your PR is
+        scored against <b>a public repo set you can see, and a private, undisclosed one you
+        can't</b> — and the label follows whichever result is <i>worse</i>. Tuning your change
+        to look good against the repos you know about doesn't help if it flat-lines or
+        regresses on the ones you don't. That's the whole design goal: the label has to mean
+        the agent generalized, not that someone found the right repo to overfit to.</p>
+
+      <h2>A regression is a hard block, not a lower label</h2>
+      <p>If either the judge component or the objective anchor regresses past the noise floor
+        — on <i>either</i> repo target — the PR <b>does not merge</b>, period. Not a lower
+        tier, not "merge it anyway and note the tradeoff." This is the anti-Goodhart floor:
+        sounding better to the judge while the objective anchor quietly drops isn't an
+        improvement, it's a trade, and the mechanism exists specifically to catch that.</p>
+
+      <h2>Everything else: one flat rate</h2>
+      <p>PRs to <code>benchmark/</code>, <code>tests/</code>, <code>docs/</code>,
+        <code>.github/</code>, or anywhere else outside <code>agent/</code> get a single flat
+        label, <code>mult:contribution</code> (×0.2), on merge. There's no "agent performance"
+        to measure for harness or tooling work, so it doesn't go through the benchmark
+        pipeline — it's still real, valued work, it's just scored differently than a change to
+        the thing being measured.</p>
+
+      <h2>The receipts are public</h2>
+      <p>Every PR that either <b>merges</b> (whatever the outcome) or gets <b>closed for a
+        measured regression</b> shows up on the
+        <a class="inline" href="../../leaderboard/">public leaderboard</a>: the real composite
+        delta on the public target, the real delta on the private target (never which repos,
+        just the number), and — for merged, genuinely-improved PRs — a spot on the
+        optimization-journey chart. A PR closed for an ordinary quality issue doesn't show up
+        there; a PR closed because it measurably made the agent worse does, with the actual
+        numbers, because that's exactly the kind of result this mechanism exists to make
+        visible.</p>
+
+      <h2>What this means if you're about to open a PR</h2>
+      <ul>
+        <li><b>Touching <code>agent/</code>?</b> Write the change you believe actually improves
+          maintainer judgment, not the change you think will read well. The label only ever
+          reflects what the benchmark measured — there's nothing to persuade a diff-reader of.</li>
+        <li><b>Touching anything else?</b> Business as usual — scope, tests, quality review,
+          <code>mult:contribution</code> on merge.</li>
+        <li><b>Either way</b>, the full pipeline — automated gates, scope check, human/bot
+          review — is unchanged and documented in
+          <a class="inline" href="https://github.com/gittensor-vanguard/vanguarstew/blob/main/REVIEW.md">REVIEW.md</a>.
+          This post covers what changed in the value-label layer specifically.</li>
+      </ul>
+
+      <p>Questions, or a call that looks inconsistent with what's written here? Say so in the
+        PR thread — the rubric is public precisely so it can be checked.</p>
+
+      <div class="close-card">
+        <h3>See it in practice</h3>
+        <p>Every measured result — merged or closed for a real regression — is on the
+          <a class="inline" href="../../leaderboard/">leaderboard</a>, automatically, straight
+          from the maintainer bot. No cherry-picking.</p>
+        <div class="close-cta">
+          <a class="btn btn-primary" href="../../leaderboard/">View the leaderboard <span>→</span></a>
+          <a class="btn btn-ghost" href="https://github.com/gittensor-vanguard/vanguarstew/labels/good%20first%20issue">Find a good first issue <span>→</span></a>
+        </div>
+      </div>
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brandmark" style="font-size:1rem"><span class="dot"></span>vanguarstew</span>
+    <span>a repository-maintainer agent &amp; its benchmark</span>
+    <span class="sp"></span>
+    <a href="../">Blog</a>
+    <a href="../../">Home</a>
+    <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub</a>
+  </div>
+</footer>
+</body>
+</html>
