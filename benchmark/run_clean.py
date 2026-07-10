@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
 from benchmark.comparability import artifact_kind
 
 logger = logging.getLogger(__name__)
@@ -119,24 +120,13 @@ def _partition_errors(artifact: dict) -> list[str]:
     kind = artifact_kind(artifact)
     if kind == "generalization":
         for part in ("tuned", "held_out"):
-            err = _dict(artifact.get(part)).get("error")
+            err = _partition_error(_dict(artifact.get(part)))
             if err:
                 findings.append(f"{part} error: {err!r}")
-        containers = [
-            ("tuned", _dict(artifact.get("tuned")).get("per_repo")),
-            ("held_out", _dict(artifact.get("held_out")).get("per_repo")),
-        ]
     elif kind == "multi":
-        containers = [("multi", artifact.get("per_repo"))]
-    else:
-        return findings
-    for label, per_repo in containers:
-        if not isinstance(per_repo, list):
-            continue
-        for idx, entry in enumerate(per_repo):
-            if isinstance(entry, dict) and entry.get("error"):
-                repo = entry.get("repo") or entry.get("repo_name") or idx
-                findings.append(f"{label}.per_repo[{repo}] error: {entry.get('error')!r}")
+        err = _partition_error({"per_repo": artifact.get("per_repo")})
+        if err:
+            findings.append(f"multi error: {err!r}")
     return findings
 
 

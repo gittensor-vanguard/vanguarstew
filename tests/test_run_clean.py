@@ -55,6 +55,21 @@ def test_per_repo_error_fails():
     assert result["passed"] is False
 
 
+def test_bare_string_per_repo_row_fails_closed():
+    art = _multi("ok")
+    art["per_repo"].append("corrupt row")
+    result = check_run_clean(art)
+    assert result["passed"] is False
+    assert "corrupt row" in result["checks"][0]["detail"]
+
+
+def test_blank_string_per_repo_row_is_ignored():
+    art = _multi("ok")
+    art["per_repo"].append("   ")
+    result = check_run_clean(art)
+    assert result["passed"] is True
+
+
 def test_partition_error_in_generalization():
     art = {
         "tuned": _multi("a"),
@@ -63,6 +78,17 @@ def test_partition_error_in_generalization():
     }
     result = check_run_clean(art)
     assert result["passed"] is False
+
+
+def test_generalization_partition_bare_string_per_repo_fails_closed():
+    art = {
+        "tuned": {"composite_mean": 0.6, "scored_repos": 1, "per_repo": ["corrupt"]},
+        "held_out": {"composite_mean": 0.58, "scored_repos": 1, "per_repo": []},
+        "generalization_gap": 0.02,
+    }
+    result = check_run_clean(art)
+    assert result["passed"] is False
+    assert "tuned error: 'corrupt'" in result["checks"][0]["detail"]
 
 
 def test_headline():
