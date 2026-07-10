@@ -49,6 +49,14 @@ def test_is_number_rejects_bool_nan_inf_and_non_numeric():
     assert not _is_number(None)
 
 
+def test_is_number_rejects_int_too_large_for_float():
+    # ``math.isfinite`` raises OverflowError for a Python int too big to convert to a float
+    # (json.load yields such an int from an oversized integer literal). It must be treated as
+    # malformed, never allowed to raise -- matching the sibling integrity modules' guard.
+    assert not _is_number(10**400)
+    assert not _is_number(-(10**400))
+
+
 # --- single-repo happy path + component failures --------------------------------------------------
 
 def test_valid_weights_pass():
@@ -99,6 +107,14 @@ def test_bool_weight_rejected():
 
 def test_non_numeric_weight_rejected_without_raising():
     result = check_weight_integrity(_slice({"judge": "0.6", "objective": 0.4}))
+    assert "weights_non_negative" in failed_checks(result)
+
+
+def test_oversized_int_weight_rejected_without_raising():
+    # A weight that is a Python int too large to convert to a float must be flagged invalid, not
+    # crash check_weight_integrity with an OverflowError out of ``math.isfinite``.
+    result = check_weight_integrity(_slice({"judge": 10**400, "objective": 0.4}))
+    assert result["passed"] is False
     assert "weights_non_negative" in failed_checks(result)
 
 

@@ -43,7 +43,17 @@ def _is_number(value) -> bool:
     (``type`` is ``numpy.float64`` etc., never plain ``float``), and non-finite ``NaN``/``inf`` are
     all rejected here rather than flowing into a sum that reads as valid.
     """
-    return type(value) in (int, float) and math.isfinite(value)
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        # A Python ``int`` too large to convert to a float raises ``OverflowError`` in
+        # ``math.isfinite`` (json.load produces such ints from an oversized integer literal). Treat
+        # it as malformed rather than letting it crash the whole integrity check -- matching the
+        # OverflowError guard the sibling integrity modules already carry (objective_integrity.py,
+        # judge_report_integrity.py, tally_integrity.py, #616/#927).
+        return False
 
 
 def _dict(value) -> dict:
