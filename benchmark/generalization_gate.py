@@ -8,10 +8,12 @@ a pass/fail decision. A run that tuned to 0.70 and then collapsed to 0.40 on hel
 
 ``check_generalization(result, max_gap=…, min_held_out_repos=…)`` evaluates named criteria:
 
-1. ``has_partitions`` - both ``tuned`` and ``held_out`` partitions carry a composite score;
-2. ``enough_held_out_repos`` - the held-out partition scored at least ``min_held_out_repos``
+1. ``no_partition_error`` - neither ``tuned`` nor ``held_out`` carries an ``error`` or a per-repo
+   clone/freeze failure in ``per_repo[i]`` (the run completed clean on both partitions);
+2. ``has_partitions`` - both ``tuned`` and ``held_out`` partitions carry a composite score;
+3. ``enough_held_out_repos`` - the held-out partition scored at least ``min_held_out_repos``
    distinct repos (a one-repo held-out set doesn't demonstrate generalization);
-3. ``gap_within_tolerance`` - the tuned-minus-held-out drop is at most ``max_gap`` (the agent
+4. ``gap_within_tolerance`` - the tuned-minus-held-out drop is at most ``max_gap`` (the agent
    didn't overfit the tuned set). A held-out score that *exceeds* tuned is a non-positive gap and
    always within tolerance.
 
@@ -26,6 +28,8 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+
+from benchmark.acceptance import _partition_error
 
 logger = logging.getLogger(__name__)
 
@@ -84,15 +88,28 @@ def check_generalization(result, max_gap: float = DEFAULT_MAX_GAP,
     is True only when every check passes; all checks are always reported.
     """
     result = _dict(result)
-    tuned = _composite(result.get("tuned"))
-    held = _composite(result.get("held_out"))
-    held_repos = _scored_repos(result.get("held_out"))
+    tuned_part = _dict(result.get("tuned"))
+    held_part = _dict(result.get("held_out"))
+    tuned_err = _partition_error(tuned_part)
+    held_err = _partition_error(held_part)
+    tuned = _composite(tuned_part)
+    held = _composite(held_part)
+    held_repos = _scored_repos(held_part)
     both = tuned is not None and held is not None
     gap = round(tuned - held, 3) if both else None
     checks = []
 
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
+
+    no_error = tuned_err is None and held_err is None
+    if no_error:
+        err_detail = "both partitions completed clean"
+    elif tuned_err is not None:
+        err_detail = f"tuned partition error: {tuned_err!r}"
+    else:
+        err_detail = f"held_out partition error: {held_err!r}"
+    add("no_partition_error", no_error, err_detail)
 
     add("has_partitions", both,
         f"tuned composite {_num(tuned)}, held-out composite {_num(held)}"
