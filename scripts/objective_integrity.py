@@ -20,11 +20,31 @@ from benchmark.objective_integrity import (
 
 
 def load_artifact(path: str) -> dict:
+    """Load a JSON artifact from ``path``, exiting with a clean error on failure.
+
+    Distinguishes the common ``OSError`` subclasses so the user gets an actionable
+    message rather than a raw traceback:
+
+    - ``FileNotFoundError``: the path does not exist.
+    - ``PermissionError``: the file exists but is not readable.
+    - ``IsADirectoryError``: the path is a directory, not a file.
+    - Other ``OSError``: the raw ``str(exc)`` is used (covers broken symlinks,
+      I/O errors, etc.) without leaking internal details beyond the OS message.
+    """
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except FileNotFoundError:
         print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except OSError as exc:
+        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except json.JSONDecodeError as exc:
         print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)

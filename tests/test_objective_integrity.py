@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -276,6 +278,84 @@ def test_cli_missing_file_exits_two():
         text=True,
     )
     assert proc.returncode == 2
+    assert "artifact not found" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_cli_permission_denied_exits_two(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text("{}", encoding="utf-8")
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text("{}", encoding="utf-8")
+    unreadable.chmod(0o000)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.objective_integrity", str(unreadable)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        unreadable.chmod(0o644)
+    assert proc.returncode == 2
+    assert "not readable" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_directory_path_exits_two(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(tmp_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "directory, not a file" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_broken_symlink_exits_two(tmp_path):
+    link = tmp_path / "dangling.json"
+    link.symlink_to(tmp_path / "does-not-exist.json")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(link)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    # A broken symlink resolves to FileNotFoundError on open()
+    assert "artifact not found" in proc.stderr
+
+
+def test_cli_invalid_json_exits_two(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not valid json", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(bad)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "not valid JSON" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_non_object_json_exits_two(tmp_path):
+    arr = tmp_path / "arr.json"
+    arr.write_text("[1, 2, 3]", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(arr)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "must be a JSON object" in proc.stderr
+    assert "Traceback" not in proc.stderr
 
 
 def test_weighted_recall_preferred_when_valid():
