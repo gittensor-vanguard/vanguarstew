@@ -1,57 +1,5 @@
 [
   {
-    "timestamp": "2026-07-10T02:52:41.128978+00:00",
-    "pr_number": 1331,
-    "band": "none",
-    "label": null,
-    "public": {
-      "composite_delta": 0.0,
-      "per_repo": [
-        {
-          "repo": "https://github.com/pypa/hatch",
-          "composite_delta": 0.0
-        },
-        {
-          "repo": "https://github.com/pytest-dev/pluggy",
-          "composite_delta": 0.0
-        },
-        {
-          "repo": "https://github.com/kurtmckee/feedparser",
-          "composite_delta": 0.0
-        }
-      ]
-    },
-    "private": {
-      "composite_delta": 0.0
-    }
-  },
-  {
-    "timestamp": "2026-07-10T03:12:28.589041+00:00",
-    "pr_number": 1311,
-    "band": "blocked",
-    "label": null,
-    "public": {
-      "composite_delta": -0.027,
-      "per_repo": [
-        {
-          "repo": "https://github.com/pypa/hatch",
-          "composite_delta": 0.0
-        },
-        {
-          "repo": "https://github.com/pytest-dev/pluggy",
-          "composite_delta": 0.017
-        },
-        {
-          "repo": "https://github.com/kurtmckee/feedparser",
-          "composite_delta": -0.1
-        }
-      ]
-    },
-    "private": {
-      "composite_delta": 0.014
-    }
-  },
-  {
     "timestamp": "2026-07-10T09:24:53.447705+00:00",
     "pr_number": 1351,
     "band": "s",
@@ -86,45 +34,6 @@
       "private": {
         "composite_delta": 0.056,
         "composite_score": 0.7,
-        "anchor_score": 0.644
-      }
-    }
-  },
-  {
-    "timestamp": "2026-07-10T09:34:37.312636+00:00",
-    "pr_number": 1352,
-    "band": "blocked",
-    "label": null,
-    "public": {
-      "composite_delta": 0.039,
-      "per_repo": [
-        {
-          "repo": "https://github.com/pypa/hatch",
-          "composite_delta": 0.0
-        },
-        {
-          "repo": "https://github.com/pytest-dev/pluggy",
-          "composite_delta": 0.017
-        },
-        {
-          "repo": "https://github.com/kurtmckee/feedparser",
-          "composite_delta": 0.1
-        }
-      ]
-    },
-    "private": {
-      "composite_delta": -0.061
-    },
-    "since_anchor": {
-      "anchor": "v0.5.0",
-      "public": {
-        "composite_delta": 0.006,
-        "composite_score": 0.723,
-        "anchor_score": 0.717
-      },
-      "private": {
-        "composite_delta": -0.003,
-        "composite_score": 0.641,
         "anchor_score": 0.644
       }
     }
