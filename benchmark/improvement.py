@@ -9,8 +9,11 @@ worth adopting, and one that improves clearly is.
 ``check_improvement(candidate, baseline, min_gain=…)`` decides whether ``candidate`` beats
 ``baseline`` by at least ``min_gain`` on the headline composite (extracted with
 ``benchmark.trend.headline_score`` — the top-level ``composite_mean``, or the ``tuned`` partition
-for a ``--generalization`` artifact). The companion ``scripts/improvement.py`` exits non-zero
-when the candidate did not improve enough.
+for a ``--generalization`` artifact). ``both_scored`` also requires that neither artifact's
+evaluated partition carries a top-level ``error`` or a per-repo clone/freeze failure in
+``per_repo[i]`` — mirroring ``check_promotion.run_completed`` and ``check_acceptance`` — so a
+partial run cannot be adopted or used as a comparison baseline. The companion
+``scripts/improvement.py`` exits non-zero when the candidate did not improve enough.
 
 Pure evaluation: no I/O, never mutates its inputs, and a malformed/non-dict artifact simply fails
 the relevant checks rather than raising.
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
 from benchmark.trend import headline_score
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,32 @@ def _num(value):
     return f"{value:.3f}" if _is_number(value) else "n/a"
 
 
+def _headline_source(artifact: dict) -> dict:
+    """The partition whose score and cleanliness ``check_improvement`` evaluates.
+
+    A ``run_generalization_report`` artifact nests scores under ``tuned``/``held_out``; its
+    headline is the **tuned** partition (mirroring ``benchmark.trend.headline_score`` and
+    ``check_promotion``'s ``_promotion_source``). Every other artifact is evaluated at the top
+    level. Both ``tuned`` and ``held_out`` must be dicts to treat the artifact as generalization;
+    a lone ``tuned`` dict without ``held_out`` is not silently treated as the headline.
+    """
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return artifact
+
+
+def _artifact_error(artifact) -> str | None:
+    """The first error on the artifact's evaluated partition, or ``None`` when clean.
+
+    Scans the top-level ``error`` and every ``per_repo[i].error`` in the headline partition via
+    :func:`benchmark.acceptance._partition_error`, so a repo that failed to clone/freeze cannot
+    pass ``both_scored``. A failed ``held_out`` partition is intentionally not scanned.
+    """
+    artifact = _dict(artifact)
+    return artifact.get("error") or _partition_error(_headline_source(artifact))
+
+
 def check_improvement(candidate, baseline, min_gain: float = DEFAULT_MIN_GAIN) -> dict:
     """Decide whether ``candidate`` improved over ``baseline`` by at least ``min_gain``.
 
@@ -50,16 +80,31 @@ def check_improvement(candidate, baseline, min_gain: float = DEFAULT_MIN_GAIN) -
     """
     base_score = headline_score(baseline)
     cand_score = headline_score(candidate)
-    both_scored = base_score is not None and cand_score is not None
+    base_err = _artifact_error(baseline)
+    cand_err = _artifact_error(candidate)
+    both_scored = (
+        base_score is not None and cand_score is not None
+        and base_err is None and cand_err is None
+    )
     gain = round(cand_score - base_score, 3) if both_scored else None
     checks = []
 
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    add("both_scored", both_scored,
-        f"baseline composite {_num(base_score)}, candidate composite {_num(cand_score)}"
-        if both_scored else "a composite score is missing from one artifact")
+    if both_scored:
+        both_detail = (
+            f"baseline composite {_num(base_score)}, candidate composite {_num(cand_score)}"
+        )
+    elif base_err is not None:
+        both_detail = f"baseline error: {base_err!r}"
+    elif cand_err is not None:
+        both_detail = f"candidate error: {cand_err!r}"
+    elif base_score is None or cand_score is None:
+        both_detail = "a composite score is missing from one artifact"
+    else:
+        both_detail = "a composite score is missing from one artifact"
+    add("both_scored", both_scored, both_detail)
 
     improves = gain is not None and gain >= min_gain
     add("improves_by_margin", improves,

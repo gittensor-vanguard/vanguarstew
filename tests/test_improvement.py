@@ -80,6 +80,87 @@ def test_missing_composite_fails_both_scored():
     assert result["gain"] is None
 
 
+def _partial_candidate():
+    return {
+        "composite_mean": 0.66,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo": "good-a", "composite_mean": 0.70, "tasks": 4},
+            {"repo": "good-b", "composite_mean": 0.62, "tasks": 3},
+            {"repo": "bad-clone", "error": "failed to clone", "tasks": 0},
+        ],
+    }
+
+
+def test_candidate_per_repo_error_fails_both_scored():
+    result = check_improvement(_partial_candidate(), _run(0.60))
+    assert result["passed"] is False
+    assert failed_checks(result) == ["both_scored", "improves_by_margin"]
+    assert result["gain"] is None
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "both_scored")
+    assert "candidate error" in detail
+
+
+def test_baseline_per_repo_error_fails_both_scored():
+    baseline = {
+        "composite_mean": 0.60,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo": "good", "tasks": 4},
+            {"repo": "bad", "tasks": 0, "error": "freeze failed"},
+        ],
+    }
+    result = check_improvement(_run(0.66), baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "both_scored")
+    assert "baseline error" in detail
+
+
+def test_tuned_per_repo_error_fails_both_scored():
+    candidate = {
+        "tuned": {
+            "composite_mean": 0.66,
+            "scored_repos": 2,
+            "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 0, "error": "clone failed"}],
+        },
+        "held_out": {"composite_mean": 0.55, "scored_repos": 2},
+        "generalization_gap": 0.11,
+    }
+    result = check_improvement(candidate, _gen(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_held_out_per_repo_error_is_ignored_when_tuned_is_clean():
+    candidate = _gen(0.66)
+    candidate["held_out"] = {
+        "composite_mean": 0.55,
+        "scored_repos": 1,
+        "per_repo": [{"repo": "x", "tasks": 0, "error": "clone failed"}],
+    }
+    result = check_improvement(candidate, _gen(0.60))
+    assert result["passed"] is True
+
+
+def test_both_scored_tolerates_missing_per_repo_and_non_list_per_repo():
+    clean = {"composite_mean": 0.66, "scored_repos": 2}
+    assert check_improvement(clean, _run(0.60))["passed"] is True
+    weird = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": "oops"}
+    assert check_improvement(weird, _run(0.60))["passed"] is True
+
+
+def test_lone_tuned_without_held_out_is_not_treated_as_generalization():
+    # Only tuned present alongside a top-level score — do not scan orphan tuned's per_repo.
+    candidate = {
+        "composite_mean": 0.66,
+        "scored_repos": 2,
+        "tuned": {"per_repo": [{"repo": "b", "tasks": 0, "error": "clone failed"}]},
+    }
+    result = check_improvement(candidate, _run(0.60))
+    assert result["passed"] is True
+
+
 def test_malformed_or_non_dict_artifacts_fail_gracefully():
     for bad in (None, "not a dict", 42, [1, 2]):
         result = check_improvement(bad, _run(0.6))
