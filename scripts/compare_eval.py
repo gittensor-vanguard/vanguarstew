@@ -36,6 +36,18 @@ def _effective_composite_mean(artifact: dict):
     return artifact.get("composite_mean")
 
 
+def _effective_composite_parts(artifact: dict) -> dict:
+    """The ``composite_parts`` (``judge_mean``/``objective_mean``), or an empty mapping when
+    nothing was scored. The component means an unscored run reports are ``_mean([])`` placeholders
+    of ``0.0`` — exactly like its placeholder ``composite_mean`` — so they must be masked the same
+    way, or the diff self-contradicts (a ``None`` composite delta alongside a fabricated component
+    drop). Mirrors :func:`_effective_composite_mean`."""
+    if not isinstance(artifact, dict) or _is_scored_unavailable(artifact):
+        return {}
+    parts = artifact.get("composite_parts")
+    return parts if isinstance(parts, dict) else {}
+
+
 def _delta(candidate, baseline) -> float | None:
     c = _numeric(candidate)
     b = _numeric(baseline)
@@ -164,8 +176,8 @@ def compare_eval_artifacts(baseline: dict, candidate: dict) -> dict:
         return {"generalization": _generalization_diff(baseline, candidate)}
 
     parts = {}
-    base_parts = baseline.get("composite_parts") or {}
-    cand_parts = candidate.get("composite_parts") or {}
+    base_parts = _effective_composite_parts(baseline)
+    cand_parts = _effective_composite_parts(candidate)
     for key in ("judge_mean", "objective_mean"):
         if key in base_parts or key in cand_parts:
             parts[key] = _metric_triplet(base_parts, cand_parts, key)

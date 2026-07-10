@@ -47,6 +47,52 @@ def test_compare_eval_artifacts_reports_composite_and_part_deltas():
     assert diff["judge_report"]["disagreement_rate"]["delta"] == 0.25
 
 
+def test_unscored_candidate_masks_composite_parts_like_composite_mean():
+    # An all-skipped run (scored_repos: 0) reports composite_mean AND composite_parts as
+    # placeholder 0.0 means. composite_mean is masked to None; the parts must be too, or the diff
+    # self-contradicts (a None composite delta beside a fabricated component drop).
+    baseline = {"composite_mean": 0.8, "scored_repos": 3,
+                "composite_parts": {"judge_mean": 0.8, "objective_mean": 0.35}}
+    candidate = {"composite_mean": 0.0, "scored_repos": 0,
+                 "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_mean"] == {"baseline": 0.8, "candidate": None, "delta": None}
+    assert diff["composite_parts"]["judge_mean"] == {"baseline": 0.8, "candidate": None, "delta": None}
+    assert diff["composite_parts"]["objective_mean"] == {"baseline": 0.35, "candidate": None, "delta": None}
+
+
+def test_unscored_baseline_masks_its_own_composite_parts():
+    baseline = {"composite_mean": 0.0, "scored_repos": 0,
+                "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}}
+    candidate = {"composite_mean": 0.7, "scored_repos": 3,
+                 "composite_parts": {"judge_mean": 0.8, "objective_mean": 0.5}}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_parts"]["judge_mean"] == {"baseline": None, "candidate": 0.8, "delta": None}
+
+
+def test_both_unscored_reports_no_component_section():
+    art = {"composite_mean": 0.0, "scored_repos": 0,
+           "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}}
+    diff = compare_eval_artifacts(dict(art), dict(art))
+    assert "composite_parts" not in diff   # nothing scored on either side -> no component deltas
+    assert diff["composite_mean"] == {"baseline": None, "candidate": None, "delta": None}
+
+
+def test_masking_is_scoped_to_placeholder_means_not_real_judge_counts():
+    # Masking applies only to the unscored placeholder MEANS (composite_mean/composite_parts). The
+    # judge_report COUNTS are real integers (zero judged tasks -> zero wins is a true zero, not a
+    # placeholder mean), so they are reported as-is, not masked.
+    baseline = {"composite_mean": 0.5, "scored_repos": 2,
+                "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4},
+                "judge_report": {"wins": 3, "losses": 0}}
+    candidate = {"composite_mean": 0.0, "scored_repos": 0,
+                 "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+                 "judge_report": {"wins": 0, "losses": 0}}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_parts"]["judge_mean"]["candidate"] is None      # placeholder mean -> masked
+    assert diff["judge_report"]["wins"] == {"baseline": 3, "candidate": 0, "delta": -3}  # real count
+
+
 def test_compare_eval_artifacts_handles_missing_optional_fields():
     diff = compare_eval_artifacts({"composite_mean": 0.4}, {"composite_mean": 0.3})
     assert diff == {"composite_mean": {"baseline": 0.4, "candidate": 0.3, "delta": -0.1}}
