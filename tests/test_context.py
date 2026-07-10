@@ -381,6 +381,32 @@ def test_load_context_reads_a_valid_file_from_the_file_not_git():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_recent_commits_match_build_context_shape():
+    # The git-only fallback and the frozen file must agree on recent_commits shape (#1275):
+    # both carry sha + committer ISO `date` + subject, so the agent sees the same knowable-at-T
+    # context whether the frozen file exists or is rebuilt.
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        d1, d2 = "2024-01-10T12:00:00+00:00", "2024-01-11T12:00:00+00:00"
+        _write(repo, "a.txt")
+        _git(repo, "add", "-A", date=d1)
+        _git(repo, "commit", "-q", "-m", "first work", date=d1)
+        _write(repo, "b.txt")
+        _git(repo, "add", "-A", date=d2)
+        _git(repo, "commit", "-q", "-m", "second work", date=d2)
+
+        fb = _context_from_git(repo)["recent_commits"]
+        fz = build_context(repo, "HEAD")["recent_commits"]
+        # Same keys per entry, and the same sha + date values (subject is masked on the agent path).
+        assert [sorted(c) for c in fb] == [sorted(c) for c in fz] == [["date", "sha", "subject"]] * 2
+        assert [(c["sha"], c["date"]) for c in fb] == [(c["sha"], c["date"]) for c in fz]
+        assert fb[0]["date"] == d2 and fb[1]["date"] == d1  # newest first, committer ISO date
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_sets_frozen_at_date():
     repo = tempfile.mkdtemp()
     try:

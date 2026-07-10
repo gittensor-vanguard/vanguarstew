@@ -19,6 +19,14 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Git-only context parity (`agent/context.py::_context_from_git`): the fallback context builder
+  (used when `.vanguarstew_context.json` is absent/unreadable) dropped `recent_commits[].date`,
+  while `benchmark/freeze.py::build_context` records the committer ISO date on every entry. The
+  agent therefore saw a differently-shaped `recent_commits` — missing the per-commit date it can
+  use to reason about recency/cadence — depending on which builder produced the context. The
+  fallback now emits the same `{sha, date, subject}` shape (subject still masked on the direct-to-
+  agent path), completing the builder-parity line after tag creator-date (#749) and the
+  empty-README probe (#916/#937) (#1275).
 - Benchmark reporting (`benchmark/judge_wlt.py`): `summarize_judge_wlt` read only the top-level
   `judge_report`, so a `--generalization` artifact (which nests a report under `tuned`/`held_out`
   and emits none at the top level) reported `unavailable` for every generalization run — while its
