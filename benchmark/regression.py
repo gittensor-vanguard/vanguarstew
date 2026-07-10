@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
 from benchmark.judge_gate import _disagreement_rate_from_telemetry, _is_int
 from benchmark.trend import headline_score
 
@@ -96,6 +97,26 @@ def _check_rows_list(checks) -> list[dict]:
             "y" if len(checks) == 1 else "ies",
         )
     return rows
+
+
+def _headline_source(artifact: dict) -> dict:
+    """The partition whose cleanliness ``check_regression`` evaluates.
+
+    A ``run_generalization_report`` artifact nests scores under ``tuned``/``held_out``; its
+    headline is the **tuned** partition (mirroring ``benchmark.trend.headline_score`` and
+    ``check_improvement``). Every other artifact is evaluated at the top level. Both ``tuned``
+    and ``held_out`` must be dicts to treat the artifact as generalization.
+    """
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return artifact
+
+
+def _artifact_error(artifact) -> str | None:
+    """The first error on the artifact's evaluated partition, or ``None`` when clean."""
+    artifact = _dict(artifact)
+    return artifact.get("error") or _partition_error(_headline_source(artifact))
 
 
 def _round(value):
@@ -187,17 +208,30 @@ def check_regression(candidate, baseline,
     """
     base_score = headline_score(baseline)
     cand_score = headline_score(candidate)
+    base_err = _artifact_error(baseline)
+    cand_err = _artifact_error(candidate)
     base_dis = _disagreement(baseline)
     cand_dis = _disagreement(candidate)
+    both_scored = (
+        base_score is not None and cand_score is not None
+        and base_err is None and cand_err is None
+    )
     checks = []
 
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    both_scored = base_score is not None and cand_score is not None
-    add("both_scored", both_scored,
-        f"baseline composite {base_score}, candidate composite {cand_score}"
-        if both_scored else "a composite score is missing from one artifact")
+    if both_scored:
+        both_detail = (
+            f"baseline composite {base_score}, candidate composite {cand_score}"
+        )
+    elif base_err is not None:
+        both_detail = f"baseline error: {base_err!r}"
+    elif cand_err is not None:
+        both_detail = f"candidate error: {cand_err!r}"
+    else:
+        both_detail = "a composite score is missing from one artifact"
+    add("both_scored", both_scored, both_detail)
 
     # Round the delta to the scores' 3-decimal precision before comparing, so a drop equal to
     # the tolerance isn't tipped over it by floating-point noise (0.58 - 0.60 == -0.02000...018).

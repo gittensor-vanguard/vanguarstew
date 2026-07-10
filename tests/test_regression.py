@@ -77,6 +77,110 @@ def test_missing_composite_fails_both_scored():
     assert result["candidate_composite"] is None
 
 
+def _partial_multi(composite=0.66):
+    return {
+        "composite_mean": composite,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo": "good-a", "tasks": 4},
+            {"repo": "good-b", "tasks": 3},
+            {"repo": "bad-clone", "error": "failed to clone", "tasks": 0},
+        ],
+    }
+
+
+def test_candidate_per_repo_error_fails_both_scored():
+    result = check_regression(_partial_multi(), _run(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    assert result["composite_delta"] is None
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "both_scored")
+    assert "candidate error" in detail
+
+
+def test_baseline_per_repo_error_fails_both_scored():
+    baseline = {
+        "composite_mean": 0.60,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo": "good", "tasks": 4},
+            {"repo": "bad", "tasks": 0, "error": "freeze failed"},
+        ],
+    }
+    result = check_regression(_run(0.66), baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "both_scored")
+    assert "baseline error" in detail
+
+
+def test_tuned_per_repo_error_fails_both_scored():
+    candidate = {
+        "tuned": {
+            "composite_mean": 0.66,
+            "scored_repos": 2,
+            "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 0, "error": "clone failed"}],
+        },
+        "held_out": {"composite_mean": 0.55, "scored_repos": 2},
+        "generalization_gap": 0.11,
+    }
+    result = check_regression(candidate, _gen(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_held_out_per_repo_error_is_ignored_when_tuned_is_clean():
+    candidate = _gen(0.66)
+    candidate["held_out"] = {
+        "composite_mean": 0.55,
+        "scored_repos": 1,
+        "per_repo": [{"repo": "x", "tasks": 0, "error": "clone failed"}],
+    }
+    result = check_regression(candidate, _gen(0.60))
+    assert result["passed"] is True
+
+
+def test_both_scored_tolerates_missing_per_repo_and_non_list_per_repo():
+    clean = {"composite_mean": 0.66, "scored_repos": 2}
+    assert check_regression(clean, _run(0.60))["passed"] is True
+    weird = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": "oops"}
+    assert check_regression(weird, _run(0.60))["passed"] is True
+
+
+def test_both_scored_per_repo_none_does_not_crash():
+    art = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": None}
+    assert check_regression(art, _run(0.60))["passed"] is True
+
+
+def test_both_scored_per_repo_with_none_and_non_dict_entries_does_not_crash():
+    art = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": [{"repo": "a", "tasks": 4}, None, 42]}
+    assert check_regression(art, _run(0.60))["passed"] is True
+
+
+def test_falsy_per_repo_error_values_do_not_fail_both_scored():
+    for falsy in (0, False, None, ""):
+        art = _partial_multi()
+        art["per_repo"][-1]["error"] = falsy
+        assert check_regression(art, _run(0.60))["passed"] is True, falsy
+
+
+def test_bare_string_per_repo_row_fails_both_scored():
+    art = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": [{"repo": "a", "tasks": 4}, "corrupt row"]}
+    result = check_regression(art, _run(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_lone_tuned_without_held_out_is_not_treated_as_generalization():
+    candidate = {
+        "composite_mean": 0.66,
+        "scored_repos": 2,
+        "tuned": {"per_repo": [{"repo": "b", "tasks": 0, "error": "clone failed"}]},
+    }
+    result = check_regression(candidate, _run(0.60))
+    assert result["passed"] is True
+
+
 def test_regression_compares_generalization_tuned_scores():
     result = check_regression(_gen(0.66), _gen(0.60))
     assert result["baseline_composite"] == 0.60 and result["candidate_composite"] == 0.66
