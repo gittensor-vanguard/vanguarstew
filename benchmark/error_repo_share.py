@@ -37,15 +37,27 @@ def _has_error(entry) -> bool:
 def _repo_error_flags(slice_) -> list[bool]:
     """One error flag per repo in a slice.
 
-    A multi-repo slice contributes one flag per dict entry in ``per_repo``; a single-repo slice
-    contributes its own top-level ``error`` as one repo. Non-dict ``per_repo`` entries are skipped.
-    When ``per_repo`` is a list the top-level ``error`` is not counted, so a failure recorded in both
-    places is counted once.
+    A multi-repo slice contributes one flag per countable entry in ``per_repo`` — a dict row
+    (flagged when it carries a truthy ``error``) or a non-empty string row (a malformed/corrupt
+    entry, always an error). A single-repo slice contributes its own top-level ``error`` as one
+    repo. Empty/whitespace strings and other non-dict/non-string entries carry no error signal and
+    are skipped. When ``per_repo`` is a list the top-level ``error`` is not counted, so a failure
+    recorded in both places is counted once.
     """
     slice_ = _dict(slice_)
     per_repo = slice_.get("per_repo")
     if isinstance(per_repo, list):
-        return [_has_error(entry) for entry in per_repo if isinstance(entry, dict)]
+        flags = []
+        for entry in per_repo:
+            if isinstance(entry, dict):
+                flags.append(_has_error(entry))
+            elif isinstance(entry, str) and entry.strip():
+                # A per_repo row that is itself a non-empty string is a malformed/corrupt entry,
+                # not a well-formed result dict — count it as an errored repo so the share
+                # reflects the real failure rate, matching ``benchmark.acceptance._partition_error``
+                # and ``check_run_clean``.
+                flags.append(True)
+        return flags
     return [_has_error(slice_)]
 
 

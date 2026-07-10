@@ -53,9 +53,29 @@ def test_empty_per_repo_has_none_share():
     }
 
 
-def test_non_dict_per_repo_entries_skipped():
-    summary = summarize_error_repo_share({"per_repo": [_err(), "nope", 5, _ok()]})
+def test_non_countable_per_repo_entries_are_skipped():
+    # Ints, None, and empty/whitespace strings carry no error signal and are not counted.
+    summary = summarize_error_repo_share({"per_repo": [_err(), 5, None, "", "   ", _ok()]})
     assert summary["repos"] == 2 and summary["error_repos"] == 1
+
+
+def test_malformed_string_per_repo_row_counts_as_error():
+    # A per_repo row that is itself a non-empty string is a malformed/corrupt entry, not a
+    # well-formed result dict — count it as an errored repo (matching the canonical
+    # acceptance._partition_error and check_run_clean) so the share reflects the real failure
+    # rate rather than silently under-reporting it.
+    summary = summarize_error_repo_share({"per_repo": [{"tasks": 3}, "corrupt row"]})
+    assert summary == {
+        "kind": "multi", "repos": 2, "error_repos": 1, "error_share": 0.5, "partitions": None,
+    }
+    # Under a generalization partition too: the malformed row counts within its slice.
+    gen = summarize_error_repo_share({
+        "tuned": {"per_repo": [_ok(), "boom"]},
+        "held_out": {"per_repo": [_ok()]},
+        "generalization_gap": 0.0,
+    })
+    assert gen["partitions"]["tuned"]["error_repos"] == 1
+    assert gen["partitions"]["held_out"]["error_repos"] == 0
 
 
 def test_per_repo_present_does_not_double_count_top_level_error():
