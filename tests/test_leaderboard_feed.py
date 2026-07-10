@@ -100,6 +100,57 @@ def test_to_leaderboard_entry_skips_malformed_per_repo_rows():
     assert entry["public"]["per_repo"] == [{"repo": "https://github.com/a/b", "composite_delta": 0.03}]
 
 
+def _since_anchor_report():
+    """A real score_pr_delta()-shaped pair, as if diffing the candidate against a cached,
+    FIXED anchor baseline (e.g. v0.5.0) rather than the shifting base-branch one."""
+    anchor_baseline = _artifact(0.60, 0.55, 0.65)
+    public_since = score_pr_delta(anchor_baseline, _artifact(0.72, 0.68, 0.78))
+    public_since["diff"]["per_repo"] = [
+        {"repo": "https://github.com/pypa/hatch", "composite_mean": {"delta": 0.12}},
+    ]
+    private_since = score_pr_delta(anchor_baseline, _artifact(0.64, 0.60, 0.70))
+    private_since["diff"]["per_repo"] = [
+        {"repo": "https://github.com/some/hidden-repo", "composite_mean": {"delta": 0.04}},
+    ]
+    return {"anchor": "v0.5.0", "public": public_since, "private": private_since}
+
+
+def test_since_anchor_is_omitted_when_not_given():
+    combined = _real_combined_report()
+    entry = to_leaderboard_entry(combined, pr_number=3, timestamp="t")
+    assert "since_anchor" not in entry
+
+
+def test_since_anchor_carries_anchor_name_and_both_deltas():
+    combined = _real_combined_report()
+    since = _since_anchor_report()
+    entry = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor=since)
+    assert entry["since_anchor"]["anchor"] == "v0.5.0"
+    assert entry["since_anchor"]["public"] == {"composite_delta": 0.12}
+    assert entry["since_anchor"]["private"] == {"composite_delta": 0.04}
+
+
+def test_since_anchor_never_leaks_private_per_repo_data():
+    combined = _real_combined_report()
+    since = _since_anchor_report()
+    entry = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor=since)
+    assert set(entry["since_anchor"]["private"]) == {"composite_delta"}
+    assert "hidden-repo" not in json.dumps(entry)
+
+
+def test_since_anchor_tolerates_malformed_input():
+    combined = _real_combined_report()
+    entry = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor={"anchor": "v0.5.0"})
+    assert entry["since_anchor"] == {
+        "anchor": "v0.5.0",
+        "public": {"composite_delta": None},
+        "private": {"composite_delta": None},
+    }
+    # a non-dict since_anchor is treated the same as not passing one at all
+    entry2 = to_leaderboard_entry(combined, pr_number=3, timestamp="t", since_anchor="not a dict")
+    assert "since_anchor" not in entry2
+
+
 def test_append_entry_creates_file_when_missing(tmp_path):
     path = str(tmp_path / "results.json")
     result = append_entry(path, {"a": 1})

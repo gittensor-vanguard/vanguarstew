@@ -12,6 +12,16 @@ bands, per-repo breakdowns), but a PRIVATE repo target's identity never is.
     per-repo breakdown (which would leak which repos are in the hidden set), never anything
     else from its ``diff`` payload.
 
+Two DIFFERENT deltas can appear on one entry:
+  - The per-PR band's delta (``public``/``private`` top-level keys) is against the base
+    branch's state at the moment this PR was scored -- a SHIFTING baseline that moves every
+    time a PR merges. This is what decides the perf:* label; it answers "was this PR a real
+    improvement over what came immediately before it."
+  - ``since_anchor`` (optional) is against a FIXED, named release (e.g. v0.5.0) that never
+    moves until the anchor itself is rolled forward. This answers "how much better is the
+    agent now than at our last tagged release" -- the cumulative-progress line, not a
+    per-PR eligibility check. See _since_anchor_fields().
+
 Pure data transformation: no I/O, no network, no repo-set opinions of its own.
 """
 
@@ -43,16 +53,46 @@ def _safe_per_repo(public_report: dict) -> list:
     return out
 
 
-def to_leaderboard_entry(combined: dict, pr_number: int, timestamp: str | None = None) -> dict:
+def _since_anchor_fields(since_anchor: dict | None) -> dict | None:
+    """The public-safe subset of a since-anchor comparison (candidate vs. a FIXED, named
+    release -- e.g. v0.5.0 -- rather than the shifting `test`-branch baseline every per-PR
+    score already uses). Same privacy rule as the per-PR public/private split: the private
+    target contributes only its composite_delta, never a diff or per-repo breakdown.
+
+    ``since_anchor`` is expected to carry ``{"anchor": <name>, "public": <score_pr_delta
+    result>, "private": <score_pr_delta result>}`` -- the same shape score_pr_delta() already
+    returns for each target, just diffed against the cached anchor baseline instead of the
+    current base branch. ``None`` (no anchor comparison was run) passes through as ``None``.
+    """
+    if not isinstance(since_anchor, dict):
+        return None
+    public = since_anchor.get("public") or {}
+    private = since_anchor.get("private") or {}
+    return {
+        "anchor": since_anchor.get("anchor"),
+        "public": {"composite_delta": _round((public.get("composite_deltas") or {}).get("composite_mean"))},
+        "private": {"composite_delta": _round((private.get("composite_deltas") or {}).get("composite_mean"))},
+    }
+
+
+def to_leaderboard_entry(
+    combined: dict, pr_number: int, timestamp: str | None = None, since_anchor: dict | None = None,
+) -> dict:
     """Build one public leaderboard-feed entry from a combine_dual_target() result.
 
     ``timestamp`` defaults to now (UTC, ISO-8601) -- pass an explicit value only for
     deterministic tests. NEVER includes the private target's per-repo data or diff; only its
     composite_delta survives into the entry.
+
+    ``since_anchor``, when given, adds a SEPARATE cumulative-progress field: the same PR's
+    delta against a fixed, named release (not the per-PR band's shifting base-branch
+    baseline) -- see _since_anchor_fields(). Omitted from the entry entirely when not given,
+    rather than a null placeholder, so old feed entries (scored before an anchor existed)
+    and new ones are both valid without every reader needing to handle a null case.
     """
     public = combined.get("public") or {}
     private = combined.get("private") or {}
-    return {
+    entry = {
         "timestamp": timestamp or datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "pr_number": pr_number,
         "band": combined.get("band"),
@@ -65,6 +105,10 @@ def to_leaderboard_entry(combined: dict, pr_number: int, timestamp: str | None =
             "composite_delta": _round((private.get("composite_deltas") or {}).get("composite_mean")),
         },
     }
+    fields = _since_anchor_fields(since_anchor)
+    if fields is not None:
+        entry["since_anchor"] = fields
+    return entry
 
 
 def append_entry(path: str, entry: dict, max_entries: int = 500) -> list:
