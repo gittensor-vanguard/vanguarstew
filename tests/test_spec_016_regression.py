@@ -268,6 +268,9 @@ def test_judge_check_passes_vacuously_without_both_rates():
 def test_both_composites_none_fails_gracefully():
     # Finding 3b: when NEITHER run yields a composite, both_scored and no_composite_regression fail,
     # composite_delta is None, the judge check passes vacuously, and passed is False -- no raise.
+    # Both artifacts here carry a top-level error, so both_scored now reports the run-cleanliness
+    # reason (#1257): both_scored also gates on run errors, and a run error takes precedence over
+    # the missing-composite message (mirroring check_improvement's both_scored, #1328).
     result = check_regression({"error": "a"}, {"error": "b"})
     assert result["passed"] is False
     assert result["baseline_composite"] is None
@@ -276,7 +279,7 @@ def test_both_composites_none_fails_gracefully():
     assert result["disagreement_delta"] is None
     assert failed_checks(result) == ["both_scored", "no_composite_regression"]
     assert _row(result, "no_judge_instability_increase")["passed"] is True
-    assert _row(result, "both_scored")["detail"] == "a composite score is missing from one artifact"
+    assert _row(result, "both_scored")["detail"] == "both runs have a partition or per-repo error"
     assert _row(result, "no_composite_regression")["detail"] == "cannot compare composites"
 
 
