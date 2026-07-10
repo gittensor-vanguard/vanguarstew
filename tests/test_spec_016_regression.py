@@ -283,7 +283,9 @@ def test_judge_check_passes_vacuously_without_both_rates():
 def test_both_composites_none_fails_gracefully():
     # Finding 3b: when NEITHER run yields a composite, both_scored and no_composite_regression fail,
     # composite_delta is None, the judge check passes vacuously, and passed is False -- no raise.
-    result = check_regression({"error": "a"}, {"error": "b"})
+    # Use artifacts without a composite_mean or error field so the "missing score" path
+    # is tested independently of the per-repo error path added in #1257.
+    result = check_regression({"rows": []}, {"rows": []})
     assert result["passed"] is False
     assert result["baseline_composite"] is None
     assert result["candidate_composite"] is None

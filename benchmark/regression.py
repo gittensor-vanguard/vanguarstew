@@ -14,13 +14,17 @@ be gated against the previous baseline the way ``--fail-under`` gates against a 
 useful when the *floor moves with the current best* rather than being a constant.
 
 Pure evaluation: no I/O, never mutates its inputs, and a malformed/non-dict artifact simply fails
-the relevant checks rather than raising.
+the relevant checks rather than raising. ``both_scored`` also requires that neither artifact's
+evaluated partition carries a top-level ``error`` or a per-repo clone/freeze failure in
+``per_repo[i]`` -- mirroring ``check_acceptance`` and ``check_improvement`` -- so a partial run
+cannot pass the regression gate.
 """
 
 from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
 from benchmark.judge_gate import _disagreement_rate_from_telemetry, _is_int
 from benchmark.trend import headline_score
 
@@ -100,6 +104,35 @@ def _check_rows_list(checks) -> list[dict]:
 
 def _round(value):
     return round(float(value), 3) if _is_number(value) else None
+
+
+def _headline_source(artifact: dict) -> dict:
+    """The partition whose score and cleanliness ``check_regression`` evaluates.
+
+    A ``run_generalization_report`` artifact nests scores under ``tuned``/``held_out``; its
+    headline is the **tuned** partition (mirroring ``benchmark.trend.headline_score`` and
+    ``check_improvement``'s ``_headline_source``). Every other artifact is evaluated at the top
+    level. Both ``tuned`` and ``held_out`` must be dicts to treat the artifact as generalization;
+    a lone ``tuned`` dict without ``held_out`` is not silently treated as the headline.
+    """
+    artifact = _dict(artifact)
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return artifact
+
+
+def _artifact_error(artifact) -> str | None:
+    """The first error on the artifact's evaluated partition, or ``None`` when clean.
+
+    Scans the top-level ``error`` and every ``per_repo[i].error`` in the headline partition via
+    :func:`benchmark.acceptance._partition_error`, so a repo that failed to clone/freeze cannot
+    pass ``both_scored`` -- mirroring ``check_acceptance`` (#1056), ``check_promotion`` (#1258),
+    and ``check_improvement`` (#1328). A failed ``held_out`` partition is intentionally not
+    scanned (only the headline partition is evaluated).
+    """
+    artifact = _dict(artifact)
+    return artifact.get("error") or _partition_error(_headline_source(artifact))
 
 
 # Sentinel: a partition carried a usable telemetry block whose counts are impossible
@@ -189,15 +222,30 @@ def check_regression(candidate, baseline,
     cand_score = headline_score(candidate)
     base_dis = _disagreement(baseline)
     cand_dis = _disagreement(candidate)
+    base_err = _artifact_error(baseline)
+    cand_err = _artifact_error(candidate)
     checks = []
 
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    both_scored = base_score is not None and cand_score is not None
-    add("both_scored", both_scored,
-        f"baseline composite {base_score}, candidate composite {cand_score}"
-        if both_scored else "a composite score is missing from one artifact")
+    both_scored = (
+        base_score is not None and cand_score is not None
+        and base_err is None and cand_err is None
+    )
+    if both_scored:
+        both_detail = (
+            f"baseline composite {base_score}, candidate composite {cand_score}"
+        )
+    elif cand_err is not None:
+        both_detail = f"candidate error: {cand_err!r}"
+    elif base_err is not None:
+        both_detail = f"baseline error: {base_err!r}"
+    elif base_score is None or cand_score is None:
+        both_detail = "a composite score is missing from one artifact"
+    else:
+        both_detail = "a composite score is missing from one artifact"
+    add("both_scored", both_scored, both_detail)
 
     # Round the delta to the scores' 3-decimal precision before comparing, so a drop equal to
     # the tolerance isn't tipped over it by floating-point noise (0.58 - 0.60 == -0.02000...018).
