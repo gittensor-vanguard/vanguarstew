@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from statistics import mean, stdev
 
+from benchmark.run_clean import check_run_clean
 from benchmark.trend import headline_score
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,29 @@ def _repeatability_artifacts(artifacts) -> list:
     return []
 
 
+def _unclean_repeats(artifacts) -> list[str]:
+    """Findings for any repeat that did not complete clean, per :func:`benchmark.run_clean`.
+
+    A partial ``run_multi_replay`` (a repo failed to clone/freeze, recorded as
+    ``per_repo[i].error`` with ``tasks: 0``) can still report a ``composite_mean``; folding its
+    headline score into the spread would let a partial series read as STABLE. Scans each repeat
+    the same way ``check_run_clean`` does -- top-level, ``multi``, and ``--generalization``
+    ``tuned``/``held_out`` per-repo errors -- so an unclean repeat forces UNSTABLE. Only repeats
+    that contribute a headline score are checked: an unscored repeat (e.g. ``scored_repos: 0``
+    with a placeholder ``composite_mean``) is already skipped from the spread and cannot fold a
+    partial score in, so it does not by itself destabilize the series.
+    """
+    problems = []
+    for idx, artifact in enumerate(_repeatability_artifacts(artifacts)):
+        if headline_score(artifact) is None:
+            continue
+        report = check_run_clean(artifact)
+        if not report.get("passed", True):
+            findings = "; ".join(report.get("findings") or ["unspecified error"])
+            problems.append(f"run {idx}: {findings}")
+    return problems
+
+
 def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
                          min_runs: int = DEFAULT_MIN_RUNS) -> dict:
     """Summarize the spread of repeated-run ``artifacts`` and decide whether it is stable.
@@ -111,6 +135,11 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
     required = _effective_min_runs(min_runs)
     if runs < required:
         result["reason"] = f"insufficient runs: {runs} scored < min_runs {required}"
+        return result
+
+    unclean = _unclean_repeats(artifacts)
+    if unclean:
+        result["reason"] = "unclean repeat(s): " + " | ".join(unclean)
         return result
 
     mu = round(mean(scores), 3)

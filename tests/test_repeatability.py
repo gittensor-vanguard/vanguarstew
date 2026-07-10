@@ -250,3 +250,38 @@ def test_cli_still_reports_stable_for_well_formed_artifacts(tmp_path):
     assert result.returncode == 0
     assert "STABLE" in result.stderr
     assert json.loads(result.stdout)["stable"] is True
+
+
+# --- cleanliness gate: an unclean repeat must force UNSTABLE, not fold a partial score (#1338) ---
+# assess_repeatability aligns with check_acceptance / check_improvement / check_run_clean: a repeat
+# with a per-repo clone/freeze failure (recorded in per_repo[i].error) cannot contribute a headline
+# score to a STABLE verdict.
+
+
+def test_a_partial_multi_repeat_with_a_per_repo_error_is_unstable():
+    dirty = {
+        "composite_mean": 0.66, "scored_repos": 2,
+        "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 3},
+                     {"repo": "c", "tasks": 0, "error": "failed to clone"}],
+    }
+    result = assess_repeatability([dirty, _run(0.64), _run(0.65)], max_cv=0.5)
+    assert result["stable"] is False
+    assert "unclean" in result["reason"]
+
+
+def test_a_generalization_repeat_partition_error_is_unstable():
+    dirty = _gen(0.66)
+    dirty["held_out"]["per_repo"] = [{"repo": "a", "tasks": 4},
+                                     {"repo": "d", "tasks": 0, "error": "freeze failed"}]
+    result = assess_repeatability([dirty, _gen(0.64), _gen(0.65)], max_cv=0.5)
+    assert result["stable"] is False
+    assert "unclean" in result["reason"]
+
+
+def test_clean_repeats_are_unaffected_by_the_cleanliness_gate():
+    # Control: per_repo rows present but none carry an error -> a tight series stays STABLE.
+    clean = {"composite_mean": 0.60, "scored_repos": 3,
+             "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 3}]}
+    result = assess_repeatability([clean, _run(0.61), _run(0.59)], max_cv=0.05)
+    assert result["stable"] is True
+    assert result["reason"] == ""
