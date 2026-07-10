@@ -203,7 +203,15 @@ def context_for_agent(context: dict) -> dict:
 
 
 def _context_from_git(repo_path: str) -> dict:
-    head = _git(repo_path, "rev-parse", "HEAD")
+    # --verify --quiet suppresses the "fatal: ambiguous argument 'HEAD'" stderr message and
+    # yields empty stdout on failure, instead of the literal word "HEAD" that a plain
+    # `rev-parse HEAD` prints to stdout on an empty repo (rc 128) -- which `_git`'s
+    # check=False would otherwise silently accept as a bogus 4-char "commit id". An empty
+    # repo cannot be frozen at any commit, so degrade to a clean error here, matching
+    # `benchmark/freeze.py::build_context`'s RuntimeError on the same input (#1307).
+    head = _git(repo_path, "rev-parse", "--verify", "--quiet", "HEAD")
+    if not head:
+        raise RuntimeError(f"git-only context fallback: {repo_path} has no commits (HEAD does not resolve)")
     freeze_date = _git(repo_path, "show", "-s", "--format=%cI", head).strip() or None
     log = _git(repo_path, "log", "--pretty=format:%H%x09%s", "-n", "50")
     commits = []
@@ -255,4 +263,9 @@ def _context_from_git(repo_path: str) -> dict:
         "releases": [{"tag": _mask_forward_refs(t)} for t in tags[-10:]],
         "readme_excerpt": readme,
         "_source": "git",
+        # This fallback masks forward refs inline (_mask_forward_refs, above) exactly like
+        # benchmark/leakage.py::scrub_context does for the frozen path -- but never recorded
+        # that it had, so a consumer reading this artifact's provenance would wrongly
+        # conclude it was never scrubbed. Set the same flag scrub_context sets (#1307).
+        "_forward_signal_scrubbed": True,
     }

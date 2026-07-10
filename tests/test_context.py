@@ -30,6 +30,7 @@ from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
 from agent.planner import _render as render_planner_context  # noqa: E402
 from benchmark.freeze import build_context  # noqa: E402
+from benchmark.leakage import scrub_context  # noqa: E402
 
 
 def test_context_for_agent_omits_unknown_issue_labels():
@@ -395,6 +396,41 @@ def test_context_from_git_sets_frozen_at_date():
         assert ctx["frozen_at"]["date"]
         assert gc._frozen_at_date(ctx) is not None
         assert ctx["frozen_at"]["date"] == build_context(repo, "HEAD")["frozen_at"]["date"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_sets_forward_signal_scrubbed_flag():
+    # The fallback masks forward refs inline (_mask_forward_refs) exactly like
+    # benchmark/leakage.py::scrub_context does for the frozen path, but never recorded that
+    # provenance flag -- so a consumer reading the artifact would wrongly conclude it was
+    # never scrubbed (#1307).
+    repo = _repo_with_commit()
+    try:
+        ctx = _context_from_git(repo)
+        assert ctx["_forward_signal_scrubbed"] is True
+        # parity: scrub_context's own output carries the identical flag/value
+        scrubbed = scrub_context(build_context(repo, "HEAD"))
+        assert ctx["_forward_signal_scrubbed"] == scrubbed["_forward_signal_scrubbed"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_raises_clean_error_on_empty_repo():
+    # A plain `git rev-parse HEAD` on an empty repo exits 128 but prints the literal string
+    # "HEAD" to stdout -- _git's check=False would otherwise silently accept that as a bogus
+    # 4-char "commit id" (frozen_at.commit == "HEAD"). --verify --quiet yields empty stdout
+    # instead, so the fallback can degrade to a clean RuntimeError, matching build_context's
+    # own RuntimeError on the same input (#1307).
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)  # init only -- deliberately zero commits
+        with pytest.raises(RuntimeError):
+            _context_from_git(repo)
+        with pytest.raises(RuntimeError):
+            build_context(repo, "HEAD")
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
