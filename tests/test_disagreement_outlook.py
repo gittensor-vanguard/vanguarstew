@@ -181,6 +181,30 @@ def test_generalization_missing_partition_telemetry_yields_none_overall():
     assert out["verdict"] is None
 
 
+def test_generalization_incoherent_partition_yields_none_overall():
+    # A partition whose disagreements exceed its dual_order_tasks is impossible telemetry; it must
+    # not be pooled into a fabricated >100% overall rate. Mirrors regression._disagreement (#1283).
+    art = {
+        "generalization_gap": 0.1,
+        "tuned": {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 10, "disagreement_rate": 0.5}},
+        "held_out": {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 1}},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["disagreement_rate"] is None
+    assert out["verdict"] is None
+    assert out["partitions"]["tuned"]["disagreement_rate"] is None
+    assert out["partitions"]["held_out"]["disagreement_rate"] == 0.2
+
+
+def test_incoherent_disagree_exceeds_dual_yields_none_slice():
+    # disagree > dual_order_tasks is impossible; the slice reports no usable telemetry rather than
+    # a fabricated rate, even when a stale disagreement_rate is stored alongside.
+    out = summarize_disagreement_outlook(
+        {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 10, "disagreement_rate": 0.5}})
+    assert out["disagreement_rate"] is None
+    assert out["verdict"] is None
+
+
 def test_generalization_headline_includes_partition_rates():
     art = {
         "generalization_gap": 0.0,
