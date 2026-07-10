@@ -34,18 +34,41 @@ def _has_error(entry) -> bool:
     return bool(_dict(entry).get("error"))
 
 
+def _row_error(entry) -> bool | None:
+    """Whether a ``per_repo`` row counts as an errored repo, or ``None`` when it is not a countable
+    repo at all.
+
+    A dict row counts (errored when it carries a truthy ``error``); a non-empty *string* row is a
+    corrupt/malformed entry and counts as an errored repo -- matching
+    ``benchmark.acceptance._partition_error``, which fails a run closed on such a row. Other non-dict
+    entries (ints, ``None``, an empty/whitespace string, a nested list) are not countable repos and
+    are ignored.
+    """
+    if isinstance(entry, dict):
+        return _has_error(entry)
+    if isinstance(entry, str) and entry.strip():
+        return True
+    return None
+
+
 def _repo_error_flags(slice_) -> list[bool]:
     """One error flag per repo in a slice.
 
-    A multi-repo slice contributes one flag per dict entry in ``per_repo``; a single-repo slice
-    contributes its own top-level ``error`` as one repo. Non-dict ``per_repo`` entries are skipped.
-    When ``per_repo`` is a list the top-level ``error`` is not counted, so a failure recorded in both
-    places is counted once.
+    A multi-repo slice contributes one flag per countable ``per_repo`` row; a single-repo slice
+    contributes its own top-level ``error`` as one repo. A non-empty string ``per_repo`` row is a
+    corrupt/malformed entry and counts as an errored repo (matching ``acceptance._partition_error``);
+    other non-dict entries are ignored. When ``per_repo`` is a list the top-level ``error`` is not
+    counted, so a failure recorded in both places is counted once.
     """
     slice_ = _dict(slice_)
     per_repo = slice_.get("per_repo")
     if isinstance(per_repo, list):
-        return [_has_error(entry) for entry in per_repo if isinstance(entry, dict)]
+        flags = []
+        for entry in per_repo:
+            errored = _row_error(entry)
+            if errored is not None:
+                flags.append(errored)
+        return flags
     return [_has_error(slice_)]
 
 

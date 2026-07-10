@@ -53,9 +53,37 @@ def test_empty_per_repo_has_none_share():
     }
 
 
-def test_non_dict_per_repo_entries_skipped():
+def test_non_empty_string_row_counts_as_errored_other_non_dict_ignored():
+    # A bare non-empty string per_repo row is a corrupt/malformed entry and counts as an errored
+    # repo (matching acceptance._partition_error, which fails a run closed on such a row). Other
+    # non-dict entries (ints, None, empty/whitespace strings) are not countable repos and are ignored.
     summary = summarize_error_repo_share({"per_repo": [_err(), "nope", 5, _ok()]})
-    assert summary["repos"] == 2 and summary["error_repos"] == 1
+    assert summary["repos"] == 3 and summary["error_repos"] == 2
+    assert summary["error_share"] == round(2 / 3, 3)
+
+
+def test_bare_string_row_is_counted_as_an_errored_repo():
+    # The issue repro: a valid row plus a corrupt string row is 1/2 errored, not 0/1 clean.
+    summary = summarize_error_repo_share({"composite_mean": 0.6, "scored_repos": 1,
+                                          "per_repo": [{"tasks": 3}, "corrupt row"]})
+    assert summary["repos"] == 2 and summary["error_repos"] == 1 and summary["error_share"] == 0.5
+
+
+def test_non_error_non_dict_rows_are_ignored():
+    # ints, None, and empty/whitespace-only strings carry no error and are not countable repos.
+    summary = summarize_error_repo_share({"per_repo": [_ok(), 7, None, "", "   "]})
+    assert summary["repos"] == 1 and summary["error_repos"] == 0
+
+
+def test_bare_string_rows_counted_in_generalization_partitions():
+    # Same malformed-row handling under tuned/held_out partitions and in the pooled overall.
+    summary = summarize_error_repo_share({
+        "generalization_gap": 0.1,
+        "tuned": {"per_repo": [_ok(), "corrupt"]},
+        "held_out": {"per_repo": [_ok(), _ok()]},
+    })
+    assert summary["repos"] == 4 and summary["error_repos"] == 1
+    assert summary["partitions"]["tuned"] == {"repos": 2, "error_repos": 1, "error_share": 0.5}
 
 
 def test_per_repo_present_does_not_double_count_top_level_error():
