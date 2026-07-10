@@ -398,10 +398,13 @@ def test_context_from_git_recent_commits_match_build_context_shape():
 
         fb = _context_from_git(repo)["recent_commits"]
         fz = build_context(repo, "HEAD")["recent_commits"]
-        # Same keys per entry, and the same sha + date values (subject is masked on the agent path).
+        # Same keys per entry, and the same sha + date values as build_context — the parity that
+        # matters (subject is masked on the agent path, and the exact `%cI` timezone rendering is
+        # git-version dependent, so compare the two builders to each other, not to a literal).
         assert [sorted(c) for c in fb] == [sorted(c) for c in fz] == [["date", "sha", "subject"]] * 2
         assert [(c["sha"], c["date"]) for c in fb] == [(c["sha"], c["date"]) for c in fz]
-        assert fb[0]["date"] == d2 and fb[1]["date"] == d1  # newest first, committer ISO date
+        assert fb[0]["date"] and fb[1]["date"]              # each entry carries a committer date
+        assert fb[0]["date"] >= fb[1]["date"]               # newest commit first (ISO dates sort)
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
