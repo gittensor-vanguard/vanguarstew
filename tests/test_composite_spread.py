@@ -70,3 +70,27 @@ def test_cli(tmp_artifact, capsys):
     assert cli.run([path]) == 0
     body = json.loads(capsys.readouterr().out)
     assert body["spread"] == 0.1
+
+
+def test_cli_missing_file(tmp_path, capsys):
+    assert cli.run([str(tmp_path / "missing.json")]) == 2
+    assert "cannot read artifact" in capsys.readouterr().err
+
+
+def test_cli_invalid_json(tmp_path, capsys):
+    path = tmp_path / "bad.json"
+    path.write_text("{not json", encoding="utf-8")
+    assert cli.run([str(path)]) == 2
+    assert "not valid JSON" in capsys.readouterr().err
+
+
+def test_cli_non_object_artifact(tmp_path, capsys):
+    path = tmp_path / "list.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    assert cli.run([str(path)]) == 2
+    assert "must be a JSON object" in capsys.readouterr().err
+
+
+def test_cli_unreadable_path_is_handled(tmp_path, capsys):
+    assert cli.run([str(tmp_path)]) == 2
+    assert "cannot read artifact" in capsys.readouterr().err
