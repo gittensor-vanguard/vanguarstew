@@ -163,3 +163,24 @@ def test_cli_missing_file_exits_two(tmp_artifact, capsys):
     good = tmp_artifact("good.json", _single())
     assert cli.run([good, "missing.json"]) == 2
     assert "not found" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_snapshot_tolerates_non_finite_task_counts(bad):
+    # Non-finite task counts survive a json round trip but int() raises on them; snapshot must
+    # treat them as malformed and return a dict, not raise ValueError/OverflowError (#1315).
+    top = snapshot({"composite_mean": 0.5, "tasks": bad})
+    assert top["tasks"] is None                       # top-level non-finite -> None
+
+    per_repo = snapshot({"per_repo": [{"repo": "a", "tasks": bad}]})
+    assert per_repo["tasks"] == 0                      # non-finite per-repo tasks skipped
+
+    # a finite row alongside a non-finite one still counts only the finite one
+    mixed = snapshot({"per_repo": [{"repo": "a", "tasks": bad}, {"repo": "b", "tasks": 3}]})
+    assert mixed["tasks"] == 3
+
+
+def test_snapshot_non_finite_via_json_round_trip():
+    # The real-world path: an artifact loaded from disk (json.load parses NaN/Infinity back).
+    artifact = json.loads('{"composite_mean": 0.5, "tasks": NaN}')
+    assert snapshot(artifact)["tasks"] is None
