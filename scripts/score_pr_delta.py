@@ -1,5 +1,5 @@
 """CLI: score a PR's ``agent/`` against a baseline on the same benchmark run, and report
-whether the measured delta supports a high-value ``mult:*`` label — evidence, not a read
+which measured-improvement performance band (if any) the PR earns — evidence, not a read
 of the diff.
 
   python -m scripts.score_pr_delta baseline_result.json candidate_result.json
@@ -10,24 +10,24 @@ the benchmark itself — it only judges two already-produced results — so it h
 network, or repo-set opinions of its own.
 
 Policy (the anti-Goodhart floor from docs/spec-driven-development.md / REVIEW.md):
-  - A PR is eligible for a top-value label ONLY when composite_mean measurably improved
-    AND neither the judge nor the objective component regressed. Improving one axis by
-    quietly trading off the other does not count — this is the Pareto floor.
-  - A regression on either axis (past the noise floor) is not just a label cap for
-    ``agent/`` PRs — it's a hard merge block (see REVIEW.md § Evidence requirement for
-    agent/ PRs). ``tier == "blocked"`` / ``blocks_merge`` reflect this directly.
-  - A composite improvement of at least ``breakthrough_multiple`` × the noise floor
-    (default 5×, i.e. ≥0.05) with BOTH the judge and objective components individually
-    improving (not merely non-regressing) earns the ceiling label, ``mult:breakthrough``
-    (×3.0) — reported as ``tier == "breakthrough"``. This only applies to the standard
-    (non-generalization) artifact shape, since the generalization report has no per-axis
-    judge/objective split to confirm both axes actually improved.
-  - "Improved"/"regressed" are judged past a small noise tolerance (``--noise-floor``,
-    default 0.01) so a run-to-run wobble from LLM sampling isn't mistaken for a real
-    change in either direction.
-  - This script is a REPORTER, not a gate: it always exits 0. A CI workflow decides what
-    to do with the recommendation (post a comment, cap a label, etc.) — kept separate so
-    the policy stays testable in isolation from CI mechanics.
+  - A regression on either the judge or the objective component (past the noise floor) is
+    a hard merge block for ``agent/`` PRs — trading one axis off for the other (sounding
+    better to the judge while the objective anchor quietly drops) counts as a regression,
+    not an improvement. This is the Pareto floor. ``band == "blocked"`` / ``blocks_merge``
+    reflect this directly.
+  - Otherwise, the composite_mean delta is bucketed into a performance band —
+    ``perf:xs`` .. ``perf:xl`` — by magnitude (see BAND_THRESHOLDS). A delta at or below
+    the noise floor earns ``band == "none"``: still mergeable, just no value multiplier
+    (a clean refactor or typo fix with no measurable effect on agent performance).
+  - Band thresholds are DELIBERATELY ROUGH right now — this project has one real
+    benchmark-delta data point so far. They're a single ordered table
+    (BAND_THRESHOLDS) so they can be recalibrated in one place once enough real
+    ``score_pr_delta`` runs exist to know what a genuinely large win looks like on this
+    benchmark. Log every real result; don't guess twice.
+  - This script is a REPORTER, not a gate: it always exits 0. A CI workflow or the
+    maintainer bot decides what to do with the recommendation (post a comment, apply a
+    label, merge/close) — kept separate so the policy stays testable in isolation from
+    that mechanics.
 """
 
 from __future__ import annotations
@@ -39,7 +39,28 @@ import sys
 from scripts.compare_eval import compare_eval_artifacts, load_artifact
 
 DEFAULT_NOISE_FLOOR = 0.01
-DEFAULT_BREAKTHROUGH_MULTIPLE = 5.0
+
+# Ordered low-to-high performance bands, keyed by the MINIMUM composite_mean delta
+# required to reach that band (a delta must clear a band's floor to earn it; the highest
+# band whose floor it clears wins). ROUGH / provisional -- see the module docstring.
+# perf:none covers 0 < delta <= noise_floor implicitly (handled in score_pr_delta()).
+BAND_THRESHOLDS = (
+    ("xs", 0.01),
+    ("s", 0.02),
+    ("m", 0.04),
+    ("l", 0.08),
+    ("xl", 0.15),
+)
+
+# gittensor label_multipliers this repo submits for the perf:* ladder (see REVIEW.md).
+# Kept alongside the thresholds so the two never drift apart silently.
+BAND_MULTIPLIERS = {
+    "xs": 0.5,
+    "s": 1.0,
+    "m": 1.5,
+    "l": 2.5,
+    "xl": 4.0,
+}
 
 
 def _delta(triplet: dict | None) -> float | None:
@@ -54,11 +75,6 @@ def _regressed(delta: float | None, noise_floor: float) -> bool:
     return delta is not None and delta < -noise_floor
 
 
-def _improved(delta: float | None, noise_floor: float) -> bool:
-    """True only when ``delta`` is a real (past-noise-floor) positive move."""
-    return delta is not None and delta > noise_floor
-
-
 def _pareto_axes(diff: dict) -> dict:
     """The two components the Pareto floor is measured over: judge_mean, objective_mean.
 
@@ -71,33 +87,37 @@ def _pareto_axes(diff: dict) -> dict:
     return {axis: parts.get(axis) for axis in ("judge_mean", "objective_mean")}
 
 
-def score_pr_delta(
-    baseline: dict,
-    candidate: dict,
-    noise_floor: float = DEFAULT_NOISE_FLOOR,
-    breakthrough_multiple: float = DEFAULT_BREAKTHROUGH_MULTIPLE,
-) -> dict:
-    """Return the full delta + a tier-eligibility recommendation.
+def _band_for_delta(delta: float | None, noise_floor: float) -> str:
+    """Bucket a composite_mean delta into a performance band. ``None`` or <= the noise
+    floor is "none" (no measurable improvement, still mergeable, no multiplier). Otherwise
+    the highest BAND_THRESHOLDS entry whose floor the delta clears."""
+    if delta is None or delta <= noise_floor:
+        return "none"
+    band = "none"
+    for name, floor in BAND_THRESHOLDS:
+        if delta >= floor:
+            band = name
+    return band
+
+
+def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT_NOISE_FLOOR) -> dict:
+    """Return the full delta + a performance-band recommendation.
 
     Handles both the standard (single top-level ``composite_mean``) and the
     generalization-report shape (``tuned``/``held_out`` partitions, no top-level
-    ``composite_mean``) — the Pareto floor is checked on whichever composite triplet(s)
-    the artifact shape actually produced.
+    ``composite_mean``) — the Pareto floor and banding are checked on whichever composite
+    triplet(s) the artifact shape actually produced (generalization uses the MINIMUM of
+    the two partitions' deltas, so a PR can't overfit the tuned set and still band high).
 
-    ``tier`` is one of:
-      - ``"blocked"``      — a scored axis regressed past the noise floor. Hard merge
-        block for ``agent/`` PRs (see REVIEW.md).
-      - ``"neutral"``      — no measurable change either way.
-      - ``"eligible"``     — composite improved with no axis regressing. Supports
-        ``mult:core-correctness`` / ``mult:capability``.
-      - ``"breakthrough"`` — composite improved by at least ``breakthrough_multiple`` ×
-        ``noise_floor`` AND both judge_mean and objective_mean individually improved.
-        Supports the ceiling label, ``mult:breakthrough``. Only reachable on the
-        standard artifact shape — the generalization shape has no per-axis split to
-        confirm both axes improved.
+    ``band`` is one of:
+      - ``"blocked"`` — a scored axis regressed past the noise floor. Hard merge block
+        for ``agent/`` PRs (see REVIEW.md).
+      - ``"none"``    — no measurable improvement past the noise floor. Still mergeable,
+        earns no ``perf:*`` label / multiplier.
+      - ``"xs"``..``"xl"`` — a measured composite improvement, bucketed by magnitude per
+        BAND_THRESHOLDS. Supports the matching ``perf:*`` label.
     """
     diff = compare_eval_artifacts(baseline, candidate)
-    breakthrough_floor = breakthrough_multiple * noise_floor
 
     if "generalization" in diff:
         gen = diff["generalization"]
@@ -106,62 +126,88 @@ def score_pr_delta(
             for part in ("tuned", "held_out")
         }
         any_regressed = any(_regressed(d, noise_floor) for d in composite_deltas.values())
-        any_improved = any(_improved(d, noise_floor) for d in composite_deltas.values())
+        present = [d for d in composite_deltas.values() if d is not None]
+        banding_delta = min(present) if present else None
         pareto_axes = {}  # no per-axis (judge/objective) split at the generalization level
-        is_breakthrough = False
     else:
         composite_deltas = {"composite_mean": _delta(diff.get("composite_mean"))}
         pareto_axes = _pareto_axes(diff)
         axis_deltas = [_delta(v) for v in pareto_axes.values()]
         any_regressed = any(_regressed(d, noise_floor) for d in axis_deltas)
-        any_improved = _improved(composite_deltas["composite_mean"], noise_floor)
-        is_breakthrough = (
-            not any_regressed
-            and composite_deltas["composite_mean"] is not None
-            and composite_deltas["composite_mean"] >= breakthrough_floor
-            and all(_improved(d, noise_floor) for d in axis_deltas)
-        )
+        banding_delta = composite_deltas["composite_mean"]
 
     if any_regressed:
-        tier = "blocked"
-        eligible, reason = False, "a scored dimension regressed past the noise floor (Pareto floor)"
-    elif is_breakthrough:
-        tier = "breakthrough"
-        eligible = True
-        reason = (
-            f"composite_mean improved by >= {breakthrough_multiple:g}x the noise floor "
-            "with both judge and objective components improving"
-        )
-    elif any_improved:
-        tier = "eligible"
-        eligible, reason = True, "composite_mean improved with no dimension regression"
+        band = "blocked"
+        reason = "a scored dimension regressed past the noise floor (Pareto floor)"
     else:
-        tier = "neutral"
-        eligible, reason = False, "no measurable improvement past the noise floor"
+        band = _band_for_delta(banding_delta, noise_floor)
+        reason = (
+            "no measurable improvement past the noise floor" if band == "none" else
+            f"composite_mean improved into the perf:{band} band"
+        )
 
     return {
-        "tier": tier,
-        "blocks_merge": tier == "blocked",
-        "eligible_for_high_tier": eligible,
+        "band": band,
+        "blocks_merge": band == "blocked",
+        "label": None if band in ("blocked", "none") else f"perf:{band}",
+        "multiplier": BAND_MULTIPLIERS.get(band),
         "reason": reason,
         "noise_floor": noise_floor,
-        "breakthrough_floor": breakthrough_floor,
         "composite_deltas": composite_deltas,
         "pareto_axes": pareto_axes,
         "diff": diff,
     }
 
 
-def headline(report: dict) -> str:
-    tier = report.get("tier")
-    labels = {
-        "blocked": "BLOCKED (merge not allowed for agent/ PRs)",
-        "neutral": "not eligible",
-        "eligible": "ELIGIBLE",
-        "breakthrough": "BREAKTHROUGH (ceiling tier)",
+def combine_dual_target(public_report: dict, private_report: dict) -> dict:
+    """Combine two independent score_pr_delta() reports — one against the public
+    curated repo set, one against a private/hidden repo set the PR author never saw —
+    into a single conservative verdict: a PR can't earn a band by tuning against the
+    repos it can see while flat-lining or regressing on repos it can't.
+
+    Rule: blocked if EITHER report is blocked; otherwise the band is the MINIMUM of the
+    two bands (by BAND_THRESHOLDS order, "none" below all bands). This mirrors
+    score_pr_delta()'s own generalization-shape handling (min across partitions), just
+    applied across two independently-run targets instead of one run's partitions.
+    """
+    order = ["none"] + [name for name, _ in BAND_THRESHOLDS]
+
+    def _rank(report):
+        return -1 if report.get("band") == "blocked" else order.index(report.get("band", "none"))
+
+    if public_report.get("band") == "blocked" or private_report.get("band") == "blocked":
+        worse = public_report if public_report.get("band") == "blocked" else private_report
+        band = "blocked"
+        reason = f"blocked on the {'public' if worse is public_report else 'private'} target: {worse.get('reason', '')}"
+    else:
+        worse = public_report if _rank(public_report) <= _rank(private_report) else private_report
+        band = worse.get("band", "none")
+        reason = (
+            "combined band is the minimum across public and private targets"
+            if band != "none" else
+            "no band cleared on both public and private targets"
+        )
+
+    return {
+        "band": band,
+        "blocks_merge": band == "blocked",
+        "label": None if band in ("blocked", "none") else f"perf:{band}",
+        "multiplier": BAND_MULTIPLIERS.get(band),
+        "reason": reason,
+        "public": public_report,
+        "private": private_report,
     }
-    verdict = labels.get(tier, "ELIGIBLE" if report.get("eligible_for_high_tier") else "not eligible")
-    return f"score_pr_delta: {verdict} for a high-value label — {report.get('reason', '')}"
+
+
+def headline(report: dict) -> str:
+    band = report.get("band")
+    if band == "blocked":
+        verdict = "BLOCKED (merge not allowed for agent/ PRs)"
+    elif band == "none":
+        verdict = "no band (mergeable, no perf:* label)"
+    else:
+        verdict = f"perf:{band}" if band else "unknown"
+    return f"score_pr_delta: {verdict} — {report.get('reason', '')}"
 
 
 def main(argv=None) -> int:
@@ -170,18 +216,12 @@ def main(argv=None) -> int:
     ap.add_argument("candidate", help="run_eval --out artifact for the PR's agent")
     ap.add_argument("--noise-floor", type=float, default=DEFAULT_NOISE_FLOOR,
                     help="minimum |delta| to count as a real change (default 0.01)")
-    ap.add_argument("--breakthrough-multiple", type=float, default=DEFAULT_BREAKTHROUGH_MULTIPLE,
-                    help="composite improvement must be >= this many x the noise floor "
-                         "(with both axes improving) to earn the breakthrough tier (default 5)")
     ap.add_argument("--out", default=None, help="write the full JSON report to this path")
     args = ap.parse_args(argv)
 
     baseline = load_artifact(args.baseline)
     candidate = load_artifact(args.candidate)
-    report = score_pr_delta(
-        baseline, candidate, noise_floor=args.noise_floor,
-        breakthrough_multiple=args.breakthrough_multiple,
-    )
+    report = score_pr_delta(baseline, candidate, noise_floor=args.noise_floor)
 
     print(headline(report), file=sys.stderr)
     text = json.dumps(report, indent=2)

@@ -50,68 +50,84 @@ priority order:
 Decisions are communicated with **status labels** that state the reason (e.g. `needs-tests`,
 `out-of-scope`, `accepted`) in the PR thread, so the rationale is always on the record.
 
-## Contribution value labels (multipliers)
+## Contribution value labels
 
-Once this repo is registered on gittensor, each scored PR receives a **value multiplier** from
-a single maintainer-applied label. gittensor takes the **highest** matching label — multipliers
-do not stack — so the maintainer applies the one tier that best fits. This is a transparent,
-ordered value ladder, prepared now and active on registration:
+Once this repo is registered on gittensor, each merged PR's emission weight comes from a
+label. Two separate tracks, because "agent got measurably better" and "the harness/tooling
+improved" are different claims that need different evidence:
 
-| Label | Multiplier | Applies to |
-| ----- | ---------- | ---------- |
-| `mult:breakthrough` | ×3.0 | The ceiling label — a rare, high-magnitude improvement: `scripts/score_pr_delta.py` reports `tier: "breakthrough"`, meaning composite score rose by at least 5× the noise floor (≥0.05) with **both** the judge and objective components individually improving (not merely non-regressing). Most solid wins land at `core-correctness` or `capability` below; this is reserved for the rare PR that measurably wins on every axis by a wide margin. |
-| `mult:core-correctness` | ×2.0 | A fix to a bug that **materially skews a score, judge verdict, or gate outcome** — i.e. without it, a real run produces a wrong number or a wrong pass/fail. Reserved for the top tier: the bug must change an outcome, not merely be "in the scoring code." A partition-handling fix to a metric module counts **only** if that metric feeds a live gate or the composite; a fix to an unwired/redundant helper does not. |
-| `mult:leakage-integrity` | ×1.8 | Anti-leakage / task-integrity work — the benchmark's trust depends on it. |
-| `mult:capability` | ×1.5 | New agent capability or a **genuinely new** benchmark dimension / task-gen improvement — not a re-slice of a metric an existing module already computes. |
-| `mult:enhancement` | ×1.2 | Solid improvement to existing behavior. |
-| `mult:maintenance` | ×1.0 | Refactor, small fix, tests, tooling (neutral). |
-| `mult:docs` | ×0.8 | Docs-only / cosmetic — welcome, lower weight. |
+### `perf:*` — agent/ PRs, earned by a measured benchmark delta (SN66-style)
 
-- Only labels set by a **maintainer** count toward the multiplier.
-- Area labels (`agent`, `benchmark`, `leakage`) are organizational only and do **not** affect scoring.
-- No label ⇒ neutral (×1.0). Values may be tuned at registration.
+A PR touching `agent/` (the scored, miner-editable surface) earns its label **only** from a
+measured improvement — never from a maintainer's read of the diff. This is the same model
+[gittensor-ai-lab/sparkinfer](https://github.com/gittensor-ai-lab/sparkinfer) uses for its
+`eval:XS`–`eval:XL` real-hardware speedup bands: labels are bot-assigned from an actual
+before/after run, and most merged PRs carry no label at all — the bands are rare and mean
+something specific.
 
-### Evidence requirement for `agent/` PRs
+The maintainer bot runs `scripts/score_pr_delta.py` **twice** — once against the public
+`benchmark/repo_sets/curated.json`, once against a private, undisclosed repo set the PR
+author has never seen — and combines the two via `combine_dual_target()`, which takes the
+**worse** of the two results. A PR can't earn a band by tuning against the repos it can see
+while flat-lining or regressing on repos it can't; that's the whole point of the private
+target.
 
-A PR touching `agent/` (the scored, miner-editable surface) is **not** eligible for
-`mult:core-correctness`, `mult:capability`, or `mult:breakthrough` on the strength of its
-diff or description alone. The maintainer runs `scripts/score_pr_delta.py` — comparing the
-PR's `agent/` against the current baseline on the same benchmark repo-set — and the label
-tier follows the *measured* result (`report["tier"]`), not a read of the change:
+| Label | Multiplier | Composite Δ (on the worse target) |
+| ----- | ---------- | ---------------------------------- |
+| `perf:xl` | ×4.0 | ≥ 0.15 |
+| `perf:l`  | ×2.5 | ≥ 0.08 |
+| `perf:m`  | ×1.5 | ≥ 0.04 |
+| `perf:s`  | ×1.0 | ≥ 0.02 |
+| `perf:xs` | ×0.5 | ≥ 0.01 |
+| *(none)*  | — | ≤ 0.01 (noise floor) — still mergeable, just no multiplier |
 
-- **`tier: "blocked"` — regression, hard merge block.** If either the judge or the
-  objective component regresses past the noise floor, the PR **is not mergeable**, full
-  stop — this is no longer just a label cap. Trading one axis off for the other (e.g.
-  sounding better to the pairwise judge while the deterministic objective anchor quietly
-  drops) counts as a regression, not an improvement. The author must revise until the
-  regression clears, or the PR is closed. (This gate applies only to PRs touching
-  `agent/`, since that's the only surface a live benchmark delta measures — `benchmark/`
-  and other PRs are governed by the usual automated gates + human review, unaffected.)
-- **`tier: "neutral"` — no measurable change.** Capped at `mult:maintenance`; code
-  quality, tests, and refactors still have real (lower-tier) value, they just aren't
-  "core correctness" or "new capability" without evidence.
-- **`tier: "eligible"` — real improvement, no regression.** Composite score measurably
-  improved (past the noise floor) with neither axis regressing. Supports
-  `mult:core-correctness` or `mult:capability`.
-- **`tier: "breakthrough"` — large improvement on every axis.** Composite improved by at
-  least 5× the noise floor (≥0.05) with *both* judge and objective components
-  individually improving. Supports the ceiling label, `mult:breakthrough`.
+**These thresholds are deliberately rough.** The project has very few real
+`score_pr_delta` data points so far — the bands exist to be recalibrated as real
+before/after deltas accumulate, not guessed once and frozen. `scripts/score_pr_delta.py`'s
+`BAND_THRESHOLDS`/`BAND_MULTIPLIERS` are the single source of truth; this table mirrors
+them and must be updated in lockstep if they change.
+
+A regression on either the judge or the objective component (past the noise floor), on
+*either* target, is a **hard merge block** — not a label cap. Trading one axis for the
+other (sounding better to the judge while the objective anchor quietly drops) counts as a
+regression. The author must revise until it clears, or the PR is closed.
+
+Before a band is finalized, the maintainer bot runs an **anti-cheating pass** over the
+diff — looking for benchmark-detection branching, hardcoded outputs that match a known
+repo/task, disabled assertions, or anything that would make the measured delta not
+reflect genuine agent improvement. A PR that trips this check is closed regardless of its
+measured number, same as sparkinfer's `flagged:gaming` convention.
 
 CI runs a lightweight offline smoke check on every `agent/`-touching PR
 (`agent-benchmark-smoke.yml`) — this catches crashes and output-shape regressions only. It
-is **not** the scoring evidence and cannot trigger the merge block above: offline mode
-returns each file's own fixed stub regardless of the prompt, so it cannot measure whether a
-PR changed the agent's actual reasoning, let alone regressed it. The real score-delta is a
-maintainer-run live comparison, ideally against a held-out repo set the PR author has not
-seen, to keep the measurement itself resistant to being tuned against.
+is **not** the scoring evidence and cannot influence a `perf:*` label or the merge block:
+offline mode returns each file's own fixed stub regardless of the prompt, so it cannot
+measure whether a PR changed the agent's actual reasoning. The real score-delta is a
+maintainer-bot-run live comparison against both repo targets.
+
+### `mult:contribution` — everything else (×0.2)
+
+PRs to `benchmark/`, `tests/`, `docs/`, `.github/`, or any other non-`agent/` surface get a
+single flat label, `mult:contribution` (×0.2), on merge — there's no "agent performance"
+to measure for harness/tooling work, so it isn't put through the banding pipeline. This
+replaces the old graduated `mult:core-correctness`/`capability`/`enhancement`/`maintenance`/
+`docs` ladder, which scored a maintainer's *read* of a diff rather than a measured effect —
+exactly the gap the `perf:*` system above closes for `agent/`.
+
+- Only labels applied by the maintainer bot (or matedev01) count toward the multiplier.
+- Area labels (`agent`, `benchmark`, `leakage`) are organizational only and do **not**
+  affect scoring.
+- No label ⇒ zero (this repo's `default_label_multiplier` is `0.0`) — matches the *(none)*
+  row above for `agent/` PRs with no measurable improvement.
 
 ## Rejections
 
 Common reasons a PR is closed rather than merged: no linked issue, out of scope, missing
 tests, trivial/no-op diff, duplicated or plagiarized work, **conceptual redundancy** (a new
 module/metric that re-derives what existing code already produces over the same data shape —
-parametrize or extend instead), AI-attributed content, or (for `agent/` PRs) a maintainer-run
-`scripts/score_pr_delta.py` regression (`tier: "blocked"` — see § Evidence requirement above).
+parametrize or extend instead), AI-attributed content, or (for `agent/` PRs) a
+maintainer-bot-run `scripts/score_pr_delta.py` regression (`band: "blocked"` — see § `perf:*`
+above) or a flagged anti-cheating finding.
 
 ## Disagree with a decision?
 
