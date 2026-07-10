@@ -44,6 +44,48 @@ def test_a_consistent_generalization_report_passes():
     ]
 
 
+def test_non_finite_scored_repos_fails_instead_of_raising():
+    # Previously ValueError/OverflowError from int(scored) in _partition_scored. A NaN/Infinity
+    # scored_repos survives a JSON save/load round trip but is not a usable count -- treat the
+    # partition as unscored and flag the report, don't crash the gate.
+    art = _report(tuned_scored=float("nan"), gap=0.05)
+    result = check_gap_integrity(art)          # must not raise
+    assert result["passed"] is False
+    assert "gap_absent_when_unscored" in failed_checks(result)
+
+
+def test_non_finite_composite_mean_fails_the_composite_check():
+    # A non-finite partition composite is not a usable number: it fails composite_reported and the
+    # gap cannot be recomputed from it, rather than being read as a real value (or crashing float()).
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        tuned_bad = check_gap_integrity(_report(tuned_mean=bad))      # must not raise
+        assert tuned_bad["passed"] is False
+        assert "tuned_composite_reported" in failed_checks(tuned_bad), bad
+        assert "gap_matches_partitions" in failed_checks(tuned_bad), bad
+
+        held_bad = check_gap_integrity(_report(held_mean=bad))        # must not raise
+        assert "held_out_composite_reported" in failed_checks(held_bad), bad
+
+
+def test_non_finite_gap_fails_the_gap_present_check():
+    # A non-finite reported gap is not numeric: it fails gap_present_when_both_scored instead of
+    # being trusted (or crashing round()/float() in _round3).
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        result = check_gap_integrity(_report(gap=bad))               # must not raise
+        assert result["passed"] is False
+        assert "gap_present_when_both_scored" in failed_checks(result), bad
+
+
+def test_non_finite_numeric_fields_never_raise_for_any_variant():
+    # NaN, +/-Infinity, and an int too large for a float all survive a JSON round trip and would
+    # crash int()/float()/isfinite; none may raise in any scored_repos/composite/gap field.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        for kwargs in ({"tuned_scored": bad}, {"held_scored": bad},
+                       {"tuned_mean": bad}, {"held_mean": bad}, {"gap": bad}):
+            result = check_gap_integrity(_report(**kwargs))   # must not raise
+            assert isinstance(result["passed"], bool), (kwargs, bad)
+
+
 def test_expected_gap_matches_runner_semantics():
     assert _expected_gap(0.62, 0.57) == 0.05
     assert _expected_gap(0.6, 0.58) == 0.02
