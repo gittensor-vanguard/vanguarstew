@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import math
 
+from benchmark.acceptance import _partition_error
 from benchmark.comparability import artifact_kind
 from benchmark.trend import headline_score
 
@@ -106,22 +107,11 @@ def _has_error(artifact: dict) -> bool:
     kind = artifact_kind(artifact)
     if kind == "generalization":
         for part in ("tuned", "held_out"):
-            if _dict(artifact.get(part)).get("error"):
+            if _partition_error(_dict(artifact.get(part))):
                 return True
-        containers = [
-            _dict(artifact.get("tuned")).get("per_repo"),
-            _dict(artifact.get("held_out")).get("per_repo"),
-        ]
-    elif kind == "multi":
-        containers = [artifact.get("per_repo")]
-    else:
         return False
-    for per_repo in containers:
-        if not isinstance(per_repo, list):
-            continue
-        for entry in per_repo:
-            if isinstance(entry, dict) and entry.get("error"):
-                return True
+    if kind == "multi":
+        return _partition_error({"per_repo": artifact.get("per_repo")}) is not None
     return False
 
 

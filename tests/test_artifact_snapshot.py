@@ -116,6 +116,54 @@ def test_malformed_per_repo_still_counts_valid_rows():
            "scored_repos": 1, "skipped": 0}
     out = snapshot(art)
     assert out["tasks"] == 4
+    assert out["has_error"] is True
+
+
+def test_bare_string_per_repo_row_sets_has_error():
+    art = _multi("ok")
+    art["per_repo"].append("corrupt row")
+    out = snapshot(art)
+    assert out["has_error"] is True
+    assert "status=error" in snapshot_headline(out)
+
+
+def test_blank_string_per_repo_row_does_not_set_has_error():
+    art = _multi("ok")
+    art["per_repo"].append("   ")
+    out = snapshot(art)
+    assert out["has_error"] is False
+
+
+def test_generalization_partition_bare_string_per_repo_sets_has_error():
+    art = _gen()
+    art["tuned"]["per_repo"].append("corrupt")
+    out = snapshot(art)
+    assert out["has_error"] is True
+
+
+def test_has_error_tolerates_missing_per_repo_and_non_list_per_repo():
+    assert snapshot(_multi("a"))["has_error"] is False
+    art = {"per_repo": "oops", "composite_mean": 0.5, "repos": 1, "scored_repos": 1, "skipped": 0}
+    out = snapshot(art)
+    assert out["has_error"] is False
+
+
+def test_has_error_per_repo_none_does_not_crash():
+    art = {"composite_mean": 0.5, "repos": 1, "scored_repos": 1, "skipped": 0, "per_repo": None}
+    assert snapshot(art)["has_error"] is False
+
+
+def test_has_error_per_repo_with_none_and_non_dict_entries_does_not_crash():
+    art = {"per_repo": [_repo("a"), None, 42], "composite_mean": 0.5, "repos": 1,
+           "scored_repos": 1, "skipped": 0}
+    assert snapshot(art)["has_error"] is False
+
+
+def test_falsy_per_repo_error_values_do_not_set_has_error():
+    for falsy in (0, False, None, ""):
+        art = _multi("ok")
+        art["per_repo"].append({"repo": "x", "tasks": 0, "error": falsy})
+        assert snapshot(art)["has_error"] is False, falsy
 
 
 def test_non_finite_top_level_tasks_snapshots_none_instead_of_raising():
