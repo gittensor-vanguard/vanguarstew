@@ -102,8 +102,20 @@ def _round(value):
     return round(float(value), 3) if _is_number(value) else None
 
 
-def _partition_disagreement_counts(part: dict) -> tuple[int, int] | None:
-    """Disagree/dual-order counts from one partition, preferring ``judge_order_stats``."""
+# Sentinel: a partition carried a usable telemetry block whose counts are impossible
+# (``disagree > dual_order_tasks``). Distinct from ``None`` (no usable telemetry at all): a
+# caller pooling partitions must fail the whole rate *closed* on corrupt data rather than
+# silently drop the bad partition and pool the rest.
+_INCOHERENT = object()
+
+
+def _partition_disagreement_counts(part: dict):
+    """Disagree/dual-order counts from one partition, preferring ``judge_order_stats``.
+
+    Returns ``(disagree, dual)`` for a coherent partition, ``None`` when no usable telemetry is
+    present, or :data:`_INCOHERENT` when a telemetry block has impossible counts
+    (``disagree > dual``) — which must not be pooled as a fabricated rate.
+    """
     part = _dict(part)
     for telemetry in (_dict(part.get("judge_order_stats")), _dict(part.get("judge_report"))):
         if not telemetry:
@@ -119,7 +131,10 @@ def _partition_disagreement_counts(part: dict) -> tuple[int, int] | None:
         if disagreements is None:
             disagreements = telemetry.get("disagreements")
         if _is_int(dual) and dual > 0 and _is_int(disagreements) and disagreements >= 0:
-            return int(disagreements), int(dual)
+            # ``disagree`` is a subset of ``dual_order_tasks``, so ``disagree > dual`` is
+            # impossible (stale/hand-edited telemetry); signal it rather than return a count
+            # pair that would inflate the pooled rate above 1.0.
+            return _INCOHERENT if disagreements > dual else (int(disagreements), int(dual))
     return None
 
 
@@ -145,6 +160,11 @@ def _disagreement(artifact) -> float | None:
         total_dual = 0
         for label in ("tuned", "held_out"):
             counts = _partition_disagreement_counts(_dict(artifact.get(label)))
+            if counts is _INCOHERENT:
+                # A partition with impossible counts makes the pooled rate uninterpretable;
+                # fail closed to None so `no_judge_instability_increase` passes vacuously
+                # (spec 016) instead of blocking on a fabricated instability rise.
+                return None
             if counts is None:
                 continue
             dis, dual = counts

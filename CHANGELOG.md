@@ -19,6 +19,16 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Benchmark gates (`benchmark/judge_gate.py`, `benchmark/regression.py`): the order-disagreement
+  recompute accepted an incoherent telemetry block where `disagree > dual_order_tasks` — impossible,
+  since `disagree` is a subset of `dual_order_tasks` (stale/hand-edited data). It produced a rate
+  above 1.0 (`_disagreement_rate_from_telemetry`) and, for a `--generalization` artifact, pooled the
+  fabricated count into a plausible-but-wrong overall rate that could flip `check_regression`'s
+  `no_judge_instability_increase` verdict and block an otherwise-fine candidate. The recompute now
+  requires `0 <= disagree <= dual_order_tasks`; `_disagreement_rate_from_telemetry` falls back to a
+  literal `disagreement_rate` (else `None`) on impossible counts, and `_partition_disagreement_counts`
+  signals the incoherent partition so `_disagreement` fails the pooled rate closed to `None` (the
+  gate then passes vacuously per Spec 016, which is updated to match) (#1283).
 - Benchmark reporting (`benchmark/judge_wlt.py`): `summarize_judge_wlt` read only the top-level
   `judge_report`, so a `--generalization` artifact (which nests a report under `tuned`/`held_out`
   and emits none at the top level) reported `unavailable` for every generalization run — while its

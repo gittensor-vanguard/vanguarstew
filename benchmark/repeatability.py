@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from statistics import mean, stdev
 
+from benchmark.run_clean import check_run_clean
 from benchmark.trend import headline_score
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,31 @@ def _effective_min_runs(min_runs: int) -> int:
     if isinstance(min_runs, bool) or not isinstance(min_runs, int):
         return DEFAULT_MIN_RUNS
     return max(0, min_runs)
+
+
+def _repeat_not_clean_detail(artifact) -> str | None:
+    """Return a short reason when ``artifact`` recorded errors, else ``None``.
+
+    Delegates to :func:`benchmark.run_clean.check_run_clean` so generalization
+    repeats scan both ``tuned`` and ``held_out`` per-repo failures the same way
+    the run-clean gate does.
+    """
+    if not isinstance(artifact, dict):
+        return None
+    clean = check_run_clean(artifact)
+    if clean.get("passed"):
+        return None
+    findings = clean.get("findings")
+    if isinstance(findings, list) and findings:
+        return str(findings[0])
+    checks = clean.get("checks")
+    if isinstance(checks, list):
+        for row in checks:
+            if isinstance(row, dict) and not row.get("passed"):
+                detail = row.get("detail")
+                if detail:
+                    return str(detail)
+    return "recorded errors"
 
 
 def _repeatability_artifacts(artifacts) -> list:
@@ -84,15 +110,11 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
       number ``<= max_cv``;
     - ``reason``: a short explanation when ``stable`` is False.
     """
-    scores = [
-        s for s in (headline_score(a) for a in _repeatability_artifacts(artifacts))
-        if s is not None
-    ]
-    runs = len(scores)
+    artifacts_list = _repeatability_artifacts(artifacts)
     result = {
         "stable": False,
-        "runs": runs,
-        "scores": scores,
+        "runs": 0,
+        "scores": [],
         "mean": None,
         "stddev": None,
         "cv": None,
@@ -103,6 +125,20 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
         "min_runs": min_runs,
         "reason": "",
     }
+
+    for idx, art in enumerate(artifacts_list):
+        dirty = _repeat_not_clean_detail(art)
+        if dirty is not None:
+            result["reason"] = f"repeat {idx + 1} not clean: {dirty}"
+            return result
+
+    scores = [
+        s for s in (headline_score(a) for a in artifacts_list)
+        if s is not None
+    ]
+    runs = len(scores)
+    result["runs"] = runs
+    result["scores"] = scores
 
     if runs == 0:
         result["reason"] = "no scored runs"

@@ -82,6 +82,18 @@ def test_stale_judge_report_disagreement_rate_is_recomputed_from_stats():
     assert "low_disagreement" in failed_checks(result)
 
 
+def test_disagreement_rate_from_telemetry_rejects_impossible_counts():
+    # `disagree` is a subset of `dual_order_tasks`, so `disagree > dual` is impossible telemetry
+    # and must not yield a count-based rate above 1.0 (#1283). It falls through to a literal
+    # `disagreement_rate` when present, else None.
+    from benchmark.judge_gate import _disagreement_rate_from_telemetry as rate
+    assert rate({"dual_order_tasks": 5, "disagree": 8}) is None            # impossible -> no rate
+    assert rate({"dual_order_tasks": 5, "disagree": 8, "disagreement_rate": 0.2}) == 0.2  # stored fallback
+    assert rate({"dual_order_tasks": 10, "disagree": 2}) == 0.2            # coherent
+    assert rate({"dual_order_tasks": 5, "disagree": 5}) == 1.0            # boundary: == is coherent
+    assert rate({"dual_order_tasks": 5, "disagree": 0}) == 0.0
+
+
 # --- multi-repo aggregates omit the top-level judge_dual_order flag -----------------------
 # A single-repo run states judge_dual_order directly; a run_multi_replay aggregate does not, so
 # the status is derived from the pooled dual-order task count (judge_report, else

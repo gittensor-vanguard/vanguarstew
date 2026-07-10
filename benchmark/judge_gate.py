@@ -171,7 +171,12 @@ def _disagreement_rate_from_telemetry(telemetry: dict) -> float | None:
     disagreements = telemetry.get("disagree")
     if disagreements is None:
         disagreements = telemetry.get("disagreements")
-    if _is_int(dual) and dual > 0 and _is_int(disagreements) and disagreements >= 0:
+    # Only a *coherent* count pair recomputes a rate: ``disagree`` cannot exceed the
+    # ``dual_order_tasks`` it is a subset of. An incoherent block (``disagree > dual``, e.g.
+    # stale/hand-edited telemetry) would otherwise yield a rate above 1.0 and false-fail the
+    # instability gates; treat it as underivable and fall through to the stored rate / None.
+    if (_is_int(dual) and dual > 0 and _is_int(disagreements)
+            and 0 <= disagreements <= dual):
         return round(disagreements / dual, 3)
     rate = telemetry.get("disagreement_rate")
     return round(float(rate), 3) if _is_number(rate) else None

@@ -180,6 +180,21 @@ def test_partition_counts_none_when_dual_missing_or_zero():
         {"judge_order_stats": {"dual_order_tasks": 0, "disagree": 0}}) is None
 
 
+def test_partition_counts_signal_incoherent_and_disagreement_fails_closed():
+    # Spec: `disagree > dual_order_tasks` is impossible telemetry -> _partition_disagreement_counts
+    # returns the _INCOHERENT sentinel (distinct from None), and _disagreement fails the whole
+    # pooled rate closed to None rather than inventing a rate above 1.0.
+    from benchmark.regression import _INCOHERENT
+    assert _partition_disagreement_counts(
+        {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}}) is _INCOHERENT
+    # Boundary: disagree == dual is coherent (rate 1.0), not incoherent.
+    assert _partition_disagreement_counts(
+        {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 5}}) == (5, 5)
+    gen = {"tuned":    {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},
+           "held_out": {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 1}}}
+    assert _disagreement(gen) is None
+
+
 def test_conflicting_sources_stats_wins():
     # Finding 1a: when judge_order_stats and judge_report DISAGREE, judge_order_stats wins because
     # it is consulted first (a stale judge_report is ignored, mirroring check_judge).

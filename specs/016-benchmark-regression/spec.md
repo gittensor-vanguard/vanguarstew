@@ -80,7 +80,16 @@ constant.
   `agree + disagree + tie` when all three are integers, else treat it as absent; it SHALL read the
   disagreement count from `disagree` or, absent that, `disagreements`; and it SHALL return
   `(disagreements, dual_order_tasks)` only when `dual_order_tasks` is an integer `> 0` and the
-  disagreement count is an integer `>= 0`, otherwise `None`.
+  disagreement count is an integer with `0 <= disagreements <= dual_order_tasks`; when a usable
+  block instead has `disagreements > dual_order_tasks` it SHALL return the `_INCOHERENT`
+  sentinel; otherwise `None`.
+- **Incoherent counts (`disagree > dual_order_tasks`):** `disagree` is a subset of
+  `dual_order_tasks`, so `disagree > dual_order_tasks` is impossible telemetry (stale/hand-edited)
+  and would otherwise yield a rate above `1.0`. WHEN a telemetry block has usable integer counts
+  with `disagree > dual_order_tasks` THEN `_disagreement_rate_from_telemetry` SHALL NOT produce a
+  count-based rate (it SHALL fall back to a literal `disagreement_rate` key when present, else
+  `None`), and `_partition_disagreement_counts` SHALL signal `_INCOHERENT` so a pooling caller can
+  fail closed rather than sum a fabricated count.
 - **Conflicting disagreement sources:** WHEN both `judge_order_stats` and `judge_report` are present
   and imply **different** disagreement values THEN `judge_order_stats` SHALL win because it is
   consulted first; `judge_report` SHALL be used only when `judge_order_stats` is absent or yields no
@@ -93,7 +102,10 @@ constant.
 - `_disagreement(artifact)` — WHEN the artifact carries both a `tuned` and a `held_out` key THEN it
   SHALL sum both partitions' disagreement and dual-order counts and return
   `total_disagree / total_dual` (or `None` when the summed dual-order total is `0`), mirroring the
-  `disagreement_outlook` partition fix (#1037 / #1041); OTHERWISE it SHALL return the flat rate.
+  `disagreement_outlook` partition fix (#1037 / #1041); a partition with no usable telemetry is
+  skipped, but WHEN **any** partition is `_INCOHERENT` THEN `_disagreement` SHALL return `None` so
+  `no_judge_instability_increase` passes vacuously instead of blocking on a fabricated instability
+  rise; OTHERWISE it SHALL return the flat rate.
 
 ### Gate evaluation (`check_regression`)
 

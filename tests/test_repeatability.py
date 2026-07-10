@@ -103,26 +103,113 @@ def test_headline_tolerates_truthy_non_integer_runs(caplog):
 
 
 def test_unscored_runs_are_skipped_not_counted():
-    result = assess_repeatability([_run(0.6), {"error": "no tasks"}, _run(0.62), "not-a-dict"])
+    result = assess_repeatability([_run(0.6), _run(0.62), "not-a-dict"])
     assert result["runs"] == 2                       # only the two scored runs count
     assert result["scores"] == [0.6, 0.62]
 
 
-def test_unscored_multi_repo_run_is_skipped_not_folded_into_spread():
-    # A repeat where every repo was too small reports scored_repos: 0 with a placeholder 0.0;
-    # folding it into the spread would fabricate a false UNSTABLE verdict, so it must be skipped.
+def test_error_repeat_fails_not_clean_instead_of_skipping():
+    result = assess_repeatability([_run(0.6), {"error": "no tasks"}, _run(0.62)])
+    assert result["stable"] is False
+    assert result["runs"] == 0
+    assert "repeat 2 not clean" in result["reason"]
+    assert "no tasks" in result["reason"]
+
+
+def test_unscored_multi_repo_run_with_errors_fails_not_clean():
+    # A repeat where every repo was too small still records per-repo errors; it must fail closed
+    # rather than being silently skipped from the spread.
     empty_run = {"repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
                  "per_repo": [{"repo": "a", "error": "bad path", "tasks": 0}]}
     result = assess_repeatability([_run(0.60), empty_run, _run(0.61)])
-    assert result["runs"] == 2                       # only the two scored repeats count
-    assert result["scores"] == [0.6, 0.61]
-    assert result["stable"] is True
+    assert result["stable"] is False
+    assert result["runs"] == 0
+    assert "repeat 2 not clean" in result["reason"]
 
 
 def test_repeatability_reads_generalization_tuned_score():
     result = assess_repeatability([_gen(0.70), _gen(0.71), _gen(0.69)])
     assert result["scores"] == [0.7, 0.71, 0.69]
     assert result["stable"] is True
+
+
+def _partial_multi(score):
+    return {
+        "composite_mean": score,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo": "a", "tasks": 4},
+            {"repo": "b", "tasks": 3},
+            {"repo": "c", "tasks": 0, "error": "clone failed"},
+        ],
+    }
+
+
+def test_partial_multi_repo_repeat_with_per_repo_error_is_unstable():
+    result = assess_repeatability([_partial_multi(0.66), _run(0.64)])
+    assert result["stable"] is False
+    assert result["runs"] == 0
+    assert "repeat 1 not clean" in result["reason"]
+    assert "clone failed" in result["reason"]
+
+
+def test_generalization_tuned_per_repo_error_fails_repeatability():
+    art = _gen(0.70)
+    art["tuned"]["per_repo"] = [
+        {"repo": "a", "tasks": 4},
+        {"repo": "b", "tasks": 0, "error": "freeze failed"},
+        {"repo": "c", "tasks": 3},
+    ]
+    result = assess_repeatability([art, _gen(0.71)])
+    assert result["stable"] is False
+    assert "repeat 1 not clean" in result["reason"]
+    assert "freeze failed" in result["reason"]
+
+
+def test_generalization_held_out_per_repo_error_fails_repeatability():
+    art = _gen(0.70)
+    art["held_out"]["per_repo"] = [
+        {"repo": "a", "tasks": 3},
+        {"repo": "b", "tasks": 0, "error": "clone failed"},
+        {"repo": "c", "tasks": 3},
+    ]
+    result = assess_repeatability([_gen(0.71), art])
+    assert result["stable"] is False
+    assert "repeat 2 not clean" in result["reason"]
+    assert "held_out" in result["reason"]
+
+
+def test_repeatability_tolerates_missing_per_repo_and_non_list_per_repo():
+    weird = {"composite_mean": 0.60, "scored_repos": 2, "per_repo": "oops"}
+    result = assess_repeatability([_run(0.60), weird, _run(0.60)])
+    assert result["stable"] is True
+
+
+def test_repeatability_per_repo_none_does_not_crash():
+    art = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": None}
+    result = assess_repeatability([art, _run(0.64)])
+    assert result["stable"] is True
+
+
+def test_repeatability_per_repo_with_none_and_non_dict_entries_does_not_crash():
+    art = {
+        "composite_mean": 0.66,
+        "scored_repos": 2,
+        "per_repo": [{"repo": "a", "tasks": 4}, None, 42],
+    }
+    result = assess_repeatability([art, _run(0.64)])
+    assert result["stable"] is True
+
+
+def test_falsy_per_repo_error_values_do_not_fail_repeatability():
+    for falsy in (0, False, None, ""):
+        art = {
+            "composite_mean": 0.66,
+            "scored_repos": 2,
+            "per_repo": [{"repo": "a", "tasks": 4, "error": falsy}],
+        }
+        result = assess_repeatability([art, _run(0.64)])
+        assert result["stable"] is True, falsy
 
 
 def test_headline_reports_stable_unstable_and_inconclusive():

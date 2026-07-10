@@ -11,7 +11,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from scripts.leaderboard_feed import append_entry, to_anchor_entry, to_leaderboard_entry  # noqa: E402
+from scripts.leaderboard_feed import (  # noqa: E402
+    append_entry,
+    to_anchor_entry,
+    to_leaderboard_entry,
+)
 from scripts.score_pr_delta import combine_dual_target, score_pr_delta  # noqa: E402
 
 
