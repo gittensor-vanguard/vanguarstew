@@ -65,8 +65,17 @@ def _slice_fraction(slice_) -> dict:
 
 
 def _combined(*slices: dict) -> dict:
-    """Overall fraction across partitions — only when every partition has both counts."""
-    if all(_is_int(s["repos"]) and _is_int(s["scored_repos"]) for s in slices):
+    """Overall fraction across partitions — only when every partition has a coherent fraction.
+
+    Each slice is a :func:`_slice_fraction` result, whose ``scored_fraction`` is a number only when
+    that partition's counts are coherent (whole ``repos > 0`` and ``0 <= scored_repos <= repos``) and
+    ``None`` otherwise. Gating on ``scored_fraction is not None`` — rather than merely on the raw
+    counts being integers — keeps an incoherent partition (``scored > repos``, a zero-repo slice,
+    negative or missing counts) from being summed into a plausible-but-wrong overall fraction, per
+    the module's "yield ``None`` rather than a misleading value" contract. The summed counts are then
+    coherent by construction, so ``_scored_fraction`` never returns ``None`` on this path.
+    """
+    if all(s["scored_fraction"] is not None for s in slices):
         repos = sum(s["repos"] for s in slices)
         scored = sum(s["scored_repos"] for s in slices)
         return {"repos": repos, "scored_repos": scored, "scored_fraction": _scored_fraction(repos, scored)}

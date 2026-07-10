@@ -238,6 +238,80 @@ def test_held_out_error_is_ignored_when_tuned_is_strong():
     assert failed_checks(result) == []
 
 
+def test_tuned_per_repo_error_fails_run_completed():
+    # A repo that failed to clone/freeze in the evaluated (tuned) partition is recorded in
+    # per_repo[i], not as a partition-level error. run_completed must still fail — promotion to
+    # main must not sign off a run that did not complete clean (mirrors check_acceptance #1056).
+    art = _generalization(
+        {"composite_mean": 0.8, "scored_repos": 2, "decisive_margin": 5,
+         "judge_report": {"disagreement_rate": 0.1},
+         "per_repo": [{"repo": "a", "tasks": 5},
+                      {"repo": "b", "tasks": 0, "error": "not a git repository"}]},
+        held_out={"composite_mean": 0.7, "scored_repos": 2,
+                  "per_repo": [{"repo": "c", "tasks": 4}, {"repo": "e", "tasks": 4}]},
+    )
+    result = check_promotion(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+
+
+def test_multi_repo_per_repo_error_fails_run_completed():
+    # Same gap for a plain (non-generalization) multi-repo run: a per_repo clone error must fail
+    # run_completed even though the aggregate composite is above the floor.
+    art = {"composite_mean": 0.8, "decisive_margin": 5, "scored_repos": 2,
+           "judge_report": {"disagreement_rate": 0.1},
+           "per_repo": [{"repo": "a", "tasks": 5},
+                        {"repo": "b", "tasks": 0, "error": "clone failed"}]}
+    result = check_promotion(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+
+
+def test_partition_level_error_still_detected_alongside_per_repo_error():
+    # A partition-level error must NOT be masked when per_repo rows also carry errors: the
+    # top-level error is checked first and named, so run_completed fails either way.
+    art = _generalization(
+        {"composite_mean": 0.8, "scored_repos": 2, "decisive_margin": 5, "error": "partition boom",
+         "judge_report": {"disagreement_rate": 0.1},
+         "per_repo": [{"repo": "b", "tasks": 0, "error": "clone failed"}]},
+    )
+    result = check_promotion(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "run_completed")
+    assert "partition boom" in detail  # the whole-partition error is surfaced, not swallowed
+
+
+def test_held_out_per_repo_error_is_ignored_when_tuned_is_clean():
+    # Only the evaluated (tuned) partition is scanned; a per_repo error confined to held_out is
+    # intentionally ignored, consistent with test_held_out_error_is_ignored_when_tuned_is_strong.
+    art = _generalization(
+        {"composite_mean": 0.8, "scored_repos": 2, "decisive_margin": 5,
+         "judge_report": {"disagreement_rate": 0.1},
+         "per_repo": [{"repo": "a", "tasks": 5}, {"repo": "b", "tasks": 5}]},
+        held_out={"composite_mean": 0.7, "scored_repos": 1,
+                  "per_repo": [{"repo": "c", "tasks": 0, "error": "clone failed"}]},
+    )
+    result = check_promotion(art)
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+
+
+def test_run_completed_tolerates_missing_per_repo_and_non_dict_partition():
+    # No AttributeError / KeyError when per_repo is absent, is a non-list, or the partition itself
+    # is not a dict: a clean run (no per_repo) still passes; malformed shapes never raise.
+    clean = _result(composite=0.7, margin=3, disagreement=0.1)  # no per_repo key at all
+    assert check_promotion(clean)["passed"] is True
+    non_list = {"composite_mean": 0.7, "decisive_margin": 3,
+                "judge_report": {"disagreement_rate": 0.1}, "per_repo": "oops"}
+    assert check_promotion(non_list)["passed"] is True  # non-list per_repo ignored, no raise
+    # A non-dict tuned is not a generalization pair -> evaluated at top level, no crash.
+    non_dict_partition = {"tuned": None, "held_out": {"composite_mean": 0.5},
+                          "composite_mean": 0.7, "decisive_margin": 3,
+                          "judge_report": {"disagreement_rate": 0.1}}
+    assert check_promotion(non_dict_partition)["passed"] is True
+
+
 def test_partial_partition_without_held_out_is_not_generalization():
     # Only a both-dict tuned/held_out pair is a generalization artifact. A lone tuned block (no
     # held_out) is evaluated at the top level, where there is no composite -> the run is unscored.

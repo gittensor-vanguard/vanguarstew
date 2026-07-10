@@ -1,7 +1,10 @@
 """Report pairwise judge disagreement outlook from a replay artifact.
 
 ``judge_gate`` pass/fails judge robustness; this read-only utility exposes ``disagreement_rate``
-and ``dual_order_tasks`` for CI dashboards with a simple stable/unstable verdict.
+and ``dual_order_tasks`` for CI dashboards with a simple stable/unstable verdict. Rates are
+derived from ``judge_order_stats`` when available (``disagree`` / ``dual_order_tasks``), falling
+back to ``judge_report`` only when stats are absent — mirroring ``check_judge``, ``check_regression``,
+and ``check_promotion``.
 
 Pure analysis: no I/O, never mutates its input, and non-finite or missing telemetry yields
 ``None`` fields rather than raising.
@@ -13,10 +16,17 @@ import logging
 import math
 
 from benchmark.comparability import artifact_kind
+from benchmark.judge_gate import _disagreement_rate_from_telemetry
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_STABLE_THRESHOLD = 0.3
+
+_EMPTY_SLICE = {
+    "dual_order_tasks": None,
+    "disagreements": None,
+    "disagreement_rate": None,
+}
 
 
 def _is_int(value) -> bool:
@@ -36,17 +46,9 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _judge_telemetry(slice_) -> dict:
-    """Return judge telemetry from a replay slice (``judge_report`` preferred over stats)."""
-    slice_ = _dict(slice_)
-    for source in (slice_.get("judge_report"), slice_.get("judge_order_stats")):
-        if isinstance(source, dict):
-            return source
-    return {}
-
-
 def _disagreement_counts(telemetry: dict) -> tuple[int, int] | None:
     """Return ``(disagreements, dual_order_tasks)`` when both are valid non-negative ints."""
+    telemetry = _dict(telemetry)
     dual = telemetry.get("dual_order_tasks")
     if not _is_int(dual):
         agree = telemetry.get("agree")
@@ -55,9 +57,9 @@ def _disagreement_counts(telemetry: dict) -> tuple[int, int] | None:
         if not all(_is_int(value) and value >= 0 for value in (agree, disagree, tie)):
             return None
         dual = agree + disagree + tie
-    disagreements = telemetry.get("disagreements")
+    disagreements = telemetry.get("disagree")
     if disagreements is None:
-        disagreements = telemetry.get("disagree")
+        disagreements = telemetry.get("disagreements")
     if disagreements is None:
         rate = telemetry.get("disagreement_rate")
         if _is_number(rate) and _is_int(dual):
@@ -70,27 +72,22 @@ def _disagreement_counts(telemetry: dict) -> tuple[int, int] | None:
 
 
 def _slice_summary(slice_) -> dict:
-    telemetry = _judge_telemetry(slice_)
-    counts = _disagreement_counts(telemetry)
-    if counts is None:
+    """Summarize one artifact slice, preferring ``judge_order_stats`` over ``judge_report``."""
+    slice_ = _dict(slice_)
+    for source in (_dict(slice_.get("judge_order_stats")), _dict(slice_.get("judge_report"))):
+        if not source:
+            continue
+        counts = _disagreement_counts(source)
+        rate = _disagreement_rate_from_telemetry(source)
+        if counts is None or rate is None:
+            continue
+        disagreements, dual = counts
         return {
-            "dual_order_tasks": None,
-            "disagreements": None,
-            "disagreement_rate": None,
+            "dual_order_tasks": dual,
+            "disagreements": disagreements,
+            "disagreement_rate": rate,
         }
-    disagreements, dual = counts
-    rate = telemetry.get("disagreement_rate")
-    if _is_number(rate):
-        out_rate = round(float(rate), 3)
-    elif dual == 0:
-        out_rate = None
-    else:
-        out_rate = round(disagreements / dual, 3)
-    return {
-        "dual_order_tasks": dual,
-        "disagreements": disagreements,
-        "disagreement_rate": out_rate,
-    }
+    return dict(_EMPTY_SLICE)
 
 
 def _combined(tuned: dict, held_out: dict) -> dict:
@@ -98,11 +95,7 @@ def _combined(tuned: dict, held_out: dict) -> dict:
     duals = [tuned.get("dual_order_tasks"), held_out.get("dual_order_tasks")]
     disagreements = [tuned.get("disagreements"), held_out.get("disagreements")]
     if not all(_is_int(value) for value in duals + disagreements):
-        return {
-            "dual_order_tasks": None,
-            "disagreements": None,
-            "disagreement_rate": None,
-        }
+        return dict(_EMPTY_SLICE)
     dual = sum(duals)
     disagree = sum(disagreements)
     if dual == 0:

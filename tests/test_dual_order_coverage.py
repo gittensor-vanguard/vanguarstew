@@ -137,6 +137,35 @@ def test_generalization_partial_partition_yields_no_overall():
     assert summary["partitions"]["held_out"]["coverage"] is None
 
 
+def test_generalization_overall_is_none_when_a_partition_is_incoherent():
+    # An over-covered partition (dual_order_tasks > tasks) is malformed: its own coverage is None.
+    # The overall must not sum the raw counts back into a plausible-but-wrong coverage (here 10
+    # dual of 15 tasks -> 0.667); per _coverage's contract the inconsistency is surfaced, not masked.
+    summary = summarize_dual_order_coverage({
+        "generalization_gap": 0.0,
+        "tuned": _slice(tasks=5, dual=8),      # incoherent: 8 dual-order tasks > 5 tasks
+        "held_out": _slice(tasks=10, dual=2),
+    })
+    assert summary["coverage"] is None
+    assert summary["dual_order_tasks"] is None and summary["tasks"] is None
+    assert summary["partitions"]["tuned"]["coverage"] is None       # partition flagged malformed
+    assert summary["partitions"]["held_out"]["coverage"] == 0.2     # the coherent one still shown
+
+
+def test_generalization_overall_is_none_when_a_partition_has_zero_tasks():
+    # A zero-task partition has no defined coverage, so the overall is withheld rather than summing
+    # the remaining partition alone into a misleadingly complete figure.
+    summary = summarize_dual_order_coverage({
+        "generalization_gap": 0.0,
+        "tuned": _slice(tasks=0, dual=0),      # zero-task slice -> coverage None
+        "held_out": _slice(tasks=4, dual=2),
+    })
+    assert summary["coverage"] is None
+    assert summary["dual_order_tasks"] is None and summary["tasks"] is None
+    assert summary["partitions"]["tuned"]["coverage"] is None
+    assert summary["partitions"]["held_out"]["coverage"] == 0.5
+
+
 # --- invalid ------------------------------------------------------------------------------------
 
 def test_invalid_and_non_dict_artifacts():

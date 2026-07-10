@@ -6,10 +6,11 @@ name: Agent benchmark smoke
 # mode returns each file's own deterministic stub regardless of prompt content, so it can
 # only catch crashes and output-shape regressions, not "did this PR make the agent smarter."
 #
-# The real score-delta that decides mult:core-correctness/mult:capability eligibility is a
-# maintainer-run LIVE benchmark comparison (scripts/score_pr_delta.py against a real model
-# and the held-out repo set) — see REVIEW.md § Contribution value labels. That step needs a
-# funded model key and a curated hidden set, so it is not run unattended on every push.
+# The real score-delta that decides a perf:* band is a maintainer-bot-run LIVE benchmark
+# comparison against BOTH the public curated set and a private, undisclosed repo set
+# (scripts/score_pr_delta.py + combine_dual_target(), see REVIEW.md § Contribution value
+# labels). That step needs a funded model key and a curated hidden set, so it is not run
+# unattended on every push.
 
 on:
   pull_request:
@@ -69,9 +70,9 @@ jobs:
               "not a reasoning-quality score)\n\n"
               f"- Ran clean: yes\n"
               f"- Composite deltas: `{json.dumps(report.get('composite_deltas'))}`\n\n"
-              "This does not determine label eligibility. `mult:core-correctness` / "
-              "`mult:capability` / `mult:breakthrough` require a maintainer-run live "
-              "benchmark comparison — see REVIEW.md."
+              "This does not determine a perf:* label. That requires a maintainer-bot-run "
+              "live benchmark comparison against both the public and private repo targets "
+              "— see REVIEW.md."
           )
           open("/tmp/comment.md", "w").write(body)
           PY

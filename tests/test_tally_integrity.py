@@ -111,6 +111,57 @@ def test_zero_tasks_slice_is_not_selected():
     assert failed_checks(result) == ["artifact_shape"]
 
 
+def test_non_finite_tally_count_fails_instead_of_raising():
+    # Previously OverflowError from int(float("inf")) in _tally_counts. A NaN/Infinity count
+    # survives a JSON save/load round trip but is not a usable count -- flag it, don't crash.
+    art = _artifact()
+    art["tally"]["challenger"] = float("inf")
+    result = check_tally_integrity(art)          # must not raise
+    assert result["passed"] is False
+    assert "tally_present" in failed_checks(result)
+
+
+def test_non_finite_tasks_fails_tasks_reported_instead_of_raising():
+    # Previously ValueError from int(float("nan")) while selecting/checking the slice.
+    art = _artifact()
+    art["tasks"] = float("nan")
+    result = check_tally_integrity(art)          # must not raise
+    assert result["passed"] is False
+    assert "tasks_reported" in failed_checks(result)
+
+
+def test_non_finite_decisive_margin_fails_instead_of_raising():
+    # Previously OverflowError from int(float("inf")) in the decisive_margin check.
+    art = _artifact()
+    art["decisive_margin"] = float("inf")
+    result = check_tally_integrity(art)          # must not raise
+    assert result["passed"] is False
+    assert "decisive_margin_matches" in failed_checks(result)
+
+
+def test_non_finite_numeric_fields_never_raise_for_any_variant():
+    # NaN, +/-Infinity, and an int too large for a float all survive a JSON round trip and
+    # would crash int()/isfinite; none may raise, in a single-repo or a per_repo slice.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        for field in ("challenger", "baseline", "tie"):
+            art = _artifact()
+            art["tally"][field] = bad
+            assert isinstance(check_tally_integrity(art)["passed"], bool), (field, bad)
+
+        art = _artifact()
+        art["tasks"] = bad
+        assert isinstance(check_tally_integrity(art)["passed"], bool), ("tasks", bad)
+
+        art = _artifact()
+        art["decisive_margin"] = bad
+        assert isinstance(check_tally_integrity(art)["passed"], bool), ("margin", bad)
+
+        per_repo = {"per_repo": [{"tasks": bad,
+                                  "tally": {"challenger": 1, "baseline": 0, "tie": 0},
+                                  "rows": []}]}
+        assert isinstance(check_tally_integrity(per_repo)["passed"], bool), ("per_repo", bad)
+
+
 def test_slice_without_rows_skips_row_checks():
     entry = {
         "tasks": 3,

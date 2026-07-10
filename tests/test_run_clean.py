@@ -19,6 +19,7 @@ except ImportError:
 
 from benchmark.run_clean import (  # noqa: E402
     _check_rows_list,
+    _findings_list,
     check_run_clean,
     failed_checks,
     run_clean_headline,
@@ -242,3 +243,37 @@ def test_failed_checks_integration_with_check_rows_list(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
         assert failed_checks({"checks": checks}) == ["no_errors"]
     assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+# --- #1219: run_clean_headline must not crash on a truthy non-list findings ---
+
+
+def test_run_clean_headline_survives_a_non_list_findings():
+    # Before #1219: `result.get("findings") or []` let a truthy non-list through, so len(42)
+    # raised TypeError and aborted the CLI headline path. It must read as 0 findings instead.
+    assert run_clean_headline({"passed": False, "findings": 42}) == "run clean: ERRORS (0 finding(s))"
+    for bad in (42, 3.14, True, {"top-level error": "x"}, "boom", range(2)):
+        assert run_clean_headline({"passed": False, "findings": bad}) == "run clean: ERRORS (0 finding(s))", bad
+
+
+def test_run_clean_headline_counts_a_real_findings_list():
+    out = run_clean_headline({"passed": False, "findings": ["a error", "b error", "c error"]})
+    assert out == "run clean: ERRORS (3 finding(s))"
+
+
+def test_findings_list_treats_non_list_as_empty_with_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _findings_list(42) == []
+    assert any("findings is int, not a list" in r.message for r in caplog.records)
+
+
+def test_findings_list_absent_and_empty_are_silent(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.run_clean"):
+        assert _findings_list(None) == []
+        assert _findings_list([]) == []
+    assert not caplog.records
+
+
+def test_findings_list_passes_a_real_list_through():
+    findings = ["top-level error: 'boom'", "tuned error: 'x'"]
+    assert _findings_list(findings) == findings

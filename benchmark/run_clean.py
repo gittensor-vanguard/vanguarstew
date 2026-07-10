@@ -168,9 +168,28 @@ def failed_checks(result: dict) -> list:
     ]
 
 
+def _findings_list(findings) -> list:
+    """Return the recorded findings as a list for headline purposes.
+
+    ``None``/absent means no findings (silent). A truthy non-list value is warned and treated
+    as empty rather than coerced, mirroring :func:`_check_rows_list`'s posture, so the headline
+    never calls ``len()`` on a scalar. Findings are free-form strings, so list entries are
+    counted as-is (there is no per-row schema to enforce).
+    """
+    if findings is None:
+        return []
+    if not isinstance(findings, list):
+        logger.warning(
+            "run_clean: findings is %s, not a list; treating as empty",
+            type(findings).__name__,
+        )
+        return []
+    return findings
+
+
 def run_clean_headline(result: dict) -> str:
     result = _dict(result)
     if result.get("passed"):
         return f"run clean: OK ({result.get('artifact_kind')})"
-    findings = result.get("findings") or []
+    findings = _findings_list(result.get("findings"))
     return f"run clean: ERRORS ({len(findings)} finding(s))"

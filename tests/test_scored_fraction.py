@@ -80,6 +80,34 @@ def test_generalization_partial_partition_withholds_overall():
     assert summary["partitions"]["held_out"]["scored_fraction"] is None
 
 
+def test_generalization_overall_is_none_when_a_partition_is_incoherent():
+    # An over-scored partition (scored > repos) is malformed: its own fraction is None. The overall
+    # must not sum the raw counts back into a plausible fraction (here 6/12 -> 0.5) and contradict
+    # the partition — per the module's "yield None rather than a misleading value" contract.
+    summary = summarize_scored_fraction({
+        "generalization_gap": 0.0,
+        "tuned": {"repos": 2, "scored_repos": 5},    # incoherent: 5 scored > 2 repos
+        "held_out": {"repos": 10, "scored_repos": 1},
+    })
+    assert summary["scored_fraction"] is None
+    assert summary["repos"] is None and summary["scored_repos"] is None
+    assert summary["partitions"]["tuned"]["scored_fraction"] is None      # partition flagged malformed
+    assert summary["partitions"]["held_out"]["scored_fraction"] == 0.1    # the coherent one still shown
+
+
+def test_generalization_overall_is_none_when_a_partition_has_zero_repos():
+    # A zero-repo slice is malformed too (fraction undefined), so it must null the overall rather
+    # than let the other partition's fraction pass through as if it were the whole picture.
+    summary = summarize_scored_fraction({
+        "generalization_gap": 0.0,
+        "tuned": {"repos": 0, "scored_repos": 0},    # zero-repo slice -> fraction None
+        "held_out": {"repos": 4, "scored_repos": 2},
+    })
+    assert summary["scored_fraction"] is None
+    assert summary["partitions"]["tuned"]["scored_fraction"] is None
+    assert summary["partitions"]["held_out"]["scored_fraction"] == 0.5
+
+
 # --- invalid / unknown kinds ---------------------------------------------------------------------
 
 def test_invalid_and_non_dict_artifacts():
