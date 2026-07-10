@@ -66,6 +66,24 @@ SYSTEM = (
     "Stay consistent with the philosophy. Respond ONLY with JSON."
 )
 
+# Prompt fragments for the plan-item schema and objective-anchor guidance. Kept as named
+# constants so tests can lock the contract without parsing full LLM prompts.
+PLAN_ITEM_SCHEMA = (
+    '  "title": short imperative title,\n'
+    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
+    '  "rationale": why this, now, given the philosophy,\n'
+    '  "theme": the higher-level direction this advances,\n'
+    '  "files": optional list of repo-relative paths or top-level modules likely touched.'
+)
+
+OBJECTIVE_ANCHOR_GUIDANCE = (
+    "Concrete specificity matters: for each non-triage item, include `files` naming the "
+    "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`). "
+    "Pick `kind` to match the maintainer commit type the action would produce "
+    "(bugfix/fix, feature/feat, docs, release, refactor, dep). When releases, milestones, "
+    "or recent history signal an upcoming version cut, include a `release`-kind item."
+)
+
 
 def _pr_title(pr: dict) -> str:
     """Return a stripped PR title when it is a string; else empty."""
@@ -490,10 +508,8 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Repository state:\n{_render(context)}\n"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
-        '  "title": short imperative title,\n'
-        '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
-        '  "rationale": why this, now, given the philosophy,\n'
-        '  "theme": the higher-level direction this advances.'
+        f"{PLAN_ITEM_SCHEMA}\n\n"
+        f"{OBJECTIVE_ANCHOR_GUIDANCE}"
     )
     stub = _offline_plan_stub(context, n)
     plan = llm.chat_json(SYSTEM, user, stub=stub)

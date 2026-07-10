@@ -14,6 +14,8 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
+    OBJECTIVE_ANCHOR_GUIDANCE,
+    PLAN_ITEM_SCHEMA,
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
@@ -728,3 +730,21 @@ def test_review_verb_governs_number_across_an_action_verb():
     out = reconcile_plan_with_queue([{"title": "Merge and land #7", "kind": "triage"}],
                                     {"open_prs": prs}, 5)
     assert [o["title"] for o in out] == ["Merge and land #7"]
+
+
+class _PromptCaptureLLM:
+    def __init__(self, payload):
+        self.payload = payload
+        self.last_user = ""
+
+    def chat_json(self, system, user, stub=None):
+        self.last_user = user
+        return self.payload
+
+
+def test_plan_prompt_includes_objective_anchor_guidance():
+    llm = _PromptCaptureLLM([{"title": "Fix loader race", "kind": "bugfix", "files": ["core/loader.py"]}])
+    plan_next_actions({"open_prs": []}, {}, 1, llm)
+    assert PLAN_ITEM_SCHEMA.strip() in llm.last_user
+    assert OBJECTIVE_ANCHOR_GUIDANCE in llm.last_user
+    assert '"files"' in llm.last_user

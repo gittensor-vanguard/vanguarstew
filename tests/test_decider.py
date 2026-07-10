@@ -21,6 +21,7 @@ from agent.decider import (  # noqa: E402
     _normalize_rationale,
     _normalize_reviewer,
     _normalize_version_bump,
+    _release_context_note,
     _run_lens,
     decide,
 )
@@ -287,3 +288,15 @@ def test_decide_offline_runs_lenses_without_network_and_keeps_stub_shape():
         "patch": None,
         "rationale": "offline stub decision",
     }
+
+
+def test_release_context_note_surfaces_frozen_tags():
+    note = _release_context_note({"releases": [{"tag": "v2.1.0"}, {"tag": "v2.0.3"}]})
+    assert "v2.1.0" in note
+    assert "version_bump" in note
+
+
+def test_release_context_note_empty_when_no_releases():
+    assert _release_context_note({}) == ""
+    assert _release_context_note({"releases": []}) == ""
+    assert _release_context_note({"releases": [{"tag": ""}]}) == ""
