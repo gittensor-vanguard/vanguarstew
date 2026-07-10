@@ -9,6 +9,8 @@ anchor exists to catch (see M2: "the objective anchor grounds the judge").
 
 This gates **each component independently**. ``check_component_floors(result)`` evaluates:
 
+0. ``run_completed`` - the evaluated partition produced a real composite and completed without
+   a top-level or per-repo clone/freeze error;
 1. ``composite_floor`` - ``composite_mean`` is at least ``min_composite``;
 2. ``judge_floor`` - the judge component mean is at least ``min_judge``;
 3. ``objective_floor`` - the objective anchor mean is at least ``min_objective``.
@@ -90,12 +92,23 @@ def _floor_source(result: dict) -> dict:
 def _artifact_error(result: dict) -> str | None:
     """The first error on the evaluated partition, or ``None`` when clean.
 
-    Scans the top-level ``error`` and every ``per_repo[i].error`` in the floor partition via
+    Scans the top-level ``error`` (truthy values only — falsy ``0``/``False``/``""``/``None`` are
+    not failure records) and every ``per_repo[i].error`` in the floor partition via
     :func:`benchmark.acceptance._partition_error`, so a partial multi-repo run cannot pass the
     floors. A failed ``held_out`` partition is intentionally not scanned.
     """
     result = _dict(result)
-    return result.get("error") or _partition_error(_floor_source(result))
+    top_err = result.get("error")
+    if top_err:
+        return top_err
+    try:
+        return _partition_error(_floor_source(result))
+    except Exception:
+        logger.warning(
+            "component_floor: _partition_error failed on evaluated partition",
+            exc_info=True,
+        )
+        return "partition error scan failed"
 
 
 def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
@@ -118,11 +131,12 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     judge = _scored_metric(source, "judge_mean", nested_key="composite_parts")
     objective = _scored_metric(source, "objective_mean", nested_key="composite_parts")
     error = _artifact_error(result)
-    run_completed = composite is not None and error is None
+    has_composite = composite is not None   # 0.0 is a valid scored composite — never bool(composite)
+    run_completed = has_composite and error is None
 
     checks = [{
         "name": "run_completed",
-        "passed": bool(run_completed),
+        "passed": run_completed,
         "detail": (
             "run produced a scored composite"
             if run_completed

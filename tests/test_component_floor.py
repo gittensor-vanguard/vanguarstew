@@ -14,7 +14,9 @@ if ROOT not in sys.path:
 
 from benchmark.component_floor import (  # noqa: E402
     DEFAULT_MIN_COMPOSITE,
+    _artifact_error,
     _check_rows_list,
+    _floor_source,
     check_component_floors,
     component_floor_headline,
     failed_checks,
@@ -174,6 +176,50 @@ def test_lone_tuned_without_held_out_is_not_treated_as_generalization():
         "tuned": {"per_repo": [{"repo": "b", "tasks": 0, "error": "clone failed"}]},
     }
     assert check_component_floors(art)["passed"] is True
+
+
+def test_zero_composite_passes_run_completed():
+    # A genuine 0.0 score must not be treated as absent — bool(0.0) is False but 0.0 is valid.
+    result = check_component_floors(_result(0.0, 0.0, 0.0), min_composite=0.0, min_judge=0.0, min_objective=0.0)
+    assert result["passed"] is True
+    assert next(c for c in result["checks"] if c["name"] == "run_completed")["passed"] is True
+
+
+def test_falsy_top_level_error_values_do_not_fail_run_completed():
+    for falsy in (0, False, None, ""):
+        art = _result(0.66, 0.7, 0.62)
+        art["error"] = falsy
+        result = check_component_floors(art)
+        assert result["passed"] is True, falsy
+        assert next(c for c in result["checks"] if c["name"] == "run_completed")["passed"] is True
+
+
+def test_artifact_error_helper_reports_top_level_and_per_repo_errors():
+    assert _artifact_error({"error": "boom"}) == "boom"
+    assert _artifact_error(_partial_multi()) == "clone failed"
+    assert _artifact_error(_result(0.66, 0.7, 0.62)) is None
+    assert _artifact_error("not a dict") is None
+
+
+def test_floor_source_helper_requires_both_generalization_partitions():
+    art = {"composite_mean": 0.66, "tuned": {"composite_mean": 0.1}}
+    assert _floor_source(art) is art
+    gen = {
+        "tuned": {"composite_mean": 0.66},
+        "held_out": {"composite_mean": 0.55},
+        "generalization_gap": 0.11,
+    }
+    assert _floor_source(gen) is gen["tuned"]
+
+
+def test_artifact_error_helper_survives_non_dict_partition(monkeypatch):
+    import benchmark.component_floor as cf
+
+    def _boom(partition):
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(cf, "_partition_error", _boom)
+    assert _artifact_error({"composite_mean": 0.66, "scored_repos": 1}) == "partition error scan failed"
 
 
 def test_malformed_or_non_dict_result_fails_gracefully():
