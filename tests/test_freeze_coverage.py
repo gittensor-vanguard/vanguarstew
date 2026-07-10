@@ -90,8 +90,21 @@ def test_empty_freeze_string_not_counted():
     assert out["repos_frozen"] == 0
 
 
-def test_malformed_row_skipped():
+def test_corrupt_string_row_counts_as_unfrozen():
+    # A non-empty string per_repo row is a corrupt/malformed entry: it pinned no freeze_commit,
+    # so it counts as a repo that was not frozen (into the denominator, not the numerator) rather
+    # than being dropped and inflating coverage to 100%. Mirrors error_repo_share (#1362).
     art = {"per_repo": ["bad", _repo("a", "sha1")], "repos": 1, "scored_repos": 1}
+    out = summarize_freeze_coverage(art)
+    assert out["repos_total"] == 2
+    assert out["repos_frozen"] == 1
+    assert out["freeze_coverage"] == 0.5
+
+
+def test_empty_string_row_carries_no_repo_signal():
+    # An empty/whitespace string is not a countable repo (matching error_repo_share): it neither
+    # inflates nor deflates the denominator.
+    art = {"per_repo": ["   ", _repo("a", "sha1")], "repos": 1, "scored_repos": 1}
     out = summarize_freeze_coverage(art)
     assert out["repos_total"] == 1
     assert out["freeze_coverage"] == 1.0
