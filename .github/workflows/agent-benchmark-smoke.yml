@@ -57,10 +57,9 @@ jobs:
           echo "---"
           cat /tmp/delta_report.json
 
-      - name: Comment the smoke result on the PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+      # Rendered for every run, including fork PRs: the job summary needs no token permission,
+      # so the smoke result is always reported somewhere even when the PR comment can't be posted.
+      - name: Render the smoke result
         run: |
           python3 - <<'PY'
           import json
@@ -76,4 +75,16 @@ jobs:
           )
           open("/tmp/comment.md", "w").write(body)
           PY
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md
+          cat /tmp/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # A `pull_request` event from a fork gets a read-only GITHUB_TOKEN no matter what the
+      # `permissions:` block above requests, so `gh pr comment` fails with "Resource not
+      # accessible by integration (addComment)" and takes the whole job down with it. Every
+      # contributor PR comes from a fork (#221), so only comment on a same-repo PR; the job
+      # summary rendered above carries the result for the rest.
+      - name: Comment the smoke result on the PR
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md
