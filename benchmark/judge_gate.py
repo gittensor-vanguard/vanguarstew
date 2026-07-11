@@ -36,6 +36,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,21 @@ DEFAULT_MIN_DUAL_ORDER_TASKS = 2
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, so a hand-edited or degenerate artifact can
+    carry a non-finite ``dual_order_tasks``. Without the finite guard an ``Infinity``
+    ``dual_order_tasks`` trivially clears ``enough_dual_order_tasks`` (``inf >= min`` is ``True``),
+    passing the judge-robustness gate on a malformed run. Treating a non-finite value as
+    non-numeric fails that check closed instead, matching ``score_integrity`` (#1336),
+    ``artifact_snapshot`` (#1316), and ``component_floor``. ``OverflowError`` guards an oversized int.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _is_int(value) -> bool:

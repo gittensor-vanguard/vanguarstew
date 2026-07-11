@@ -62,6 +62,17 @@ def test_too_few_dual_order_tasks_fails():
     assert "enough_dual_order_tasks" in failed_checks(result)
 
 
+def test_non_finite_dual_order_tasks_fails_the_gate():
+    # json round-trips Infinity verbatim; an inf dual_order_tasks would trivially clear
+    # enough_dual_order_tasks (inf >= min) and pass the judge-robustness gate on a malformed run.
+    # It must be treated as non-numeric and fail closed (score_integrity #1336 / artifact_snapshot
+    # #1316 / component_floor).
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_judge(_result(dual_tasks=bad))
+        assert result["passed"] is False, bad
+        assert "enough_dual_order_tasks" in failed_checks(result), bad
+
+
 def test_dual_order_tasks_falls_back_to_judge_order_stats():
     # judge_report lacks the count; it is read from judge_order_stats instead.
     r = {"judge_dual_order": True, "judge_report": {"disagreement_rate": 0.1},
