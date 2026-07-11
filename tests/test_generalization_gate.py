@@ -119,6 +119,16 @@ def test_too_few_held_out_repos_fails():
     assert result["held_out_repos"] == 2
 
 
+def test_non_finite_held_out_repos_fails_enough_held_out_repos():
+    # json round-trips Infinity verbatim; an inf held-out scored_repos would trivially clear
+    # enough_held_out_repos (inf >= min) and pass the gate on a malformed run. It must be treated
+    # as non-numeric and fail closed (score_integrity #1336 / gap_integrity #1320 / component_floor).
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_generalization(_gen(0.68, 0.63, held_repos=bad))
+        assert result["passed"] is False, bad
+        assert "enough_held_out_repos" in failed_checks(result), bad
+
+
 def test_held_out_repo_count_falls_back_to_per_repo_length():
     result = check_generalization({
         "tuned": {"composite_mean": 0.68},
