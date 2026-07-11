@@ -172,3 +172,12 @@ def test_cli_non_object_json_exits_two(tmp_path, capsys):
     path.write_text("[1, 2]", encoding="utf-8")
     assert cli.run([str(path)]) == 2
     assert "JSON object" in capsys.readouterr().err
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory artifact path is an OSError (IsADirectoryError on POSIX, PermissionError on
+    # Windows), not a FileNotFoundError -- it must exit 2 with an actionable message, not a raw
+    # traceback.
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "directory" in err or "not readable" in err
