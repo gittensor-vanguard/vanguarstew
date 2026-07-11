@@ -371,3 +371,13 @@ def test_cli_rejects_non_object_json(tmp_artifacts, capsys):
     good = tmp_artifacts("good.json", _multi("a"))
     assert cli.run([good, str(bad)]) == 2
     assert "JSON object" in capsys.readouterr().err
+
+
+def test_cli_directory_path_exits_two(tmp_artifacts, tmp_path, capsys):
+    # A directory artifact path is an OSError (IsADirectoryError on POSIX, PermissionError on
+    # Windows), not a FileNotFoundError -- it must exit 2 with an actionable message, not a raw
+    # traceback.
+    good = tmp_artifacts("good.json", _multi("a"))
+    assert cli.run([good, str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "directory" in err or "not readable" in err
