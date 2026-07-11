@@ -112,6 +112,25 @@ def test_generalization_missing_partition_stats():
     assert out["partitions"]["held_out"]["agree_rate"] is None
 
 
+def test_generalization_overall_null_when_a_partition_has_zero_tasks():
+    # A zero-task slice has integer (all-zero) counts but no defined agree_rate; it must not be
+    # summed into a plausible-but-wrong overall from the other partition alone -- the overall is
+    # None, mirroring scored_fraction (#1274), skip_share (#1272), and dual_order_coverage
+    # (#1280). The coherent partition's own rate is still reported under `partitions`.
+    art = {
+        "generalization_gap": 0.0,
+        "tuned": _stats(0, 0, 0),          # zero dual-order tasks
+        "held_out": _stats(7, 3, 0),
+    }
+    out = summarize_order_agree_rate(art)
+    assert out["partitions"]["tuned"]["total"] == 0
+    assert out["partitions"]["tuned"]["agree_rate"] is None
+    assert out["partitions"]["held_out"]["agree_rate"] == 0.7
+    assert out["total"] is None
+    assert out["agree"] is None
+    assert out["agree_rate"] is None
+
+
 def test_multi_repo_uses_top_level_stats():
     art = {
         "per_repo": [{"repo": "a", "tasks": 3}],
