@@ -283,6 +283,38 @@ def test_malformed_per_repo_survives(caplog):
     assert any(name.startswith("repo-0:") for name in _names(result))
 
 
+def test_corrupt_string_per_repo_row_fails_closed():
+    # A per_repo row serialized as a raw error string (not a result dict) is silently dropped by
+    # _per_repo_list, so a partial artifact with one clean scored repo used to pass as CONSISTENT.
+    # It must fail closed instead -- matching run_clean (#1357) and error_repo_share (#1362).
+    art = {"per_repo": [_artifact(tasks=1, challenger=1, baseline=0, tie=0), "CLONE FAILED: fatal"]}
+    result = check_tally_integrity(art)
+    assert result["passed"] is False
+    assert "per_repo_rows_wellformed" in failed_checks(result)
+
+
+def test_corrupt_string_row_in_generalization_partition_fails_closed():
+    report = {
+        "generalization_gap": 0.0,
+        "tuned": {"per_repo": [_artifact(tasks=1, challenger=1, baseline=0, tie=0)]},
+        "held_out": {"per_repo": [_artifact(tasks=1, challenger=0, baseline=1, tie=0), "boom"]},
+    }
+    result = check_tally_integrity(report)
+    assert result["passed"] is False
+    assert "per_repo_rows_wellformed" in failed_checks(result)
+
+
+def test_wellformed_per_repo_rows_pass_the_check():
+    # Control: an int row and a whitespace-only string are ignored (not corrupt) -- only a
+    # non-empty string is flagged -- so a clean multi-repo run stays CONSISTENT and reports the
+    # well-formedness check as passing.
+    art = {"per_repo": [_artifact(tasks=1, challenger=1, baseline=0, tie=0), 42, "   "]}
+    result = check_tally_integrity(art)
+    assert result["passed"] is True
+    assert "per_repo_rows_wellformed" in _names(result)
+    assert "per_repo_rows_wellformed" not in failed_checks(result)
+
+
 def test_integrity_slices_expands_partition_rows():
     part = {"scored_repos": 1, "rows": _rows(1, 0, 0), "tasks": 1,
             "tally": {"challenger": 1, "baseline": 0, "tie": 0}}
