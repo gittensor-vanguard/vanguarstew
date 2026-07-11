@@ -164,6 +164,29 @@ def test_cli_missing_file_exits_two(capsys):
     assert "not found" in capsys.readouterr().err
 
 
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory path raises IsADirectoryError from open() on POSIX (where CI runs), not a
+    # FileNotFoundError -- it must exit 2 with an actionable message, not a raw traceback.
+    assert cli.run([str(tmp_path)]) == 2
+    assert "directory" in capsys.readouterr().err
+
+
+def test_cli_unreadable_file_exits_two(tmp_path, capsys):
+    # An unreadable regular file raises PermissionError from open() -- a distinct path from the
+    # directory case -- and must also exit 2 with its own actionable message.
+    path = tmp_path / "locked.json"
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0)
+    if os.access(str(path), os.R_OK):  # root / a mode-ignoring filesystem can still read it
+        os.chmod(path, 0o600)
+        pytest.skip("file is readable despite chmod 0 (running as root?)")
+    try:
+        assert cli.run([str(path)]) == 2
+        assert "not readable" in capsys.readouterr().err
+    finally:
+        os.chmod(path, 0o600)  # restore so pytest can remove tmp_path
+
+
 def test_cli_invalid_json_exits_two(tmp_path, capsys):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
