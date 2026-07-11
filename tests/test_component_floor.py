@@ -60,6 +60,22 @@ def test_composite_below_floor_is_caught():
     assert "composite_floor" in failed_checks(result)
 
 
+def test_non_finite_composite_fails_the_floor_not_passes_it():
+    # json round-trips Infinity verbatim; an inf composite_mean would trivially clear every floor
+    # (inf >= min is True), false-passing a malformed run. It must fail the floor closed instead,
+    # matching score_integrity (#1336).
+    result = check_component_floors(_result(float("inf"), 0.7, 0.6))
+    assert result["passed"] is False
+    assert "composite_floor" in failed_checks(result)
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf")])
+def test_non_finite_component_mean_fails_its_floor(bad):
+    result = check_component_floors(_result(0.6, bad, 0.6))
+    assert result["passed"] is False
+    assert "judge_floor" in failed_checks(result)
+
+
 def test_floors_are_inclusive():
     assert check_component_floors(_result(0.5, 0.4, 0.4),
                                   min_composite=0.5, min_judge=0.4, min_objective=0.4)["passed"] is True
