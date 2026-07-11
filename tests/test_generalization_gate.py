@@ -2,7 +2,10 @@
 
 import copy
 import os
+import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -17,6 +20,7 @@ from benchmark.generalization_gate import (  # noqa: E402
     failed_checks,
     generalization_headline,
 )
+from scripts import generalization_gate as cli  # noqa: E402
 
 
 def _gen(tuned, held, held_repos=3):
@@ -306,3 +310,33 @@ def test_clean_per_repo_rows_still_pass_no_partition_error():
     )
     assert "no_partition_error" not in failed_checks(result)
     assert result["passed"] is True
+
+
+def test_cli_directory_path_exits_two(tmp_path):
+    # Invoking the gate CLI on a directory artifact path is an OSError (IsADirectoryError on
+    # POSIX, PermissionError on Windows), not a FileNotFoundError -- it must exit 2 with an
+    # actionable message rather than dumping a raw traceback.
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.generalization_gate", str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert "directory" in proc.stderr or "not readable" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    # Platform-agnostic: a real directory never raises IsADirectoryError on Windows (it raises
+    # PermissionError), so force it to prove the dedicated handler is not dead code. On every
+    # platform load_artifact must raise SystemExit(2) with the specific directory message and no
+    # traceback.
+    def _raise_is_a_directory(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise_is_a_directory)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "Traceback" not in err
