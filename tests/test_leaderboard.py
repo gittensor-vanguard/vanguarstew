@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -247,6 +249,16 @@ def test_components_helper_reads_headline_partition_and_guards_non_dict():
     assert _components(_gen(0.6, judge=0.8, objective=0.6)) == {"judge_mean": 0.8, "objective_mean": 0.6}
     assert _components("not-a-dict") == {"judge_mean": None, "objective_mean": None}
     assert _components({}) == {"judge_mean": None, "objective_mean": None}
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf")])
+def test_non_finite_component_mean_is_none_in_row(bad):
+    # json round-trips NaN/Infinity verbatim; a non-finite composite_parts mean must degrade to
+    # None rather than surfacing as inf/nan in a leaderboard row (mirrors composite_spread #1397).
+    assert _components(_single(0.6, judge=bad, objective=0.5)) == {"judge_mean": None, "objective_mean": 0.5}
+    out = rank([("A", _single(0.6, judge=bad, objective=0.5))])
+    row = out["ranking"][0]
+    assert row["judge_mean"] is None and row["objective_mean"] == 0.5
 
 
 def test_rank_does_not_mutate_inputs():

@@ -58,6 +58,10 @@ Returns `(disagreements, dual_order_tasks)` only when both are valid **non-negat
   `round(disagreement_rate * dual)` when a numeric rate and an int `dual` are available; if none of
   these yields a value the block is unusable (`None`).
 - WHEN either resolved value is not a non-negative int THEN the result SHALL be `None`.
+- WHEN the resolved `disagreements` exceeds `dual_order_tasks` THEN the block is **incoherent**
+  (`disagree` is a subset of the dual-order tasks, so `disagreements > dual` is impossible) and the
+  result SHALL be `None`, so an impossible block is never surfaced as a slice nor pooled by
+  `_combined` into a fabricated rate above `1.0` (mirrors `regression._disagreement`, spec 016).
 
 ### Slice summary (`_slice_summary`)
 

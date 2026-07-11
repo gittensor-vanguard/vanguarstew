@@ -68,6 +68,13 @@ def _disagreement_counts(telemetry: dict) -> tuple[int, int] | None:
             return None
     if not _is_int(disagreements) or disagreements < 0 or not _is_int(dual) or dual < 0:
         return None
+    if disagreements > dual:
+        # ``disagree`` is a subset of ``dual_order_tasks``, so ``disagreements > dual`` is an
+        # impossible (incoherent) telemetry block. Reject it as unusable rather than returning
+        # counts that a slice would surface and ``_combined`` would pool into a fabricated
+        # >100% disagreement rate — mirroring ``regression._disagreement``'s ``_INCOHERENT``
+        # guard (#1283) and ``judge_gate._disagreement_rate_from_telemetry``.
+        return None
     return disagreements, dual
 
 

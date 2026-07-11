@@ -79,15 +79,20 @@ def make_order_share(*, numerator_keys, count_field, share_field, headline_label
         if kind == "generalization":
             tuned = _slice_summary(artifact.get("tuned"))
             held = _slice_summary(artifact.get("held_out"))
-            totals = [tuned.get("total"), held.get("total")]
-            nums = [tuned.get(count_field), held.get(count_field)]
-            if all(_is_int(v) for v in totals) and all(_is_int(v) for v in nums):
-                total = sum(totals)
-                numerator = sum(nums)
+            # Gate on each partition's derived share, not merely on the raw counts being
+            # integers: a partition's ``share_field`` is a number only when its counts are
+            # coherent (total > 0). A zero-task slice has integer counts but a ``None`` share,
+            # and summing it in masks the incoherence behind a plausible-but-wrong overall from
+            # the other partition alone. Mirrors the sibling fixes in scored_fraction (#1274),
+            # skip_share (#1272), and dual_order_coverage (#1280). When both partitions are
+            # coherent their totals are > 0, so the summed total is > 0 and the share is defined.
+            if all(part.get(share_field) is not None for part in (tuned, held)):
+                total = tuned["total"] + held["total"]
+                numerator = tuned[count_field] + held[count_field]
                 overall = {
                     "total": total,
                     count_field: numerator,
-                    share_field: round(numerator / total, 3) if total > 0 else None,
+                    share_field: round(numerator / total, 3),
                 }
             else:
                 overall = {"total": None, count_field: None, share_field: None}

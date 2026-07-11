@@ -35,7 +35,9 @@ dict from the headline partition.
 
 ### Numeric semantics (`_is_number`)
 
-- Only non-boolean `int`/`float` values SHALL count as numeric.
+- Only **finite**, non-boolean `int`/`float` values SHALL count as numeric; a `NaN`/`Infinity`
+  weight (which `json` round-trips verbatim) SHALL NOT, so it degrades to `None`/`unavailable`
+  rather than poisoning the reported `sum` (mirrors `component_mix` / `composite_spread`).
 - `bool` SHALL NOT be treated as numeric.
 
 ### Headline partition (`_headline_partition`)

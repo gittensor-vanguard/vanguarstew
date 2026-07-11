@@ -36,7 +36,7 @@ import argparse
 import json
 import sys
 
-from scripts.compare_eval import compare_eval_artifacts, load_artifact
+from scripts.compare_eval import compare_eval_artifacts
 
 DEFAULT_NOISE_FLOOR = 0.01
 
@@ -210,7 +210,42 @@ def headline(report: dict) -> str:
     return f"score_pr_delta: {verdict} — {report.get('reason', '')}"
 
 
-def main(argv=None) -> int:
+def load_artifact(path: str) -> dict:
+    """Load a JSON artifact from ``path``, exiting with a clean error on failure.
+
+    Distinguishes the common ``OSError`` subclasses so the user gets an actionable message
+    rather than a raw traceback: ``FileNotFoundError`` (missing), ``PermissionError``
+    (unreadable), ``IsADirectoryError`` (a directory, not a file), and any other ``OSError``
+    (broken symlink, I/O error, ...). Checks the JSON shape directly rather than delegating
+    to a helper that raises a bare ``ValueError`` for it, so nothing here needs -- or risks
+    masking bugs behind -- a catch-all ``except ValueError``. Mirrors the pattern already
+    established in ``scripts/repo_task_mean.py`` and the other CLIs hardened this way (#1376).
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except OSError as exc:
+        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except json.JSONDecodeError as exc:
+        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    if not isinstance(data, dict):
+        print(f"artifact must be a JSON object: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    return data
+
+
+def run(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("baseline", help="run_eval --out artifact for the baseline agent")
     ap.add_argument("candidate", help="run_eval --out artifact for the PR's agent")
@@ -219,8 +254,12 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=None, help="write the full JSON report to this path")
     args = ap.parse_args(argv)
 
-    baseline = load_artifact(args.baseline)
-    candidate = load_artifact(args.candidate)
+    try:
+        baseline = load_artifact(args.baseline)
+        candidate = load_artifact(args.candidate)
+    except SystemExit as exc:
+        return int(exc.code)
+
     report = score_pr_delta(baseline, candidate, noise_floor=args.noise_floor)
 
     print(headline(report), file=sys.stderr)
@@ -233,5 +272,9 @@ def main(argv=None) -> int:
     return 0
 
 
+def main() -> None:
+    raise SystemExit(run())
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

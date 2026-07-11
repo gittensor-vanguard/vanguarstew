@@ -107,6 +107,24 @@ def test_generalization_malformed_partition_does_not_crash():
     assert summary["total"] is None
 
 
+def test_generalization_overall_null_when_a_partition_has_zero_categorized_tasks():
+    # A zero-task slice has integer (all-zero) counts but no defined share; it must not be summed
+    # into a plausible-but-wrong overall from the other partition alone -- the overall is None,
+    # mirroring scored_fraction (#1274), skip_share (#1272), and dual_order_coverage (#1280). The
+    # coherent partition's own share is still reported under `partitions`.
+    summary = summarize_agree_order_share({
+        "generalization_gap": 0.0,
+        "tuned": _stats(agree=0, disagree=0, tie=0, single=0, offline=0),   # zero categorized tasks
+        "held_out": _stats(agree=7, disagree=1, tie=2, single=0, offline=0),
+    })
+    assert summary["partitions"]["tuned"]["total"] == 0
+    assert summary["partitions"]["tuned"]["agree_order_share"] is None
+    assert summary["partitions"]["held_out"]["agree_order_share"] == 0.7
+    assert summary["total"] is None
+    assert summary["agree"] is None
+    assert summary["agree_order_share"] is None
+
+
 def test_invalid_and_non_dict_artifacts():
     for bad in ({}, None, 5, "x", [1]):
         summary = summarize_agree_order_share(bad)

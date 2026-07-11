@@ -98,6 +98,21 @@ def test_generalization_missing_partitions():
     assert summary["partitions"]["held_out"]["dual_order_share"] is None
 
 
+def test_generalization_overall_null_when_a_partition_has_zero_categorized_tasks():
+    # A zero-task slice (all counts 0) has a None share; the multi-key dual-share overall must
+    # not be summed from the coherent partition alone. Mirrors #1272/#1274/#1280.
+    summary = summarize_dual_order_share({
+        "generalization_gap": 0.0,
+        "tuned": _stats(agree=0, disagree=0, tie=0, single=0, offline=0),
+        "held_out": _stats(agree=6, disagree=0, tie=0, single=2, offline=0),
+    })
+    assert summary["partitions"]["tuned"]["dual_order_share"] is None
+    assert summary["partitions"]["held_out"]["dual_order_share"] == 0.75
+    assert summary["total"] is None
+    assert summary["dual_order_tasks"] is None
+    assert summary["dual_order_share"] is None
+
+
 def test_invalid_and_non_dict_artifacts():
     for bad in ({}, None, 5, "x", [1]):
         summary = summarize_dual_order_share(bad)

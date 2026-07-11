@@ -14,7 +14,9 @@ if ROOT not in sys.path:
 
 from benchmark.component_floor import (  # noqa: E402
     DEFAULT_MIN_COMPOSITE,
+    _artifact_error,
     _check_rows_list,
+    _floor_source,
     check_component_floors,
     component_floor_headline,
     failed_checks,
@@ -33,7 +35,7 @@ def _names(result):
 def test_all_components_above_floors_passes():
     result = check_component_floors(_result(0.62, 0.7, 0.55))
     assert result["passed"] is True
-    assert _names(result) == ["composite_floor", "judge_floor", "objective_floor"]
+    assert _names(result) == ["run_completed", "composite_floor", "judge_floor", "objective_floor"]
     assert result["composite_mean"] == 0.62 and result["judge_mean"] == 0.7
 
 
@@ -58,6 +60,22 @@ def test_composite_below_floor_is_caught():
     assert "composite_floor" in failed_checks(result)
 
 
+def test_non_finite_composite_fails_the_floor_not_passes_it():
+    # json round-trips Infinity verbatim; an inf composite_mean would trivially clear every floor
+    # (inf >= min is True), false-passing a malformed run. It must fail the floor closed instead,
+    # matching score_integrity (#1336).
+    result = check_component_floors(_result(float("inf"), 0.7, 0.6))
+    assert result["passed"] is False
+    assert "composite_floor" in failed_checks(result)
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf")])
+def test_non_finite_component_mean_fails_its_floor(bad):
+    result = check_component_floors(_result(0.6, bad, 0.6))
+    assert result["passed"] is False
+    assert "judge_floor" in failed_checks(result)
+
+
 def test_floors_are_inclusive():
     assert check_component_floors(_result(0.5, 0.4, 0.4),
                                   min_composite=0.5, min_judge=0.4, min_objective=0.4)["passed"] is True
@@ -79,6 +97,147 @@ def test_missing_components_fail_their_floors():
     assert result["judge_mean"] is None and result["objective_mean"] is None
 
 
+def _partial_multi(composite=0.66, judge=0.7, objective=0.62):
+    return {
+        "composite_mean": composite,
+        "scored_repos": 2,
+        "composite_parts": {"judge_mean": judge, "objective_mean": objective},
+        "per_repo": [
+            {"repo": "a", "tasks": 4},
+            {"repo": "b", "tasks": 3},
+            {"repo": "c", "tasks": 0, "error": "clone failed"},
+        ],
+    }
+
+
+def test_multi_repo_per_repo_error_fails_run_completed():
+    result = check_component_floors(_partial_multi())
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "run_completed")
+    assert "clone failed" in detail
+
+
+def test_tuned_per_repo_error_fails_run_completed():
+    art = {
+        "tuned": {
+            "composite_mean": 0.66,
+            "scored_repos": 2,
+            "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.62},
+            "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 0, "error": "freeze failed"}],
+        },
+        "held_out": {"composite_mean": 0.55, "scored_repos": 2, "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.5}},
+        "generalization_gap": 0.11,
+    }
+    result = check_component_floors(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+
+
+def test_held_out_per_repo_error_is_ignored_when_tuned_is_clean():
+    art = {
+        "tuned": {
+            "composite_mean": 0.66,
+            "scored_repos": 2,
+            "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.62},
+            "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 3}],
+        },
+        "held_out": {
+            "composite_mean": 0.55,
+            "scored_repos": 1,
+            "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.5},
+            "per_repo": [{"repo": "x", "tasks": 0, "error": "clone failed"}],
+        },
+        "generalization_gap": 0.11,
+    }
+    assert check_component_floors(art)["passed"] is True
+
+
+def test_run_completed_tolerates_missing_per_repo_and_non_list_per_repo():
+    clean = _result(0.66, 0.7, 0.62)
+    assert check_component_floors(clean)["passed"] is True
+    weird = {**clean, "per_repo": "oops"}
+    assert check_component_floors(weird)["passed"] is True
+
+
+def test_run_completed_per_repo_none_does_not_crash():
+    art = {**_result(0.66, 0.7, 0.62), "per_repo": None}
+    assert check_component_floors(art)["passed"] is True
+
+
+def test_run_completed_per_repo_with_none_and_non_dict_entries_does_not_crash():
+    art = {**_result(0.66, 0.7, 0.62), "per_repo": [{"repo": "a", "tasks": 4}, None, 42]}
+    assert check_component_floors(art)["passed"] is True
+
+
+def test_falsy_per_repo_error_values_do_not_fail_run_completed():
+    for falsy in (0, False, None, ""):
+        art = _partial_multi()
+        art["per_repo"][-1]["error"] = falsy
+        assert check_component_floors(art)["passed"] is True, falsy
+
+
+def test_bare_string_per_repo_row_fails_run_completed():
+    art = _result(0.66, 0.7, 0.62)
+    art["per_repo"] = [{"repo": "a", "tasks": 4}, "corrupt row"]
+    result = check_component_floors(art)
+    assert result["passed"] is False
+    assert "run_completed" in failed_checks(result)
+
+
+def test_lone_tuned_without_held_out_is_not_treated_as_generalization():
+    art = {
+        "composite_mean": 0.66,
+        "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.62},
+        "tuned": {"per_repo": [{"repo": "b", "tasks": 0, "error": "clone failed"}]},
+    }
+    assert check_component_floors(art)["passed"] is True
+
+
+def test_zero_composite_passes_run_completed():
+    # A genuine 0.0 score must not be treated as absent — bool(0.0) is False but 0.0 is valid.
+    result = check_component_floors(_result(0.0, 0.0, 0.0), min_composite=0.0, min_judge=0.0, min_objective=0.0)
+    assert result["passed"] is True
+    assert next(c for c in result["checks"] if c["name"] == "run_completed")["passed"] is True
+
+
+def test_falsy_top_level_error_values_do_not_fail_run_completed():
+    for falsy in (0, False, None, ""):
+        art = _result(0.66, 0.7, 0.62)
+        art["error"] = falsy
+        result = check_component_floors(art)
+        assert result["passed"] is True, falsy
+        assert next(c for c in result["checks"] if c["name"] == "run_completed")["passed"] is True
+
+
+def test_artifact_error_helper_reports_top_level_and_per_repo_errors():
+    assert _artifact_error({"error": "boom"}) == "boom"
+    assert _artifact_error(_partial_multi()) == "clone failed"
+    assert _artifact_error(_result(0.66, 0.7, 0.62)) is None
+    assert _artifact_error("not a dict") is None
+
+
+def test_floor_source_helper_requires_both_generalization_partitions():
+    art = {"composite_mean": 0.66, "tuned": {"composite_mean": 0.1}}
+    assert _floor_source(art) is art
+    gen = {
+        "tuned": {"composite_mean": 0.66},
+        "held_out": {"composite_mean": 0.55},
+        "generalization_gap": 0.11,
+    }
+    assert _floor_source(gen) is gen["tuned"]
+
+
+def test_artifact_error_helper_survives_non_dict_partition(monkeypatch):
+    import benchmark.component_floor as cf
+
+    def _boom(partition):
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(cf, "_partition_error", _boom)
+    assert _artifact_error({"composite_mean": 0.66, "scored_repos": 1}) == "partition error scan failed"
+
+
 def test_malformed_or_non_dict_result_fails_gracefully():
     for bad in (None, "not a dict", 42, [1, 2]):
         result = check_component_floors(bad)
@@ -91,7 +250,7 @@ def test_non_numeric_fields_do_not_crash():
     weird = {"composite_mean": "high", "composite_parts": {"judge_mean": "a", "objective_mean": None}}
     result = check_component_floors(weird)
     assert result["passed"] is False
-    assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
+    assert set(failed_checks(result)) == {"run_completed", "composite_floor", "judge_floor", "objective_floor"}
 
 
 def test_headline_reports_pass_and_fail():
@@ -158,7 +317,7 @@ def test_check_rows_list_warns_on_non_list(caplog):
 
 def test_every_floor_reported_even_when_all_fail():
     result = check_component_floors(_result(0.1, 0.1, 0.1))
-    assert len(result["checks"]) == 3
+    assert len(result["checks"]) == 4
     assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
 
 
@@ -212,7 +371,7 @@ def test_unscored_multi_repo_placeholder_fails_all_floors():
     }
     result = check_component_floors(empty_run)
     assert result["passed"] is False
-    assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
+    assert set(failed_checks(result)) == {"run_completed", "composite_floor", "judge_floor", "objective_floor"}
     assert result["composite_mean"] is None
     assert result["judge_mean"] is None
     assert result["objective_mean"] is None
@@ -227,7 +386,7 @@ def test_unscored_placeholder_is_not_passed_even_at_permissive_floors():
     }
     result = check_component_floors(empty_run, min_composite=0.0, min_judge=0.0, min_objective=0.0)
     assert result["passed"] is False
-    assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
+    assert set(failed_checks(result)) == {"run_completed", "composite_floor", "judge_floor", "objective_floor"}
 
 
 def test_genuine_zero_scored_run_is_a_real_score():
@@ -307,7 +466,7 @@ def test_unscored_tuned_partition_fails_all_floors():
     })
     result = check_component_floors(art)
     assert result["passed"] is False
-    assert set(failed_checks(result)) == {"composite_floor", "judge_floor", "objective_floor"}
+    assert set(failed_checks(result)) == {"run_completed", "composite_floor", "judge_floor", "objective_floor"}
     assert result["composite_mean"] is None
 
 
@@ -450,7 +609,7 @@ def test_cli_runs_the_gate_and_emits_the_result_for_a_well_formed_artifact(tmp_p
     payload = json.loads(result.stdout)
     assert payload["passed"] is True
     assert [c["name"] for c in payload["checks"]] == [
-        "composite_floor", "judge_floor", "objective_floor",
+        "run_completed", "composite_floor", "judge_floor", "objective_floor",
     ]
     assert payload["composite_mean"] == 0.62 and payload["judge_mean"] == 0.7
     assert "[PASS] composite_floor" in result.stderr

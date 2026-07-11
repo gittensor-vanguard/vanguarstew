@@ -151,16 +151,27 @@ def _repo_tasks(entry: dict) -> int | None:
 
 
 def _partition_counts(entries: list) -> tuple[int, int, int]:
-    """Return ``(total, scored, skipped)`` ignoring malformed per-repo entries."""
+    """Return ``(total, scored, skipped)`` over per-repo entries.
+
+    A dict row with a numeric ``tasks`` count is scored (``tasks > 0``) or skipped (``tasks == 0``).
+    A non-empty string row is a corrupt/malformed entry — a real repo that produced no scored
+    tasks — so it counts as a *skipped* repo (into ``total`` and ``skipped``) rather than being
+    silently dropped and inflating the pass rate; that under-count is what let too many corrupt
+    repos slip past the ``max_skipped`` gate. Mirrors how #1362 (``error_repo_share``) and #1386
+    (``freeze_coverage``) count such a row in the bad bucket. Empty/whitespace strings and other
+    non-dict/non-string entries carry no repo signal and are ignored.
+    """
     total = scored = skipped = 0
     for entry in entries:
         tasks = _repo_tasks(entry)
-        if tasks is None:
-            continue
-        total += 1
-        if tasks > 0:
-            scored += 1
-        else:
+        if tasks is not None:
+            total += 1
+            if tasks > 0:
+                scored += 1
+            else:
+                skipped += 1
+        elif isinstance(entry, str) and entry.strip():
+            total += 1
             skipped += 1
     return total, scored, skipped
 

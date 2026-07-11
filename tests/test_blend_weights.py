@@ -49,6 +49,22 @@ def test_malformed_weights_yield_none():
     assert out["judge"] is None
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf")])
+def test_non_finite_weight_yields_none(bad):
+    # json round-trips NaN/Infinity verbatim; a non-finite weight must degrade to None rather than
+    # poisoning judge/sum (mirrors component_mix / composite_spread / trend).
+    out = summarize_blend_weights({"weights": {"judge": bad, "objective": 0.4}})
+    assert out["judge"] is None
+    assert out["sum"] is None
+    assert blend_weights_headline(out) == "blend weights: unavailable"
+
+
+def test_oversized_int_weight_is_not_numeric():
+    out = summarize_blend_weights({"weights": {"judge": 10**400, "objective": 0.4}})
+    assert out["judge"] is None
+    assert out["sum"] is None
+
+
 def test_headline():
     assert "judge 0.6" in blend_weights_headline(summarize_blend_weights(_run()))
 

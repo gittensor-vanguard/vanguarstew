@@ -35,7 +35,9 @@ objective means as a single number for trending. `summarize_composite_spread` re
 
 ### Numeric semantics (`_is_number`, `_round3`)
 
-- Only non-boolean `int`/`float` values SHALL count as numeric.
+- Only **finite**, non-boolean `int`/`float` values SHALL count as numeric; a `NaN`/`Infinity`
+  mean (which `json` round-trips verbatim) SHALL NOT, so it degrades to `None`/`n/a` rather than
+  poisoning the reported `spread` (mirrors `component_mix` and `trend`).
 - `_round3(value)` SHALL return `round(float(value), 3)` when `value` passes `_is_number`,
   otherwise `None`.
 

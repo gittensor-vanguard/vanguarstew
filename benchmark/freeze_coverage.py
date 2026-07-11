@@ -4,8 +4,10 @@
 fraction of per-repo rows that actually pinned a ``freeze_commit`` — useful when auditing whether
 a multi-repo run froze every repo it touched.
 
-Pure analysis: no I/O, never mutates its input, and malformed ``per_repo`` rows are logged and
-skipped rather than raising.
+Pure analysis: no I/O, never mutates its input, and never raises on malformed input. A ``per_repo``
+row that is a non-empty string is a corrupt/malformed entry — it pinned no ``freeze_commit``, so it
+counts as a repo that was not frozen (mirroring how #1362 counts such a row as an errored repo in
+``error_repo_share``); other non-dict rows carry no repo signal and are skipped.
 """
 
 from __future__ import annotations
@@ -35,7 +37,21 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _rows_from_per_repo(per_repo, field: str = "per_repo") -> list[dict]:
+def _has_freeze_commit(entry: dict) -> bool:
+    value = entry.get("freeze_commit")
+    return isinstance(value, str) and bool(value)
+
+
+def _repo_freeze_flags(per_repo, field: str = "per_repo") -> list[bool]:
+    """One "pinned a freeze commit" flag per countable repo in ``per_repo``.
+
+    A dict row is flagged by whether it carries a ``freeze_commit``. A non-empty string row is a
+    corrupt/malformed entry that pinned nothing, so it counts as an *unfrozen* repo (flag
+    ``False``) — mirroring how #1362 counts such a row as an errored repo in
+    ``error_repo_share._repo_error_flags``, so a corrupt repo can never inflate freeze coverage.
+    Empty/whitespace strings and other non-dict/non-string entries carry no repo signal and are
+    skipped, so they neither inflate nor deflate the denominator.
+    """
     if per_repo is None:
         return []
     if not isinstance(per_repo, list):
@@ -45,29 +61,24 @@ def _rows_from_per_repo(per_repo, field: str = "per_repo") -> list[dict]:
             type(per_repo).__name__,
         )
         return []
-    rows = []
+    flags = []
     for idx, entry in enumerate(per_repo):
-        if not isinstance(entry, dict):
+        if isinstance(entry, dict):
+            flags.append(_has_freeze_commit(entry))
+        elif isinstance(entry, str) and entry.strip():
             logger.warning(
-                "freeze_coverage: %s[%s] is %s, not an object; skipping",
+                "freeze_coverage: %s[%s] is a corrupt string row; counting as unfrozen",
                 field,
                 idx,
-                type(entry).__name__,
             )
-            continue
-        rows.append(entry)
-    return rows
-
-
-def _has_freeze_commit(entry: dict) -> bool:
-    value = entry.get("freeze_commit")
-    return isinstance(value, str) and bool(value)
+            flags.append(False)
+    return flags
 
 
 def _slice_summary(per_repo, field: str = "per_repo") -> dict:
-    rows = _rows_from_per_repo(per_repo, field)
-    total = len(rows)
-    frozen = sum(1 for row in rows if _has_freeze_commit(row))
+    flags = _repo_freeze_flags(per_repo, field)
+    total = len(flags)
+    frozen = sum(1 for flag in flags if flag)
     coverage = round(frozen / total, 3) if total > 0 else None
     return {
         "repos_total": total,

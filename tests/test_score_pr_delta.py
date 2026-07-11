@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -16,6 +18,7 @@ from scripts.score_pr_delta import (  # noqa: E402
     _regressed,
     combine_dual_target,
     headline,
+    run,
     score_pr_delta,
 )
 
@@ -203,6 +206,76 @@ def test_combine_dual_target_no_band_if_either_target_shows_nothing():
     assert combined["band"] == "none"
     assert combined["label"] is None
     assert combined["blocks_merge"] is False
+
+
+def test_run_exits_cleanly_on_a_missing_artifact_path(tmp_path, capsys):
+    missing = tmp_path / "does_not_exist.json"
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    rc = run([str(missing), str(other)])
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "artifact not found" in captured.err
+    assert "does_not_exist.json" in captured.err
+
+
+def test_run_exits_cleanly_when_a_path_is_a_directory(tmp_path, capsys):
+    # A directory path raises IsADirectoryError (POSIX) or PermissionError (Windows) from
+    # open() -- both are OSError subclasses that must be caught, not just FileNotFoundError,
+    # and each gets its own actionable message (hence the platform-dependent wording here).
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    rc = run([str(tmp_path), str(other)])
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "directory" in captured.err or "not readable" in captured.err
+    assert str(tmp_path) in captured.err
+
+
+def test_run_exits_cleanly_when_the_artifact_is_unreadable(tmp_path, capsys):
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    os.chmod(unreadable, 0o000)
+    try:
+        if os.access(unreadable, os.R_OK):
+            pytest.skip("root or this OS ignores file permission bits")
+        rc = run([str(unreadable), str(other)])
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "Traceback" not in captured.err
+        assert "not readable" in captured.err
+    finally:
+        os.chmod(unreadable, 0o644)
+
+
+def test_run_exits_cleanly_on_invalid_json(tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not valid json")
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    rc = run([str(bad), str(other)])
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "not valid JSON" in captured.err
+
+
+def test_run_exits_cleanly_on_a_non_object_json_artifact(tmp_path, capsys):
+    # Valid JSON, wrong shape (a list, not an object) -- must degrade cleanly too, not just
+    # OSError/JSONDecodeError cases.
+    not_an_object = tmp_path / "list.json"
+    not_an_object.write_text(json.dumps([1, 2, 3]))
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    rc = run([str(not_an_object), str(other)])
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "must be a JSON object" in captured.err
 
 
 def test_cli_end_to_end_writes_a_report(tmp_path):

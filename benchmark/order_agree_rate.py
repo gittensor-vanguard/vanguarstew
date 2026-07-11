@@ -80,12 +80,18 @@ def _slice_summary(slice_) -> dict:
 
 
 def _combined(tuned: dict, held_out: dict) -> dict:
-    """Overall agree rate across partitions — only when both carry complete stats."""
-    agrees = [tuned.get("agree"), held_out.get("agree")]
-    disagrees = [tuned.get("disagree"), held_out.get("disagree")]
-    ties = [tuned.get("tie"), held_out.get("tie")]
-    totals = [tuned.get("total"), held_out.get("total")]
-    if not all(_is_int(value) for value in agrees + disagrees + ties + totals):
+    """Overall agree rate across partitions — only when every partition has a defined rate.
+
+    Gate on each partition's derived ``agree_rate`` being non-None, not merely on the raw
+    counts being integers. A zero-task slice has integer (all-zero) counts but a ``None`` rate;
+    summing it in masks the incoherence behind a plausible-but-wrong overall from the coherent
+    partition alone (the ``total == 0`` guard below only caught the case where *both* partitions
+    were empty). Mirrors the sibling fixes in scored_fraction (#1274), skip_share (#1272), and
+    dual_order_coverage (#1280). When both partitions are coherent their totals are > 0, so the
+    summed total is > 0 and the rate is defined.
+    """
+    slices = (tuned, held_out)
+    if not all(s.get("agree_rate") is not None for s in slices):
         return {
             "agree": None,
             "disagree": None,
@@ -93,10 +99,10 @@ def _combined(tuned: dict, held_out: dict) -> dict:
             "total": None,
             "agree_rate": None,
         }
-    agree, disagree, tie = sum(agrees), sum(disagrees), sum(ties)
-    total = sum(totals)
-    if total == 0:
-        return {"agree": 0, "disagree": 0, "tie": 0, "total": 0, "agree_rate": None}
+    agree = sum(s["agree"] for s in slices)
+    disagree = sum(s["disagree"] for s in slices)
+    tie = sum(s["tie"] for s in slices)
+    total = sum(s["total"] for s in slices)
     return {
         "agree": agree,
         "disagree": disagree,

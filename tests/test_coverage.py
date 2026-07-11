@@ -112,13 +112,30 @@ def test_generalization_with_skipped_across_partitions():
     assert result["repos_skipped"] == 1
 
 
-def test_malformed_per_repo_entries_are_ignored():
+def test_corrupt_string_row_counts_as_skipped_others_ignored():
+    # A non-empty string per_repo row is a corrupt/errored repo: it counts as a skipped repo
+    # (into repos_total and repos_skipped), not silently dropped — mirroring error_repo_share
+    # (#1362) and freeze_coverage (#1386). A dict row with a non-numeric tasks count carries no
+    # usable task signal and is still ignored, and empty/whitespace strings carry no repo signal.
     multi = _multi(_repo(2), _repo(3))
-    multi["per_repo"].append("not-a-dict")
-    multi["per_repo"].append({"tasks": "many"})
+    multi["per_repo"].append("errored-repo")     # corrupt string -> counts as skipped
+    multi["per_repo"].append({"tasks": "many"})  # non-numeric tasks -> ignored
+    multi["per_repo"].append("   ")              # whitespace -> ignored
     result = check_coverage(multi)
     assert result["repos_scored"] == 2
+    assert result["repos_skipped"] == 1
+    assert result["repos_total"] == 3
     assert result["total_tasks"] == 5
+
+
+def test_corrupt_string_rows_trip_max_skipped_gate():
+    # Two corrupt string rows are two skipped repos; they must fail the max_skipped gate rather
+    # than false-passing SUFFICIENT because they were dropped from the count.
+    result = check_coverage({"per_repo": [_repo(5), _repo(5), "errored-c", "errored-d"]})
+    assert result["repos_scored"] == 2
+    assert result["repos_skipped"] == 2
+    assert result["repos_total"] == 4
+    assert result["passed"] is False
 
 
 def test_non_list_per_repo_is_treated_as_empty():

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_GAP = 0.1
@@ -97,6 +99,13 @@ def check_generalization(result, max_gap: float = DEFAULT_MAX_GAP,
     add("has_partitions", both,
         f"tuned composite {_num(tuned)}, held-out composite {_num(held)}"
         if both else "a composite is missing from the tuned or held-out partition")
+
+    tuned_err = _partition_error(result.get("tuned"))
+    held_err = _partition_error(result.get("held_out"))
+    no_error = tuned_err is None and held_err is None
+    add("no_partition_error", no_error,
+        "both partitions completed without error" if no_error
+        else f"partition error(s): tuned={tuned_err!r}, held_out={held_err!r}")
 
     add("enough_held_out_repos", _is_number(held_repos) and held_repos >= min_held_out_repos,
         f"{held_repos} held-out repo(s) >= {min_held_out_repos}"

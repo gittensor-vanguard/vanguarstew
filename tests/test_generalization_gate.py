@@ -38,7 +38,7 @@ def _names(result):
 def test_a_run_that_generalizes_passes():
     result = check_generalization(_gen(0.68, 0.63), max_gap=0.1)   # gap 0.05
     assert result["passed"] is True
-    assert _names(result) == ["has_partitions", "enough_held_out_repos", "gap_within_tolerance"]
+    assert _names(result) == ["has_partitions", "no_partition_error", "enough_held_out_repos", "gap_within_tolerance"]
     assert result["gap"] == 0.05 and result["held_out_repos"] == 3
 
 
@@ -253,3 +253,56 @@ def test_check_generalization_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_generalization(run)
     assert run == snapshot
+
+
+# --- no_partition_error: a partition that did not complete clean must fail the gate (#1329) ---
+# check_generalization uses BOTH partitions for its decision, so a top-level error or a per_repo
+# clone/freeze failure in EITHER tuned or held_out must fail no_partition_error -- mirroring
+# check_acceptance and check_promotion.run_completed -- or a partial, biased run signs off as
+# GENERALIZES.
+
+
+def _gen_pr(tuned_per_repo, held_per_repo):
+    result = _gen(0.68, 0.63)   # gap 0.05, would otherwise pass
+    result["tuned"]["per_repo"] = tuned_per_repo
+    result["held_out"]["per_repo"] = held_per_repo
+    return result
+
+
+def test_a_held_out_per_repo_error_fails_no_partition_error():
+    result = check_generalization(
+        _gen_pr(
+            [{"repo": "a", "tasks": 4}],
+            [{"repo": "b", "tasks": 4}, {"repo": "c", "tasks": 0, "error": "failed to clone"}],
+        )
+    )
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+
+
+def test_a_tuned_per_repo_error_fails_no_partition_error():
+    result = check_generalization(
+        _gen_pr(
+            [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 0, "error": "not a git repo"}],
+            [{"repo": "c", "tasks": 4}],
+        )
+    )
+    assert result["passed"] is False
+    assert "no_partition_error" in failed_checks(result)
+
+
+def test_a_top_level_partition_error_fails_no_partition_error():
+    result = _gen(0.68, 0.63)
+    result["held_out"]["error"] = "RepoSetError: no repos to replay"
+    out = check_generalization(result)
+    assert out["passed"] is False
+    assert "no_partition_error" in failed_checks(out)
+
+
+def test_clean_per_repo_rows_still_pass_no_partition_error():
+    # Control: per_repo rows present but none carry an error -> the gate still passes.
+    result = check_generalization(
+        _gen_pr([{"repo": "a", "tasks": 4}], [{"repo": "b", "tasks": 4}, {"repo": "c", "tasks": 5}])
+    )
+    assert "no_partition_error" not in failed_checks(result)
+    assert result["passed"] is True

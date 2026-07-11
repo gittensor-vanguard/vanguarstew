@@ -9,6 +9,8 @@ anchor exists to catch (see M2: "the objective anchor grounds the judge").
 
 This gates **each component independently**. ``check_component_floors(result)`` evaluates:
 
+0. ``run_completed`` - the evaluated partition produced a real composite and completed without
+   a top-level or per-repo clone/freeze error;
 1. ``composite_floor`` - ``composite_mean`` is at least ``min_composite``;
 2. ``judge_floor`` - the judge component mean is at least ``min_judge``;
 3. ``objective_floor`` - the objective anchor mean is at least ``min_objective``.
@@ -23,6 +25,9 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
+
+from benchmark.acceptance import _partition_error
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +39,21 @@ _CHECK_ROW_KEYS = ("name", "passed")
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as a real component mean.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, so a hand-edited or degenerate artifact
+    can carry a non-finite ``composite_mean``/component mean. Without the finite guard an
+    ``Infinity`` mean trivially clears every floor (``inf >= min`` is ``True``), false-passing the
+    gate on a malformed run; treating it as non-numeric fails the floor closed instead — matching
+    ``score_integrity`` (#1336) and the other non-finite guards. ``OverflowError`` guards an
+    oversized int that cannot convert to float.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _dict(value) -> dict:
@@ -85,6 +104,28 @@ def _floor_source(result: dict) -> dict:
     return result
 
 
+def _artifact_error(result: dict) -> str | None:
+    """The first error on the evaluated partition, or ``None`` when clean.
+
+    Scans the top-level ``error`` (truthy values only — falsy ``0``/``False``/``""``/``None`` are
+    not failure records) and every ``per_repo[i].error`` in the floor partition via
+    :func:`benchmark.acceptance._partition_error`, so a partial multi-repo run cannot pass the
+    floors. A failed ``held_out`` partition is intentionally not scanned.
+    """
+    result = _dict(result)
+    top_err = result.get("error")
+    if top_err:
+        return top_err
+    try:
+        return _partition_error(_floor_source(result))
+    except Exception:
+        logger.warning(
+            "component_floor: _partition_error failed on evaluated partition",
+            exc_info=True,
+        )
+        return "partition error scan failed"
+
+
 def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
                            min_judge: float = DEFAULT_MIN_JUDGE,
                            min_objective: float = DEFAULT_MIN_OBJECTIVE) -> dict:
@@ -104,12 +145,24 @@ def check_component_floors(result, min_composite: float = DEFAULT_MIN_COMPOSITE,
     composite = _scored_metric(source, "composite_mean")
     judge = _scored_metric(source, "judge_mean", nested_key="composite_parts")
     objective = _scored_metric(source, "objective_mean", nested_key="composite_parts")
+    error = _artifact_error(result)
+    has_composite = composite is not None   # 0.0 is a valid scored composite — never bool(composite)
+    run_completed = has_composite and error is None
 
-    checks = [
+    checks = [{
+        "name": "run_completed",
+        "passed": run_completed,
+        "detail": (
+            "run produced a scored composite"
+            if run_completed
+            else f"no scored composite (error={error!r}, composite={composite!r})"
+        ),
+    }]
+    checks.extend([
         _floor_check("composite_floor", composite, min_composite),
         _floor_check("judge_floor", judge, min_judge),
         _floor_check("objective_floor", objective, min_objective),
-    ]
+    ])
 
     return {
         "passed": all(c["passed"] for c in checks),
