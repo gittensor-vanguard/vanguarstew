@@ -187,6 +187,17 @@ def test_is_number_guard():
     assert not _is_number("0.5")
 
 
+def test_is_number_guards_an_oversized_int_overflow():
+    # math.isfinite() raises OverflowError for a Python int too large to convert to a float
+    # (a hand-edited or degenerate skip_share field) -- must degrade to non-numeric, not crash.
+    assert not _is_number(10**400)
+    assert not _is_number(-(10**400))
+
+
+def test_headline_degrades_on_an_oversized_int_share_instead_of_crashing():
+    assert skip_share_headline({"skip_share": 10**400}) == "skip share: n/a"
+
+
 # --- CLI: success + every error path (the review: "CLI error handling entirely untested") ---------
 
 def _write(tmp_path, name, text):
