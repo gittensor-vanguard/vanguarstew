@@ -160,6 +160,13 @@ def test_cli_missing_file_exits_two(capsys):
     assert "not found" in capsys.readouterr().err
 
 
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory path raises IsADirectoryError inside open(); the CLI must report it cleanly and
+    # exit 2, not dump a raw traceback (mirrors generalization_gate #1446 / objective_integrity #1377).
+    assert cli.run([str(tmp_path)]) == 2
+    assert "directory" in capsys.readouterr().err
+
+
 def test_cli_invalid_json_exits_two(tmp_path, capsys):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
