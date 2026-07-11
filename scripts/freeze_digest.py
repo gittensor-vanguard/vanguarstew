@@ -13,11 +13,27 @@ from benchmark.freeze_digest import freeze_digest, freeze_digest_headline
 
 
 def load_artifact(path: str) -> dict:
+    """Load a JSON artifact from ``path``, exiting with a clean error on failure.
+
+    Distinguishes the common ``OSError`` subclasses so the user gets an actionable message
+    rather than a raw traceback: ``FileNotFoundError`` (missing), ``PermissionError``
+    (unreadable), ``IsADirectoryError`` (a directory, not a file), and any other ``OSError``
+    (broken symlink, I/O error, ...).
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
         print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except OSError as exc:
+        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except json.JSONDecodeError as exc:
         print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
