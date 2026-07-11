@@ -16,6 +16,7 @@ Pure analysis: no I/O, never mutates its input, and missing telemetry yields ``N
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.comparability import artifact_kind
 from benchmark.trend import headline_score
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _dict(value) -> dict:

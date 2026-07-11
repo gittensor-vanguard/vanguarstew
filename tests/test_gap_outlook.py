@@ -95,3 +95,22 @@ def test_cli_directory_path_exits_two(tmp_path, capsys):
     assert cli.run([str(tmp_path)]) == 2
     err = capsys.readouterr().err
     assert "directory" in err or "not readable" in err
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_composite_mean_degrades_to_na(bad):
+    # json.dump/json.load round-trip NaN/Infinity verbatim, so a hand-edited or degenerate
+    # artifact can carry a non-finite composite_mean. It is not a real score: the partition
+    # scores None, the recomputed gap is None, the verdict is unknown, and the headline degrades
+    # to "n/a" rather than surfacing "nan"/"inf" (mirrors benchmark/trend.py and skip_share.py).
+    from benchmark.gap_outlook import _partition_score
+
+    assert _partition_score({"composite_mean": bad, "scored_repos": 2}) is None
+    out = summarize_gap_outlook(_gen(bad, 0.5, 0.1))
+    assert out["generalization_gap"] is None
+    assert out["tuned_score"] is None
+    assert out["verdict"] is None
+    headline = gap_outlook_headline(out)
+    assert "nan" not in headline
+    assert "inf" not in headline
+    assert "n/a" in headline
