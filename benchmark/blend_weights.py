@@ -2,7 +2,9 @@
 
 ``score_integrity`` verifies the composite matches its weights, but nothing exposes the weights
 themselves as a compact JSON summary for CI logs. ``summarize_blend_weights`` reads the ``weights``
-dict from the headline partition (top level, or ``tuned`` for generalization).
+dict from the headline partition (top level, or ``tuned`` for generalization) — or, for the
+multi-repo and generalization shapes that record ``weights`` per-repo rather than at the partition
+level, from the first ``per_repo`` row, mirroring ``score_integrity._weights``.
 
 Pure analysis: no I/O, never mutates its input, and malformed weights yield ``None`` fields.
 """
@@ -43,10 +45,32 @@ def _headline_partition(artifact: dict) -> dict:
     return artifact
 
 
+def _partition_weights(part: dict):
+    """The blend ``weights`` for a partition: its top-level ``weights`` when present, else the
+    first ``per_repo`` row that carries one.
+
+    ``run_multi_replay`` records ``weights`` at the top level only for a single-repo result; a
+    multi-repo aggregate and every generalization partition carry ``weights`` per-repo instead (the
+    blend is identical across repos), so reading only the partition top level reported
+    ``unavailable`` for those shapes. The fallback mirrors ``score_integrity._weights``. A present
+    but non-dict top-level ``weights`` is returned unchanged so the malformed-input warning path is
+    preserved.
+    """
+    weights = part.get("weights")
+    if weights is not None:
+        return weights
+    per_repo = part.get("per_repo")
+    if isinstance(per_repo, list):
+        for entry in per_repo:
+            if isinstance(entry, dict) and isinstance(entry.get("weights"), dict):
+                return entry["weights"]
+    return None
+
+
 def summarize_blend_weights(artifact) -> dict:
     """Return blend weights from a replay ``artifact``."""
     artifact = _dict(artifact)
-    weights = _headline_partition(artifact).get("weights")
+    weights = _partition_weights(_headline_partition(artifact))
     if not isinstance(weights, dict):
         if weights is not None:
             logger.warning(

@@ -39,6 +39,41 @@ def test_generalization_reads_tuned_partition():
     assert out["judge"] == 0.5
 
 
+def test_multi_repo_reads_weights_from_per_repo():
+    # A multi-repo aggregate records weights per-repo (identical blend across repos), NOT at the
+    # top level, so reading only the top level reported "unavailable". Recover from the first
+    # per_repo row -- mirroring score_integrity._weights.
+    art = {
+        "repos": 2, "scored_repos": 2, "composite_mean": 0.62,
+        "per_repo": [
+            {"repo": "r1", "tasks": 4, "weights": {"judge": 0.6, "objective": 0.4}},
+            {"repo": "r2", "tasks": 4, "weights": {"judge": 0.6, "objective": 0.4}},
+        ],
+    }
+    out = summarize_blend_weights(art)
+    assert out["kind"] == "multi"
+    assert out["judge"] == 0.6 and out["objective"] == 0.4 and out["sum"] == 1.0
+
+
+def test_generalization_reads_weights_from_tuned_per_repo():
+    # Real generalization partitions carry weights in per_repo, not at the partition top level; the
+    # tuned partition's blend must be recovered from tuned.per_repo (held_out is not the headline).
+    art = {
+        "generalization_gap": 0.0,
+        "tuned": {"per_repo": [{"repo": "r1", "weights": {"judge": 0.7, "objective": 0.3}}]},
+        "held_out": {"per_repo": [{"repo": "r2", "weights": {"judge": 0.9, "objective": 0.1}}]},
+    }
+    out = summarize_blend_weights(art)
+    assert out["kind"] == "generalization"
+    assert out["judge"] == 0.7 and out["objective"] == 0.3
+
+
+def test_multi_repo_without_any_weights_stays_unavailable():
+    # Control: no weights at the top level OR in any per_repo row -> genuinely unavailable.
+    out = summarize_blend_weights({"scored_repos": 1, "per_repo": [{"repo": "r1", "tasks": 4}]})
+    assert out["judge"] is None and out["sum"] is None
+
+
 def test_missing_weights_yield_none():
     out = summarize_blend_weights({"composite_mean": 0.5})
     assert out["judge"] is None
