@@ -219,8 +219,12 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=None, help="write the full JSON report to this path")
     args = ap.parse_args(argv)
 
-    baseline = load_artifact(args.baseline)
-    candidate = load_artifact(args.candidate)
+    try:
+        baseline = load_artifact(args.baseline)
+        candidate = load_artifact(args.candidate)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     report = score_pr_delta(baseline, candidate, noise_floor=args.noise_floor)
 
     print(headline(report), file=sys.stderr)

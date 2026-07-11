@@ -16,6 +16,7 @@ from scripts.score_pr_delta import (  # noqa: E402
     _regressed,
     combine_dual_target,
     headline,
+    main,
     score_pr_delta,
 )
 
@@ -203,6 +204,50 @@ def test_combine_dual_target_no_band_if_either_target_shows_nothing():
     assert combined["band"] == "none"
     assert combined["label"] is None
     assert combined["blocks_merge"] is False
+
+
+def test_main_exits_cleanly_on_a_missing_artifact_path(tmp_path, capsys):
+    missing = tmp_path / "does_not_exist.json"
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    rc = main([str(missing), str(other)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "does_not_exist.json" in captured.err
+
+
+def test_main_exits_cleanly_when_a_path_is_a_directory(tmp_path, capsys):
+    # A directory path raises IsADirectoryError (POSIX) / PermissionError (Windows) from
+    # open() -- both are OSError subclasses that must be caught, not just FileNotFoundError.
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    rc = main([str(tmp_path), str(other)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+
+
+def test_main_exits_cleanly_on_invalid_json(tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not valid json")
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    rc = main([str(bad), str(other)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+
+
+def test_cli_subprocess_exits_1_on_a_directory_path_without_a_traceback(tmp_path):
+    other = tmp_path / "candidate.json"
+    other.write_text(json.dumps(_artifact(0.6, 0.55, 0.65)))
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.score_pr_delta", str(tmp_path), str(other)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
 
 
 def test_cli_end_to_end_writes_a_report(tmp_path):
