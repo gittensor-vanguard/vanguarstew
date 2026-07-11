@@ -34,6 +34,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,21 @@ DEFAULT_MIN_SCORED_REPOS = 1
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, so a hand-edited or degenerate artifact can
+    carry a non-finite ``scored_repos`` or ``generalization_gap``. Without the finite guard an
+    ``Infinity`` ``scored_repos`` trivially clears ``both_partitions_scored`` (``inf >= min`` is
+    ``True``), accepting a malformed run. Treating a non-finite value as non-numeric fails that
+    check closed instead, matching ``score_integrity`` (#1336), ``gap_integrity`` (#1320), and
+    ``component_floor``. ``OverflowError`` guards an oversized int that cannot convert to float.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _dict(value) -> dict:

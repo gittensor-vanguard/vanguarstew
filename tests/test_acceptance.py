@@ -188,6 +188,16 @@ def test_non_numeric_gap_or_scored_counts_do_not_crash():
     assert {"both_partitions_scored", "gap_computed"} <= set(failed_checks(result))
 
 
+def test_non_finite_scored_repos_fails_both_partitions_scored():
+    # json round-trips Infinity verbatim; an inf scored_repos would trivially clear
+    # both_partitions_scored (inf >= min) and accept a malformed run. It must be treated as
+    # non-numeric and fail closed (score_integrity #1336 / gap_integrity #1320 / component_floor).
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_acceptance(_report(tuned_scored=bad, held_scored=bad))
+        assert result["passed"] is False, bad
+        assert "both_partitions_scored" in failed_checks(result), bad
+
+
 def test_headline_reports_pass_and_fail():
     assert "PASS" in acceptance_headline(check_acceptance(_report(gap=0.05)))
     fail_line = acceptance_headline(check_acceptance(_report(gap=0.5), max_gap=0.15))
