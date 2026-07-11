@@ -38,6 +38,29 @@ def test_strip_forward_refs_masks_scheme_less_github_deeplinks():
     assert strip_forward_refs("notgithub.com/o/r/pull/900") == "notgithub.com/o/r/pull/900"
 
 
+def test_strip_forward_refs_masks_raw_githubusercontent_deeplinks():
+    # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path> is a distinct host from
+    # github.com (not a subdomain match), and its <ref> segment is a branch/tag/commit-ish
+    # -- the same forward-reference risk as a github.com tree/blob link (e.g. a future
+    # release tag such as v3.0-release), so it must be masked the same way.
+    for text in (
+        "See https://raw.githubusercontent.com/acme/widget/v3.0-release/docs/diagram.png",
+        "scheme-less raw.githubusercontent.com/acme/widget/main/README.md is fine",
+        "https://raw.githubusercontent.com/acme/widget/feature-branch/src/app.py",
+    ):
+        out = strip_forward_refs(text)
+        assert "<link>" in out and "githubusercontent.com" not in out, text
+    # The specific leaking content (a future release tag) must not survive either.
+    out = strip_forward_refs(
+        "logo: https://raw.githubusercontent.com/acme/widget/v3.0-release/docs/diagram.png done"
+    )
+    assert "v3.0-release" not in out
+    # The host boundary: a look-alike host must not be masked (mirrors the github.com case).
+    assert strip_forward_refs("notraw.githubusercontent.com/o/r/main/x") == (
+        "notraw.githubusercontent.com/o/r/main/x"
+    )
+
+
 def test_strip_forward_refs_preserves_plain_numbers():
     # 0-9a-f matches bare digits too (0-9 is a subset) -- a plain count/stat/year
     # is not a SHA and must survive the scrub.

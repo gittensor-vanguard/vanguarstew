@@ -33,6 +33,10 @@ _CASES = [
     "see www.github.com/o/r/pull/900 next",
     "clone from github.com/o/r to start",
     "notgithub.com/o/r/pull/900 is fine",
+    # raw.githubusercontent.com: a distinct host, ref segment carries the same leak risk
+    "logo: https://raw.githubusercontent.com/acme/widget/v3.0-release/docs/diagram.png",
+    "scheme-less raw.githubusercontent.com/acme/widget/main/README.md is fine",
+    "notraw.githubusercontent.com/o/r/main/x is fine",
     # trailing punctuation around a link
     "see https://github.com/o/r/issues/5, next",
     "see https://github.com/o/r/pull/9.",
