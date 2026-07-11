@@ -40,12 +40,12 @@ def test_strip_forward_refs_masks_scheme_less_github_deeplinks():
 
 def test_strip_forward_refs_masks_raw_githubusercontent_deeplinks():
     # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path> is a distinct host from
-    # github.com (not a subdomain match), and its <ref> segment is a branch/tag/commit-ish
-    # -- the same forward-reference risk as a github.com tree/blob link (e.g. a future
-    # release tag such as v3.0-release), so it must be masked the same way.
+    # github.com (not a subdomain match), and a <ref> naming a specific future release tag
+    # or feature branch is the same forward-reference risk as a github.com tree/blob link,
+    # so it must be masked the same way.
     for text in (
         "See https://raw.githubusercontent.com/acme/widget/v3.0-release/docs/diagram.png",
-        "scheme-less raw.githubusercontent.com/acme/widget/main/README.md is fine",
+        "scheme-less raw.githubusercontent.com/acme/widget/next-milestone/README.md is fine",
         "https://raw.githubusercontent.com/acme/widget/feature-branch/src/app.py",
     ):
         out = strip_forward_refs(text)
@@ -59,6 +59,25 @@ def test_strip_forward_refs_masks_raw_githubusercontent_deeplinks():
     assert strip_forward_refs("notraw.githubusercontent.com/o/r/main/x") == (
         "notraw.githubusercontent.com/o/r/main/x"
     )
+
+
+def test_strip_forward_refs_preserves_raw_githubusercontent_default_branch_links():
+    # main/master/HEAD name no specific point in time -- always "whatever's current" -- so a
+    # README badge/logo pinned to the default branch (extremely common, benign) must survive
+    # untouched, exactly like the bare owner/repo URL case. Regression: an earlier version of
+    # this fix masked these too, which caused a measured benchmark regression (over-scrubbing
+    # legitimate, common README content).
+    for text in (
+        "logo: https://raw.githubusercontent.com/acme/widget/main/logo.png",
+        "badge: https://raw.githubusercontent.com/acme/widget/master/badge.svg?style=flat",
+        "https://raw.githubusercontent.com/acme/widget/HEAD/README.md",
+        "scheme-less raw.githubusercontent.com/acme/widget/main/README.md is fine",
+    ):
+        assert strip_forward_refs(text) == text, text
+    # A near-miss ref that merely starts with "main" is NOT the default branch and must still
+    # be masked -- the exclusion is an exact-segment match, not a prefix match.
+    out = strip_forward_refs("https://raw.githubusercontent.com/acme/widget/main-experimental/x.py")
+    assert "<link>" in out and "main-experimental" not in out
 
 
 def test_strip_forward_refs_preserves_plain_numbers():

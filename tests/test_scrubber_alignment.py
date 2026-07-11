@@ -33,9 +33,12 @@ _CASES = [
     "see www.github.com/o/r/pull/900 next",
     "clone from github.com/o/r to start",
     "notgithub.com/o/r/pull/900 is fine",
-    # raw.githubusercontent.com: a distinct host, ref segment carries the same leak risk
+    # raw.githubusercontent.com: a distinct host; a specific ref (tag/feature branch) is
+    # masked, but main/master (the perpetual "current" ref, like a bare owner/repo URL) is
+    # deliberately left unmasked, and a look-alike host is never matched.
     "logo: https://raw.githubusercontent.com/acme/widget/v3.0-release/docs/diagram.png",
-    "scheme-less raw.githubusercontent.com/acme/widget/main/README.md is fine",
+    "scheme-less raw.githubusercontent.com/acme/widget/feature-branch/README.md is fine",
+    "badge: https://raw.githubusercontent.com/acme/widget/main/README.md is fine",
     "notraw.githubusercontent.com/o/r/main/x is fine",
     # trailing punctuation around a link
     "see https://github.com/o/r/issues/5, next",

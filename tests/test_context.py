@@ -612,19 +612,33 @@ def test_mask_forward_refs_preserves_plain_numbers():
 
 def test_mask_forward_refs_masks_raw_githubusercontent_links():
     # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path> is a distinct host from
-    # github.com; its <ref> segment (branch/tag/commit-ish) is the same forward-reference
-    # risk as a github.com tree/blob link and must be masked (mirrors benchmark/leakage.py).
+    # github.com; a <ref> naming a specific future release tag or feature branch is the
+    # same forward-reference risk as a github.com tree/blob link and must be masked
+    # (mirrors benchmark/leakage.py).
     out = _mask_forward_refs(
         "logo: https://raw.githubusercontent.com/acme/widget/v3.0-release/docs/diagram.png"
     )
     assert "<link>" in out and "v3.0-release" not in out
     assert _mask_forward_refs(
-        "scheme-less raw.githubusercontent.com/acme/widget/main/README.md"
+        "scheme-less raw.githubusercontent.com/acme/widget/feature-branch/README.md"
     ) == "scheme-less <link>"
     assert _mask_forward_refs("notraw.githubusercontent.com/o/r/main/x") == (
         "notraw.githubusercontent.com/o/r/main/x"
     )
     assert "<sha>" not in out
+
+
+def test_mask_forward_refs_preserves_raw_githubusercontent_default_branch_links():
+    # main/master/HEAD are the perpetual "whatever's current" ref, not a specific point in
+    # time -- like the bare owner/repo URL, a README badge/logo pinned to the default branch
+    # (extremely common, benign) must survive untouched. Regression: an earlier version of
+    # this fix masked these too, causing a measured benchmark regression.
+    assert _mask_forward_refs(
+        "logo: https://raw.githubusercontent.com/acme/widget/main/logo.png"
+    ) == "logo: https://raw.githubusercontent.com/acme/widget/main/logo.png"
+    assert _mask_forward_refs(
+        "scheme-less raw.githubusercontent.com/acme/widget/master/README.md"
+    ) == "scheme-less raw.githubusercontent.com/acme/widget/master/README.md"
 
 
 def test_mask_forward_refs_masks_full_sha256_hash():

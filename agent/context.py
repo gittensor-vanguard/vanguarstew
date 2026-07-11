@@ -43,15 +43,19 @@ _GH_LINK = re.compile(
 )
 
 # raw.githubusercontent.com is a distinct host from github.com, used to serve a file's raw
-# content at a specific ref: raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>. That
-# third segment is a branch/tag/commit-ish -- the same forward-reference risk as github.com's
-# tree/blob links -- so it must be masked the same way. Keep aligned with
+# content at a specific ref: raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>. A ref
+# naming a specific future release tag or feature branch is the same forward-reference risk
+# as github.com's tree/blob links, so it's masked the same way. But main/master/HEAD name no
+# specific point in time -- the perpetual "whatever's current" ref, like the bare owner/repo
+# URL below which is deliberately left unmasked -- so a README badge/logo pinned to the
+# default branch (extremely common, benign) survives untouched. Keep aligned with
 # ``benchmark/leakage.py``.
 _GH_RAW_LINK = re.compile(
     r"(?<![\w.])(?:https?://)?raw\.githubusercontent\.com"
-    r"/[^\s" + re.escape(_URL_STOP) + r"]+"
-    r"/[^\s" + re.escape(_URL_STOP) + r"]+"
-    r"/[^\s" + re.escape(_URL_STOP) + r"]+",
+    r"/[^/\s" + re.escape(_URL_STOP) + r"]+"
+    r"/[^/\s" + re.escape(_URL_STOP) + r"]+"
+    r"/(?!(?:main|master|head)(?:[/\s" + re.escape(_URL_STOP) + r"]|$))"
+    r"[^\s" + re.escape(_URL_STOP) + r"]+",
     re.I,
 )
 

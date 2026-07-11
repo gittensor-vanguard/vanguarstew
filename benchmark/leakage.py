@@ -48,15 +48,19 @@ _GH_LINK = re.compile(
 
 # raw.githubusercontent.com is a distinct host from github.com (not a subdomain match for
 # the pattern above), used to serve a file's raw content at a specific ref:
-# raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>. That third segment is a branch,
-# tag, or commit-ish — the same forward-reference risk as github.com's tree/blob links
-# (e.g. a future release tag such as `v3.0-release`) — so it must be masked the same way,
-# even though there is no `tree`/`blob` keyword to anchor on for this host.
+# raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>. A ref naming a specific future
+# release tag or feature branch (`v3.0-release`) is the same forward-reference risk as
+# github.com's tree/blob links, so it's masked the same way. But `main`/`master`/`HEAD` name
+# no specific point in time -- they're the perpetual "whatever's current" ref, exactly like
+# the bare owner/repo URL below, which is deliberately left unmasked -- so a README badge or
+# logo image pinned to the default branch (extremely common, and benign) survives untouched;
+# only a ref that actually commits to a specific future state is masked.
 _GH_RAW_LINK = re.compile(
     r"(?<![\w.])(?:https?://)?raw\.githubusercontent\.com"    # raw.githubusercontent.com
-    r"/[^\s" + re.escape(_URL_STOP) + r"]+"                    # owner
-    r"/[^\s" + re.escape(_URL_STOP) + r"]+"                    # repo
-    r"/[^\s" + re.escape(_URL_STOP) + r"]+",                    # ref (branch/tag/sha)
+    r"/[^/\s" + re.escape(_URL_STOP) + r"]+"                   # owner (single segment)
+    r"/[^/\s" + re.escape(_URL_STOP) + r"]+"                   # repo (single segment)
+    r"/(?!(?:main|master|head)(?:[/\s" + re.escape(_URL_STOP) + r"]|$))"
+    r"[^\s" + re.escape(_URL_STOP) + r"]+",                    # ref (branch/tag/sha) + path
     re.I,
 )
 
