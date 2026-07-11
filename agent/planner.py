@@ -58,6 +58,33 @@ _PLAN_KINDS = frozenset({
     "feature", "bugfix", "refactor", "docs", "release", "dep", "triage",
 })
 
+# Conventional-Commit prefix on a commit subject: "feat:", "fix(scope):", "docs!:". This block
+# mirrors the objective anchor's classifier (benchmark/score.py `commit_kind`) in simplified
+# form, mapped into the planner's own `kind` vocabulary. We deliberately do NOT import from
+# ``benchmark/`` (``agent/`` must not depend on it — a miner-only split is planned); keep the
+# two aligned, as agent/context.py already does for forward-reference scrubbing.
+_CC_PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
+
+# Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Only types a plan item can
+# express appear here; types with no plan-kind equivalent (test, ci, perf, style, revert,
+# build) are dropped rather than mis-binned under a neighboring kind, since a wrong hint is
+# worse than none.
+_CC_TYPE_TO_PLAN_KIND = {
+    "feat": "feature", "feature": "feature",
+    "fix": "bugfix", "bugfix": "bugfix", "bug": "bugfix",
+    "docs": "docs", "doc": "docs",
+    "refactor": "refactor",
+    "release": "release",
+    "chore": "dep", "deps": "dep", "dep": "dep",
+}
+
+# Release tooling (standard-version / release-please) cuts versions under a chore/build type:
+# "chore(release): 1.4.0", "chore(main): release 1.2.3", "build(release): 2.0.0". Those are
+# release actions, not dependency chores, so they must count toward "release" — exactly how
+# the anchor classifies them. The body regex matches benchmark/score.py `_RELEASE_TAG_SUBJECT`.
+_RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
+_RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
+
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
     "maintainer philosophy, plan the next concrete maintainer actions / PRs that should "
@@ -122,6 +149,67 @@ def _safe_prs(context: dict) -> list:
         return []
     raw = context.get("open_prs")
     return raw if isinstance(raw, list) else []
+
+
+def _commit_plan_kind(subject):
+    """The plan-vocabulary kind a recent-commit subject evidences, or None.
+
+    Reads the Conventional-Commit prefix; a version-cut subject under a release-tooling type
+    ("chore(release): 1.4.0") reads as ``release`` rather than ``dep``. Merge commits and
+    prefix-less subjects carry no reliable kind, and a non-string subject (malformed frozen
+    context) is ignored rather than raising inside ``re``.
+    """
+    if not isinstance(subject, str):
+        return None
+    m = _CC_PREFIX_RE.match(subject)
+    if not m:
+        return None
+    cc_type = m.group(1).lower()
+    if cc_type in _RELEASE_TOOLING_TYPES:
+        body = subject[m.end():].lstrip(" :\t")
+        if _RELEASE_CUT_BODY_RE.match(body):
+            return "release"
+    return _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+
+
+def _recent_commits(context: dict) -> list:
+    """The frozen recent-commit list, or ``[]`` when absent or malformed."""
+    if not isinstance(context, dict):
+        return []
+    raw = context.get("recent_commits")
+    return raw if isinstance(raw, list) else []
+
+
+def _recent_kind_counts(context: dict) -> list:
+    """``(kind, count)`` pairs over recent commits, most frequent first, ties alphabetical."""
+    counts: dict = {}
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        kind = _commit_plan_kind(commit.get("subject"))
+        if kind:
+            counts[kind] = counts.get(kind, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _recent_kinds_note(context: dict) -> str:
+    """Prompt note surfacing the repo's recent kind mix so planned kinds track history (#1387).
+
+    Derived from the full frozen ``recent_commits`` list — unlike the JSON dump in ``_render``,
+    which is truncated to 12000 chars, so the tail of a long history still counts here. All
+    recent commits are considered, not one author's: the revealed window the plan is scored
+    against is repo-wide.
+    """
+    counts = _recent_kind_counts(context)
+    if not counts:
+        return ""
+    mix = ", ".join(f"{kind} ({n})" for kind, n in counts)
+    return (
+        f"\nRecent maintainer activity by kind, from Conventional-Commit subjects: {mix}.\n"
+        "Near-future maintainer work usually continues this mix. Unless the philosophy or "
+        'the PR queue argues otherwise, make the plan items\' "kind" values collectively '
+        "cover the recurring kinds above.\n"
+    )
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -488,6 +576,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
+        f"{_recent_kinds_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         '  "title": short imperative title,\n'
