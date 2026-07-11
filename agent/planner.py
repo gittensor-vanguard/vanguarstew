@@ -10,7 +10,7 @@ import json
 import logging
 import re
 
-from agent.context import context_for_agent
+from agent.context import context_for_agent, latest_release_tag
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,24 @@ def _safe_prs(context: dict) -> list:
         return []
     raw = context.get("open_prs")
     return raw if isinstance(raw, list) else []
+
+
+def _release_note(context: dict) -> str:
+    """Prompt note grounding release anticipation in the frozen release history (#1383).
+
+    Derived deterministically from the frozen context (``latest_release_tag`` fails closed on
+    a truncated or malformed release list), so it survives the 12000-char truncation
+    ``_render`` applies to the JSON context dump. Empty when the repo has no versioned frozen
+    release — a release nudge without a cadence to ground it would just bait false positives.
+    """
+    tag = latest_release_tag(context)
+    if not tag:
+        return ""
+    return (
+        f"\nLatest release at freeze: {tag}. This repo cuts versioned releases; when the "
+        "recent commits look like they are building toward another cut (accumulated "
+        'features/fixes since that tag), include a plan item with kind "release".\n'
+    )
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -488,10 +506,13 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
+        f"{_release_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         '  "title": short imperative title,\n'
         '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
+        '  "files": repo-relative paths the work would likely touch (list of strings; [] '
+        "if unsure — never guess paths the repo state doesn't support),\n"
         '  "rationale": why this, now, given the philosophy,\n'
         '  "theme": the higher-level direction this advances.'
     )

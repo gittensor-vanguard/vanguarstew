@@ -202,6 +202,58 @@ def context_for_agent(context: dict) -> dict:
     return out
 
 
+# A semver core (major.minor[.patch]) with an optional leading v; any pre-release/build
+# suffix is deliberately ignored. Narrow mirror of ``benchmark/score.py`` (`_SEMVER` /
+# `parse_semver` / `base_from_releases`) — we deliberately do NOT import from ``benchmark/``
+# (``agent/`` must not depend on it); keep the two aligned, as this module already does for
+# forward-reference scrubbing.
+_SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
+
+
+def _parse_semver(text):
+    """First semver core in ``text`` -> ``(major, minor, patch)``, or None."""
+    if not isinstance(text, str):
+        return None
+    m = _SEMVER_RE.search(text)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+
+
+def latest_release_tag(context) -> str | None:
+    """The highest-versioned frozen release tag at freeze T, or None.
+
+    This is the same base version the objective anchor derives for ``version_bump`` scoring
+    (``benchmark/score.py::base_from_releases``): each release is resolved to one
+    representative version — its ``tag``, falling back to the display ``name`` only when the
+    tag is absent or not semver-shaped — *before* comparing across releases, so a lower
+    release's name can never outrank another release's tag.
+
+    Fail-closed on ``_releases_truncated is True``: a partial release list may be missing the
+    real latest tag, and a wrong base is worse than none. Malformed input (non-dict context,
+    non-list ``releases``, non-dict rows, versionless releases) degrades to None, never to a
+    corrupt base.
+    """
+    if not isinstance(context, dict) or context.get("_releases_truncated") is True:
+        return None
+    releases = context.get("releases")
+    if not isinstance(releases, list):
+        return None
+    best_tag, best_ver = None, None
+    for rel in releases:
+        if not isinstance(rel, dict):
+            continue
+        for candidate in (rel.get("tag"), rel.get("name")):
+            if not candidate:
+                continue
+            ver = _parse_semver(str(candidate))
+            if ver is not None:
+                if best_ver is None or ver > best_ver:
+                    best_tag, best_ver = str(candidate), ver
+                break
+    return best_tag
+
+
 def _context_from_git(repo_path: str) -> dict:
     # --verify --quiet suppresses the "fatal: ambiguous argument 'HEAD'" stderr message and
     # yields empty stdout on failure, instead of the literal word "HEAD" that a plain

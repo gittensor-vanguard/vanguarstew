@@ -21,6 +21,7 @@ from agent.decider import (  # noqa: E402
     _normalize_rationale,
     _normalize_reviewer,
     _normalize_version_bump,
+    _release_guidance,
     _run_lens,
     decide,
 )
@@ -287,3 +288,51 @@ def test_decide_offline_runs_lenses_without_network_and_keeps_stub_shape():
         "patch": None,
         "rationale": "offline stub decision",
     }
+
+
+# ── frozen release context grounding version_bump (#1383) ─────────────────────────────────
+
+
+def test_release_guidance_surfaces_latest_tag_and_bump_semantics():
+    note = _release_guidance({"releases": [{"tag": "v1.2.0"}, {"tag": "v1.10.0"}]})
+    assert "Latest release tag at freeze: v1.10.0" in note
+    for level in ("major", "minor", "patch", "null"):
+        assert level in note
+
+
+def test_release_guidance_empty_without_versioned_release():
+    assert _release_guidance({}) == ""
+    assert _release_guidance({"releases": [{"tag": "weekly-build"}]}) == ""
+    # Fail-closed: a truncated release list may hide the real latest tag.
+    assert _release_guidance(
+        {"releases": [{"tag": "v1.0.0"}], "_releases_truncated": True}
+    ) == ""
+
+
+class _RecordingLLM:
+    offline = False
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.users_seen = []
+
+    def chat_json(self, system, user, stub=None):
+        self.users_seen.append(user)
+        return dict(self.payload)
+
+
+def test_decide_synthesis_prompt_includes_release_guidance():
+    llm = _RecordingLLM({"action": "release", "version_bump": "minor", "rationale": "cadence"})
+    ctx = {"recent_commits": [{"subject": "feat: exporter"}],
+           "releases": [{"tag": "v1.2.0"}]}
+    out = decide(ctx, {}, "should we cut a release?", llm)
+    # 3 lens calls first, synthesis last — the guidance belongs to the synthesis prompt,
+    # where version_bump is emitted.
+    assert "Latest release tag at freeze: v1.2.0" in llm.users_seen[-1]
+    assert out["version_bump"] == "minor"
+
+
+def test_decide_synthesis_prompt_omits_release_guidance_without_base():
+    llm = _RecordingLLM({"action": "plan"})
+    decide({"recent_commits": []}, {}, "plan the next steps", llm)
+    assert "Latest release tag at freeze" not in llm.users_seen[-1]

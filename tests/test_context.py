@@ -23,7 +23,9 @@ from agent.context import (  # noqa: E402
     _context_from_git,
     _looks_like_sha,
     _mask_forward_refs,
+    _parse_semver,
     context_for_agent,
+    latest_release_tag,
     load_context,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
@@ -712,3 +714,48 @@ def test_context_from_git_masks_forward_refs_in_subjects_and_readme():
         assert "Roadmap" in ctx["readme_excerpt"]           # substantive prose preserved
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+# ── latest_release_tag: the agent-side base version for release/bump grounding (#1383) ────
+
+
+def test_latest_release_tag_prefers_highest_semver_tag():
+    ctx = {"releases": [
+        {"tag": "v1.2.0"},
+        {"tag": "v1.10.0"},   # numeric compare, not lexicographic ("1.10" > "1.2")
+        {"tag": "v0.9.9"},
+    ]}
+    assert latest_release_tag(ctx) == "v1.10.0"
+
+
+def test_latest_release_tag_tag_outranks_another_releases_name():
+    # A lower release's display name must never outrank another release's real tag
+    # (mirrors benchmark/score.py base_from_releases).
+    ctx = {"releases": [
+        {"tag": "v1.0.0", "name": "Preview of 9.0"},
+        {"tag": "v2.0.0"},
+    ]}
+    assert latest_release_tag(ctx) == "v2.0.0"
+
+
+def test_latest_release_tag_falls_back_to_name_when_tag_unversioned():
+    ctx = {"releases": [{"tag": "stable", "name": "Release 1.4.0"}]}
+    assert latest_release_tag(ctx) == "Release 1.4.0"
+
+
+def test_latest_release_tag_fails_closed_on_malformed_or_truncated_input():
+    assert latest_release_tag(None) is None
+    assert latest_release_tag({}) is None
+    assert latest_release_tag({"releases": "not-a-list"}) is None
+    assert latest_release_tag({"releases": [None, "v1.0.0", {"tag": None}, {"name": ""}]}) is None
+    # A truncated release list may be missing the real latest tag — no base at all.
+    assert latest_release_tag(
+        {"releases": [{"tag": "v1.0.0"}], "_releases_truncated": True}
+    ) is None
+
+
+def test_parse_semver_tolerates_v_prefix_missing_patch_and_suffixes():
+    assert _parse_semver("v1.2") == (1, 2, 0)
+    assert _parse_semver("2.0.1-rc1") == (2, 0, 1)
+    assert _parse_semver("no version here") is None
+    assert _parse_semver(None) is None

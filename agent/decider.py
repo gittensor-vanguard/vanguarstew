@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 
-from agent.context import context_for_agent
+from agent.context import context_for_agent, latest_release_tag
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +198,26 @@ def _run_lens(name: str, context: dict, philosophy: dict, request: str, llm) -> 
     return _normalize_lens_verdict(llm.chat_json(system, user, stub=stub))
 
 
+def _release_guidance(context: dict) -> str:
+    """Synthesis-prompt note grounding ``version_bump`` in the frozen release tags (#1383).
+
+    The objective anchor scores ``version_bump`` as the semver delta from the latest frozen
+    release tag to the revealed release, so the prompt states that base explicitly instead of
+    hoping the model spots it inside the (12000-char-truncated) JSON context dump. Empty when
+    no versioned frozen release exists — then no bump can be scored against a base, and
+    ``null`` remains the honest default the stub already uses.
+    """
+    tag = latest_release_tag(context)
+    if not tag:
+        return ""
+    return (
+        f"\nLatest release tag at freeze: {tag}. If this decision implies cutting a release, "
+        "set version_bump relative to that tag — major for breaking/incompatible changes, "
+        "minor for backward-compatible features, patch for fixes and safe maintenance. Use "
+        "null when the decision does not cut a release now.\n"
+    )
+
+
 def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     lenses = {
         name: _run_lens(name, context, philosophy, request, llm)
@@ -209,7 +229,8 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     )
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:3000]}\n\n"
-        f"Repository state:\n{_render(context)}\n\n"
+        f"Repository state:\n{_render(context)}\n"
+        f"{_release_guidance(context)}\n"
         f"Decision request: {request}\n\n"
         f"Specialist perspectives already weighed (correctness, direction-fit, risk/timing):\n"
         f"{lens_block}\n\n"

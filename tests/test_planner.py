@@ -26,6 +26,7 @@ from agent.planner import (  # noqa: E402
     _pr_number,
     _pr_queue_note,
     _pr_title,
+    _release_note,
     _safe_prs,
     _significant_tokens,
     plan_next_actions,
@@ -728,3 +729,49 @@ def test_review_verb_governs_number_across_an_action_verb():
     out = reconcile_plan_with_queue([{"title": "Merge and land #7", "kind": "triage"}],
                                     {"open_prs": prs}, 5)
     assert [o["title"] for o in out] == ["Merge and land #7"]
+
+
+# --- frozen release context + structured files in the planner prompt (#1383) ---
+
+
+def test_release_note_surfaces_latest_frozen_tag():
+    note = _release_note({"releases": [{"tag": "v1.2.0"}, {"tag": "v1.10.0"}]})
+    assert "Latest release at freeze: v1.10.0" in note
+    assert '"release"' in note
+
+
+def test_release_note_empty_without_versioned_release():
+    assert _release_note({}) == ""
+    assert _release_note({"releases": []}) == ""
+    assert _release_note({"releases": [{"tag": "stable"}]}) == ""
+    # Fail-closed: a truncated release list may hide the real latest tag.
+    assert _release_note({"releases": [{"tag": "v1.0.0"}], "_releases_truncated": True}) == ""
+
+
+def test_planner_prompt_asks_for_files_and_surfaces_release_context():
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Cut the 1.3 release", "kind": "release",
+                     "files": ["CHANGELOG.md"], "rationale": "cadence", "theme": "release"}]
+
+    ctx = {"open_prs": [], "releases": [{"tag": "v1.2.0"}]}
+    out = plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
+    assert '"files"' in captured["user"]     # the schema asks for structured paths
+    assert "Latest release at freeze: v1.2.0" in captured["user"]
+    assert out and out[0]["kind"] == "release"
+    assert out[0]["files"] == ["CHANGELOG.md"]
+
+
+def test_planner_prompt_omits_release_note_without_frozen_releases():
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Write user documentation", "kind": "docs"}]
+
+    plan_next_actions({"open_prs": []}, {}, 3, CapturingLLM(api_key="offline"))
+    assert "Latest release at freeze" not in captured["user"]
