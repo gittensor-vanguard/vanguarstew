@@ -164,6 +164,15 @@ def test_cli_missing_file_exits_two(capsys):
     assert "not found" in capsys.readouterr().err
 
 
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory artifact path is an OSError (IsADirectoryError on POSIX, PermissionError on
+    # Windows), not a FileNotFoundError -- it must exit 2 with an actionable message, not a raw
+    # traceback.
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "directory" in err or "not readable" in err
+
+
 def test_cli_invalid_json_exits_two(tmp_path, capsys):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
