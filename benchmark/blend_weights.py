@@ -10,6 +10,7 @@ Pure analysis: no I/O, never mutates its input, and malformed weights yield ``No
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.comparability import artifact_kind
 
@@ -17,7 +18,19 @@ logger = logging.getLogger(__name__)
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    A saved artifact round-trips ``NaN``/``Infinity`` verbatim through ``json``, so a non-finite
+    weight must degrade to ``None`` (and the headline to ``unavailable``) rather than poisoning the
+    reported ``judge``/``objective``/``sum`` — mirroring ``component_mix``, ``composite_spread``,
+    and ``trend`` (#1183). ``OverflowError`` guards an oversized int that cannot convert to float.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _dict(value) -> dict:
