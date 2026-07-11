@@ -192,6 +192,41 @@ def test_malformed_per_repo_is_skipped(caplog):
     assert any(name.startswith("repo-0:") for name in _names(result))
 
 
+def test_corrupt_string_per_repo_row_fails_closed():
+    # A per_repo row serialized as a raw error string (not a result dict) is silently dropped by
+    # _per_repo_list, so a partial artifact with one clean scored repo used to pass as CONSISTENT.
+    # It must fail closed instead -- matching run_clean (#1357), error_repo_share (#1362), and
+    # tally_integrity (#1453).
+    art = {"per_repo": [_artifact(), "CLONE FAILED: fatal"]}
+    result = check_judge_report_integrity(art)
+    assert result["passed"] is False
+    assert "per_repo_rows_wellformed" in failed_checks(result)
+
+
+def test_corrupt_string_row_in_generalization_partition_fails_closed():
+    held = _artifact()
+    held["scored_repos"] = 1
+    report = {
+        "generalization_gap": 0.0,
+        "tuned": {"per_repo": [_artifact(), "boom"]},
+        "held_out": held,
+    }
+    result = check_judge_report_integrity(report)
+    assert result["passed"] is False
+    assert "per_repo_rows_wellformed" in failed_checks(result)
+
+
+def test_wellformed_per_repo_rows_pass_the_check():
+    # Control: an int row and a whitespace-only string are ignored (not corrupt) -- only a
+    # non-empty string is flagged -- so a clean multi-repo run stays CONSISTENT and reports the
+    # well-formedness check as passing.
+    art = {"per_repo": [_artifact(), 42, "   "]}
+    result = check_judge_report_integrity(art)
+    assert result["passed"] is True
+    assert "per_repo_rows_wellformed" in _names(result)
+    assert "per_repo_rows_wellformed" not in failed_checks(result)
+
+
 def test_integrity_headline_reports_consistent_and_inconsistent():
     assert "CONSISTENT" in integrity_headline(check_judge_report_integrity(_artifact()))
     art = _artifact()
