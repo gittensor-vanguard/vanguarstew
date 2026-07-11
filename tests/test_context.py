@@ -608,6 +608,22 @@ def test_mask_forward_refs_preserves_plain_numbers():
     text = "supports 2500000 requests per second, up from 1200000 last year"
     out = _mask_forward_refs(text)
     assert out == text
+
+
+def test_mask_forward_refs_masks_raw_githubusercontent_links():
+    # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path> is a distinct host from
+    # github.com; its <ref> segment (branch/tag/commit-ish) is the same forward-reference
+    # risk as a github.com tree/blob link and must be masked (mirrors benchmark/leakage.py).
+    out = _mask_forward_refs(
+        "logo: https://raw.githubusercontent.com/acme/widget/v3.0-release/docs/diagram.png"
+    )
+    assert "<link>" in out and "v3.0-release" not in out
+    assert _mask_forward_refs(
+        "scheme-less raw.githubusercontent.com/acme/widget/main/README.md"
+    ) == "scheme-less <link>"
+    assert _mask_forward_refs("notraw.githubusercontent.com/o/r/main/x") == (
+        "notraw.githubusercontent.com/o/r/main/x"
+    )
     assert "<sha>" not in out
 
 

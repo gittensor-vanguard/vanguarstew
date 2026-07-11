@@ -42,6 +42,19 @@ _GH_LINK = re.compile(
     re.I,
 )
 
+# raw.githubusercontent.com is a distinct host from github.com, used to serve a file's raw
+# content at a specific ref: raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>. That
+# third segment is a branch/tag/commit-ish -- the same forward-reference risk as github.com's
+# tree/blob links -- so it must be masked the same way. Keep aligned with
+# ``benchmark/leakage.py``.
+_GH_RAW_LINK = re.compile(
+    r"(?<![\w.])(?:https?://)?raw\.githubusercontent\.com"
+    r"/[^\s" + re.escape(_URL_STOP) + r"]+"
+    r"/[^\s" + re.escape(_URL_STOP) + r"]+"
+    r"/[^\s" + re.escape(_URL_STOP) + r"]+",
+    re.I,
+)
+
 _TRAILING_PUNCT = ".,;!"
 
 _ISSUE_REF = re.compile(r"#\d+")
@@ -89,6 +102,7 @@ def _mask_forward_refs(text: str) -> str:
     if not text:
         return text
     text = _GH_LINK.sub(_mask_link, text)
+    text = _GH_RAW_LINK.sub(_mask_link, text)
     text = _ISSUE_REF.sub("#ref", text)
     text = _SHA.sub(lambda m: "<sha>" if _looks_like_sha(m.group(0)) else m.group(0), text)
     return text
