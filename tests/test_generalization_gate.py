@@ -112,6 +112,37 @@ def test_a_held_out_score_above_tuned_is_within_tolerance():
     assert result["passed"] is True
 
 
+def test_non_finite_scored_repos_fails_enough_held_out_repos_closed():
+    # json round-trips NaN/Infinity, so a degenerate artifact can carry a non-finite
+    # scored_repos. Infinity must not clear `enough_held_out_repos` via `inf >= min`; a
+    # non-finite count is treated as unavailable and the check fails closed (mirrors #1457).
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_generalization(
+            {"tuned": _part(4, 0.68), "held_out": {"composite_mean": 0.66, "scored_repos": bad}},
+            max_gap=0.1, min_held_out_repos=2,
+        )
+        assert "enough_held_out_repos" in failed_checks(result), bad
+        assert result["held_out_repos"] is None, bad
+        assert result["passed"] is False, bad
+
+
+def test_non_finite_composite_is_unavailable_not_a_score():
+    # A non-finite composite_mean must not feed a bogus gap: it is treated as no score, so
+    # has_partitions fails and no gap is computed.
+    for bad in (float("inf"), float("nan")):
+        result = check_generalization(
+            {"tuned": {"composite_mean": bad, "scored_repos": 4}, "held_out": _part(3, 0.66)},
+            max_gap=0.1,
+        )
+        assert "has_partitions" in failed_checks(result), bad
+        assert result["gap"] is None and result["tuned_composite"] is None, bad
+
+
+def test_composite_helper_rejects_non_finite_score():
+    assert _composite({"scored_repos": 4, "composite_mean": float("inf")}) is None
+    assert _composite({"scored_repos": 4, "composite_mean": float("nan")}) is None
+
+
 def test_too_few_held_out_repos_fails():
     result = check_generalization(_gen(0.68, 0.63, held_repos=2), min_held_out_repos=3)
     assert result["passed"] is False

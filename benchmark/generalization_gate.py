@@ -26,6 +26,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.acceptance import _partition_error
 
@@ -38,7 +39,23 @@ _CHECK_ROW_KEYS = ("name", "passed")
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, so a hand-edited or degenerate
+    ``--generalization`` artifact can carry a non-finite ``scored_repos`` or ``composite_mean``.
+    Without the finite guard an ``Infinity`` ``scored_repos`` trivially clears
+    ``enough_held_out_repos`` (``inf >= min`` is ``True``), and a non-finite ``composite_mean``
+    would feed a bogus ``gap``. Treating a non-finite value as non-numeric fails those checks
+    closed instead, matching ``acceptance`` (#1457), ``score_integrity`` (#1336), ``gap_integrity``
+    (#1320), and ``component_floor``. ``OverflowError`` guards an oversized int that cannot
+    convert to float.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _dict(value) -> dict:
