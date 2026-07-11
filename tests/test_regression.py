@@ -15,7 +15,9 @@ if ROOT not in sys.path:
 
 from benchmark.regression import (  # noqa: E402
     DEFAULT_MAX_COMPOSITE_DROP,
+    _artifact_error,
     _check_rows_list,
+    _headline_source,
     check_regression,
     failed_checks,
     regression_headline,
@@ -179,6 +181,49 @@ def test_lone_tuned_without_held_out_is_not_treated_as_generalization():
     }
     result = check_regression(candidate, _run(0.60))
     assert result["passed"] is True
+
+
+def test_falsy_top_level_error_values_do_not_fail_both_scored():
+    for falsy in (0, False, None, ""):
+        art = _run(0.66)
+        art["error"] = falsy
+        result = check_regression(art, _run(0.60))
+        assert result["passed"] is True, falsy
+        assert next(c for c in result["checks"] if c["name"] == "both_scored")["passed"] is True
+
+
+def test_zero_composite_still_counts_as_scored_for_both_scored():
+    result = check_regression(_run(0.0), _run(0.0))
+    assert result["passed"] is True
+    assert next(c for c in result["checks"] if c["name"] == "both_scored")["passed"] is True
+
+
+def test_artifact_error_helper_reports_top_level_and_per_repo_errors():
+    assert _artifact_error({"error": "boom"}) == "boom"
+    assert _artifact_error(_partial_multi()) == "failed to clone"
+    assert _artifact_error(_run(0.66)) is None
+    assert _artifact_error("not a dict") is None
+
+
+def test_headline_source_helper_requires_both_generalization_partitions():
+    art = {"composite_mean": 0.66, "tuned": {"composite_mean": 0.1}}
+    assert _headline_source(art) is art
+    gen = {
+        "tuned": {"composite_mean": 0.66},
+        "held_out": {"composite_mean": 0.55},
+        "generalization_gap": 0.11,
+    }
+    assert _headline_source(gen) is gen["tuned"]
+
+
+def test_artifact_error_helper_survives_partition_error_failure(monkeypatch):
+    import benchmark.regression as reg
+
+    def _boom(partition):
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(reg, "_partition_error", _boom)
+    assert _artifact_error({"composite_mean": 0.66, "scored_repos": 1}) == "partition error scan failed"
 
 
 def test_regression_compares_generalization_tuned_scores():

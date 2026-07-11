@@ -99,14 +99,16 @@ def _check_rows_list(checks) -> list[dict]:
     return rows
 
 
-def _headline_source(artifact: dict) -> dict:
+def _headline_source(artifact) -> dict:
     """The partition whose cleanliness ``check_regression`` evaluates.
 
     A ``run_generalization_report`` artifact nests scores under ``tuned``/``held_out``; its
     headline is the **tuned** partition (mirroring ``benchmark.trend.headline_score`` and
     ``check_improvement``). Every other artifact is evaluated at the top level. Both ``tuned``
-    and ``held_out`` must be dicts to treat the artifact as generalization.
+    and ``held_out`` must be dicts to treat the artifact as generalization; a lone ``tuned`` dict
+    without ``held_out`` is not silently treated as the headline partition.
     """
+    artifact = _dict(artifact)
     tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
     if isinstance(tuned, dict) and isinstance(held_out, dict):
         return tuned
@@ -116,7 +118,17 @@ def _headline_source(artifact: dict) -> dict:
 def _artifact_error(artifact) -> str | None:
     """The first error on the artifact's evaluated partition, or ``None`` when clean."""
     artifact = _dict(artifact)
-    return artifact.get("error") or _partition_error(_headline_source(artifact))
+    top_err = artifact.get("error")
+    if top_err:
+        return top_err
+    try:
+        return _partition_error(_headline_source(artifact))
+    except Exception:
+        logger.warning(
+            "regression: _partition_error failed on evaluated partition",
+            exc_info=True,
+        )
+        return "partition error scan failed"
 
 
 def _round(value):
