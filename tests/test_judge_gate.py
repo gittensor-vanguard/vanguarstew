@@ -62,6 +62,29 @@ def test_too_few_dual_order_tasks_fails():
     assert "enough_dual_order_tasks" in failed_checks(result)
 
 
+def test_non_finite_dual_order_tasks_fails_closed():
+    # json round-trips NaN/Infinity, so a degenerate artifact can carry a non-finite
+    # dual_order_tasks. Infinity must not clear dual_order_judging (inf > 0) or
+    # enough_dual_order_tasks (inf >= min) and pass the gate; a non-finite count is treated as
+    # unavailable and both checks fail closed (mirrors #1457). No judge_dual_order flag, so the
+    # dual-order status is derived from the (bogus) count.
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_judge({"judge_report": {"dual_order_tasks": bad, "disagreement_rate": 0.1}})
+        assert result["passed"] is False, bad
+        assert result["dual_order_tasks"] is None, bad
+        assert {"dual_order_judging", "enough_dual_order_tasks"} <= set(failed_checks(result)), bad
+
+
+def test_non_finite_disagreement_rate_is_unavailable():
+    # A non-finite disagreement_rate is not a valid rate: low_disagreement fails closed rather
+    # than trusting inf/NaN against the tolerance.
+    for bad in (float("inf"), float("nan")):
+        result = check_judge({"judge_dual_order": True,
+                              "judge_report": {"dual_order_tasks": 5, "disagreement_rate": bad}})
+        assert "low_disagreement" in failed_checks(result), bad
+        assert result["disagreement_rate"] is None, bad
+
+
 def test_dual_order_tasks_falls_back_to_judge_order_stats():
     # judge_report lacks the count; it is read from judge_order_stats instead.
     r = {"judge_dual_order": True, "judge_report": {"disagreement_rate": 0.1},
