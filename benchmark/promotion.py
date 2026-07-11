@@ -36,6 +36,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.acceptance import _partition_error
 from benchmark.judge_gate import _disagreement_rate
@@ -48,7 +49,21 @@ DEFAULT_MAX_DISAGREEMENT = 0.5
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, so a hand-edited or degenerate artifact can
+    carry a non-finite ``composite_mean``/margin. Without the finite guard an ``Infinity`` composite
+    trivially clears ``composite_floor`` (``inf >= min`` is ``True``) and an ``Infinity`` margin
+    clears ``beats_baseline`` — promoting a malformed run. Treating a non-finite value as
+    non-numeric fails those checks closed instead, matching ``score_integrity`` (#1336),
+    ``component_floor``, and the other non-finite guards. ``OverflowError`` guards an oversized int.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _dict(value) -> dict:

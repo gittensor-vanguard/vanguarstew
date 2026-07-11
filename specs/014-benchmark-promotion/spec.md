@@ -42,8 +42,11 @@ fails closed instead of being waved through.
 
 ### Numeric semantics (`_is_number`)
 
-- `_is_number` SHALL be true for built-in `int` and `float` values.
+- `_is_number` SHALL be true for **finite** built-in `int` and `float` values only.
 - `bool` SHALL NOT be treated as a number (`_is_number(True)` is `False`).
+- A non-finite `float` (`NaN`/`Infinity`, which `json` round-trips verbatim) SHALL NOT be numeric,
+  so it cannot clear `composite_floor` or `beats_baseline` and promote a malformed run (mirrors
+  `score_integrity` / `component_floor`).
 - Every non-`int`/`float` value SHALL be non-numeric.
 
 ### Evaluated partition (`_promotion_source`)

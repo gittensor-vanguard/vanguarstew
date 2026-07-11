@@ -49,6 +49,22 @@ def test_composite_below_floor_holds():
     assert failed_checks(result) == ["composite_floor"]
 
 
+def test_non_finite_composite_does_not_promote():
+    # json round-trips Infinity verbatim; an inf composite would trivially clear composite_floor
+    # (inf >= min) and promote a malformed run. It must be treated as non-numeric and fail closed,
+    # matching score_integrity (#1336) / component_floor.
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_promotion(_result(composite=bad, margin=5, disagreement=0.05))
+        assert result["passed"] is False, bad
+        assert "composite_floor" in failed_checks(result), bad
+
+
+def test_non_finite_decisive_margin_does_not_beat_baseline():
+    result = check_promotion(_result(composite=0.7, margin=float("inf"), disagreement=0.05))
+    assert result["passed"] is False
+    assert "beats_baseline" in failed_checks(result)
+
+
 def test_a_tie_run_does_not_beat_the_baseline():
     # A memorized-tie agent (margin 0) fails beats_baseline even with a decent composite.
     result = check_promotion(_result(composite=0.6, margin=0), min_decisive_margin=1)
