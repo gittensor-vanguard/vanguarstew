@@ -145,3 +145,27 @@ def test_cli_generalization_reports_tuned_margin(tmp_artifact, capsys):
     body = json.loads(capsys.readouterr().out)
     assert body["kind"] == "generalization"
     assert body["decisive_margin"] == 6
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A real directory artifact path raises an OSError subclass (IsADirectoryError on POSIX,
+    # PermissionError on Windows) -- not FileNotFoundError. It must exit 2 with an actionable
+    # message and, crucially, no raw traceback.
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "directory" in err or "not readable" in err
+
+
+def test_cli_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    # Platform-agnostic: a real directory never raises IsADirectoryError on Windows (it raises
+    # PermissionError), so force it to prove the dedicated handler is not dead code. On every
+    # platform this must exit 2 with the specific directory message and no traceback.
+    def _raise_is_a_directory(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise_is_a_directory)
+    assert cli.run([str(tmp_path / "run.json")]) == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "Traceback" not in err
