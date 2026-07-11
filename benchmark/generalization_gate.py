@@ -26,6 +26,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.acceptance import _partition_error
 
@@ -38,7 +39,7 @@ _CHECK_ROW_KEYS = ("name", "passed")
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _dict(value) -> dict:

@@ -105,6 +105,24 @@ def test_composite_helper_guards_unscored_and_tolerates_malformed():
     assert _composite({"scored_repos": 2, "composite_mean": "bad"}) is None    # non-numeric score
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_composite_is_not_a_real_score(bad):
+    # json round-trips NaN/Infinity verbatim, so a non-finite composite_mean reaches the gate. It
+    # is not a real score: _composite must degrade it to None exactly as it does an unscored
+    # partition, guarded as headline_score/promotion/component_floor do. Otherwise an Infinity
+    # held-out composite makes gap -inf, false-passes gap_within_tolerance, and signs off
+    # "GENERALIZES" with inf/nan surfacing in the headline instead of degrading to n/a.
+    assert _composite(_part(4, bad)) is None
+    result = check_generalization({"tuned": _part(4, 0.70), "held_out": _part(3, bad),
+                                   "generalization_gap": None})
+    assert result["passed"] is False
+    assert "has_partitions" in failed_checks(result)
+    assert result["held_out_composite"] is None and result["gap"] is None
+    headline = generalization_headline(result)
+    assert "GENERALIZES" not in headline
+    assert "inf" not in headline.lower() and "nan" not in headline.lower()
+
+
 def test_a_held_out_score_above_tuned_is_within_tolerance():
     # Negative gap (held-out beat tuned) always passes the tolerance check.
     result = check_generalization(_gen(0.60, 0.66), max_gap=0.1)
