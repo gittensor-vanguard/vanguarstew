@@ -31,8 +31,19 @@ def _is_int(value) -> bool:
 
 
 def _is_number(value) -> bool:
-    """A finite, non-boolean real number — used to guard headline formatting against ``NaN``/``inf``."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    """A finite, non-boolean real number — used to guard headline formatting against ``NaN``/``inf``.
+
+    ``math.isfinite`` raises ``OverflowError`` for a Python ``int`` too large to convert to a
+    ``float`` (a hand-edited or degenerate ``skip_share`` field); guard it the same way every
+    other ``_is_number`` in this codebase does (``acceptance``, ``component_floor``,
+    ``gap_outlook``) instead of crashing the headline formatter outright.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _skip_share(repos, scored) -> float | None:
