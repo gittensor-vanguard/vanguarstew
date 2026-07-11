@@ -210,6 +210,41 @@ def _row_slices(result: dict) -> list[tuple[str, dict]]:
     return []
 
 
+def _malformed_per_repo_rows(result: dict) -> list[str] | None:
+    """Labels of ``per_repo`` rows that are a non-empty string instead of a result dict.
+
+    ``_per_repo_list`` keeps only dict rows so the row checks can run, which silently drops a
+    row serialized as a raw error string (e.g. ``"CLONE FAILED: ..."`` where ``run_multi_replay``
+    expected a result dict). Such a corrupt row is surfaced here so a partial artifact fails
+    closed instead of passing as CONSISTENT, matching ``benchmark.acceptance._partition_error``
+    and the sibling gates ``run_clean`` (#1357), ``error_repo_share`` (#1362), and
+    ``tally_integrity`` (#1453). Only non-empty strings are flagged: a per_repo row that is a dict
+    carrying its own ``error`` is an unscored repo, not a row inconsistency, and
+    ints/``None``/lists stay ignored exactly as ``_per_repo_list`` treats them.
+
+    Returns ``None`` for a single-repo/rows-only artifact that carries no ``per_repo`` container,
+    so the well-formedness check is reported only where per_repo rows exist. The shape branch
+    mirrors :func:`_row_slices` to keep per_repo handling consistent across the module.
+    """
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
+        containers = (("tuned", tuned.get("per_repo")), ("held_out", held_out.get("per_repo")))
+    elif "per_repo" in result:
+        containers = (("", result.get("per_repo")),)
+    else:
+        return None
+    saw_list = False
+    malformed: list[str] = []
+    for prefix, per_repo in containers:
+        if not isinstance(per_repo, list):
+            continue
+        saw_list = True
+        for index, entry in enumerate(per_repo):
+            if isinstance(entry, str) and entry.strip():
+                malformed.append(f"{prefix}:repo-{index}" if prefix else f"repo-{index}")
+    return malformed if saw_list else None
+
+
 def _expected_row_composite(row: dict, w_judge: float, w_objective: float) -> float | None:
     winner = row.get("winner")
     ab = _WINNER_AB.get(winner)
@@ -310,6 +345,15 @@ def check_row_integrity(result, tolerance: float = DEFAULT_TOLERANCE) -> dict:
     else:
         for label, slice_ in slices:
             _check_slice(label, slice_, tolerance, checks)
+
+    malformed = _malformed_per_repo_rows(result)
+    if malformed is not None:
+        checks.append({
+            "name": "per_repo_rows_wellformed",
+            "passed": not malformed,
+            "detail": "all per_repo rows are well-formed result objects" if not malformed
+            else f"corrupt per_repo string row(s): {', '.join(malformed)}",
+        })
 
     return {"passed": all(c["passed"] for c in checks), "checks": checks, "tolerance": tolerance}
 
