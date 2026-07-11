@@ -86,6 +86,30 @@ def test_a_missing_tally_fails_all_tasks_decided():
     assert result["decided"] is None
 
 
+def test_non_finite_task_count_fails_closed():
+    # json round-trips NaN/Infinity, so a degenerate artifact can carry a non-finite task count.
+    # Infinity must not clear run_scored (inf > 0) or enough_tasks (inf >= min); a non-finite
+    # total is treated as unavailable and both fail closed (mirrors #1457/#1465), with tasks None.
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_sample_adequacy(_run(bad, 3, 2, 1), min_tasks=3)
+        assert result["passed"] is False, bad
+        assert result["tasks"] is None, bad
+        assert {"run_scored", "enough_tasks"} <= set(failed_checks(result)), bad
+
+
+def test_non_finite_tally_and_tasks_do_not_pass_the_gate():
+    # A fully-degenerate artifact (Infinity task count AND a matching Infinity tally) must not
+    # sign off adequacy via inf >= min and inf == inf; every check fails closed.
+    result = check_sample_adequacy(
+        {"per_repo": [{"tasks": float("inf"),
+                       "tally": {"challenger": float("inf"), "baseline": 0, "tie": 0}}]},
+        min_tasks=5,
+    )
+    assert result["passed"] is False
+    assert set(_names(result)) == set(failed_checks(result))   # all three fail
+    assert result["tasks"] is None
+
+
 def test_a_tally_missing_a_key_fails_all_tasks_decided():
     result = check_sample_adequacy({"tasks": 5, "tally": {"challenger": 3, "tie": 0}}, min_tasks=3)
     assert result["passed"] is False
