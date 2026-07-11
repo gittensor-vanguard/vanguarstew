@@ -37,11 +37,23 @@ def _round(value):
     return round(float(value), 4) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _dict(value) -> dict:
+    """A dict view of ``value``, or ``{}`` when it is not a dict.
+
+    The feed nests scalar aggregates under dict keys (``composite_mean``, ``composite_deltas``,
+    ``diff``), but a malformed upstream artifact can carry a non-dict there. A bare
+    ``value or {}`` only guards the *falsy* case, so a truthy scalar/list still raised
+    ``AttributeError`` on the following ``.get()`` -- this coerces to ``{}`` instead, matching
+    the module's "coerce or default, don't crash" policy.
+    """
+    return value if isinstance(value, dict) else {}
+
+
 def _safe_per_repo(public_report: dict) -> list:
     """The public target's per-repo composite deltas -- repo names included, since
     curated.json's repos are already public. Malformed/missing entries are skipped rather
     than raising, matching this project's usual "coerce or default, don't crash" policy."""
-    per_repo = (((public_report or {}).get("diff") or {}).get("per_repo")) or []
+    per_repo = _dict(_dict(public_report).get("diff")).get("per_repo") or []
     if not isinstance(per_repo, list):
         return []
     out = []
@@ -49,7 +61,7 @@ def _safe_per_repo(public_report: dict) -> list:
         if not isinstance(entry, dict):
             continue
         repo = entry.get("repo")
-        delta = _round((entry.get("composite_mean") or {}).get("delta"))
+        delta = _round(_dict(entry.get("composite_mean")).get("delta"))
         if isinstance(repo, str) and repo:
             out.append({"repo": repo, "composite_delta": delta})
     return out
@@ -77,7 +89,7 @@ def _since_anchor_fields(since_anchor: dict | None) -> dict | None:
         return None
 
     def _scores(report):
-        composite = ((report or {}).get("diff") or {}).get("composite_mean") or {}
+        composite = _dict(_dict(_dict(report).get("diff")).get("composite_mean"))
         return {
             "composite_delta": _round(composite.get("delta")),
             "composite_score": _round(composite.get("candidate")),
@@ -106,19 +118,20 @@ def to_leaderboard_entry(
     rather than a null placeholder, so old feed entries (scored before an anchor existed)
     and new ones are both valid without every reader needing to handle a null case.
     """
-    public = combined.get("public") or {}
-    private = combined.get("private") or {}
+    combined = _dict(combined)
+    public = _dict(combined.get("public"))
+    private = _dict(combined.get("private"))
     entry = {
         "timestamp": timestamp or datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "pr_number": pr_number,
         "band": combined.get("band"),
         "label": combined.get("label"),
         "public": {
-            "composite_delta": _round((public.get("composite_deltas") or {}).get("composite_mean")),
+            "composite_delta": _round(_dict(public.get("composite_deltas")).get("composite_mean")),
             "per_repo": _safe_per_repo(public),
         },
         "private": {
-            "composite_delta": _round((private.get("composite_deltas") or {}).get("composite_mean")),
+            "composite_delta": _round(_dict(private.get("composite_deltas")).get("composite_mean")),
         },
     }
     fields = _since_anchor_fields(since_anchor)
@@ -146,8 +159,8 @@ def to_anchor_entry(
     return {
         "anchor": anchor_name,
         "timestamp": timestamp or datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "public_score": _round((public_artifact or {}).get("composite_mean")),
-        "private_score": _round((private_artifact or {}).get("composite_mean")),
+        "public_score": _round(_dict(public_artifact).get("composite_mean")),
+        "private_score": _round(_dict(private_artifact).get("composite_mean")),
     }
 
 
