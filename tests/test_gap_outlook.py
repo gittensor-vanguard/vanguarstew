@@ -86,3 +86,12 @@ def test_cli(tmp_artifact, capsys):
     assert cli.run([path]) == 0
     body = json.loads(capsys.readouterr().out)
     assert body["verdict"] == "unfavorable"
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory artifact path is an OSError (IsADirectoryError on POSIX, PermissionError on
+    # Windows), not a FileNotFoundError -- it must exit 2 with an actionable message, not a raw
+    # traceback.
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "directory" in err or "not readable" in err
