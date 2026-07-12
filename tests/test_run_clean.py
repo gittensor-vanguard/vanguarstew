@@ -121,6 +121,13 @@ def test_cli_without_strict_exits_zero_on_error(tmp_artifact):
     assert cli.run([path]) == 0
 
 
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory path raises IsADirectoryError inside open(); the CLI must report it cleanly and
+    # exit 2, not dump a raw traceback (mirrors generalization_gate #1446 / objective_integrity #1377).
+    assert cli.run([str(tmp_path)]) == 2
+    assert "directory" in capsys.readouterr().err
+
+
 def test_failed_checks_helper_is_robust():
     assert failed_checks({}) == []
     assert failed_checks("not a dict") == []
