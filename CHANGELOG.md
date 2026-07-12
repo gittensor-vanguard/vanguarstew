@@ -19,6 +19,13 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Agent context (`agent/context.py`): `load_context` caught `json.JSONDecodeError` for a malformed
+  `.vanguarstew_context.json`, but since Python 3.11 `json.load` raises a plain `ValueError` (not
+  `JSONDecodeError`) for an integer literal beyond the 4300-digit int-string conversion limit, so a
+  context file that is byte-valid JSON apart from one number's magnitude crashed `load_context` (and
+  `solve()`) with a raw traceback instead of degrading to git-only context. The handler now catches
+  `ValueError` (which `json.JSONDecodeError` subclasses), restoring the degrade-rather-than-crash
+  contract for corrupt frozen input (#1494).
 - Benchmark gates (`benchmark/judge_gate.py`, `benchmark/regression.py`): the order-disagreement
   recompute accepted an incoherent telemetry block where `disagree > dual_order_tasks` — impossible,
   since `disagree` is a subset of `dual_order_tasks` (stale/hand-edited data). It produced a rate

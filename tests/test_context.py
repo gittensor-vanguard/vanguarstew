@@ -347,6 +347,27 @@ def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_falls_back_on_oversized_integer_literal(caplog):
+    # #1494: since Python 3.11, json.load raises a plain ValueError (not json.JSONDecodeError) for
+    # an integer literal beyond the int-string conversion limit (4300 digits). A context file that
+    # is byte-for-byte valid JSON apart from one number's magnitude must still degrade to git-only
+    # context rather than crash solve() with a raw traceback.
+    import logging
+    repo = _repo_with_commit()
+    try:
+        oversized = b'{"open_prs_count": ' + b"9" * 4400 + b"}"
+        with open(os.path.join(repo, CONTEXT_FILE), "wb") as f:
+            f.write(oversized)
+        with caplog.at_level(logging.WARNING, logger="agent.context"):
+            ctx = load_context(repo)  # no exception (previously: raw ValueError)
+        assert ctx["_source"] == "git"
+        assert ctx["frozen_at"]["commit"]
+        assert any("unreadable" in r.message and "bytes" in r.message for r in caplog.records)
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 @pytest.mark.skipif(
     not hasattr(os, "geteuid") or os.geteuid() == 0,
     reason="root bypasses file permissions",
