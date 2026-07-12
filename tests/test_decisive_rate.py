@@ -202,3 +202,69 @@ def test_single_repo_reports_kind_and_null_partitions():
     out = summarize_decisive_rate(_run({"challenger": 2, "baseline": 1, "tie": 0}))
     assert out["kind"] != "generalization"
     assert out["partitions"] is None
+
+
+def test_multi_repo_reads_judge_report_when_no_top_level_tally():
+    # run_multi_replay emits NO top-level tally for a multi-repo aggregate -- the win/loss/tie
+    # counts live in judge_report (wins/losses/ties) -- so decisive_rate reported "no tally
+    # available". Fall back to judge_report, mirroring win_rate.
+    art = {
+        "repos": 2, "scored_repos": 2, "composite_mean": 0.55,
+        "judge_report": {"wins": 5, "losses": 3, "ties": 2},
+        "per_repo": [{"repo": "r0", "tasks": 5}, {"repo": "r1", "tasks": 5}],
+    }
+    out = summarize_decisive_rate(art)
+    assert out["kind"] == "multi"
+    assert out["total"] == 10
+    assert out["decisive"] == 8 and out["tie"] == 2
+    assert out["decisive_rate"] == 0.8
+
+
+def test_top_level_tally_takes_precedence_over_judge_report():
+    # When both are present the explicit tally wins; judge_report is only the fallback.
+    out = summarize_decisive_rate({
+        "tally": {"challenger": 1, "baseline": 0, "tie": 0},
+        "judge_report": {"wins": 9, "losses": 9, "ties": 9},
+    })
+    assert out["total"] == 1 and out["decisive"] == 1
+
+
+def test_malformed_judge_report_fallback_fails_closed():
+    out = summarize_decisive_rate({
+        "judge_report": {"wins": -1, "losses": 3, "ties": 2},
+        "per_repo": [{"repo": "r0", "tasks": 5}],
+    })
+    assert out["total"] is None
+
+
+def test_non_dict_judge_report_fallback_yields_none():
+    out = summarize_decisive_rate({"judge_report": "nope", "per_repo": [{"repo": "r0", "tasks": 5}]})
+    assert out["total"] is None
+
+
+def test_judge_report_missing_key_fails_closed():
+    # Every one of wins/losses/ties must be present; a judge_report missing a key fails closed.
+    out = summarize_decisive_rate({
+        "judge_report": {"wins": 5, "losses": 3},          # no "ties"
+        "per_repo": [{"repo": "r0", "tasks": 5}],
+    })
+    assert out["total"] is None
+
+
+def test_judge_report_non_int_value_fails_closed():
+    # A non-integer judge_report count is rejected the same way a non-int tally count is.
+    out = summarize_decisive_rate({
+        "judge_report": {"wins": "5", "losses": 3, "ties": 2},
+        "per_repo": [{"repo": "r0", "tasks": 5}],
+    })
+    assert out["total"] is None
+
+
+def test_zero_count_judge_report_yields_zero_total_none_rates():
+    # An all-zero judge_report is a valid empty tally: total 0, rates None, not "unavailable".
+    out = summarize_decisive_rate({
+        "judge_report": {"wins": 0, "losses": 0, "ties": 0},
+        "per_repo": [{"repo": "r0", "tasks": 0}],
+    })
+    assert out["total"] == 0
+    assert out["decisive_rate"] is None
