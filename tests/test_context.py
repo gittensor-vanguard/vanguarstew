@@ -327,6 +327,7 @@ def _repo_with_commit():
     b"",                          # empty file
     b"\xff\xfe\x00\x01\x02\x80",  # binary / non-UTF-8 content
     b"not json at all",           # plain text
+    b'{"repo": "x", "open_issues": [], "tasks": ' + b"9" * 5000 + b"}",  # valid JSON but an oversized int literal -> plain ValueError (not JSONDecodeError) since py3.11
 ])
 def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
     # A present-but-unreadable context file (truncated / empty / binary / non-JSON) must not
