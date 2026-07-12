@@ -16,6 +16,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from benchmark.judge_calibration import (  # noqa: E402
     _failed_ids_list,
+    _is_number,
     _symmetry_checks_list,
     calibration_headline,
     check_calibration,
@@ -110,6 +111,36 @@ def test_calibration_headline_pass_and_fail():
     assert "FAIL" in calibration_headline(bad)
     assert "sample" in calibration_headline(bad)
     assert calibration_headline({}) == "calibration: no scenarios evaluated"
+
+
+# --- #1497: a non-finite / non-numeric scenario_count degrades, never raises ----------
+# json round-trips NaN/Infinity verbatim and a large JSON integer loads as an
+# arbitrary-precision int, so a hand-built or degenerate artifact reaches the headline's
+# int() coercion. Mirrors the twin fix in score_calibration (#1490).
+
+_OVERSIZED_INT = int("1" + "0" * 400)  # finite Python int, but too large to convert to float
+
+
+def test_is_number_rejects_non_finite_oversized_and_non_numeric_values():
+    assert _is_number(0.0) is True
+    assert _is_number(3) is True
+    assert _is_number(-2.5) is True
+    assert _is_number(True) is False          # bools are not numbers here
+    assert _is_number("1.0") is False
+    assert _is_number(None) is False
+    assert _is_number(float("nan")) is False
+    assert _is_number(float("inf")) is False
+    assert _is_number(float("-inf")) is False
+    assert _is_number(_OVERSIZED_INT) is False  # int too large for float -> not usable
+
+
+def test_calibration_headline_tolerates_a_non_finite_scenario_count():
+    # Previously: OverflowError on Infinity/an oversized int, ValueError on NaN, TypeError on
+    # a truthy non-number. Each must read as "no scenarios evaluated" instead.
+    for bad in (float("inf"), float("nan"), _OVERSIZED_INT, [3]):
+        assert calibration_headline(
+            {"scenario_count": bad, "passed": True}
+        ) == "calibration: no scenarios evaluated", bad
 
 
 # --- #625 / #852: malformed failed / symmetry_checks must not abort headlines --------
