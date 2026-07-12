@@ -85,6 +85,75 @@ def test_single_repo_reports_kind_and_no_partitions():
     assert out["partitions"] is None
 
 
+def test_multi_repo_reads_judge_report_when_no_top_level_tally():
+    # run_multi_replay emits NO top-level tally for a multi-repo aggregate -- the win/loss/tie
+    # counts live in judge_report (wins/losses/ties) -- so win_rate reported "no tally available".
+    # Fall back to judge_report, mirroring margin_outlook / judge_wlt.
+    art = {
+        "repos": 2, "scored_repos": 2, "skipped": 0, "composite_mean": 0.55,
+        "judge_report": {"wins": 5, "losses": 3, "ties": 2},
+        "per_repo": [{"repo": "r0", "tasks": 5}, {"repo": "r1", "tasks": 5}],
+    }
+    out = summarize_win_rate(art)
+    assert out["kind"] == "multi"
+    assert out["total"] == 10
+    assert (out["challenger"], out["baseline"], out["tie"]) == (5, 3, 2)
+    assert out["challenger_rate"] == 0.5
+
+
+def test_top_level_tally_takes_precedence_over_judge_report():
+    # When both are present the explicit tally wins; judge_report is only the fallback.
+    out = summarize_win_rate({
+        "tally": {"challenger": 1, "baseline": 0, "tie": 0},
+        "judge_report": {"wins": 9, "losses": 9, "ties": 9},
+    })
+    assert out["total"] == 1 and out["challenger"] == 1
+
+
+def test_malformed_judge_report_fallback_fails_closed():
+    # A malformed judge_report (negative count) is rejected the same way a malformed tally is.
+    out = summarize_win_rate({
+        "judge_report": {"wins": -1, "losses": 3, "ties": 2},
+        "per_repo": [{"repo": "r0", "tasks": 5}],
+    })
+    assert out["total"] is None
+
+
+def test_non_dict_judge_report_fallback_yields_none():
+    # A non-dict judge_report is ignored (fails closed), just like a non-dict tally.
+    out = summarize_win_rate({"judge_report": "nope", "per_repo": [{"repo": "r0", "tasks": 5}]})
+    assert out["total"] is None
+
+
+def test_zero_count_judge_report_yields_zero_total_none_rates():
+    # An all-zero judge_report is a valid empty tally: total 0, rates None (matches the zero-tally
+    # case), not "unavailable".
+    out = summarize_win_rate({
+        "judge_report": {"wins": 0, "losses": 0, "ties": 0},
+        "per_repo": [{"repo": "r0", "tasks": 0}],
+    })
+    assert out["total"] == 0
+    assert out["challenger_rate"] is None
+
+
+def test_judge_report_missing_key_fails_closed():
+    # Every one of wins/losses/ties must be present; a judge_report missing a key fails closed.
+    out = summarize_win_rate({
+        "judge_report": {"wins": 5, "losses": 3},          # no "ties"
+        "per_repo": [{"repo": "r0", "tasks": 5}],
+    })
+    assert out["total"] is None
+
+
+def test_judge_report_non_int_value_fails_closed():
+    # A non-integer judge_report count is rejected the same way a non-int tally count is.
+    out = summarize_win_rate({
+        "judge_report": {"wins": "5", "losses": 3, "ties": 2},
+        "per_repo": [{"repo": "r0", "tasks": 5}],
+    })
+    assert out["total"] is None
+
+
 # --- generalization: sum the tuned/held_out partition tallies (mirrors offline_share) --------
 
 def _gen(tuned_tally, held_tally):
