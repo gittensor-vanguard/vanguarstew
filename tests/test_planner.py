@@ -834,3 +834,63 @@ def test_planner_prompt_omits_kind_note_without_conventional_commits():
     ctx = {"open_prs": [], "recent_commits": [{"subject": "Add streaming export"}]}
     plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
     assert "Recent maintainer activity by kind" not in captured["user"]
+
+
+# --- #1537: prompt-ensemble consensus planning ------------------------------------------
+
+class _EnsembleLLM:
+    """A non-offline fake LLM. Records every prompt, and returns a plan chosen by which
+    framing the prompt carries, so consensus selection can be exercised deterministically."""
+    offline = False
+
+    def __init__(self, by_framing):
+        self.by_framing = by_framing
+        self.prompts = []
+
+    def chat_json(self, system, user, stub=None):
+        self.prompts.append(user)
+        for marker, plan in self.by_framing.items():
+            if marker and marker in user:
+                return plan
+        return self.by_framing["default"]
+
+
+_ENS_CTX = {"recent_commits": [{"subject": "fix(agent): x"}], "open_prs": []}
+
+
+def test_ensemble_draws_one_distinct_prompt_per_framing():
+    llm = _EnsembleLLM({"default": [{"title": "a", "kind": "bugfix"}]})
+    plan_next_actions(_ENS_CTX, {}, 3, llm, k=3)
+    assert len(llm.prompts) == 3                       # one call per framing
+    assert len(set(llm.prompts)) == 3                  # the prompts genuinely differ
+    assert any("RISK" in p for p in llm.prompts)
+    assert any("USER IMPACT" in p for p in llm.prompts)
+
+
+def test_ensemble_selects_the_consensus_plan():
+    # neutral + RISK agree on a benchmark bugfix; USER IMPACT dissents with a docs item.
+    agreed = [{"title": "harden scoring", "kind": "bugfix", "files": ["benchmark/score.py"]}]
+    dissent = [{"title": "write guides", "kind": "docs", "files": ["docs/guide.md"]}]
+    llm = _EnsembleLLM({"RISK": agreed, "USER IMPACT": dissent, "default": agreed})
+    plan = plan_next_actions(_ENS_CTX, {}, 3, llm, k=3)
+    assert [i["kind"] for i in plan] == ["bugfix"]     # the agreed-upon plan wins
+
+
+def test_ensemble_k1_is_single_shot_neutral_framing():
+    llm = _EnsembleLLM({"default": [{"title": "a", "kind": "bugfix"}]})
+    plan_next_actions(_ENS_CTX, {}, 3, llm, k=1)
+    assert len(llm.prompts) == 1                        # exactly one draw
+    assert "RISK" not in llm.prompts[0] and "USER IMPACT" not in llm.prompts[0]  # neutral prompt
+
+
+def test_ensemble_collapses_to_one_call_when_offline():
+    # Offline stubs are identical across framings; drawing K would waste calls.
+    calls = {"n": 0}
+
+    class _OfflineCounting(LLM):
+        def chat_json(self, system, user, stub=None):
+            calls["n"] += 1
+            return super().chat_json(system, user, stub=stub)
+
+    plan_next_actions(_ENS_CTX, {}, 3, _OfflineCounting(api_key="offline"), k=3)
+    assert calls["n"] == 1

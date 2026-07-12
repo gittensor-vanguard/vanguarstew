@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import Counter
 
 from agent.context import context_for_agent
 
@@ -110,6 +111,84 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
     "(bugfix/fix, feature/feat, docs, release, refactor, dep). When releases, milestones, "
     "or recent history signal an upcoming version cut, include a `release`-kind item."
 )
+
+# Prompt-ensemble framings (#1537). The managed-inference contract fixes temperature 0, so
+# sampling the SAME prompt K times is deterministic (identical) — the only way to get K
+# genuinely different plans is to vary the prompt itself. Each framing biases the same plan
+# task toward a different, equally-valid prioritization lens; the consensus selector then
+# keeps the plan whose predictions the framings most agree on. The first framing is empty
+# (neutral) so a 1-framing ensemble reproduces the pre-ensemble single-shot prompt exactly.
+_PLAN_FRAMINGS = (
+    "",
+    "\n\nAmong equally-defensible options, prioritize by RISK: put correctness-, stability-, "
+    "and security-critical work first.",
+    "\n\nAmong equally-defensible options, prioritize by USER IMPACT: put what most affects "
+    "users and adopters first.",
+)
+# Ensemble size, capped at the number of framings. K=1 => single neutral framing (unchanged).
+PLAN_ENSEMBLE_K = 3
+
+
+def _plan_framings(k: int) -> tuple:
+    """The first ``k`` framings (>=1, capped at the number available)."""
+    if not isinstance(k, int) or k < 1:
+        k = 1
+    return _PLAN_FRAMINGS[:min(k, len(_PLAN_FRAMINGS))]
+
+
+def _item_modules(item: dict) -> set:
+    """Top-level module names an item predicts it will touch (from `files` path segments)."""
+    mods = set()
+    for path in _normalize_files(item.get("files") if isinstance(item, dict) else None):
+        top = path.strip("/").split("/")[0].rsplit(".", 1)[0].strip().lower()
+        if top:
+            mods.add(top)
+    return mods
+
+
+def _plan_features(plan: list) -> set:
+    """The set of anchor-relevant predictions a plan makes: kinds, modules, release signal.
+
+    These are exactly the signals the objective anchor scores, so 'agreement' between two
+    candidate plans is measured on the axes that actually matter, not on prose wording.
+    """
+    feats: set = set()
+    for item in plan or []:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        if isinstance(kind, str) and kind.strip():
+            feats.add(("kind", kind.strip().lower()))
+            if kind.strip().lower() == "release":
+                feats.add(("release",))
+        for mod in _item_modules(item):
+            feats.add(("mod", mod))
+    return feats
+
+
+def _select_consensus(candidates: list) -> list:
+    """Pick the candidate plan whose predictions the ensemble most agrees on (deterministic).
+
+    Each candidate is scored by how many other candidates share each of its predicted
+    features (kinds/modules/release); the highest-agreement plan wins. Ties keep the
+    earliest candidate — and the neutral framing is first — so the result is stable and, at
+    K=1, is exactly the single-shot plan.
+    """
+    plans = [p for p in candidates if isinstance(p, list)]
+    if not plans:
+        return []
+    if len(plans) == 1:
+        return plans[0]
+    feature_sets = [_plan_features(p) for p in plans]
+    freq: Counter = Counter()
+    for features in feature_sets:
+        freq.update(features)
+    best_idx, best_score = 0, None
+    for idx, features in enumerate(feature_sets):
+        score = sum(freq[f] for f in features)
+        if best_score is None or score > best_score:  # strict: ties keep the earlier (neutral-first)
+            best_idx, best_score = idx, score
+    return plans[best_idx]
 
 
 def _pr_title(pr: dict) -> str:
@@ -588,9 +667,8 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     return out[:n]
 
 
-def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
-    if not isinstance(context, dict):
-        return _offline_plan_stub({}, n)
+def _one_plan(context: dict, philosophy: dict, n: int, llm, framing: str = "") -> list:
+    """One normalized candidate plan for a single prompt framing (pre-queue-reconciliation)."""
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
@@ -599,6 +677,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"
         f"{OBJECTIVE_ANCHOR_GUIDANCE}"
+        f"{framing}"
     )
     stub = _offline_plan_stub(context, n)
     plan = llm.chat_json(SYSTEM, user, stub=stub)
@@ -613,7 +692,18 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
             plan = _plan_list(raw_plan, "plan") or _plan_list(plan.get("actions"), "actions")
         else:
             plan = _plan_list(plan.get("actions"), "actions")
-    plan = _normalize_plan(plan if isinstance(plan, list) else [])
+    return _normalize_plan(plan if isinstance(plan, list) else [])
+
+
+def plan_next_actions(context: dict, philosophy: dict, n: int, llm, k: int = PLAN_ENSEMBLE_K) -> list:
+    if not isinstance(context, dict):
+        return _offline_plan_stub({}, n)
+    # Prompt-ensemble (#1537): draw one candidate plan per framing, then keep the consensus.
+    # Offline mode returns a deterministic stub regardless of prompt, so the framings would be
+    # identical — collapse to a single draw to avoid wasted, redundant calls.
+    framings = ("",) if getattr(llm, "offline", False) else _plan_framings(k)
+    candidates = [_one_plan(context, philosophy, n, llm, framing) for framing in framings]
+    plan = _select_consensus(candidates)
     return reconcile_plan_with_queue(plan, context, n)
 
 
