@@ -86,6 +86,16 @@ def test_is_finite_number_rejects_numpy_when_available():
     assert not _is_finite_number(np.int64(3))
 
 
+def test_is_finite_number_rejects_oversized_int_without_raising():
+    # ``math.isfinite`` raises OverflowError for a Python int too big to convert to a float
+    # (json.load yields such an int from an oversized integer literal). It must read as
+    # non-finite instead of crashing the gate (#1417), matching the guard the sibling
+    # integrity modules carry (weight_integrity #1365).
+    assert not _is_finite_number(10**400)
+    assert not _is_finite_number(-(10**400))
+    assert _is_finite_number(10**15)  # large but float-convertible ints still count
+
+
 def test_inflated_composite_mean_fails():
     art = _multi(_repo(2, 0.6), _repo(2, 0.8))
     art["composite_mean"] = 0.99
@@ -120,6 +130,25 @@ def test_nan_headline_composite_fails():
     art["composite_mean"] = float("nan")
     result = check_aggregate_integrity(art)
     assert "composite_mean_matches_repos" in failed_checks(result)
+
+
+def test_oversized_int_headline_composite_fails_without_raising():
+    # A headline composite_mean too large to convert to a float must fail the check with a
+    # clear detail, not crash check_aggregate_integrity with an OverflowError (#1417).
+    art = _multi(_repo(2, 0.6))
+    art["composite_mean"] = 10**400
+    result = check_aggregate_integrity(art)
+    assert result["passed"] is False
+    assert "composite_mean_matches_repos" in failed_checks(result)
+
+
+def test_oversized_int_per_repo_composite_fails_without_raising():
+    # The same guard covers per-repo values: an oversized-int composite_mean on a scored repo
+    # reads as missing/non-finite, failing scored_composites_reported instead of raising.
+    art = _multi(_repo(2, 0.6), _repo(2, 0.8))
+    art["per_repo"][0]["composite_mean"] = 10**400
+    result = check_aggregate_integrity(art)
+    assert "scored_composites_reported" in failed_checks(result)
 
 
 def test_tolerance_accepts_small_delta():

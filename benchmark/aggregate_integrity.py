@@ -44,7 +44,16 @@ def _is_finite_number(value) -> bool:
     """Return True only for finite built-in int/float (reject bool, NaN, inf, numpy)."""
     if type(value) not in (int, float):
         return False
-    return math.isfinite(value)
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        # A Python ``int`` too large to convert to a float raises ``OverflowError`` in
+        # ``math.isfinite`` (json.load produces such ints from an oversized integer literal).
+        # Treat it as malformed rather than letting a single field crash the whole gate --
+        # matching the OverflowError guard the sibling integrity modules already carry
+        # (weight_integrity.py #1365; objective_integrity.py / judge_report_integrity.py /
+        # tally_integrity.py, #616/#927).
+        return False
 
 
 def _dict(value) -> dict:
