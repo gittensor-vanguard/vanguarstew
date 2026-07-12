@@ -39,6 +39,56 @@ def test_generalization_reads_tuned_partition():
     assert out["judge"] == 0.5
 
 
+def test_multi_repo_falls_back_to_per_repo_weights():
+    # run_multi_replay only writes a top-level "weights" for a single-repo result -- a
+    # multi-repo aggregate records it per-repo instead (identical across repos in one run).
+    art = {"per_repo": [{"repo": "r1", "weights": {"judge": 0.6, "objective": 0.4}}]}
+    out = summarize_blend_weights(art)
+    assert out["kind"] == "multi"
+    assert out["judge"] == 0.6
+    assert out["objective"] == 0.4
+    assert out["sum"] == 1.0
+
+
+def test_generalization_partition_falls_back_to_per_repo_weights():
+    # Same gap as the multi-repo case, but inside a generalization partition (no top-level
+    # "weights" on "tuned" either -- only its own per_repo rows carry it).
+    art = {
+        "generalization_gap": 0.1,
+        "tuned": {"per_repo": [{"repo": "r1", "weights": {"judge": 0.55, "objective": 0.45}}]},
+        "held_out": {"per_repo": []},
+    }
+    out = summarize_blend_weights(art)
+    assert out["kind"] == "generalization"
+    assert out["judge"] == 0.55
+    assert out["objective"] == 0.45
+
+
+def test_multi_repo_skips_a_repo_row_without_weights():
+    art = {"per_repo": [
+        {"repo": "r1"},
+        {"repo": "r2", "weights": {"judge": 0.6, "objective": 0.4}},
+    ]}
+    out = summarize_blend_weights(art)
+    assert out["judge"] == 0.6
+
+
+def test_per_repo_fallback_not_used_when_top_level_weights_present():
+    # A single-repo artifact already has top-level weights; the per_repo fallback must not
+    # override it even if per_repo (implausibly) carries something different.
+    art = {
+        "weights": {"judge": 0.7, "objective": 0.3},
+        "per_repo": [{"repo": "r1", "weights": {"judge": 0.1, "objective": 0.9}}],
+    }
+    out = summarize_blend_weights(art)
+    assert out["judge"] == 0.7
+
+
+def test_missing_weights_anywhere_yields_none():
+    out = summarize_blend_weights({"per_repo": [{"repo": "r1"}]})
+    assert out["judge"] is None
+
+
 def test_missing_weights_yield_none():
     out = summarize_blend_weights({"composite_mean": 0.5})
     assert out["judge"] is None
