@@ -11,9 +11,9 @@ if ROOT not in sys.path:
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.decider import (  # noqa: E402
+    _LENS_SYSTEMS,
     SYSTEM,
     VALID_ACTIONS,
-    _LENS_SYSTEMS,
     _normalize_action,
     _normalize_labels,
     _normalize_lens_verdict,
