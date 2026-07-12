@@ -37,13 +37,25 @@ def _dict(value) -> dict:
 
 
 def _tally_counts(slice_) -> tuple[int, int, int] | None:
-    tally = _dict(slice_).get("tally")
-    if not isinstance(tally, dict):
-        return None
-    counts = [tally.get(k) for k in ("challenger", "baseline", "tie")]
-    if not all(_is_int(c) and c >= 0 for c in counts):
-        return None
-    return counts[0], counts[1], counts[2]
+    slice_ = _dict(slice_)
+    tally = slice_.get("tally")
+    if isinstance(tally, dict):
+        counts = [tally.get(k) for k in ("challenger", "baseline", "tie")]
+        if all(_is_int(c) and c >= 0 for c in counts):
+            return counts[0], counts[1], counts[2]
+    # A *valid* top-level ``tally`` always takes precedence (returned above). When it is absent or
+    # malformed, a multi-repo aggregate keeps its win/loss/tie counts in ``judge_report``
+    # (wins/losses/ties) instead -- ``run_multi_replay`` writes no top-level tally for it -- so fall
+    # back to that, mirroring ``win_rate`` and ``margin_outlook._margin``. Every one of the three
+    # keys must be present and a non-negative int, so a ``judge_report`` with a missing key or a
+    # non-int value fails closed to ``None`` exactly like a malformed tally.
+    report = slice_.get("judge_report")
+    if isinstance(report, dict):
+        counts = [report.get(k) for k in ("wins", "losses", "ties")]
+        if all(_is_int(c) and c >= 0 for c in counts):
+            logger.debug("decisive_rate: no usable top-level tally; using judge_report wins/losses/ties")
+            return counts[0], counts[1], counts[2]
+    return None
 
 
 _NONE_SLICE = {
@@ -84,7 +96,9 @@ def _slice_summary(slice_) -> dict:
 def summarize_decisive_rate(result) -> dict:
     """Return decisive/tie share summary for a replay ``result`` artifact.
 
-    Single- and multi-repo artifacts report a top-level slice from the artifact's own ``tally``.
+    A single-repo artifact reports a top-level slice from its own ``tally``; a multi-repo
+    aggregate carries no top-level ``tally``, so its counts fall back to the top-level
+    ``judge_report`` (mirroring :func:`benchmark.win_rate`).
     A ``generalization`` artifact has no top-level tally, so its overall is summed from the
     ``tuned`` and ``held_out`` partition tallies (mirroring :func:`benchmark.win_rate`); it also
     adds a ``partitions`` map. A missing or malformed tally yields ``None`` rates, and a
