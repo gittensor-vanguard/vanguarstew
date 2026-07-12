@@ -191,11 +191,32 @@ def test_generalization_missing_partition_yields_none_overall_but_keeps_partitio
     assert out["partitions"]["held_out"]["total"] is None
 
 
-def test_generalization_both_partitions_zero_total_yields_none_rate():
+def test_generalization_both_partitions_zero_total_yields_none_overall():
+    # After the #1530 fix the overall is gated on each partition's derived decisive_rate being
+    # non-None; two zero-task partitions both have a None rate, so the overall nulls out entirely
+    # (total None), matching the sibling fixes rather than reporting a fabricated 0-of-0.
     out = summarize_decisive_rate(_gen({"challenger": 0, "baseline": 0, "tie": 0},
                                        {"challenger": 0, "baseline": 0, "tie": 0}))
-    assert out["total"] == 0
+    assert out["total"] is None
     assert out["decisive_rate"] is None
+
+
+def test_generalization_asymmetric_zero_task_partition_nulls_overall():
+    # #1530: a zero-task held_out partition has an integer (all-zero) total but a None rate. The
+    # old gate (both totals are ints) summed it in, presenting the tuned partition's 0.8 as the
+    # whole-run rate. The overall must now be None, while each partition still reports its own
+    # figures (tuned coherent, held_out's rate None).
+    out = summarize_decisive_rate(_gen({"challenger": 6, "baseline": 2, "tie": 2},   # tuned 8/10
+                                       {"challenger": 0, "baseline": 0, "tie": 0}))  # held_out 0 tasks
+    assert out["kind"] == "generalization"
+    assert out["total"] is None
+    assert out["decisive"] is None
+    assert out["decisive_rate"] is None
+    # partitions untouched: tuned keeps its real numbers; held_out reports its zero-task None rate
+    assert out["partitions"]["tuned"]["total"] == 10
+    assert out["partitions"]["tuned"]["decisive_rate"] == 0.8
+    assert out["partitions"]["held_out"]["total"] == 0
+    assert out["partitions"]["held_out"]["decisive_rate"] is None
 
 
 def test_single_repo_reports_kind_and_null_partitions():
