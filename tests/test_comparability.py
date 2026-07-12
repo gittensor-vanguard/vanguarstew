@@ -371,3 +371,52 @@ def test_cli_rejects_non_object_json(tmp_artifacts, capsys):
     good = tmp_artifacts("good.json", _multi("a"))
     assert cli.run([good, str(bad)]) == 2
     assert "JSON object" in capsys.readouterr().err
+
+
+def test_cli_directory_path_exits_two(tmp_artifacts, tmp_path, capsys):
+    # A directory artifact path is an OSError (IsADirectoryError on POSIX), not a
+    # FileNotFoundError -- it must exit 2 with an actionable message, not a raw traceback.
+    good = tmp_artifacts("good.json", _multi("a"))
+    assert cli.run([good, str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert ("directory" in err or "not readable" in err) and "Traceback" not in err
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    # Platform-agnostic: force IsADirectoryError (Windows raises PermissionError on a dir) so the
+    # dedicated handler is proven live -- SystemExit(2), the specific message, and no traceback.
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    # A non-directory, non-permission OSError (e.g. I/O error, ENAMETOOLONG) hits the generic
+    # OSError fallback rather than dumping a traceback.
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "Traceback" not in err
