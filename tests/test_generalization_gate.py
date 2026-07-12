@@ -123,6 +123,33 @@ def test_a_non_finite_composite_is_not_a_real_score(bad):
     assert "inf" not in headline.lower() and "nan" not in headline.lower()
 
 
+def test_an_oversized_int_scored_repos_does_not_crash_and_fails_closed():
+    # math.isfinite raises OverflowError on a Python int too large to convert to a float, and
+    # json parses an arbitrarily long integer literal into an int -- so an oversized scored_repos
+    # must be guarded, not crash the gate. It is treated as non-numeric: enough_held_out_repos
+    # fails closed and held_out_repos is unavailable (mirrors gap_outlook #1479 / skip_share #1502).
+    big = 10 ** 400
+    result = check_generalization(
+        {"tuned": _part(4, 0.68), "held_out": {"composite_mean": 0.66, "scored_repos": big}},
+        max_gap=0.1, min_held_out_repos=2,
+    )
+    assert result["passed"] is False
+    assert "enough_held_out_repos" in failed_checks(result)
+    assert result["held_out_repos"] is None
+
+
+def test_an_oversized_int_composite_is_not_a_real_score():
+    big = 10 ** 400
+    assert _composite({"scored_repos": 4, "composite_mean": big}) is None
+    result = check_generalization(
+        {"tuned": {"composite_mean": big, "scored_repos": 4}, "held_out": _part(3, 0.66)},
+        max_gap=0.1,
+    )
+    assert result["passed"] is False
+    assert "has_partitions" in failed_checks(result)
+    assert result["tuned_composite"] is None and result["gap"] is None
+
+
 def test_a_held_out_score_above_tuned_is_within_tolerance():
     # Negative gap (held-out beat tuned) always passes the tolerance check.
     result = check_generalization(_gen(0.60, 0.66), max_gap=0.1)

@@ -39,7 +39,21 @@ _CHECK_ROW_KEYS = ("name", "passed")
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    ``math.isfinite`` raises ``OverflowError`` for a Python ``int`` too large to convert to a
+    ``float``, and ``json`` parses an arbitrarily long integer literal into a Python ``int`` -- so
+    a hand-edited or degenerate artifact's oversized ``scored_repos``/``composite_mean`` would
+    crash the gate outright. Guard it the same way every other ``_is_number`` in this codebase
+    does (``gap_outlook`` #1479, ``skip_share`` #1502, ``acceptance``, ``component_floor``,
+    ``composite_spread``), treating the oversized int as non-numeric so the gate fails closed.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:
