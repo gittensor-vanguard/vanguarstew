@@ -237,5 +237,45 @@
       }
     },
     "merged": true
+  },
+  {
+    "timestamp": "2026-07-12T03:23:52.059331+00:00",
+    "pr_number": 1495,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.086,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.234
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.025
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.071
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.011,
+        "composite_score": 0.728,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.254,
+        "composite_score": 0.898,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
   }
 ]
