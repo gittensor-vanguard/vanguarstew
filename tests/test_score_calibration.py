@@ -205,6 +205,24 @@ def test_values_match_does_not_raise_on_non_finite_or_oversized_expected():
     assert _values_match(0.5, 0.6, 0.001) is False
 
 
+def test_values_match_does_not_raise_on_non_finite_or_oversized_actual():
+    # Symmetric to the `expected` case: a corrupt value on the ACTUAL side must also fail the
+    # finite guard and degrade to `==` rather than reaching float() and raising. `actual` is
+    # normally a computed score, but the comparison must be safe regardless of which side is bad.
+    assert _values_match(0.5, _OVERSIZED_INT, 0.001) is False
+    assert _values_match(0.5, float("nan"), 0.001) is False
+    assert _values_match(0.5, float("inf"), 0.001) is False
+    # both sides corrupt: still no raise, still a mismatch
+    assert _values_match(_OVERSIZED_INT, float("inf"), 0.001) is False
+
+
+def test_failed_ids_list_drops_non_finite_items_without_coercion():
+    # _failed_ids_list filters for non-empty strings only; a non-finite/oversized numeric id is
+    # dropped, never coerced through float(), so it cannot raise OverflowError.
+    assert _failed_ids_list(["ok", float("nan"), float("inf"), _OVERSIZED_INT, ""]) == ["ok"]
+    assert failed_scenarios({"failed": [_OVERSIZED_INT, "keep"]}) == ["keep"]
+
+
 def test_check_calibration_fails_not_crashes_on_a_corrupt_expected_value():
     # A scenario whose `expected` carries an oversized/non-finite number must fail (mismatch),
     # while a well-formed scenario in the same corpus still passes — no crash, per the contract.

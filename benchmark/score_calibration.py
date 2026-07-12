@@ -127,6 +127,10 @@ def _is_number(value) -> bool:
 def _values_match(expected, actual, tolerance: float) -> bool:
     if isinstance(expected, bool):
         return expected is actual
+    # The numeric branch requires BOTH operands to pass the finite `_is_number` guard, so a
+    # non-finite/oversized value on *either* side — a corrupt `expected` OR a degenerate `actual`
+    # — never reaches float(). Such a comparison degrades to `==` (mismatch) instead of raising
+    # OverflowError and aborting the run, upholding the "fail rather than crash" contract (#1489).
     if _is_number(expected) and _is_number(actual):
         return abs(float(expected) - float(actual)) <= tolerance
     return expected == actual
@@ -204,6 +208,9 @@ def _failed_ids_list(failed) -> list[str]:
                 type(failed).__name__,
             )
         return []
+    # Scenario ids are strings; keep only non-empty strings. This never coerces an item to a
+    # number, so a non-finite/oversized value slipped into the list is simply dropped — there is
+    # no float() path here to raise OverflowError.
     return [item for item in failed if isinstance(item, str) and item.strip()]
 
 
