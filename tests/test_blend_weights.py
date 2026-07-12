@@ -1,6 +1,7 @@
 """Tests for blend weights summary and CLI (deterministic, offline)."""
 
 import json
+import logging
 import os
 import sys
 
@@ -87,6 +88,51 @@ def test_per_repo_fallback_not_used_when_top_level_weights_present():
 def test_missing_weights_anywhere_yields_none():
     out = summarize_blend_weights({"per_repo": [{"repo": "r1"}]})
     assert out["judge"] is None
+
+
+def test_malformed_per_repo_row_is_skipped_in_favor_of_a_later_valid_one():
+    # A row whose "weights" field is present but the wrong type (a string, not an object) must
+    # not stop the scan -- a later row with real weights is still found.
+    art = {"per_repo": [
+        {"repo": "r1", "weights": "not an object"},
+        {"repo": "r2", "weights": {"judge": 0.6, "objective": 0.4}},
+    ]}
+    out = summarize_blend_weights(art)
+    assert out["judge"] == 0.6
+    assert out["objective"] == 0.4
+
+
+def test_all_per_repo_rows_malformed_logs_a_warning_and_yields_none(caplog):
+    art = {"per_repo": [{"repo": "r1", "weights": "bad"}, {"repo": "r2", "weights": 42}]}
+    with caplog.at_level(logging.WARNING, logger="benchmark.blend_weights"):
+        out = summarize_blend_weights(art)
+    assert out["judge"] is None
+    assert any("malformed" in r.message for r in caplog.records)
+
+
+def test_per_repo_rows_with_no_weights_field_logs_a_warning(caplog):
+    art = {"per_repo": [{"repo": "r1"}, {"repo": "r2"}]}
+    with caplog.at_level(logging.WARNING, logger="benchmark.blend_weights"):
+        out = summarize_blend_weights(art)
+    assert out["judge"] is None
+    assert any("no weights field" in r.message for r in caplog.records)
+
+
+def test_empty_per_repo_logs_a_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.blend_weights"):
+        out = summarize_blend_weights({"per_repo": []})
+    assert out["judge"] is None
+    assert any("per_repo is empty" in r.message for r in caplog.records)
+
+
+def test_missing_tuned_partition_yields_none_and_logs_a_warning(caplog):
+    # A generalization-shaped artifact (generalization_gap present) whose "tuned" key is
+    # missing/malformed must still degrade to None, not raise or silently omit a warning.
+    art = {"generalization_gap": 0.1, "held_out": {"per_repo": []}}
+    with caplog.at_level(logging.WARNING, logger="benchmark.blend_weights"):
+        out = summarize_blend_weights(art)
+    assert out["judge"] is None
+    assert len(caplog.records) >= 1
 
 
 def test_missing_weights_yield_none():

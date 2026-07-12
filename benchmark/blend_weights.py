@@ -50,13 +50,42 @@ def _per_repo_weights(container: dict):
     multi-repo aggregate, and every generalization partition, record ``weights`` inside each
     ``per_repo`` row instead (the blend is identical across repos in one run), with no
     top-level ``weights`` at all. Mirrors ``score_integrity._weights``'s fallback.
+
+    Called only once the top-level lookup has already failed, so every path out of here is a
+    terminal "weights unavailable" outcome -- each is logged with why, mirroring
+    ``score_integrity._warn_default_weights``, rather than failing silently.
     """
     per_repo = container.get("per_repo")
     if not isinstance(per_repo, list):
+        if per_repo is not None:
+            logger.warning(
+                "blend_weights: per_repo is %s, not a list; no per-repo weights to fall back to",
+                type(per_repo).__name__,
+            )
+        else:
+            logger.warning(
+                "blend_weights: no top-level weights and no per_repo rows to fall back to"
+            )
         return None
+    malformed = 0
     for entry in per_repo:
-        if isinstance(entry, dict) and isinstance(entry.get("weights"), dict):
-            return entry["weights"]
+        if not isinstance(entry, dict):
+            continue
+        weights = entry.get("weights")
+        if isinstance(weights, dict):
+            return weights
+        if weights is not None:
+            malformed += 1
+    if malformed:
+        logger.warning(
+            "blend_weights: %d per_repo row(s) had a malformed (non-object) weights field and "
+            "none had usable weights",
+            malformed,
+        )
+    elif per_repo:
+        logger.warning("blend_weights: per_repo rows carry no weights field at all")
+    else:
+        logger.warning("blend_weights: per_repo is empty; no rows to fall back to")
     return None
 
 
