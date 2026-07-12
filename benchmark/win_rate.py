@@ -36,13 +36,23 @@ def _dict(value) -> dict:
 
 
 def _tally_counts(slice_) -> tuple[int, int, int] | None:
-    tally = _dict(slice_).get("tally")
-    if not isinstance(tally, dict):
-        return None
-    counts = [tally.get(k) for k in ("challenger", "baseline", "tie")]
-    if not all(_is_int(c) and c >= 0 for c in counts):
-        return None
-    return counts[0], counts[1], counts[2]
+    slice_ = _dict(slice_)
+    tally = slice_.get("tally")
+    if isinstance(tally, dict):
+        counts = [tally.get(k) for k in ("challenger", "baseline", "tie")]
+        if all(_is_int(c) and c >= 0 for c in counts):
+            return counts[0], counts[1], counts[2]
+    # A multi-repo aggregate carries no top-level ``tally`` -- ``run_multi_replay`` records the
+    # aggregate win/loss/tie counts in ``judge_report`` (wins/losses/ties) instead -- so fall back
+    # to it, mirroring ``margin_outlook._margin`` and ``judge_wlt``. The same non-negative-int
+    # validation applies, so a malformed ``judge_report`` still fails closed to ``None``, and an
+    # explicit ``tally`` always takes precedence.
+    report = slice_.get("judge_report")
+    if isinstance(report, dict):
+        counts = [report.get(k) for k in ("wins", "losses", "ties")]
+        if all(_is_int(c) and c >= 0 for c in counts):
+            return counts[0], counts[1], counts[2]
+    return None
 
 
 _NONE_SLICE = {
@@ -82,7 +92,9 @@ def _slice_summary(slice_) -> dict:
 def summarize_win_rate(artifact) -> dict:
     """Return win-rate summary for a replay ``artifact``.
 
-    Single- and multi-repo artifacts report a top-level slice from the artifact's own ``tally``.
+    A single-repo artifact reports a top-level slice from its own ``tally``; a multi-repo
+    aggregate carries no top-level ``tally``, so its counts fall back to the top-level
+    ``judge_report`` (mirroring the sibling win/loss utilities).
     A ``generalization`` artifact has no top-level tally, so its overall is summed from the
     ``tuned`` and ``held_out`` partition tallies (mirroring the sibling share/rate utilities);
     it also adds a ``partitions`` map. A missing or malformed tally yields ``None`` rates, and a
