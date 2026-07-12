@@ -366,6 +366,14 @@ def test_cli_missing_file_exits_two(tmp_artifacts, capsys):
     assert "not found" in capsys.readouterr().err
 
 
+def test_cli_directory_path_exits_two(tmp_path, tmp_artifacts, capsys):
+    # A directory path raises IsADirectoryError inside open(); the CLI must report it cleanly and
+    # exit 2, not dump a raw traceback (mirrors generalization_gate #1446 / objective_integrity #1377).
+    good = tmp_artifacts("good.json", _multi("a"))
+    assert cli.run([good, str(tmp_path)]) == 2
+    assert "directory" in capsys.readouterr().err
+
+
 def test_cli_rejects_non_object_json(tmp_artifacts, capsys):
     bad = tmp_artifacts("bad.json", [1, 2, 3])
     good = tmp_artifacts("good.json", _multi("a"))
