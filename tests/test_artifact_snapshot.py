@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -264,3 +265,25 @@ def test_cli_missing_file_exits_two(tmp_artifact, capsys):
     good = tmp_artifact("good.json", _single())
     assert cli.run([good, "missing.json"]) == 2
     assert "not found" in capsys.readouterr().err
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory path raises IsADirectoryError inside open(); the CLI must report it cleanly and
+    # exit 2, not dump a raw traceback (mirrors generalization_gate #1446 / objective_integrity #1377).
+    assert cli.run([str(tmp_path)]) == 2
+    assert "directory" in capsys.readouterr().err
+
+
+def test_cli_unreadable_file_exits_two(capsys):
+    # An unreadable file raises PermissionError; the CLI reports it cleanly and exits 2.
+    with patch("builtins.open", side_effect=PermissionError("denied")):
+        assert cli.run(["locked.json"]) == 2
+    assert "not readable" in capsys.readouterr().err
+
+
+def test_cli_generic_os_error_exits_two(capsys):
+    # Any other OSError (e.g. an I/O error) is reported cleanly with its message, not a traceback.
+    with patch("builtins.open", side_effect=OSError("I/O error")):
+        assert cli.run(["flaky.json"]) == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "I/O error" in err
