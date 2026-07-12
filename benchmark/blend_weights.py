@@ -43,16 +43,36 @@ def _headline_partition(artifact: dict) -> dict:
     return artifact
 
 
+def _per_repo_weights(container: dict):
+    """The first ``per_repo`` row's ``weights`` dict, or ``None``.
+
+    ``run_multi_replay`` only writes a top-level ``weights`` for a single-repo result -- a
+    multi-repo aggregate, and every generalization partition, record ``weights`` inside each
+    ``per_repo`` row instead (the blend is identical across repos in one run), with no
+    top-level ``weights`` at all. Mirrors ``score_integrity._weights``'s fallback.
+    """
+    per_repo = container.get("per_repo")
+    if not isinstance(per_repo, list):
+        return None
+    for entry in per_repo:
+        if isinstance(entry, dict) and isinstance(entry.get("weights"), dict):
+            return entry["weights"]
+    return None
+
+
 def summarize_blend_weights(artifact) -> dict:
     """Return blend weights from a replay ``artifact``."""
     artifact = _dict(artifact)
-    weights = _headline_partition(artifact).get("weights")
+    partition = _headline_partition(artifact)
+    weights = partition.get("weights")
     if not isinstance(weights, dict):
         if weights is not None:
             logger.warning(
                 "blend_weights: weights is %s, not an object; treating as empty",
                 type(weights).__name__,
             )
+        weights = _per_repo_weights(partition)
+    if not isinstance(weights, dict):
         return {
             "kind": artifact_kind(artifact),
             "judge": None,
