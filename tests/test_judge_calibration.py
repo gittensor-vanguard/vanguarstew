@@ -47,6 +47,21 @@ def test_shipped_corpus_passes_calibration():
     assert failed_scenarios(result) == []
 
 
+def test_failed_list_does_not_double_count_a_scenario_failing_both_checks(monkeypatch):
+    # A scenario runs through both the winner check and the symmetry check under the same id, so one
+    # that fails BOTH must appear once in `failed` (the set of ids that failed any check), not twice
+    # -- otherwise failed_scenarios() reports duplicates and the headline shows an impossible ratio
+    # (e.g. "2/1 failed"). Force an asymmetric judge (always "A") so the A/B swap does not flip
+    # (symmetry fails) while expected_winner "B" also fails the winner check.
+    monkeypatch.setattr("benchmark.judge_calibration.pairwise_judge", lambda *a, **k: "A")
+    scenario = dict(_VALID, id="both_fail", expected_winner="B", expect_symmetric=True)
+    result = check_calibration([scenario])
+    assert result["failed"] == ["both_fail"]
+    assert failed_scenarios(result) == ["both_fail"]
+    assert result["passed"] is False
+    assert "2/1" not in calibration_headline(result)
+
+
 def test_load_manifest_and_corpus_are_consistent():
     manifest = load_manifest()
     corpus = load_corpus()

@@ -176,8 +176,14 @@ def check_calibration(corpus: list[dict] | None = None, llm: LLM | None = None) 
         "scenario_count": len(results),
         "results": results,
         "symmetry_checks": symmetry,
-        "failed": [r["id"] for r in results if not r["passed"]]
-               + [s["id"] for s in symmetry if not s["passed"]],
+        # ``failed`` is the set of scenario ids that failed ANY check. A scenario runs through both
+        # the winner check (``results``) and the symmetry check (``symmetry``) under the same id, so
+        # one that fails both must be listed once, not twice -- dedup preserving first-seen order
+        # (mirrors score_calibration, whose single-source ``failed`` never duplicates).
+        "failed": list(dict.fromkeys(
+            [r["id"] for r in results if not r["passed"]]
+            + [s["id"] for s in symmetry if not s["passed"]]
+        )),
     }
 
 
