@@ -21,6 +21,32 @@ def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _usable_tasks(tasks, where: str) -> bool:
+    """True when ``tasks`` is a positive int that also converts to a float.
+
+    A Python ``int`` too large to convert to a float (``json.load`` produces one from an
+    oversized integer literal) passes the plain int check and then overflows both the
+    single-kind ``float(tasks)`` conversion and the summed-mean ``total / scored`` division
+    (#1418). Probe the conversion up front and skip the count with a warning — mirroring the
+    oversized-int hardening in weight_integrity (#1365) and honoring this module's "logged
+    and skipped rather than raising" contract. Every accepted count converts to a float, and
+    a mean of accepted counts can never exceed the largest of them, so the mean divisions
+    cannot overflow either.
+    """
+    if not (_is_int(tasks) and tasks > 0):
+        return False
+    try:
+        float(tasks)
+    except OverflowError:
+        logger.warning(
+            "repo_task_mean: %s tasks count is an int too large to convert to a float; "
+            "skipping",
+            where,
+        )
+        return False
+    return True
+
+
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
@@ -53,7 +79,7 @@ def _partition_stats(per_repo, field: str = "per_repo") -> dict:
     task_counts = []
     for row in _rows_from_per_repo(per_repo, field):
         tasks = row.get("tasks")
-        if _is_int(tasks) and tasks > 0:
+        if _usable_tasks(tasks, field):
             task_counts.append(tasks)
     scored = len(task_counts)
     total = sum(task_counts)
@@ -71,7 +97,7 @@ def summarize_repo_task_mean(artifact) -> dict:
     kind = artifact_kind(artifact)
     if kind == "single":
         tasks = artifact.get("tasks")
-        if _is_int(tasks) and tasks > 0:
+        if _usable_tasks(tasks, "artifact"):
             stats = {"scored_repos": 1, "total_tasks": tasks, "mean_tasks_per_repo": float(tasks)}
         else:
             stats = {"scored_repos": 0, "total_tasks": 0, "mean_tasks_per_repo": None}

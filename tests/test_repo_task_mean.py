@@ -1,6 +1,7 @@
 """Tests for repo task mean summary and CLI (deterministic, offline)."""
 
 import json
+import logging
 import os
 import sys
 
@@ -69,6 +70,45 @@ def test_headline():
     assert "mean 3.000" in repo_task_mean_headline(out)
 
 
+# --- #1418: a tasks count too large to convert to a float is skipped, not raised ------
+
+
+def test_single_oversized_tasks_count_skipped_without_raising(caplog):
+    # json.load yields a plain int from an oversized integer literal; it passes the int
+    # check but float(tasks) raises OverflowError. It must read as unscored with a warning.
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_task_mean"):
+        out = summarize_repo_task_mean({"composite_mean": 0.5, "tasks": 10**400})
+    assert out["scored_repos"] == 0
+    assert out["total_tasks"] == 0
+    assert out["mean_tasks_per_repo"] is None
+    assert "mean n/a" in repo_task_mean_headline(out)
+    assert any("too large" in r.message for r in caplog.records)
+
+
+def test_multi_oversized_tasks_count_skipped_scores_remaining(caplog):
+    # The oversized count is dropped like any other malformed row; the good repo still
+    # counts and the summed-mean division no longer overflows.
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_task_mean"):
+        out = summarize_repo_task_mean(_multi(10**400, 5))
+    assert out["scored_repos"] == 1
+    assert out["total_tasks"] == 5
+    assert out["mean_tasks_per_repo"] == 5.0
+    assert any("too large" in r.message for r in caplog.records)
+
+
+def test_generalization_oversized_tasks_count_skipped():
+    art = {
+        "tuned": _multi(10**400, 4),
+        "held_out": _multi(2),
+        "generalization_gap": 0.0,
+    }
+    out = summarize_repo_task_mean(art)
+    assert out["scored_repos"] == 2
+    assert out["total_tasks"] == 6
+    assert out["mean_tasks_per_repo"] == 3.0
+    assert out["partitions"]["tuned"]["scored_repos"] == 1
+
+
 @pytest.fixture
 def tmp_artifact(tmp_path):
     def write(payload):
@@ -92,3 +132,13 @@ def test_cli_directory_path_exits_two(tmp_path, capsys):
     assert cli.run([str(tmp_path)]) == 2
     err = capsys.readouterr().err
     assert "directory" in err or "not readable" in err
+
+
+def test_cli_oversized_tasks_count_produces_clean_summary(tmp_artifact, capsys):
+    # End-to-end repro from #1418: an oversized tasks count in the artifact must yield a
+    # clean summary (exit 0, mean null), not an OverflowError traceback out of the summarizer.
+    path = tmp_artifact({"composite_mean": 0.5, "tasks": 10**400})
+    assert cli.run([path]) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["scored_repos"] == 0
+    assert body["mean_tasks_per_repo"] is None
