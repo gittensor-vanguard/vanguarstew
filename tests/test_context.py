@@ -23,8 +23,10 @@ from agent.context import (  # noqa: E402
     _context_from_git,
     _looks_like_sha,
     _mask_forward_refs,
+    _repo_layout,
     context_for_agent,
     load_context,
+    module_activity,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
@@ -375,8 +377,10 @@ def test_load_context_reads_a_valid_file_from_the_file_not_git():
         with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
             json.dump(payload, f)
         out = load_context(repo)
-        assert out == payload
+        for key, value in payload.items():  # file content returned verbatim...
+            assert out[key] == value
         assert out["_source"] == "github-api"  # from the file, not the git rebuild ("git")
+        assert "repo_layout" in out  # ...plus the knowable-at-T repo layout attached from the checkout
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
@@ -712,3 +716,61 @@ def test_context_from_git_masks_forward_refs_in_subjects_and_readme():
         assert "Roadmap" in ctx["readme_excerpt"]           # substantive prose preserved
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+# --- #1535: structural grounding — repo layout + recent module activity --------------------
+
+def test_repo_layout_lists_real_top_level_modules_and_skips_noise(tmp_path):
+    for d in ("agent", "benchmark", "scripts", "__pycache__", ".git", "node_modules"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "README.md").write_text("x", encoding="utf-8")   # a file, not a module
+    (tmp_path / CONTEXT_FILE).write_text("{}", encoding="utf-8")  # the sidecar, excluded
+    layout = _repo_layout(str(tmp_path))
+    assert layout == ["agent", "benchmark", "scripts"]           # sorted, dirs only, noise removed
+
+
+def test_repo_layout_returns_empty_on_unreadable_path():
+    assert _repo_layout(os.path.join("does", "not", "exist")) == []
+
+
+def test_module_activity_ranks_modules_by_recent_scope_frequency():
+    commits = [
+        {"subject": "fix(scripts): a"}, {"subject": "feat(scripts): b"},
+        {"subject": "fix(benchmark): c"}, {"subject": "chore(agent)!: d"},
+        {"subject": "docs: no scope here"}, {"subject": "fix(agent/context): e"},
+        "not-a-dict", {"subject": 123},
+    ]
+    # scripts x2, agent x2 (agent/context -> agent), benchmark x1; ordered by frequency
+    assert module_activity(commits) == ["scripts", "agent", "benchmark"]
+
+
+def test_module_activity_empty_without_scopes_and_tolerates_malformed():
+    assert module_activity([{"subject": "add a thing"}, {"subject": "Merge branch"}]) == []
+    assert module_activity(None) == []          # non-list tolerated
+    assert module_activity("nope") == []
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_attaches_repo_layout_from_the_checkout():
+    repo = _repo_with_commit()
+    try:
+        (os.path.join(repo, "agent"))
+        os.mkdir(os.path.join(repo, "benchmark"))
+        ctx = load_context(repo)
+        assert isinstance(ctx.get("repo_layout"), list)
+        assert "benchmark" in ctx["repo_layout"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_context_for_agent_exposes_repo_layout_and_module_activity():
+    ctx = {
+        "repo_layout": ["agent", "benchmark"],
+        "recent_commits": [{"subject": "fix(agent): x"}, {"subject": "feat(agent): y"},
+                           {"subject": "fix(benchmark): z"}],
+    }
+    view = context_for_agent(ctx)
+    assert view["repo_layout"] == ["agent", "benchmark"]
+    assert view["module_activity"] == ["agent", "benchmark"]     # agent x2 > benchmark x1
+    # a missing/garbage repo_layout degrades to [] rather than propagating a bad shape
+    assert context_for_agent({"repo_layout": "oops"})["repo_layout"] == []

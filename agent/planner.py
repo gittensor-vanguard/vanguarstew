@@ -106,6 +106,11 @@ PLAN_ITEM_SCHEMA = (
 OBJECTIVE_ANCHOR_GUIDANCE = (
     "Concrete specificity matters: for each non-triage item, include `files` naming the "
     "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`). "
+    "Ground those in `repo_layout` (the repo's ACTUAL top-level modules) — name the specific "
+    "module(s) that item would realistically touch, and lean toward the ones in "
+    "`module_activity` (where recent maintainer effort is concentrating), since work tends to "
+    "continue where it has been. Name only the module(s) an item genuinely touches — do not "
+    "list the whole layout. "
     "Pick `kind` to match the maintainer commit type the action would produce "
     "(bugfix/fix, feature/feat, docs, release, refactor, dep). When releases, milestones, "
     "or recent history signal an upcoming version cut, include a `release`-kind item."
@@ -622,5 +627,6 @@ def _render(context: dict) -> str:
     keep = {k: ctx.get(k) for k in (
         "frozen_at", "recent_commits", "open_issues", "open_prs",
         "labels", "milestones", "releases", "readme_excerpt",
+        "repo_layout", "module_activity",
     )}
     return json.dumps(keep, indent=1)[:12000]

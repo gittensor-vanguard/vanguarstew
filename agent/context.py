@@ -13,8 +13,68 @@ import logging
 import os
 import re
 import subprocess
+from collections import Counter
 
 logger = logging.getLogger(__name__)
+
+# Conventional-Commit scope: the "(scope)" in "fix(scripts): ...". The scope names the area
+# the maintainer worked in, so its frequency across recent commits is a knowable-at-T signal
+# of where effort is concentrating — the strongest deterministic predictor of what changes next.
+_CC_SCOPE_RE = re.compile(r"^\s*[a-z]+\(([^)]+)\)!?:", re.I)
+
+# Build/cache/virtualenv dirs are not maintainer-facing modules; keep them out of repo_layout.
+_LAYOUT_IGNORE = frozenset({
+    "__pycache__", "node_modules", ".git", "venv", ".venv", "env", "build", "dist",
+    ".pytest_cache", ".ruff_cache", ".mypy_cache", ".tox", ".idea", ".vscode", "egg-info",
+})
+
+
+def _repo_layout(repo_path: str, limit: int = 40) -> list:
+    """Top-level module/dir names that actually exist in the frozen checkout at T.
+
+    Grounds the agent's plan in the repo's REAL module names (what
+    ``benchmark.score.changed_modules`` keys on) instead of generic guesses — knowable-at-T
+    (the current tree) and leakage-safe (no future information). Dotfiles/dirs and the context
+    sidecar are excluded. Returns [] rather than raising on any read error.
+    """
+    try:
+        entries = os.listdir(repo_path)
+    except OSError:
+        return []
+    mods = sorted(
+        e for e in entries
+        if not e.startswith(".") and e not in _LAYOUT_IGNORE and e != CONTEXT_FILE
+        and os.path.isdir(os.path.join(repo_path, e))
+    )
+    return mods[:limit]
+
+
+def module_activity(recent_commits, limit: int = 8) -> list:
+    """Top-level modules ranked by recent Conventional-Commit scope frequency (most active first).
+
+    Derived only from recent-commit subjects already in the frozen context (knowable-at-T), so
+    it adds no new leakage surface. A subject without a parseable scope contributes nothing;
+    when no commit carries a scope the result is simply empty (the repo doesn't use scopes).
+    """
+    counts: Counter = Counter()
+    for commit in _agent_context_list(recent_commits, "recent_commits"):
+        subject = commit.get("subject", "") if isinstance(commit, dict) else ""
+        if not isinstance(subject, str):
+            continue
+        match = _CC_SCOPE_RE.match(subject)
+        if not match:
+            continue
+        scope = match.group(1).split(",")[0].split("/")[0].split(".")[0].strip().lower()
+        if scope:
+            counts[scope] += 1
+    return [mod for mod, _ in counts.most_common(limit)]
+
+
+def _with_layout(context, repo_path: str):
+    """Attach the knowable-at-T repo layout to a freshly-loaded context (dicts only)."""
+    if isinstance(context, dict):
+        context.setdefault("repo_layout", _repo_layout(repo_path))
+    return context
 
 CONTEXT_FILE = ".vanguarstew_context.json"
 
@@ -107,7 +167,7 @@ def load_context(repo_path: str) -> dict:
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                return _with_layout(json.load(f), repo_path)
         except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
             # A present-but-unreadable context file must not abort solve(): fall back to
             # rebuilding the knowable-at-T context from the frozen git checkout (leakage-safe —
@@ -128,7 +188,7 @@ def load_context(repo_path: str) -> dict:
                 "load_context: %s unreadable (%s bytes, %s: %s); rebuilding from git",
                 path, size, type(exc).__name__, exc,
             )
-    return _context_from_git(repo_path)
+    return _with_layout(_context_from_git(repo_path), repo_path)
 
 
 def _agent_context_list(items, field: str) -> list:
@@ -191,6 +251,10 @@ def context_for_agent(context: dict) -> dict:
         out[key] = items
     for key in ("recent_commits", "releases", "milestones", "labels"):
         out[key] = _agent_context_list(out.get(key), key)
+    # Structural grounding: the repo's real top-level modules and where recent effort lands.
+    # Both are knowable-at-T and let the planner name actual module names it will touch.
+    out["repo_layout"] = out.get("repo_layout") if isinstance(out.get("repo_layout"), list) else []
+    out["module_activity"] = module_activity(out.get("recent_commits"))
     if out.get("_issues_truncated") is True:
         # Defense in depth for older frozen artifacts that still carry a partial backlog.
         out["open_issues"] = []
