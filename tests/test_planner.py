@@ -16,6 +16,7 @@ from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
+    RELEASE_CADENCE_GUIDANCE,
     _commit_plan_kind,
     _explicit_pr_number,
     _is_review_item,
@@ -30,6 +31,8 @@ from agent.planner import (  # noqa: E402
     _pr_queue_note,
     _pr_title,
     _recent_kinds_note,
+    _release_cadence_note,
+    _release_cadence_signal,
     _safe_prs,
     _significant_tokens,
     plan_next_actions,
@@ -750,7 +753,38 @@ def test_plan_prompt_includes_objective_anchor_guidance():
     assert PLAN_ITEM_SCHEMA.strip() in llm.last_user
     assert OBJECTIVE_ANCHOR_GUIDANCE in llm.last_user
     assert '"files"' in llm.last_user
-# --- recent commit kinds in the planner prompt (#1387) ---
+    assert RELEASE_CADENCE_GUIDANCE not in llm.last_user
+
+
+def test_release_cadence_signal_detects_release_subjects():
+    ctx = {"recent_commits": [{"subject": "feat: add export"}, {"subject": "chore(release): 1.4.0"}]}
+    assert _release_cadence_signal(ctx) is True
+    assert _release_cadence_signal({"recent_commits": [{"subject": "fix: loader"}]}) is False
+    assert _release_cadence_signal({}) is False
+
+
+def test_release_cadence_note_only_when_history_signals_cadence():
+    assert _release_cadence_note({}) == ""
+    note = _release_cadence_note({"recent_commits": [{"subject": "release: 2.0"}]})
+    assert RELEASE_CADENCE_GUIDANCE in note
+
+
+def test_planner_prompt_includes_release_cadence_only_with_history():
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Fix loader", "kind": "bugfix"}]
+
+    plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "fix: a"}]},
+                      {}, 2, CapturingLLM(api_key="offline"))
+    assert RELEASE_CADENCE_GUIDANCE not in captured["user"]
+
+    plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.0.0"}]},
+                      {}, 2, CapturingLLM(api_key="offline"))
+    assert RELEASE_CADENCE_GUIDANCE in captured["user"]
+
 
 
 def test_commit_plan_kind_maps_conventional_prefixes_to_plan_vocabulary():

@@ -14,6 +14,7 @@ from agent.decider import (  # noqa: E402
     _LENS_SYSTEMS,
     SYSTEM,
     VALID_ACTIONS,
+    _is_planning_request,
     _normalize_action,
     _normalize_labels,
     _normalize_lens_verdict,
@@ -21,6 +22,7 @@ from agent.decider import (  # noqa: E402
     _normalize_rationale,
     _normalize_reviewer,
     _normalize_version_bump,
+    _planning_version_bump_note,
     _release_context_note,
     _run_lens,
     decide,
@@ -300,3 +302,45 @@ def test_release_context_note_empty_when_no_releases():
     assert _release_context_note({}) == ""
     assert _release_context_note({"releases": []}) == ""
     assert _release_context_note({"releases": [{"tag": ""}]}) == ""
+
+
+def test_is_planning_request():
+    assert _is_planning_request("plan the next 5 maintainer actions") is True
+    assert _is_planning_request("Plan The Next 3 actions") is True
+    assert _is_planning_request("review PR #1") is False
+    assert _is_planning_request(None) is False
+
+
+def test_planning_version_bump_note_on_planning_request_with_tags():
+    ctx = {"releases": [{"tag": "v1.2.0"}], "recent_commits": [{"subject": "fix: a"}]}
+    note = _planning_version_bump_note(ctx, "plan the next 5 maintainer actions")
+    assert "version_bump" in note
+    assert _planning_version_bump_note(ctx, "merge PR #9") == ""
+    assert _planning_version_bump_note({}, "plan the next 5 maintainer actions") == ""
+
+
+def test_planning_version_bump_note_on_cadence_without_tags():
+    ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}]}
+    note = _planning_version_bump_note(ctx, "plan the next 3 maintainer actions")
+    assert "version_bump" in note
+
+
+def test_decide_prompt_surfaces_planning_bump_note():
+    captured = {}
+
+    class CapturingLLM:
+        offline = False
+
+        def chat_json(self, system, user, stub=None):
+            captured.setdefault("users", []).append(user)
+            if system == SYSTEM:
+                return {
+                    "action": "plan", "labels": [], "reviewer": None,
+                    "version_bump": "minor", "patch": None, "rationale": "cadence",
+                }
+            return {"verdict": "ok", "reasoning": "because"}
+
+    ctx = {"releases": [{"tag": "v2.0.0"}], "recent_commits": [{"subject": "feat: x"}]}
+    decide(ctx, {}, "plan the next 5 maintainer actions", CapturingLLM())
+    synthesis = captured["users"][-1]
+    assert "forward planning" in synthesis and "version_bump" in synthesis

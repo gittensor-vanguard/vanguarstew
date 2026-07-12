@@ -105,10 +105,14 @@ PLAN_ITEM_SCHEMA = (
 
 OBJECTIVE_ANCHOR_GUIDANCE = (
     "Concrete specificity matters: for each non-triage item, include `files` naming the "
-    "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`). "
+    "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
     "Pick `kind` to match the maintainer commit type the action would produce "
-    "(bugfix/fix, feature/feat, docs, release, refactor, dep). When releases, milestones, "
-    "or recent history signal an upcoming version cut, include a `release`-kind item."
+    "(bugfix/fix, feature/feat, docs, release, refactor, dep). When several kinds recur in "
+    "recent history, plan separate items so each kind is covered."
+)
+
+RELEASE_CADENCE_GUIDANCE = (
+    "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
 )
 
 
@@ -226,8 +230,24 @@ def _recent_kinds_note(context: dict) -> str:
         f"\nRecent maintainer activity by kind, from Conventional-Commit subjects: {mix}.\n"
         "Near-future maintainer work usually continues this mix. Unless the philosophy or "
         'the PR queue argues otherwise, make the plan items\' "kind" values collectively '
-        "cover the recurring kinds above.\n"
+        "cover the recurring kinds above, and keep `files` on every non-triage item.\n"
     )
+
+
+def _release_cadence_signal(context: dict) -> bool:
+    """True when recent commits show a release cut (mirrors heuristic_plan cadence)."""
+    return any(
+        _commit_plan_kind(commit.get("subject")) == "release"
+        for commit in _recent_commits(context)
+        if isinstance(commit, dict)
+    )
+
+
+def _release_cadence_note(context: dict) -> str:
+    """Inject release-item guidance only when history evidences release cadence."""
+    if not _release_cadence_signal(context):
+        return ""
+    return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -595,6 +615,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
         f"{_recent_kinds_note(context)}"
+        f"{_release_cadence_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"
