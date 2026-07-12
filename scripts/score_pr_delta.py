@@ -217,9 +217,10 @@ def load_artifact(path: str) -> dict:
     rather than a raw traceback: ``FileNotFoundError`` (missing), ``PermissionError``
     (unreadable), ``IsADirectoryError`` (a directory, not a file), and any other ``OSError``
     (broken symlink, I/O error, ...). Checks the JSON shape directly rather than delegating
-    to a helper that raises a bare ``ValueError`` for it, so nothing here needs -- or risks
-    masking bugs behind -- a catch-all ``except ValueError``. Mirrors the pattern already
-    established in ``scripts/repo_task_mean.py`` and the other CLIs hardened this way (#1376).
+    to a helper that raises a bare ``ValueError`` for it, so the ``except ValueError`` arm
+    below can only ever see ``json.load`` parse/decode failures (#1493), never a masked bug
+    from other code. Mirrors the pattern already established in ``scripts/repo_task_mean.py``
+    and the other CLIs hardened this way (#1376).
     """
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -236,7 +237,10 @@ def load_artifact(path: str) -> dict:
     except OSError as exc:
         print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
-    except json.JSONDecodeError as exc:
+    except ValueError as exc:
+        # json.JSONDecodeError subclasses ValueError, and json.load raises a *plain*
+        # ValueError for an integer literal beyond the int-conversion digit limit
+        # (Python 3.11+), which escaped a JSONDecodeError-only arm as a raw traceback (#1493).
         print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     if not isinstance(data, dict):

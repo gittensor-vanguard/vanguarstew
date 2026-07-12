@@ -344,6 +344,24 @@ def test_cli_invalid_json_exits_two(tmp_path):
     assert "Traceback" not in proc.stderr
 
 
+def test_cli_oversized_integer_literal_exits_two(tmp_path):
+    # Since Python 3.11, json.load raises a *plain* ValueError (not JSONDecodeError) for an
+    # integer literal beyond the int-conversion digit limit (4300). The artifact is
+    # byte-for-byte valid JSON, so it must exit 2 with the clean invalid-JSON message rather
+    # than dump the raw ValueError traceback (#1493).
+    bad = tmp_path / "big.json"
+    bad.write_text('{"composite_mean": 0.5, "tasks": ' + "9" * 5000 + "}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(bad)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "not valid JSON" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
 def test_cli_non_object_json_exits_two(tmp_path):
     arr = tmp_path / "arr.json"
     arr.write_text("[1, 2, 3]", encoding="utf-8")

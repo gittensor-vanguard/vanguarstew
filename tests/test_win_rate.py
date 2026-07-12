@@ -178,6 +178,16 @@ def test_cli_invalid_json_exits_two(tmp_path, capsys):
     assert "not valid JSON" in capsys.readouterr().err
 
 
+def test_cli_oversized_integer_literal_exits_two(tmp_path, capsys):
+    # json.load raises a *plain* ValueError (not JSONDecodeError) for an integer literal
+    # beyond the int-conversion digit limit (Python 3.11+); it must exit 2 with the clean
+    # invalid-JSON message, not a raw traceback (#1493).
+    path = tmp_path / "big.json"
+    path.write_text('{"tasks": ' + "9" * 5000 + "}", encoding="utf-8")
+    assert cli.run([str(path)]) == 2
+    assert "not valid JSON" in capsys.readouterr().err
+
+
 def test_cli_non_object_json_exits_two(tmp_path, capsys):
     path = tmp_path / "list.json"
     path.write_text("[1]", encoding="utf-8")

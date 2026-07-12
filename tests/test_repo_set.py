@@ -166,6 +166,17 @@ def test_load_reports_missing_file_and_bad_json(tmp_path):
         load_repo_set(str(bad))
 
 
+def test_load_reports_an_oversized_integer_literal_as_invalid_json(tmp_path):
+    # Since Python 3.11, json.load raises a *plain* ValueError (not JSONDecodeError) for an
+    # integer literal beyond the int-conversion digit limit, which escaped the
+    # JSONDecodeError-only arm and crashed run_eval --repo-set / validate_repo_set with a raw
+    # ValueError instead of a clean RepoSetError (#1493).
+    big = tmp_path / "big.json"
+    big.write_text('{"padding": ' + "9" * 5000 + "}", encoding="utf-8")
+    with pytest.raises(RepoSetError, match="invalid JSON"):
+        load_repo_set(str(big))
+
+
 def test_load_reports_a_directory_path_as_a_clean_error(tmp_path):
     # os.path.exists is true for a directory, so a directory path reaches open() and raises
     # IsADirectoryError — an OSError, but NOT a FileNotFoundError. It must surface as a clean

@@ -39,7 +39,10 @@ def load_artifact(path: str) -> dict:
         print(f"artifact path is not a file (a parent component is not a directory): {path}",
               file=sys.stderr)
         raise SystemExit(2) from None
-    except json.JSONDecodeError as exc:
+    except ValueError as exc:
+        # json.JSONDecodeError subclasses ValueError, and json.load raises a *plain*
+        # ValueError for an integer literal beyond the int-conversion digit limit
+        # (Python 3.11+), which escaped a JSONDecodeError-only arm as a raw traceback (#1493).
         print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     if not isinstance(data, dict):

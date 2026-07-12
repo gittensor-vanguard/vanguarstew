@@ -243,14 +243,19 @@ def load_repo_set(path) -> RepoSet:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except json.JSONDecodeError as exc:
-        raise RepoSetError(f"invalid JSON in {path}: {exc}") from exc
     except UnicodeDecodeError as exc:
         # A file that exists and is readable but is not valid UTF-8 (e.g. saved as UTF-16/latin-1,
         # or a binary file passed by mistake) makes json.load raise UnicodeDecodeError while
-        # decoding the stream. It is a ValueError, not a JSONDecodeError or an OSError, so it would
-        # otherwise escape as a raw traceback; wrap it like every other load failure.
+        # decoding the stream. UnicodeDecodeError subclasses ValueError, so this arm must come
+        # before the general ValueError arm below to keep the "not valid UTF-8" wording distinct
+        # from the invalid-JSON case.
         raise RepoSetError(f"repo-set config {path} is not valid UTF-8: {exc}") from exc
+    except ValueError as exc:
+        # json.JSONDecodeError subclasses ValueError, and json.load raises a *plain* ValueError
+        # for an integer literal beyond the int-conversion digit limit (Python 3.11+), which
+        # escaped a JSONDecodeError-only arm as a raw ValueError instead of a clean RepoSetError
+        # (#1493).
+        raise RepoSetError(f"invalid JSON in {path}: {exc}") from exc
     except FileNotFoundError as exc:
         # FileNotFoundError is an OSError subclass, so it must be caught before the general
         # OSError branch below to keep the "not found" wording (the file was removed between

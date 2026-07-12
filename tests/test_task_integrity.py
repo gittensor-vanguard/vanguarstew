@@ -168,6 +168,21 @@ def test_cli_rejects_malformed_json(tmp_path):
     assert exc.value.code == 2
 
 
+def test_cli_rejects_an_oversized_integer_literal(tmp_path, capsys):
+    # json.load raises a *plain* ValueError (not JSONDecodeError) for an integer literal
+    # beyond the int-conversion digit limit (Python 3.11+); the task-file loader must exit 2
+    # with its clean message, not a raw traceback (#1493).
+    path = tmp_path / "big.json"
+    path.write_text('[{"repo": "r", "commit": "abc", "horizon": ' + "9" * 5000 + "}]",
+                    encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        cli.run([str(path)])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert "not valid JSON" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_cli_main_exits_with_the_return_code(tmp_path, monkeypatch):
     path = _write(tmp_path, "tasks.json", [_task("dup"), _task("dup")])
     monkeypatch.setattr(sys, "argv", ["task_integrity", path, "--strict"])
