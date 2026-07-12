@@ -166,6 +166,27 @@ def test_load_reports_missing_file_and_bad_json(tmp_path):
         load_repo_set(str(bad))
 
 
+def test_load_wraps_oversized_int_literal_as_invalid_json(tmp_path):
+    # Since Python 3.11 json.load raises a *plain* ValueError — not a JSONDecodeError — on an
+    # integer literal past the 4300-digit int-string-conversion limit. The loader now catches the
+    # ValueError base, so an oversized-int config fails as a clean RepoSetError instead of crashing
+    # run_eval --repo-set / validate_repo_set with a raw traceback (#1493).
+    big = tmp_path / "oversized.json"
+    big.write_text('{"n": ' + "9" * 5000 + "}", encoding="utf-8")
+    with pytest.raises(RepoSetError, match="invalid JSON"):
+        load_repo_set(str(big))
+
+
+def test_load_reports_non_utf8_config_distinctly_after_widening(tmp_path):
+    # The UnicodeDecodeError (a ValueError subclass) arm is ordered before the broad ValueError
+    # arm, so a non-UTF-8 config keeps its distinct "not valid UTF-8" message rather than being
+    # reported as invalid JSON (#1493).
+    latin1 = tmp_path / "latin1.json"
+    latin1.write_bytes('{"name": "café"}'.encode("latin-1"))
+    with pytest.raises(RepoSetError, match="not valid UTF-8"):
+        load_repo_set(str(latin1))
+
+
 def test_load_reports_a_directory_path_as_a_clean_error(tmp_path):
     # os.path.exists is true for a directory, so a directory path reaches open() and raises
     # IsADirectoryError — an OSError, but NOT a FileNotFoundError. It must surface as a clean
