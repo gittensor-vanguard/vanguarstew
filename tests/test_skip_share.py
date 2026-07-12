@@ -190,12 +190,31 @@ def test_is_number_guard():
 def test_is_number_guards_an_oversized_int_overflow():
     # math.isfinite() raises OverflowError for a Python int too large to convert to a float
     # (a hand-edited or degenerate skip_share field) -- must degrade to non-numeric, not crash.
+    # Covers both signs: OverflowError fires the same way for a huge positive or negative int.
     assert not _is_number(10**400)
     assert not _is_number(-(10**400))
+    assert not _is_number(-(10**309))
+
+
+def test_is_number_bool_rejection_is_unchanged_by_the_overflow_guard():
+    # The overflow guard must not alter the pre-existing bool-rejection behavior: a bool is
+    # non-numeric regardless of its truthiness, exactly as before this fix.
+    assert _is_number(True) is False
+    assert _is_number(False) is False
+
+
+def test_is_number_at_the_float_conversion_boundary():
+    # Just inside float's representable range still converts and is finite; just past it raises
+    # OverflowError, which the guard must catch (the exact boundary this fix targets).
+    just_under_max = int(sys.float_info.max) - 1
+    just_over_max = 10**309
+    assert _is_number(just_under_max) is True
+    assert _is_number(just_over_max) is False
 
 
 def test_headline_degrades_on_an_oversized_int_share_instead_of_crashing():
     assert skip_share_headline({"skip_share": 10**400}) == "skip share: n/a"
+    assert skip_share_headline({"skip_share": -(10**400)}) == "skip share: n/a"
 
 
 # --- CLI: success + every error path (the review: "CLI error handling entirely untested") ---------
