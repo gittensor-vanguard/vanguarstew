@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -348,6 +349,34 @@ def test_cli_without_strict_returns_zero_even_when_failing(tmp_path, capsys):
     path = _write(tmp_path, "run.json", _multi(6, 1))
     assert cli.run([path]) == 0
     assert json.loads(capsys.readouterr().out)["passed"] is False
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory path raises IsADirectoryError inside open(); the CLI must report it cleanly and
+    # exit 2 (SystemExit(2)), not dump a raw traceback (mirrors generalization_gate #1446).
+    with pytest.raises(SystemExit) as exc:
+        cli.run([str(tmp_path)])
+    assert exc.value.code == 2
+    assert "directory" in capsys.readouterr().err
+
+
+def test_cli_unreadable_file_exits_two(capsys):
+    # An unreadable file raises PermissionError; the CLI reports it cleanly and exits 2.
+    with patch("builtins.open", side_effect=PermissionError("denied")):
+        with pytest.raises(SystemExit) as exc:
+            cli.run(["locked.json"])
+    assert exc.value.code == 2
+    assert "not readable" in capsys.readouterr().err
+
+
+def test_cli_generic_os_error_exits_two(capsys):
+    # Any other OSError (e.g. an I/O error) is reported cleanly with its message, not a traceback.
+    with patch("builtins.open", side_effect=OSError("I/O error")):
+        with pytest.raises(SystemExit) as exc:
+            cli.run(["flaky.json"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "I/O error" in err
 
 
 def test_cli_honours_threshold_flags(tmp_path):
