@@ -136,10 +136,30 @@ def test_generalization_malformed_partition_tally_yields_none_overall():
 
 
 def test_generalization_zero_total_yields_none_rates():
+    # Both partitions judged zero tasks: neither has a defined rate, so the overall degrades to
+    # None (not total 0) — matching the sibling order_agree_rate (#1426). The headline is
+    # unchanged ("no tally available"), only the structured total goes 0 -> None.
     out = summarize_win_rate(_gen({"challenger": 0, "baseline": 0, "tie": 0},
                                   {"challenger": 0, "baseline": 0, "tie": 0}))
-    assert out["total"] == 0
+    assert out["total"] is None
     assert out["challenger_rate"] is None
+    assert win_rate_headline(out) == "win rate: no tally available"
+
+
+def test_generalization_asymmetric_zero_task_partition_nulls_overall():
+    # A single zero-task partition must not be summed into a plausible-but-wrong overall taken
+    # from the other partition alone (the crux of #1496; mirrors order_agree_rate #1426). The
+    # tuned partition judged 0 tasks; the overall must be None, not the held_out partition's 60%.
+    out = summarize_win_rate(_gen({"challenger": 0, "baseline": 0, "tie": 0},
+                                  {"challenger": 6, "baseline": 3, "tie": 1}))
+    assert out["total"] is None
+    assert out["challenger_rate"] is None
+    # per-partition fields still report exactly what each partition declared
+    assert out["partitions"]["tuned"]["total"] == 0
+    assert out["partitions"]["tuned"]["challenger_rate"] is None
+    assert out["partitions"]["held_out"]["total"] == 10
+    assert out["partitions"]["held_out"]["challenger_rate"] == 0.6
+    assert win_rate_headline(out) == "win rate: no tally available"
 
 
 @pytest.fixture

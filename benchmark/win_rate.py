@@ -86,14 +86,22 @@ def summarize_win_rate(artifact) -> dict:
     A ``generalization`` artifact has no top-level tally, so its overall is summed from the
     ``tuned`` and ``held_out`` partition tallies (mirroring the sibling share/rate utilities);
     it also adds a ``partitions`` map. A missing or malformed tally yields ``None`` rates, and a
-    generalization overall is ``None`` unless both partitions have a usable tally.
+    generalization overall is ``None`` unless both partitions have a usable, non-empty tally — a
+    partition that judged zero tasks nulls the overall rather than letting the other partition's
+    rate stand in as the whole-run rate.
     """
     artifact = _dict(artifact)
     kind = artifact_kind(artifact)
     if kind == "generalization":
         tuned = _slice_summary(artifact.get("tuned"))
         held = _slice_summary(artifact.get("held_out"))
-        if all(_is_int(slice_["total"]) for slice_ in (tuned, held)):
+        # Gate the overall on each partition's derived rate being defined, not merely on the raw
+        # total being an int. A zero-task partition has an integer (all-zero) total but a ``None``
+        # challenger_rate; summing it in masks the incoherence behind a plausible-but-wrong overall
+        # from the other partition alone (the ``total == 0`` guard in _rates only caught the case
+        # where *both* partitions were empty). Mirrors the sibling fix in order_agree_rate (#1426).
+        # When both partitions are coherent their totals are > 0, so the summed total is > 0.
+        if all(slice_["challenger_rate"] is not None for slice_ in (tuned, held)):
             overall = _rates(
                 tuned["challenger"] + held["challenger"],
                 tuned["baseline"] + held["baseline"],
