@@ -86,10 +86,25 @@ def test_generalization_malformed_partition_report_yields_none_overall():
     assert out["partitions"]["held_out"]["total"] is None
 
 
-def test_generalization_zero_total_reports_zero():
+def test_generalization_both_partitions_zero_task_null_overall():
+    # Two zero-task partitions null the overall entirely rather than reporting a fabricated
+    # 0-of-0 whole-run tally (matches the sibling zero-task generalization fixes).
     out = summarize_judge_wlt(_gen((0, 0, 0), (0, 0, 0)))
-    assert out["total"] == 0
-    assert out["wins"] == 0 and out["losses"] == 0 and out["ties"] == 0
+    assert out["total"] is None
+    assert out["wins"] is None and out["losses"] is None and out["ties"] is None
+    assert out["partitions"]["tuned"]["total"] == 0            # each partition still reported
+    assert out["partitions"]["held_out"]["total"] == 0
+
+
+def test_generalization_asymmetric_zero_task_partition_nulls_overall():
+    # Regression for #1544: a zero-task ``tuned`` partition must not let ``held_out``'s tally be
+    # summed and presented as the whole-run overall.
+    out = summarize_judge_wlt(_gen((0, 0, 0), (6, 3, 1)))
+    assert out["total"] is None
+    assert out["wins"] is None
+    assert out["partitions"]["tuned"]["total"] == 0            # zero-task partition preserved
+    assert out["partitions"]["held_out"]["total"] == 10       # coherent partition preserved
+    assert judge_wlt_headline(out) == "judge wlt: unavailable"
 
 
 def test_missing_judge_report_yields_none():
