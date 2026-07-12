@@ -327,6 +327,7 @@ def _repo_with_commit():
     b"",                          # empty file
     b"\xff\xfe\x00\x01\x02\x80",  # binary / non-UTF-8 content
     b"not json at all",           # plain text
+    b'{"n": ' + b"9" * 5000 + b"}",  # valid-JSON shape, oversized int -> plain ValueError (#1494)
 ])
 def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
     # A present-but-unreadable context file (truncated / empty / binary / non-JSON) must not
@@ -344,6 +345,18 @@ def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
         assert any("unreadable" in r.message and "bytes" in r.message for r in caplog.records)
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_load_context_oversized_int_raises_plain_valueerror_not_jsondecodeerror():
+    # Regression guard for #1494: since Python 3.11 json.load raises a *plain* ValueError (not a
+    # JSONDecodeError) when a literal exceeds the 4300-digit int-string-conversion limit. The
+    # old `except json.JSONDecodeError` arm would not have caught it; load_context now catches
+    # the ValueError base so this degrades to the git fallback instead of aborting solve().
+    import json
+    blob = '{"n": ' + "9" * 5000 + "}"
+    with pytest.raises(ValueError) as exc_info:
+        json.loads(blob)
+    assert not isinstance(exc_info.value, json.JSONDecodeError)  # a plain ValueError, not the subclass
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
