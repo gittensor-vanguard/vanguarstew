@@ -18,8 +18,25 @@ from benchmark.leaderboard import leaderboard_headline, rank
 
 
 def load_artifact(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except OSError as exc:
+        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except ValueError as exc:
+        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     if not isinstance(data, dict):
         raise ValueError(f"artifact must be a JSON object: {path}")
     return data
@@ -40,7 +57,9 @@ def main() -> None:
 
     try:
         entries = [(label, load_artifact(path)) for label, path in map(_split_label, args.artifacts)]
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except SystemExit as exc:
+        raise SystemExit(exc.code) from None
+    except ValueError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
