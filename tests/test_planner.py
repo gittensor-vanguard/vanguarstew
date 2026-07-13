@@ -18,6 +18,7 @@ from agent.planner import (  # noqa: E402
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
     _commit_plan_kind,
+    _ensure_kind_coverage,
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
@@ -786,6 +787,46 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
     assert RELEASE_CADENCE_GUIDANCE in captured["user"]
 
 
+def test_normalize_plan_item_keeps_build_kind():
+    item = _normalize_plan_item({
+        "title": "Update CI toolchain",
+        "kind": "build",
+        "rationale": "recent build commits",
+        "theme": "build momentum",
+        "files": ["pyproject.toml"],
+    })
+    assert item is not None
+    assert item["kind"] == "build"
+
+
+def test_ensure_kind_coverage_injects_build_when_history_signals_it():
+    ctx = {"recent_commits": [{"subject": "build: bump mypy"}, {"subject": "build: fix wheel"}]}
+    out = _ensure_kind_coverage([], ctx)
+    assert len(out) == 1
+    assert out[0]["kind"] == "build"
+    assert out[0]["files"] == [".github/", "pyproject.toml"]
+
+
+def test_ensure_kind_coverage_skips_kinds_already_planned():
+    ctx = {"recent_commits": [{"subject": "build: bump mypy"}]}
+    plan = [{"title": "Refresh packaging", "kind": "build", "rationale": "x", "theme": "y"}]
+    assert _ensure_kind_coverage(plan, ctx) == plan
+
+
+def test_plan_next_actions_prepends_build_gap_item():
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Write docs", "kind": "docs", "rationale": "x", "theme": "y"}]
+
+    ctx = {"open_prs": [], "recent_commits": [{"subject": "build: update tox"}]}
+    out = plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
+    assert any(item.get("kind") == "build" for item in out)
+    assert '"build"' in captured["user"]
+
+
 
 def test_commit_plan_kind_maps_conventional_prefixes_to_plan_vocabulary():
     assert _commit_plan_kind("feat: add exporter") == "feature"
@@ -803,9 +844,8 @@ def test_commit_plan_kind_release_tooling_cut_reads_as_release_not_dep():
     assert _commit_plan_kind("chore(release): 1.4.0") == "release"
     assert _commit_plan_kind("chore(main): release 1.2.3") == "release"
     assert _commit_plan_kind("build(release): v2.0.0") == "release"
-    # An ordinary chore stays dep; an ordinary build has no plan-kind equivalent.
+    assert _commit_plan_kind("build: switch to bazel") == "build"
     assert _commit_plan_kind("chore: update editorconfig") == "dep"
-    assert _commit_plan_kind("build: switch to bazel") is None
 
 
 def test_commit_plan_kind_drops_unexpressible_and_unknown_subjects():
@@ -854,7 +894,8 @@ def test_planner_prompt_surfaces_recent_kind_mix():
     out = plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
     assert "Recent maintainer activity by kind" in captured["user"]
     assert "bugfix (1)" in captured["user"] and "feature (1)" in captured["user"]
-    assert out and out[0]["kind"] == "bugfix"
+    kinds = {item.get("kind") for item in out}
+    assert "bugfix" in kinds and "feature" in kinds
 
 
 def test_planner_prompt_omits_kind_note_without_conventional_commits():

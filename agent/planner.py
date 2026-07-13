@@ -55,7 +55,7 @@ _PR_NUMBER = re.compile(
 _MIN_SUBJECT_PHRASE = 8
 
 _PLAN_KINDS = frozenset({
-    "feature", "bugfix", "refactor", "docs", "release", "dep", "triage",
+    "feature", "bugfix", "refactor", "docs", "release", "dep", "build", "triage",
 })
 
 # Conventional-Commit prefix on a commit subject: "feat:", "fix(scope):", "docs!:". This block
@@ -65,16 +65,15 @@ _PLAN_KINDS = frozenset({
 # two aligned, as agent/context.py already does for forward-reference scrubbing.
 _CC_PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
 
-# Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Only types a plan item can
-# express appear here; types with no plan-kind equivalent (test, ci, perf, style, revert,
-# build) are dropped rather than mis-binned under a neighboring kind, since a wrong hint is
-# worse than none.
+# Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Types with no plan-kind
+# equivalent (test, ci, perf, style, revert) are dropped rather than mis-binned.
 _CC_TYPE_TO_PLAN_KIND = {
     "feat": "feature", "feature": "feature",
     "fix": "bugfix", "bugfix": "bugfix", "bug": "bugfix",
     "docs": "docs", "doc": "docs",
     "refactor": "refactor",
     "release": "release",
+    "build": "build",
     "chore": "dep", "deps": "dep", "dep": "dep",
 }
 
@@ -97,7 +96,7 @@ SYSTEM = (
 # constants so tests can lock the contract without parsing full LLM prompts.
 PLAN_ITEM_SCHEMA = (
     '  "title": short imperative title,\n'
-    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
+    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","build","triage",\n'
     '  "rationale": why this, now, given the philosophy,\n'
     '  "theme": the higher-level direction this advances,\n'
     '  "files": optional list of repo-relative paths or top-level modules likely touched.'
@@ -107,8 +106,8 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
     "Concrete specificity matters: for each non-triage item, include `files` naming the "
     "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
     "Pick `kind` to match the maintainer commit type the action would produce "
-    "(bugfix/fix, feature/feat, docs, release, refactor, dep). When several kinds recur in "
-    "recent history, plan separate items so each kind is covered."
+    "(bugfix/fix, feature/feat, docs, release, refactor, dep, build). When several kinds recur "
+    "in recent history, plan separate items so each kind is covered."
 )
 
 RELEASE_CADENCE_GUIDANCE = (
@@ -608,6 +607,48 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     return out[:n]
 
 
+def _planned_kinds(plan: list) -> set[str]:
+    kinds = set()
+    for item in plan:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        if isinstance(kind, str) and kind in _PLAN_KINDS:
+            kinds.add(kind)
+    return kinds
+
+
+def _kind_gap_files(kind: str) -> list[str]:
+    """Default `files` hints for deterministic kind-gap items."""
+    return {
+        "build": [".github/", "pyproject.toml"],
+        "docs": ["docs/"],
+    }.get(kind, [])
+
+
+def _ensure_kind_coverage(plan: list, context: dict) -> list:
+    """Prepend plan items for recurring commit kinds the LLM omitted (mirrors heuristic_plan)."""
+    if not isinstance(plan, list):
+        plan = []
+    planned = _planned_kinds(plan)
+    gap_items = []
+    for kind, count in _recent_kind_counts(context):
+        if kind not in _PLAN_KINDS or kind == "triage" or kind in planned:
+            continue
+        item = {
+            "title": f"Continue {kind} work",
+            "kind": kind,
+            "rationale": f"recent history includes {count} {kind} change(s)",
+            "theme": f"{kind} momentum",
+        }
+        files = _kind_gap_files(kind)
+        if files:
+            item["files"] = files
+        gap_items.append(item)
+        planned.add(kind)
+    return gap_items + plan
+
+
 def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
@@ -635,6 +676,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         else:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
+    plan = _ensure_kind_coverage(plan, context)
     return reconcile_plan_with_queue(plan, context, n)
 
 
