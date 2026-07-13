@@ -22,6 +22,7 @@ from benchmark.acceptance import (  # noqa: E402
     failed_checks,
 )
 from benchmark.artifact_snapshot import _has_error  # noqa: E402
+from scripts import acceptance as acceptance_cli  # noqa: E402
 
 
 def _report(gap=0.05, tuned_scored=3, held_scored=2, tuned_err=None, held_err=None, tuned_mean=0.6):
@@ -424,3 +425,34 @@ def test_failed_checks_logs_warning_for_skipped_rows(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.acceptance"):
         assert failed_checks({"checks": checks}) == ["gap_within_bound"]
     assert any("checks[1] is int" in r.message for r in caplog.records)
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    result = _run_cli(str(tmp_path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        acceptance_cli.load_artifact(str(tmp_path / "gen.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        acceptance_cli.load_artifact(str(tmp_path / "gen.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
