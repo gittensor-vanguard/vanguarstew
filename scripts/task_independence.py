@@ -30,7 +30,9 @@ def load_tasks(path: str):
         # Covers missing file, permission denied, and "is a directory".
         print(f"cannot read task file ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
-    except json.JSONDecodeError as exc:
+    except ValueError as exc:
+        # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
+        # beyond the int-string-conversion limit (py3.11+); JSONDecodeError subclasses it.
         print(f"task file is not valid JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     return data
