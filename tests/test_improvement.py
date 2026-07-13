@@ -3,6 +3,9 @@
 import copy
 import os
 import sys
+from unittest.mock import patch
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -15,6 +18,7 @@ from benchmark.improvement import (  # noqa: E402
     failed_checks,
     improvement_headline,
 )
+from scripts.improvement import load_artifact  # noqa: E402
 
 
 def _run(composite):
@@ -291,3 +295,34 @@ def test_check_improvement_does_not_mutate_inputs():
     snap_b, snap_c = copy.deepcopy(baseline), copy.deepcopy(candidate)
     check_improvement(candidate, baseline)
     assert baseline == snap_b and candidate == snap_c
+
+
+# --- CLI loader: directory/unreadable artifact paths exit 2 cleanly (not a raw traceback) -----
+# The CLI (scripts/improvement.py) reads two artifacts via load_artifact; a directory path or an
+# unreadable file must exit 2 with a clear message, mirroring generalization_gate #1446 /
+# objective_integrity #1377. (improvement.main() reads sys.argv directly, so load_artifact — the
+# function that changed — is exercised directly.)
+
+
+def test_load_artifact_directory_path_exits_two(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(tmp_path))
+    assert exc.value.code == 2
+    assert "directory" in capsys.readouterr().err
+
+
+def test_load_artifact_unreadable_file_exits_two(capsys):
+    with patch("builtins.open", side_effect=PermissionError("denied")):
+        with pytest.raises(SystemExit) as exc:
+            load_artifact("locked.json")
+    assert exc.value.code == 2
+    assert "not readable" in capsys.readouterr().err
+
+
+def test_load_artifact_generic_os_error_exits_two(capsys):
+    with patch("builtins.open", side_effect=OSError("I/O error")):
+        with pytest.raises(SystemExit) as exc:
+            load_artifact("flaky.json")
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "I/O error" in err
