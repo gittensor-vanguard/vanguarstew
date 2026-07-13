@@ -103,6 +103,25 @@ def _since_anchor_fields(since_anchor: dict | None) -> dict | None:
     }
 
 
+def _composite_delta(report) -> float | None:
+    """The banded composite delta for a target's report, for BOTH artifact shapes.
+
+    The standard shape carries ``composite_deltas["composite_mean"]``. A ``--generalization`` score
+    carries per-partition deltas ``{"tuned": ..., "held_out": ...}`` with no ``composite_mean`` key,
+    so reading only ``composite_mean`` published ``None`` there -- a feed entry whose delta
+    contradicted its own ``band``. In that case the delta is the MINIMUM of the present partition
+    deltas: the exact value ``score_pr_delta`` already derived the band from (a PR can't overfit the
+    tuned set and still band high), so the published delta can never contradict the published band.
+    Non-numeric partition values are ignored; ``None`` when nothing usable is present.
+    """
+    deltas = _dict(_dict(report).get("composite_deltas"))
+    if "composite_mean" in deltas:
+        return _round(deltas.get("composite_mean"))
+    present = [v for v in deltas.values()
+               if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return _round(min(present)) if present else None
+
+
 def to_leaderboard_entry(
     combined: dict, pr_number: int, timestamp: str | None = None, since_anchor: dict | None = None,
 ) -> dict:
@@ -127,11 +146,11 @@ def to_leaderboard_entry(
         "band": combined.get("band"),
         "label": combined.get("label"),
         "public": {
-            "composite_delta": _round(_dict(public.get("composite_deltas")).get("composite_mean")),
+            "composite_delta": _composite_delta(public),
             "per_repo": _safe_per_repo(public),
         },
         "private": {
-            "composite_delta": _round(_dict(private.get("composite_deltas")).get("composite_mean")),
+            "composite_delta": _composite_delta(private),
         },
     }
     fields = _since_anchor_fields(since_anchor)
