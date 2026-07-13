@@ -347,6 +347,27 @@ def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_falls_back_to_git_on_oversized_int_literal(caplog):
+    # A context file that is byte-for-byte valid JSON except for one integer literal longer than
+    # CPython's 4300-digit int-conversion limit: since 3.11 json.load raises a bare ValueError
+    # (not a JSONDecodeError) for it, which must still take the warn-and-fall-back path rather
+    # than crashing solve().
+    import logging
+    repo = _repo_with_commit()
+    try:
+        payload = '{"open_prs": [], "tasks": ' + ("9" * 5000) + "}"
+        with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+            f.write(payload)
+        with caplog.at_level(logging.WARNING, logger="agent.context"):
+            ctx = load_context(repo)  # no exception
+        assert ctx["_source"] == "git"
+        assert ctx["frozen_at"]["commit"]
+        assert any("unreadable" in r.message and "bytes" in r.message for r in caplog.records)
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 @pytest.mark.skipif(
     not hasattr(os, "geteuid") or os.geteuid() == 0,
     reason="root bypasses file permissions",
