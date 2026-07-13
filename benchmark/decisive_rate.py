@@ -109,7 +109,15 @@ def summarize_decisive_rate(result) -> dict:
     if kind == "generalization":
         tuned = _slice_summary(result.get("tuned"))
         held = _slice_summary(result.get("held_out"))
-        if all(_is_int(slice_["total"]) for slice_ in (tuned, held)):
+        # Gate the overall on each partition's derived ``decisive_rate`` being non-None, not merely
+        # on the raw ``total`` being an int. A zero-task partition has an integer (all-zero) total
+        # but a ``None`` rate; summing it in presents the *other* partition's rate as the whole-run
+        # rate (#1530) — the ``total == 0`` guard in ``_rates`` only caught the case where *both*
+        # partitions were empty. Mirrors the sibling fixes in order_agree_rate (#1426),
+        # scored_fraction (#1274), skip_share (#1272), and dual_order_coverage (#1280). When both
+        # partitions are coherent their totals are > 0, so the summed total is > 0 and the rate is
+        # defined.
+        if all(slice_.get("decisive_rate") is not None for slice_ in (tuned, held)):
             overall = _rates(tuned["decisive"] + held["decisive"], tuned["tie"] + held["tie"])
         else:
             overall = dict(_NONE_SLICE)
