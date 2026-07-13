@@ -69,6 +69,35 @@ def test_headline():
     assert "mean 3.000" in repo_task_mean_headline(out)
 
 
+def test_single_repo_oversized_task_count_is_skipped():
+    # json.load yields a Python int for an oversized literal; it must be treated as malformed
+    # (skipped) rather than crashing float(tasks) with OverflowError.
+    out = summarize_repo_task_mean({"composite_mean": 0.5, "tasks": 10**400})
+    assert out["scored_repos"] == 0
+    assert out["mean_tasks_per_repo"] is None
+
+
+def test_multi_repo_oversized_task_count_is_skipped():
+    art = {"per_repo": [{"repo": "a", "tasks": 10**400}, _repo(4, "b")], "scored_repos": 2}
+    out = summarize_repo_task_mean(art)
+    assert out["scored_repos"] == 1
+    assert out["total_tasks"] == 4
+    assert out["mean_tasks_per_repo"] == 4.0
+
+
+def test_generalization_oversized_task_count_is_skipped():
+    art = {
+        "tuned": {"per_repo": [{"repo": "a", "tasks": 10**400}]},
+        "held_out": _multi(3),
+        "generalization_gap": 0.0,
+    }
+    out = summarize_repo_task_mean(art)
+    assert out["scored_repos"] == 1
+    assert out["total_tasks"] == 3
+    assert out["mean_tasks_per_repo"] == 3.0
+    assert out["partitions"]["tuned"]["scored_repos"] == 0
+
+
 @pytest.fixture
 def tmp_artifact(tmp_path):
     def write(payload):
