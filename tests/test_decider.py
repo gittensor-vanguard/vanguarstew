@@ -344,3 +344,27 @@ def test_decide_prompt_surfaces_planning_bump_note():
     decide(ctx, {}, "plan the next 5 maintainer actions", CapturingLLM())
     synthesis = captured["users"][-1]
     assert "forward planning" in synthesis and "version_bump" in synthesis
+
+
+def test_decide_never_rejects_a_plain_planning_request():
+    class RejectingLLM:
+        offline = False
+
+        def chat_json(self, system, user, stub=None):
+            if system == SYSTEM:
+                return {
+                    "action": "reject",
+                    "labels": ["bug"],
+                    "reviewer": "someone",
+                    "version_bump": None,
+                    "patch": "--- a/x\n+++ b/x\n@@\n+nope\n",
+                    "rationale": "out of scope: merge bar only accepts code changes",
+                }
+            return {"verdict": "ok", "reasoning": "because"}
+
+    philosophy = {"merge_bar": "Only accepts code changes; planning requests are out of scope."}
+    out = decide({}, philosophy, "plan the next 5 maintainer actions", RejectingLLM())
+    assert out["action"] == "plan"
+    assert out["labels"] == []
+    assert out["reviewer"] is None
+    assert out["patch"] is None

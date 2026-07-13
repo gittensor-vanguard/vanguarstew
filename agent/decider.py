@@ -245,6 +245,11 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out["rationale"] = _normalize_rationale(out.get("rationale"))
     out["patch"] = _normalize_patch(out.get("patch"))
     out["version_bump"] = _normalize_version_bump(out.get("version_bump"))
+    if _is_planning_request(request):
+        out["action"] = "plan"
+        out["labels"] = []
+        out["reviewer"] = None
+        out["patch"] = None
     return out
 
 
