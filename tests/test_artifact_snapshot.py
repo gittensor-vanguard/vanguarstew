@@ -212,6 +212,38 @@ def test_non_finite_decisive_margin_snapshots_none():
         assert out["decisive_margin"] is None, bad
 
 
+def test_multi_repo_decisive_margin_from_judge_report():
+    # A multi-repo aggregate carries no top-level decisive_margin; the win/loss counts live in
+    # judge_report, so derive wins - losses (mirrors margin_outlook / promotion). Previously the
+    # snapshot published decisive_margin=null for every multi-repo run.
+    out = snapshot({"per_repo": [{"repo": "a", "tasks": 5}],
+                    "judge_report": {"wins": 7, "losses": 2, "ties": 1}, "composite_mean": 0.6})
+    assert out["kind"] == "multi"
+    assert out["decisive_margin"] == 5
+
+
+def test_generalization_decisive_margin_from_tuned_judge_report():
+    # A generalization run derives the margin from the tuned (headline) partition's judge_report.
+    out = snapshot({
+        "generalization_gap": 0.1,
+        "tuned": {"per_repo": [{"repo": "a", "tasks": 4}], "judge_report": {"wins": 6, "losses": 1}},
+        "held_out": {"per_repo": [{"repo": "b", "tasks": 3}], "judge_report": {"wins": 9, "losses": 0}},
+    })
+    assert out["kind"] == "generalization"
+    assert out["decisive_margin"] == 5     # tuned 6-1, not held_out
+
+
+def test_top_level_decisive_margin_takes_precedence_over_judge_report():
+    out = snapshot({"tasks": 5, "decisive_margin": 3, "judge_report": {"wins": 9, "losses": 0}})
+    assert out["decisive_margin"] == 3
+
+
+def test_malformed_judge_report_decisive_margin_is_none():
+    # A judge_report missing losses (or with a non-int count) can't derive a margin -> None.
+    out = snapshot({"per_repo": [{"repo": "a", "tasks": 5}], "judge_report": {"wins": 7}})
+    assert out["decisive_margin"] is None
+
+
 def test_non_finite_composite_is_unscored_without_raising():
     # A non-finite headline composite is treated as unscored (via the hardened trend reader); the
     # snapshot and its headline never raise.

@@ -115,6 +115,27 @@ def _has_error(artifact: dict) -> bool:
     return False
 
 
+def _decisive_margin(artifact: dict, kind: str):
+    """The decisive margin for a snapshot, for every artifact shape.
+
+    A single-repo run carries a top-level ``decisive_margin``. A multi-repo aggregate and a
+    generalization run carry no top-level ``decisive_margin`` -- the win/loss counts live in
+    ``judge_report`` (the ``tuned`` partition's, for a generalization run, matching the headline
+    convention this module already uses for ``repos``) -- so derive it as ``wins - losses`` there,
+    mirroring ``margin_outlook`` and ``promotion``. A non-finite/non-numeric value degrades to
+    ``None``.
+    """
+    margin = artifact.get("decisive_margin")
+    if _is_number(margin):
+        return margin
+    source = _dict(artifact.get("tuned")) if kind == "generalization" else artifact
+    report = _dict(source.get("judge_report"))
+    wins, losses = report.get("wins"), report.get("losses")
+    if _is_int(wins) and _is_int(losses):
+        return wins - losses
+    return None
+
+
 def snapshot(artifact) -> dict:
     """Return a compact JSON-friendly summary of a replay ``artifact``."""
     artifact = _dict(artifact)
@@ -130,9 +151,7 @@ def snapshot(artifact) -> dict:
         if _is_number(artifact.get("generalization_gap"))
         else None,
         "repo_set": artifact.get("repo_set") if isinstance(artifact.get("repo_set"), str) else None,
-        "decisive_margin": artifact.get("decisive_margin")
-        if _is_number(artifact.get("decisive_margin"))
-        else None,
+        "decisive_margin": _decisive_margin(artifact, kind),
         "offline": artifact.get("offline") if isinstance(artifact.get("offline"), bool) else None,
         "has_error": _has_error(artifact),
     }
