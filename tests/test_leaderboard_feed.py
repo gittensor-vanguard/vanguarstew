@@ -269,6 +269,32 @@ def test_to_anchor_entry_reads_composite_mean_directly_off_each_artifact():
     }
 
 
+def test_to_anchor_entry_masks_unscored_placeholder_score():
+    # An anchor that scored no repos reports scored_repos==0 with a placeholder composite_mean of
+    # 0.0. Publishing that as a real 0.0 base score is a fabricated perfect-zero; mask it to None,
+    # mirroring compare_eval._is_scored_unavailable / run_eval._is_unscored_placeholder.
+    unscored = {"composite_mean": 0.0, "repos": 3, "scored_repos": 0}
+    entry = to_anchor_entry("v0.5.0", unscored, unscored, timestamp="t")
+    assert entry["public_score"] is None
+    assert entry["private_score"] is None
+
+
+def test_to_anchor_entry_keeps_genuine_single_repo_zero():
+    # A single-repo anchor has no scored_repos key, so a genuine 0.0 composite is a real score and
+    # must be preserved (guard against over-masking).
+    entry = to_anchor_entry("v0.5.0", {"composite_mean": 0.0, "tasks": 5},
+                            {"composite_mean": 0.0, "tasks": 5}, timestamp="t")
+    assert entry["public_score"] == 0.0
+    assert entry["private_score"] == 0.0
+
+
+def test_to_anchor_entry_keeps_scored_multi_repo_score():
+    # A multi-repo anchor that DID score (scored_repos > 0) keeps its real composite_mean.
+    scored = {"composite_mean": 0.62, "repos": 3, "scored_repos": 3}
+    entry = to_anchor_entry("v0.5.0", scored, scored, timestamp="t")
+    assert entry["public_score"] == 0.62
+
+
 def test_to_anchor_entry_defaults_timestamp_to_now():
     entry = to_anchor_entry("v0.5.0", {"composite_mean": 0.6}, {"composite_mean": 0.6})
     assert isinstance(entry["timestamp"], str) and entry["timestamp"]
