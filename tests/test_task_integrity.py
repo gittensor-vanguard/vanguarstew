@@ -111,6 +111,30 @@ def test_failed_checks_helper_is_robust():
     assert failed_checks(check_task_integrity([])) != []
 
 
+def test_failed_checks_survives_check_row_missing_name():
+    # A dict check row missing "name" must be skipped, not raise KeyError -- the previous guard only
+    # handled a non-list checks container. Mirrors the sibling gates' _check_rows_list sanitizer.
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    assert failed_checks({"checks": [{"name": "distinct_freeze_commits", "passed": False},
+                                     {"passed": False}]}) == ["distinct_freeze_commits"]
+
+
+def test_failed_checks_skips_non_dict_and_non_str_name_rows():
+    result = {"checks": [42, {"name": 99, "passed": False},
+                         {"name": "distinct_freeze_commits", "passed": False}]}
+    assert failed_checks(result) == ["distinct_freeze_commits"]
+
+
+def test_headline_survives_check_row_missing_name():
+    headline = task_integrity_headline({
+        "passed": False, "task_count": 2,
+        "checks": [{"name": "distinct_freeze_commits", "passed": False}, {"passed": False}],
+    })
+    assert "DEGENERATE" in headline
+    assert "1/1" in headline     # the malformed row is excluded from numerator AND denominator
+    assert "distinct_freeze_commits" in headline
+
+
 def test_check_task_integrity_does_not_mutate_input():
     tasks = [_task("abc123"), _task("def456")]
     snapshot = copy.deepcopy(tasks)
