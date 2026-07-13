@@ -252,7 +252,7 @@ def _check_slice(label: str, slice_: dict, checks: list) -> None:
         row_count = len(rows or [])
         add("rows_match_tasks", tasks_ok and rows is not None and row_count == int(tasks),
             f"{row_count} usable row(s) for {int(tasks) if tasks_ok else tasks} task(s)")
-        if tally is not None and rows:
+        if tally is not None and rows is not None:
             row_counts = _count_row_winners(rows)
             match = row_counts is not None and all(row_counts[k] == tally[k] for k in _TALLY_KEYS)
             add("row_winners_match_tally", match,

@@ -111,6 +111,21 @@ def test_zero_tasks_slice_is_not_selected():
     assert failed_checks(result) == ["artifact_shape"]
 
 
+def test_zero_task_slice_with_empty_rows_is_consistent():
+    # A real run_replay zero-task slice emits rows: [] (an EMPTY list, not an absent key). The
+    # recount of [] equals the all-zero tally, so row_winners_match_tally must be True and the
+    # artifact CONSISTENT. An empty rows list must not be conflated with a missing one -- the
+    # check used `and rows:` (empty list is falsy) where its sibling rows_match_tasks correctly
+    # uses `rows is not None`.
+    art = {"tasks": 0, "tally": {"challenger": 0, "baseline": 0, "tie": 0},
+           "rows": [], "decisive_margin": 0}
+    result = check_tally_integrity(art)
+    assert result["passed"] is True
+    assert failed_checks(result) == []
+    row_check = next(c for c in result["checks"] if c["name"] == "row_winners_match_tally")
+    assert row_check["passed"] is True
+
+
 def test_non_finite_tally_count_fails_instead_of_raising():
     # Previously OverflowError from int(float("inf")) in _tally_counts. A NaN/Infinity count
     # survives a JSON save/load round trip but is not a usable count -- flag it, don't crash.
