@@ -132,6 +132,30 @@ def test_failed_checks_helper_is_robust():
     assert failed_checks(check_task_uniformity([])) != []
 
 
+def test_failed_checks_survives_check_row_missing_name():
+    # A dict check row missing "name" must be skipped, not raise KeyError -- the previous guard only
+    # handled a non-list checks container. Mirrors the sibling gates' _check_rows_list sanitizer.
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    assert failed_checks({"checks": [{"name": "windows_uniform", "passed": False},
+                                     {"passed": False}]}) == ["windows_uniform"]
+
+
+def test_failed_checks_skips_non_dict_and_non_str_name_rows():
+    result = {"checks": [42, {"name": 99, "passed": False},
+                         {"name": "windows_uniform", "passed": False}]}
+    assert failed_checks(result) == ["windows_uniform"]
+
+
+def test_headline_survives_check_row_missing_name():
+    headline = task_uniformity_headline({
+        "passed": False, "task_count": 2,
+        "checks": [{"name": "windows_uniform", "passed": False}, {"passed": False}],
+    })
+    assert "UNEVEN" in headline
+    assert "1/1" in headline     # the malformed row is excluded from numerator AND denominator
+    assert "windows_uniform" in headline
+
+
 def test_check_task_uniformity_does_not_mutate_input():
     tasks = [_task(5, 0), _task(5, 6)]
     snapshot = copy.deepcopy(tasks)
