@@ -4,6 +4,22 @@ Goal: a general repository-maintainer agent, optimized against a benchmark deriv
 
 ---
 
+## North Star
+
+**vanguarstew is becoming the first measurable, public, self-improving AI software maintainer.**
+
+Three things that are each individually rare, and together nobody else has:
+
+1. **It co-maintains a real repository, transparently** — reviewing real PRs in the open as a supervised co-maintainer.
+2. **Every improvement to it is scored by a rigorous, anti-gaming benchmark that predicts what real maintainers actually did** — time-travel replay on real git history, public + held-out repo targets, and a Pareto floor that blocks any PR that trades one axis off against another.
+3. **Its maintainer skill is tracked climbing on a public leaderboard over time.**
+
+This is deliberately **not** "another agent framework" (orchestration plumbing is a crowded, vendor-owned space) and **not** "another issue-resolution benchmark." It is a category nobody else occupies: an AI whose *judgment as a maintainer* — what to plan, triage, review, release — is measured, verifiable, and provably improving in public.
+
+The proof we are building toward is a **verifiable demonstration**, not a number you have to take on trust: freeze a well-known repository at a past commit, have the agent predict the maintainers' next actions, and show it called them right against the *actual* git history anyone can check on GitHub. Same principle as a reproducible benchmark receipt — the evidence is public and independently checkable. Milestones M7–M8 below are the concrete path to that demonstration.
+
+---
+
 ## M0 — Scaffold & agent contract
 
 The agent runs and returns a well-formed maintainer decision.
@@ -89,3 +105,20 @@ Fully on-chain, 66-style.
 - Register the repo on gittensor (#1578 config: maintainer_cut 0.5, trusted_label_pipeline, label_multipliers).
 - Wire the full submit → evaluate → rank loop (subnet economics handled by gittensor).
 - **Acceptance:** miners can submit a maintainer agent and have it evaluated and ranked autonomously, end-to-end.
+
+## M7 — Legible, verifiable maintainer-foresight metric
+
+Turn the internal composite score into a single number an outsider instantly understands and can check — the leaderboard's hero stat.
+
+- A public **maintainer-foresight accuracy** metric built from the *objective, verifiable* side of the score: did the agent predict the modules, commit-kinds, and releases that the maintainers actually produced next. This is the half that anyone can independently confirm against real git history — no trust in our judge required.
+- Raise objective predictive accuracy as the primary optimization target contributors compete on (the benchmark already rewards exactly this): every `agent/` PR is measured on whether it makes the agent predict *what real maintainers did* more accurately, on repos it has never seen.
+- Surface the metric as the leaderboard's headline, with the composite/judge detail available underneath for depth.
+- **Acceptance:** the leaderboard leads with a single objective foresight-accuracy figure on the held-out target; it moves only when a merged PR genuinely improves verifiable prediction accuracy, and cannot be moved by prose-quality alone.
+
+## M8 — The verifiable public demonstration
+
+The flagship, checkable "here's the receipt" moment.
+
+- A clean, **fair** frozen-repo prediction demonstration on a repository people recognize: state the freeze commit, the model, and the context cutoff up front (so it cannot be dismissed as cherry-picked), have the agent predict the next maintainer actions, then show the match against the real revealed history.
+- A public, continuously-updated record: the foresight metric climbing over a real track record of merged, genuinely-improving PRs against a fixed anchor — the "optimization journey," not a one-off.
+- **Acceptance:** a third party can independently reproduce the demonstration from the published freeze point and model, and confirm both the individual prediction and the direction of the leaderboard trend against public git history.
