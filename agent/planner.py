@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 
 from agent.context import context_for_agent
 
@@ -112,7 +113,14 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
 )
 
 RELEASE_CADENCE_GUIDANCE = (
-    "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
+    "That meets or exceeds the repo's usual interval between releases, so a new release looks "
+    "due — include one `release`-kind item in the plan."
+)
+
+RELEASE_RECENT_GUIDANCE = (
+    "That is recent relative to the repo's usual release interval, so another release is "
+    "unlikely right now — do NOT add a `release`-kind item unless the philosophy or the PR "
+    "queue clearly calls for one."
 )
 
 
@@ -222,7 +230,11 @@ def _recent_kinds_note(context: dict) -> str:
     recent commits are considered, not one author's: the revealed window the plan is scored
     against is repo-wide.
     """
-    counts = _recent_kind_counts(context)
+    # The release axis is governed separately by `_release_timing_note`, which reads the
+    # *measured* freeze-window timing rather than the overall history mix. Excluding release
+    # here keeps this note from re-introducing the "release recurred, so plan one" prior that
+    # over-predicts releases regardless of the actual as-of-T signal.
+    counts = [(kind, n) for kind, n in _recent_kind_counts(context) if kind != "release"]
     if not counts:
         return ""
     mix = ", ".join(f"{kind} ({n})" for kind, n in counts)
@@ -234,20 +246,175 @@ def _recent_kinds_note(context: dict) -> str:
     )
 
 
+# Release-keyword detection consistent with the objective anchor (benchmark/score.py
+# `is_release_subject`): explicit release/version-bump wording. The version-tag-leading
+# subject case reuses `_RELEASE_CUT_BODY_RE` above (identical to score.py's
+# `_RELEASE_TAG_SUBJECT`). Reimplemented locally because agent/ must not import benchmark/
+# (the miner-only split is planned); keep aligned, as `_commit_plan_kind` already is.
+_RELEASE_KW_RE = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
+
+
+def _is_release_commit(subject) -> bool:
+    """True for a genuine release/version-cut commit subject (mirrors `is_release_subject`).
+
+    A Conventional-Commit prefix is authoritative: release-tooling cuts
+    (``chore(release): 1.4.0``) read as releases via ``_commit_plan_kind``, and any other
+    CC-typed subject is NOT a release even when it names a version (``revert: release 1.2.0``,
+    ``fix: 2.0.0``, ``docs: 1.4.0``). Only a subject with no CC prefix is matched on release
+    wording or a leading version tag (``Release v1.2.0``, ``bump version``, ``v1.2.0``) —
+    catching releases the narrower ``_commit_plan_kind`` (CC-prefix only) misses, which is a
+    source of the planner under-predicting on repos that tag releases without a CC prefix.
+    """
+    if not isinstance(subject, str):
+        return False
+    if _commit_plan_kind(subject) == "release":
+        return True
+    if _CC_PREFIX_RE.match(subject):
+        return False
+    return bool(_RELEASE_KW_RE.search(subject) or _RELEASE_CUT_BODY_RE.match(subject))
+
+
 def _release_cadence_signal(context: dict) -> bool:
-    """True when recent commits show a release cut (mirrors heuristic_plan cadence)."""
+    """True when recent commits show any release cut (mirrors the objective anchor)."""
     return any(
-        _commit_plan_kind(commit.get("subject")) == "release"
+        _is_release_commit(commit.get("subject"))
         for commit in _recent_commits(context)
         if isinstance(commit, dict)
     )
 
 
-def _release_cadence_note(context: dict) -> str:
-    """Inject release-item guidance only when history evidences release cadence."""
-    if not _release_cadence_signal(context):
+def _parse_iso(value):
+    """Parse an ISO-8601 timestamp to a ``datetime``, or ``None``. Tolerates a trailing ``Z``.
+
+    Frozen commit dates come from ``git log %cI`` (strict ISO with a numeric offset), which
+    ``datetime.fromisoformat`` parses on 3.10; a stray ``Z`` (some GitHub-derived fields) is
+    normalized first. A non-string or unparseable value degrades to ``None`` rather than
+    raising, matching this module's fail-soft posture on malformed frozen context.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _frozen_datetime(context: dict, commits: list):
+    """The freeze timestamp: ``frozen_at.date`` when present, else the newest commit's date."""
+    frozen = context.get("frozen_at") if isinstance(context, dict) else None
+    if isinstance(frozen, dict):
+        dt = _parse_iso(frozen.get("date"))
+        if dt is not None:
+            return dt
+    if commits and isinstance(commits[0], dict):
+        return _parse_iso(commits[0].get("date"))
+    return None
+
+
+def _median_int(values: list):
+    """Median of a list of ints, rounded to an int; ``None`` for an empty list."""
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return None
+    mid = n // 2
+    if n % 2:
+        return ordered[mid]
+    return round((ordered[mid - 1] + ordered[mid]) / 2)
+
+
+def _release_timing(context: dict) -> dict:
+    """Measure release timing from the frozen (newest-first) commit history.
+
+    Returns computable signals the planner uses *instead of* the LLM's narrative read of
+    cadence: how many commits (and, when dates are present, days) since the most recent
+    release cut, plus the repo's typical number of commits between consecutive release cuts.
+    ``recent_commits`` is newest-first (``git log`` order), so the smallest matching index is
+    the most recent release and equals the number of commits made since it. All timing fields
+    are ``None`` when the recent history carries no detectable release commit.
+    """
+    commits = _recent_commits(context)
+    idxs = [
+        i for i, c in enumerate(commits)
+        if isinstance(c, dict) and _is_release_commit(c.get("subject"))
+    ]
+    if not idxs:
+        return {
+            "has_release_history": False,
+            "commits_since_release": None,
+            "median_gap": None,
+            "days_since_release": None,
+            "last_release_subject": None,
+        }
+    last = idxs[0]  # newest-first: the smallest index is the most recent release
+    gaps = [b - a for a, b in zip(idxs, idxs[1:])]
+    days = None
+    last_dt = _parse_iso(commits[last].get("date"))
+    frozen_dt = _frozen_datetime(context, commits)
+    if last_dt is not None and frozen_dt is not None:
+        days = (frozen_dt - last_dt).days
+    return {
+        "has_release_history": True,
+        "commits_since_release": last,
+        "median_gap": _median_int(gaps) if gaps else None,
+        "days_since_release": days,
+        "last_release_subject": commits[last].get("subject"),
+    }
+
+
+# Fallback thresholds used only when a single release in the window leaves the repo's own
+# commit cadence between releases unmeasurable. Deliberately conservative — with no measured
+# cadence, treat a release as due only after substantial elapsed time / accumulated work, so
+# we do not re-introduce the over-eager "history mentions a release, so plan one" default.
+_RELEASE_DUE_DAYS = 30
+_RELEASE_DUE_COMMIT_FLOOR = 20
+
+
+def _release_is_due(timing: dict):
+    """Whether a new release looks due, or ``None`` when there is no release history to judge.
+
+    Prefers the repo's own measured cadence: due once at least a full typical gap's worth of
+    commits has accumulated since the last release. With only one release in the window (no
+    measurable gap), fall back to elapsed days, then to a commit-count floor.
+    """
+    cs = timing.get("commits_since_release")
+    if cs is None:
+        return None
+    gap = timing.get("median_gap")
+    if isinstance(gap, int) and gap > 0:
+        return cs >= gap
+    days = timing.get("days_since_release")
+    if days is not None:
+        return days >= _RELEASE_DUE_DAYS
+    return cs >= _RELEASE_DUE_COMMIT_FLOOR
+
+
+def _release_timing_note(context: dict) -> str:
+    """Directional release guidance grounded in the *measured* timing of the frozen window.
+
+    Unlike a blanket "history mentions releases, so plan one", this reads the specific freeze
+    window: it encourages a `release` item only when a typical release interval's worth of work
+    has accumulated since the last cut, and actively discourages one right after a release. The
+    computed numbers are embedded so the model reasons from the signal, not the repo's overall
+    "vibe". Silent when the history carries no detectable release commit — the LLM then decides
+    from context rather than a fixed prior.
+    """
+    timing = _release_timing(context)
+    if not timing["has_release_history"]:
         return ""
-    return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+    head = f"the last release was cut {timing['commits_since_release']} commit(s) ago"
+    if timing["days_since_release"] is not None:
+        head += f" (~{timing['days_since_release']} day(s))"
+    facts = [head]
+    if timing["median_gap"] is not None:
+        facts.append(
+            f"the repo's typical gap between releases is ~{timing['median_gap']} commit(s)"
+        )
+    guidance = RELEASE_CADENCE_GUIDANCE if _release_is_due(timing) else RELEASE_RECENT_GUIDANCE
+    return f"\nRelease timing (computed from the frozen history): {'; '.join(facts)}. {guidance}\n"
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -615,7 +782,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
         f"{_recent_kinds_note(context)}"
-        f"{_release_cadence_note(context)}"
+        f"{_release_timing_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"

@@ -17,8 +17,10 @@ from agent.planner import (  # noqa: E402
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
+    RELEASE_RECENT_GUIDANCE,
     _commit_plan_kind,
     _explicit_pr_number,
+    _is_release_commit,
     _is_review_item,
     _matched_pr,
     _normalize_files,
@@ -31,8 +33,10 @@ from agent.planner import (  # noqa: E402
     _pr_queue_note,
     _pr_title,
     _recent_kinds_note,
-    _release_cadence_note,
     _release_cadence_signal,
+    _release_is_due,
+    _release_timing,
+    _release_timing_note,
     _safe_prs,
     _significant_tokens,
     plan_next_actions,
@@ -763,13 +767,92 @@ def test_release_cadence_signal_detects_release_subjects():
     assert _release_cadence_signal({}) is False
 
 
-def test_release_cadence_note_only_when_history_signals_cadence():
-    assert _release_cadence_note({}) == ""
-    note = _release_cadence_note({"recent_commits": [{"subject": "release: 2.0"}]})
+def test_is_release_commit_matches_the_objective_anchor():
+    # CC release-tooling cuts and explicit release wording count.
+    assert _is_release_commit("chore(release): 1.4.0") is True
+    assert _is_release_commit("release: 2.0") is True
+    # Prefix-less releases the narrower _commit_plan_kind misses now count (fixes the
+    # under-prediction on repos that tag releases without a Conventional-Commit prefix).
+    assert _is_release_commit("Release v1.2.0") is True
+    assert _is_release_commit("v1.2.0") is True
+    assert _is_release_commit("bump version to 3.1.0") is True
+    # A CC-typed non-release subject is authoritative — never a release, even with a version.
+    assert _is_release_commit("revert: release 1.2.0") is False
+    assert _is_release_commit("fix: crash in v1.2.0 parser") is False
+    assert _is_release_commit("feat: add exporter") is False
+    assert _is_release_commit(None) is False
+
+
+def test_release_timing_measures_commits_since_last_release():
+    # Newest-first history: index 0 is the freeze commit. A release two commits back.
+    ctx = {"recent_commits": [
+        {"subject": "fix: a", "date": "2024-05-03T00:00:00+00:00"},
+        {"subject": "feat: b", "date": "2024-05-02T00:00:00+00:00"},
+        {"subject": "chore(release): 1.2.0", "date": "2024-05-01T00:00:00+00:00"},
+        {"subject": "fix: c", "date": "2024-04-20T00:00:00+00:00"},
+        {"subject": "chore(release): 1.1.0", "date": "2024-04-10T00:00:00+00:00"},
+    ], "frozen_at": {"date": "2024-05-03T00:00:00+00:00"}}
+    timing = _release_timing(ctx)
+    assert timing["has_release_history"] is True
+    assert timing["commits_since_release"] == 2
+    assert timing["median_gap"] == 2          # release indices 2 and 4 -> gap 2
+    assert timing["days_since_release"] == 2   # 2024-05-01 -> 2024-05-03
+
+
+def test_release_timing_absent_without_release_history():
+    timing = _release_timing({"recent_commits": [{"subject": "fix: a"}, {"subject": "feat: b"}]})
+    assert timing["has_release_history"] is False
+    assert timing["commits_since_release"] is None
+    assert _release_is_due(timing) is None
+
+
+def test_release_is_due_uses_measured_cadence_both_directions():
+    # Just released relative to the typical gap -> not due.
+    assert _release_is_due({"commits_since_release": 0, "median_gap": 5}) is False
+    # Accumulated a full typical interval of work -> due.
+    assert _release_is_due({"commits_since_release": 6, "median_gap": 5}) is True
+    # Single release in window (no measurable gap): fall back to elapsed days.
+    assert _release_is_due(
+        {"commits_since_release": 3, "median_gap": None, "days_since_release": 40}
+    ) is True
+    assert _release_is_due(
+        {"commits_since_release": 3, "median_gap": None, "days_since_release": 2}
+    ) is False
+
+
+def test_release_timing_note_suppresses_right_after_a_release():
+    # A release was just cut (freeze commit itself) with a fast cadence -> discourage another.
+    ctx = {"recent_commits": [
+        {"subject": "chore(release): 1.3.0"},
+        {"subject": "fix: a"},
+        {"subject": "chore(release): 1.2.0"},
+        {"subject": "fix: b"},
+        {"subject": "chore(release): 1.1.0"},
+    ]}
+    note = _release_timing_note(ctx)
+    assert RELEASE_RECENT_GUIDANCE in note
+    assert RELEASE_CADENCE_GUIDANCE not in note
+    assert "0 commit(s) ago" in note
+
+
+def test_release_timing_note_encourages_when_pressure_building():
+    # Typical gap ~3 commits, but 6 commits have accumulated since the last release -> due.
+    commits = [{"subject": f"fix: change {i}"} for i in range(6)]  # indices 0..5
+    commits.append({"subject": "chore(release): 1.1.0"})           # index 6 (most recent cut)
+    commits += [{"subject": "fix: x"}, {"subject": "feat: y"}]     # indices 7,8
+    commits.append({"subject": "chore(release): 1.0.0"})           # index 9
+    note = _release_timing_note({"recent_commits": commits})
     assert RELEASE_CADENCE_GUIDANCE in note
+    assert RELEASE_RECENT_GUIDANCE not in note
+    assert "typical gap between releases is ~3 commit(s)" in note
 
 
-def test_planner_prompt_includes_release_cadence_only_with_history():
+def test_release_timing_note_silent_without_release_history():
+    assert _release_timing_note({}) == ""
+    assert _release_timing_note({"recent_commits": [{"subject": "fix: a"}]}) == ""
+
+
+def test_planner_prompt_release_guidance_tracks_measured_timing():
     captured = {}
 
     class CapturingLLM(LLM):
@@ -777,13 +860,27 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
             captured["user"] = user
             return [{"title": "Fix loader", "kind": "bugfix"}]
 
+    # No release history -> neither directive appears.
     plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "fix: a"}]},
                       {}, 2, CapturingLLM(api_key="offline"))
     assert RELEASE_CADENCE_GUIDANCE not in captured["user"]
+    assert RELEASE_RECENT_GUIDANCE not in captured["user"]
 
+    # A single release just cut -> suppress, not the old blanket "include a release".
     plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.0.0"}]},
                       {}, 2, CapturingLLM(api_key="offline"))
+    assert RELEASE_RECENT_GUIDANCE in captured["user"]
+    assert RELEASE_CADENCE_GUIDANCE not in captured["user"]
+
+    # Pressure building: work accumulated well past the repo's typical release gap.
+    building = [{"subject": f"fix: change {i}"} for i in range(6)]
+    building.append({"subject": "chore(release): 1.1.0"})
+    building += [{"subject": "fix: x"}, {"subject": "feat: y"}]
+    building.append({"subject": "chore(release): 1.0.0"})
+    plan_next_actions({"open_prs": [], "recent_commits": building},
+                      {}, 2, CapturingLLM(api_key="offline"))
     assert RELEASE_CADENCE_GUIDANCE in captured["user"]
+    assert RELEASE_RECENT_GUIDANCE not in captured["user"]
 
 
 
