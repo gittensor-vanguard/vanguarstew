@@ -97,14 +97,15 @@ vulnerable to.
   rejected) and against real `run_eval` artifacts, not just synthetic test dicts. Full
   suite green (3675 passed).
 
-## M6 — gittensor integration / subnet launch
+## M6 — gittensor integration ✅
 
-Fully on-chain, 66-style.
+Live on gittensor as a scored repository — no separate subnet fork needed.
 
-- Decide reuse vs. fork of `tau` (Generate → Solve → Compare/eval) and its managed inference.
-- Register the repo on gittensor (#1578 config: maintainer_cut 0.5, trusted_label_pipeline, label_multipliers).
-- Wire the full submit → evaluate → rank loop (subnet economics handled by gittensor).
-- **Acceptance:** miners can submit a maintainer agent and have it evaluated and ranked autonomously, end-to-end.
+- [x] **Reuse vs. fork of `tau`:** resolved to **reuse**. Rather than standing up a separate 66-style Generate → Solve → Compare subnet with its own managed inference, vanguarstew registered as a repository on the existing gittensor repo-scoring subnet, which already runs the submit → evaluate → rank loop over real pull requests. No parallel eval/inference infrastructure to maintain.
+- [x] **Registered on gittensor** — live in the subnet's `master_repositories.json`: `maintainer_cut` 0.5, `trusted_label_pipeline` true, the full `perf:xs`–`perf:xl` multiplier ladder (0.5 → 4.0) plus `mult:contribution`, eligibility gates (`min_credibility` 0.5, `max_open_pr_threshold` 2), a 7-day PR scoring window with 3-day sigmoid time-decay, and `test` registered as an additional accepted branch.
+- [x] **Submit → evaluate → rank loop live:** contributors open PRs against the agent; gittensor's own validators score and rank the repository's contributions autonomously through the trusted label pipeline; subnet economics are handled by gittensor. The `perf:*` bands the benchmark measures map directly to the on-chain `label_multipliers`.
+- [x] **Acceptance:** vanguarstew is a live, earning repository on gittensor, carrying a real emission share (~0.099 in the subnet's repository config) and scored end-to-end by the subnet's validators with no manual intervention in the ranking loop.
+- **Status:** ✅ complete. Registered and earning on gittensor via the trusted label pipeline; the measured `perf:*` ladder submitted by the benchmark maps 1:1 to on-chain label multipliers.
 
 ## M7 — Legible, verifiable maintainer-foresight metric
 
