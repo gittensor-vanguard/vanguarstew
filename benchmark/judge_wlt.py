@@ -52,14 +52,22 @@ def summarize_judge_wlt(artifact) -> dict:
     artifact has no top-level report — each ``tuned``/``held_out`` partition carries its own — so
     the overall is summed from the partitions (mirroring the sibling ``win_rate``); it also adds a
     ``partitions`` map. A missing or malformed report yields ``None`` counts, and a generalization
-    overall is ``None`` unless both partitions carry a usable report.
+    overall is ``None`` unless both partitions judged at least one task -- a zero-task partition
+    nulls the overall rather than presenting the other partition's tally as the whole run.
     """
     artifact = _dict(artifact)
     kind = artifact_kind(artifact)
     if kind == "generalization":
         tuned = _slice_summary(artifact.get("tuned"))
         held = _slice_summary(artifact.get("held_out"))
-        if all(_is_int(slice_["total"]) for slice_ in (tuned, held)):
+        # Gate the overall on each partition having judged at least one task (a *positive*
+        # ``total``), not merely on ``total`` being an int. A zero-task partition has an all-zero
+        # (integer) ``total`` that would otherwise pass the int gate, summing its empty report in
+        # and presenting the *other* partition's W-L-T as the whole-run tally. Mirrors the sibling
+        # zero-task generalization fixes in order_agree_rate (#1426), scored_fraction (#1274),
+        # skip_share (#1272), and dual_order_coverage (#1280); when both partitions are non-empty
+        # their totals are > 0, so the summed total is > 0 and the headline is defined.
+        if all(_is_int(slice_["total"]) and slice_["total"] > 0 for slice_ in (tuned, held)):
             wins = tuned["wins"] + held["wins"]
             losses = tuned["losses"] + held["losses"]
             ties = tuned["ties"] + held["ties"]
