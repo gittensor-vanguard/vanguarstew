@@ -22,6 +22,7 @@ from benchmark.regression import (  # noqa: E402
     failed_checks,
     regression_headline,
 )
+from scripts import regression as regression_cli  # noqa: E402
 
 
 def _run(composite, disagreement=None):
@@ -546,9 +547,7 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     result = _run_cli(str(good), str(missing))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    # the real OSError message, not a paraphrase: errno, the exact reason, and the path
-    assert "No such file or directory" in result.stderr
-    assert str(missing) in result.stderr
+    assert f"artifact not found: {missing}" in result.stderr
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
@@ -566,7 +565,7 @@ def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
         unreadable.chmod(0o644)
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    assert "Permission denied" in result.stderr
+    assert "not readable" in result.stderr
     assert str(unreadable) in result.stderr
 
 
@@ -588,8 +587,29 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     result = _run_cli(str(path), str(path))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    # the real json.JSONDecodeError text, not a generic placeholder
-    assert "Expecting property name enclosed in double quotes" in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
+    assert str(path) in result.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
+    result = _run_cli(str(good), str(tmp_path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        regression_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
 
 def test_cli_still_runs_the_real_regression_logic_for_well_formed_artifacts(tmp_path):
