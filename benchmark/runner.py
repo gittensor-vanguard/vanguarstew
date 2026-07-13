@@ -326,17 +326,25 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
             "selection": selection,
         }
         checkout_root = tempfile.mkdtemp(prefix="vanguarstew_repo_set_")
-        for entry in entries:
-            repo_path, cleanup = _materialize_repo_source(entry.source, checkout_root)
-            selected.append({
-                "repo": entry.source,
-                "repo_name": entry.name,
-                "tier": entry.tier,
-                "held_out": entry.held_out,
-                "freeze_window": dict(entry.freeze_window),
-                "repo_path": repo_path,
-                "cleanup": cleanup,
-            })
+        try:
+            for entry in entries:
+                repo_path, cleanup = _materialize_repo_source(entry.source, checkout_root)
+                selected.append({
+                    "repo": entry.source,
+                    "repo_name": entry.name,
+                    "tier": entry.tier,
+                    "held_out": entry.held_out,
+                    "freeze_window": dict(entry.freeze_window),
+                    "repo_path": repo_path,
+                    "cleanup": cleanup,
+                })
+        except BaseException:
+            # Materialization (placeholder rejection, clone failure/timeout, missing source)
+            # raises before the replay loop's try/finally is entered, so clean up the checkout
+            # root here — otherwise a failed setup leaks the temp dir and any repos already
+            # cloned into it.
+            shutil.rmtree(checkout_root, ignore_errors=True)
+            raise
     else:
         selected = [{"repo": repo, "repo_path": repo, "cleanup": False} for repo in repos]
 

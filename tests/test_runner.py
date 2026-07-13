@@ -3,6 +3,7 @@
     VANGUARSTEW_OFFLINE=1 python -m pytest tests/test_runner.py -q
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -237,3 +238,38 @@ def test_clone_passes_end_of_options_guard_and_finite_timeout(tmp_path, monkeypa
     _materialize_repo_source(source, str(tmp_path))
     assert calls["cmd"][calls["cmd"].index(source) - 1] == "--"
     assert calls["timeout"] == CLONE_TIMEOUT_SECONDS
+
+
+def test_run_multi_replay_cleans_up_checkout_root_when_a_source_fails(tmp_path, monkeypatch):
+    # A repo-set source that can't be materialized (a clone timeout/failure, the shipped
+    # OWNER/... placeholder, or a missing local source) makes run_multi_replay raise from the
+    # setup loop -- before the replay try/finally that removes the checkout dir is ever entered.
+    # The temp checkout root (and any repos already cloned into it) must still be cleaned up, not
+    # leaked. Regression test for the setup-phase temp-dir leak.
+    cfg = tmp_path / "repo_set.json"
+    cfg.write_text(json.dumps({
+        "name": "local", "description": "test", "strategy": "test",
+        "repos": [{"name": "r0", "source": "https://example.invalid/repo.git", "tier": "recent"}],
+    }), encoding="utf-8")
+
+    created = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def spy_mkdtemp(*args, **kwargs):
+        path = real_mkdtemp(*args, **kwargs)
+        created.append(path)
+        return path
+
+    def fail_clone(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    monkeypatch.setattr(tempfile, "mkdtemp", spy_mkdtemp)
+    monkeypatch.setattr("benchmark.runner.subprocess.run", fail_clone)
+
+    with pytest.raises(RepoSetError):
+        run_multi_replay(repo_set=str(cfg))
+
+    roots = [p for p in created if "vanguarstew_repo_set_" in os.path.basename(p)]
+    assert roots, "expected run_multi_replay to create a checkout root"
+    assert not os.path.exists(roots[0]), (
+        f"checkout root {roots[0]} leaked after a materialization failure")
