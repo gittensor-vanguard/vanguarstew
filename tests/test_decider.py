@@ -311,18 +311,20 @@ def test_is_planning_request():
     assert _is_planning_request(None) is False
 
 
-def test_planning_version_bump_note_on_planning_request_with_tags():
-    ctx = {"releases": [{"tag": "v1.2.0"}], "recent_commits": [{"subject": "fix: a"}]}
-    note = _planning_version_bump_note(ctx, "plan the next 5 maintainer actions")
+def test_planning_version_bump_note_only_under_release_pressure():
+    low = {"releases": [{"tag": "v1.2.0"}], "recent_commits": [{"subject": "fix: a"}]}
+    assert _planning_version_bump_note(low, "plan the next 5 maintainer actions") == ""
+    commits = [{"subject": f"feat: {i}"} for i in range(6)]
+    commits.append({"subject": "chore(release): 1.0.0"})
+    high = {"releases": [{"tag": "v1.2.0"}], "recent_commits": commits}
+    note = _planning_version_bump_note(high, "plan the next 5 maintainer actions")
     assert "version_bump" in note
-    assert _planning_version_bump_note(ctx, "merge PR #9") == ""
-    assert _planning_version_bump_note({}, "plan the next 5 maintainer actions") == ""
+    assert _planning_version_bump_note(high, "merge PR #9") == ""
 
 
-def test_planning_version_bump_note_on_cadence_without_tags():
+def test_planning_version_bump_note_suppressed_after_recent_release():
     ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}]}
-    note = _planning_version_bump_note(ctx, "plan the next 3 maintainer actions")
-    assert "version_bump" in note
+    assert _planning_version_bump_note(ctx, "plan the next 3 maintainer actions") == ""
 
 
 def test_decide_prompt_surfaces_planning_bump_note():
@@ -340,7 +342,9 @@ def test_decide_prompt_surfaces_planning_bump_note():
                 }
             return {"verdict": "ok", "reasoning": "because"}
 
-    ctx = {"releases": [{"tag": "v2.0.0"}], "recent_commits": [{"subject": "feat: x"}]}
+    commits = [{"subject": f"feat: {i}"} for i in range(6)]
+    commits.append({"subject": "chore(release): 1.0.0"})
+    ctx = {"releases": [{"tag": "v2.0.0"}], "recent_commits": commits}
     decide(ctx, {}, "plan the next 5 maintainer actions", CapturingLLM())
     synthesis = captured["users"][-1]
     assert "forward planning" in synthesis and "version_bump" in synthesis

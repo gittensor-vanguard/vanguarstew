@@ -17,7 +17,9 @@ from agent.planner import (  # noqa: E402
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
+    RELEASE_SUPPRESS_GUIDANCE,
     _commit_plan_kind,
+    _commits_since_last_release,
     _explicit_pr_number,
     _is_review_item,
     _matched_pr,
@@ -33,6 +35,9 @@ from agent.planner import (  # noqa: E402
     _recent_kinds_note,
     _release_cadence_note,
     _release_cadence_signal,
+    _release_pressure,
+    _release_recently_shipped,
+    _release_timing_note,
     _safe_prs,
     _significant_tokens,
     plan_next_actions,
@@ -756,20 +761,67 @@ def test_plan_prompt_includes_objective_anchor_guidance():
     assert RELEASE_CADENCE_GUIDANCE not in llm.last_user
 
 
-def test_release_cadence_signal_detects_release_subjects():
-    ctx = {"recent_commits": [{"subject": "feat: add export"}, {"subject": "chore(release): 1.4.0"}]}
-    assert _release_cadence_signal(ctx) is True
-    assert _release_cadence_signal({"recent_commits": [{"subject": "fix: loader"}]}) is False
-    assert _release_cadence_signal({}) is False
+def test_is_release_cut_subject_matches_anchor_patterns():
+    from agent.planner import _is_release_cut_subject
+    assert _is_release_cut_subject("chore(release): 1.4.0") is True
+    assert _is_release_cut_subject("Release 1.2.0") is True
+    assert _is_release_cut_subject("fix: loader race") is False
 
 
-def test_release_cadence_note_only_when_history_signals_cadence():
+def test_commits_since_last_release_counts_from_head():
+    ctx = {"recent_commits": [
+        {"subject": "feat: a"}, {"subject": "fix: b"}, {"subject": "chore(release): 1.0.0"},
+    ]}
+    assert _commits_since_last_release(ctx) == 2
+    assert _commits_since_last_release({"recent_commits": [{"subject": "release: 2.0"}]}) == 0
+
+
+def test_release_recently_shipped_when_head_is_release():
+    ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}, {"subject": "feat: x"}]}
+    assert _release_recently_shipped(ctx) is True
+    assert _release_pressure(ctx) is False
+
+
+def test_release_pressure_when_commits_since_release_build():
+    commits = [{"subject": f"feat: change {i}"} for i in range(6)]
+    commits.append({"subject": "chore(release): 1.0.0"})
+    ctx = {"recent_commits": commits}
+    assert _release_pressure(ctx) is True
+    note = _release_timing_note(ctx)
+    assert "pressure is building" in note
+
+
+def test_release_timing_suppresses_after_recent_cut():
+    ctx = {"recent_commits": [{"subject": "release: 3.0"}, {"subject": "feat: x"}]}
+    note = _release_timing_note(ctx)
+    assert RELEASE_SUPPRESS_GUIDANCE.split(".")[0] in note
+
+
+def test_release_timing_neutral_when_few_commits_since_release():
+    ctx = {"recent_commits": [
+        {"subject": "feat: a"}, {"subject": "fix: b"}, {"subject": "feat: c"},
+        {"subject": "chore(release): 1.0.0"},
+    ]}
+    note = _release_timing_note(ctx)
+    assert "no release pressure" in note
+
+
+def test_release_cadence_signal_is_pressure_not_any_history_release():
+    low_pressure = {"recent_commits": [
+        {"subject": "feat: a"}, {"subject": "chore(release): 1.0.0"},
+    ]}
+    assert _release_cadence_signal(low_pressure) is False
+    high_pressure = {"recent_commits": [
+        {"subject": f"feat: {i}"} for i in range(6)
+    ] + [{"subject": "chore(release): 1.0.0"}]}
+    assert _release_cadence_signal(high_pressure) is True
+
+
+def test_release_cadence_note_empty_without_commits():
     assert _release_cadence_note({}) == ""
-    note = _release_cadence_note({"recent_commits": [{"subject": "release: 2.0"}]})
-    assert RELEASE_CADENCE_GUIDANCE in note
 
 
-def test_planner_prompt_includes_release_cadence_only_with_history():
+def test_planner_prompt_includes_release_timing_not_blanket_cadence():
     captured = {}
 
     class CapturingLLM(LLM):
@@ -779,11 +831,16 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
 
     plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "fix: a"}]},
                       {}, 2, CapturingLLM(api_key="offline"))
-    assert RELEASE_CADENCE_GUIDANCE not in captured["user"]
+    assert "no release pressure" in captured["user"]
 
-    plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.0.0"}]},
+    plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "release: 3.0"}]},
                       {}, 2, CapturingLLM(api_key="offline"))
-    assert RELEASE_CADENCE_GUIDANCE in captured["user"]
+    assert RELEASE_SUPPRESS_GUIDANCE.split("do NOT")[0].strip()[:30] in captured["user"]
+
+    commits = [{"subject": f"feat: {i}"} for i in range(6)]
+    commits.append({"subject": "chore(release): 1.0.0"})
+    plan_next_actions({"open_prs": [], "recent_commits": commits}, {}, 2, CapturingLLM(api_key="offline"))
+    assert "pressure is building" in captured["user"]
 
 
 
