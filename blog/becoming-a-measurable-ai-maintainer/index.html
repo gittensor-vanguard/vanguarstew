@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What vanguarstew is really building: a measurable AI maintainer — vanguarstew</title>
+<meta name="description" content="Not another agent framework, not another issue-resolution benchmark. vanguarstew is becoming the first measurable, public, self-improving AI software maintainer — and here's the proof we're building toward.">
+<meta name="theme-color" content="#0C1412">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23CFA954'/><text x='16' y='22.5' font-size='18' text-anchor='middle' font-family='Georgia,serif' font-weight='700' fill='%23231a08'>V</text></svg>">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gittensor-vanguard.github.io/vanguarstew/blog/becoming-a-measurable-ai-maintainer/">
+<meta property="og:title" content="What vanguarstew is really building: a measurable AI maintainer — vanguarstew">
+<meta property="og:description" content="Not another agent framework, not another issue-resolution benchmark. The first measurable, public, self-improving AI software maintainer.">
+<style>
+  :root{
+    --ink:#0C1412; --ink-2:#0F1A15; --panel:#12201A; --panel-2:#152720;
+    --line:#26372E; --line-soft:#1C2B24;
+    --text:#E7EAE2; --muted:#93A69B; --faint:#6C7F75;
+    --brass:#CFA954; --brass-hi:#E7CB84; --brass-deep:#8A7132;
+    --approve:#7CBE90; --merge:#AC90E4; --changes:#E1A452; --bad:#C6553F;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --wrap:1060px; --prose:680px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ink); color:var(--text);
+    font-family:var(--sans); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    background-image:
+      radial-gradient(1100px 620px at 78% -8%, rgba(207,169,84,.075), transparent 60%),
+      radial-gradient(760px 520px at 6% 4%, rgba(124,190,144,.05), transparent 55%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:var(--wrap); margin-inline:auto; padding-inline:26px}
+  .prose{max-width:var(--prose); margin-inline:auto; padding-inline:26px}
+  a{color:inherit}
+  h1,h2,h3{font-family:var(--serif); font-weight:600; text-wrap:balance; letter-spacing:-.012em; margin:0}
+  p{margin:0}
+  code{font-family:var(--mono); font-size:.88em; background:rgba(255,255,255,.05); padding:.12em .4em; border-radius:4px}
+  .eyebrow{font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--brass); margin:0}
+  :focus-visible{outline:2px solid var(--brass); outline-offset:3px; border-radius:3px}
+
+  header.top{position:sticky; top:0; z-index:20; background:rgba(12,20,18,.72); backdrop-filter:blur(9px); border-bottom:1px solid var(--line-soft)}
+  header.top .wrap{display:flex; align-items:center; gap:18px; height:60px}
+  .brandmark{display:flex; align-items:center; gap:11px; font-family:var(--serif); font-size:1.12rem; letter-spacing:-.01em; text-decoration:none}
+  .brandmark .dot{width:11px; height:11px; border-radius:50%; background:radial-gradient(circle at 32% 30%, var(--brass-hi), var(--brass) 45%, var(--brass-deep)); box-shadow:0 0 0 1px rgba(231,203,132,.35), 0 0 14px rgba(207,169,84,.5)}
+  .top nav{margin-left:auto; display:flex; align-items:center; gap:22px}
+  .top nav a{font-family:var(--mono); font-size:.76rem; letter-spacing:.05em; color:var(--muted); text-decoration:none}
+  .top nav a:hover{color:var(--text)}
+  @media(max-width:680px){ .top nav a.hide-sm{display:none} }
+
+  article{padding-block:clamp(48px,7vw,84px)}
+  .art-head{margin-bottom:clamp(36px,6vw,56px)}
+  .art-title{font-size:clamp(2rem,4.6vw,3.1rem); line-height:1.1; margin-top:16px}
+  .art-meta{font-family:var(--mono); font-size:.78rem; color:var(--faint); margin-top:18px; display:flex; gap:14px; flex-wrap:wrap}
+  .art-lead{font-size:1.2rem; color:var(--muted); line-height:1.6; margin-top:22px}
+
+  .art-body{display:flex; flex-direction:column; gap:22px; margin-top:40px}
+  .art-body p{color:#DDE3DA; font-size:1.03rem; line-height:1.75}
+  .art-body h2{font-size:1.5rem; margin-top:26px}
+  .art-body h3{font-size:1.15rem; margin-top:6px; color:var(--brass-hi)}
+  .art-body ul, .art-body ol{margin:0; padding-left:1.3em; color:#DDE3DA; font-size:1.03rem; line-height:1.75; display:flex; flex-direction:column; gap:8px}
+  .art-body b{color:var(--text); font-weight:600}
+  .art-body a.inline{color:var(--brass); text-decoration:underline; text-underline-offset:2px}
+
+  .callout{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px 22px; display:flex; flex-direction:column; gap:8px}
+  .callout .k{font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--brass)}
+  .callout p{color:var(--muted); font-size:.98rem}
+
+  .pillars{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); border-radius:10px; overflow:hidden; margin-top:6px}
+  @media(max-width:620px){ .pillars{grid-template-columns:1fr} }
+  .pillars .p{background:var(--ink-2); padding:20px 18px; display:flex; flex-direction:column; gap:8px}
+  .pillars .p .n{font-family:var(--mono); font-size:.7rem; letter-spacing:.1em; color:var(--brass)}
+  .pillars .p .t{font-family:var(--serif); font-size:1.08rem; color:var(--text); line-height:1.3}
+  .pillars .p .d{color:var(--muted); font-size:.88rem; line-height:1.55}
+
+  .close-card{background:radial-gradient(700px 260px at 80% -30%, rgba(207,169,84,.12), transparent 60%), linear-gradient(180deg,var(--panel-2),var(--ink-2)); border:1px solid var(--line); border-radius:14px; padding:clamp(26px,5vw,40px); margin-top:12px}
+  .close-card h3{font-size:1.3rem}
+  .close-card p{color:var(--muted); margin-top:10px}
+  .close-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:20px}
+  .btn{display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:.82rem; letter-spacing:.03em; text-decoration:none; padding:11px 16px; border-radius:4px; border:1px solid transparent}
+  .btn-primary{background:var(--brass); color:#1a1305; font-weight:600; border-color:var(--brass-hi)}
+  .btn-ghost{color:var(--text); border-color:var(--line)}
+
+  footer{border-top:1px solid var(--line-soft); margin-top:40px}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:16px 26px; align-items:center; padding-block:30px; font-family:var(--mono); font-size:.74rem; color:var(--faint)}
+  footer a{color:var(--muted); text-decoration:none} footer a:hover{color:var(--brass)}
+  footer .sp{margin-left:auto}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brandmark" href="../../"><span class="dot"></span>vanguarstew</a>
+    <nav>
+      <a href="../../#bench" class="hide-sm">Benchmark</a>
+      <a href="../../leaderboard/" class="hide-sm">Leaderboard</a>
+      <span class="hide-sm" style="color:var(--brass)">Blog</span>
+      <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <article>
+    <div class="prose art-head">
+      <p class="eyebrow">Vanguarstew journal</p>
+      <h1 class="art-title">What vanguarstew is really building: a measurable AI maintainer</h1>
+      <div class="art-meta">
+        <span>July 13, 2026</span>
+        <span>·</span>
+        <span>Vision · North Star</span>
+        <span>·</span>
+        <a href="../../leaderboard/" style="color:var(--brass)">Live leaderboard ↗</a>
+      </div>
+      <p class="art-lead">Most AI-agent projects are a variation on the same pitch: a framework
+        for wiring up model calls, or an agent that resolves a GitHub issue. Both are crowded
+        spaces. vanguarstew is doing something different — and it's worth saying plainly what
+        the end goal is.</p>
+    </div>
+
+    <div class="prose art-body">
+      <p><b>vanguarstew is becoming the first measurable, public, self-improving AI software
+        maintainer.</b> Three things, each individually rare, that together nobody else has:</p>
+
+      <div class="pillars">
+        <div class="p">
+          <span class="n">01</span>
+          <span class="t">Maintains a real repo, in the open</span>
+          <span class="d">It reviews real pull requests as a supervised co-maintainer — not in a demo sandbox.</span>
+        </div>
+        <div class="p">
+          <span class="n">02</span>
+          <span class="t">Scored against real maintainer history</span>
+          <span class="d">Every improvement is measured by replaying real git history: could it predict what the maintainers actually did next — on public and held-out repos alike.</span>
+        </div>
+        <div class="p">
+          <span class="n">03</span>
+          <span class="t">Improvement tracked in public</span>
+          <span class="d">Its maintainer skill is plotted on a public leaderboard. You can watch it climb.</span>
+        </div>
+      </div>
+
+      <h2>Why not "the best agent framework"</h2>
+      <p>Because that's the wrong category. LangGraph, AutoGen, CrewAI, the OpenAI Agents SDK,
+        the Microsoft Agent Framework — these are excellent <i>orchestration</i> tools.
+        Comparing vanguarstew to them is like comparing an inference engine to a deep-learning
+        framework: a category error. vanguarstew isn't plumbing for building agents. It's a
+        specialist at one hard, specific task — <b>maintainer judgment</b>: knowing what a
+        codebase wants next, what to merge, what to triage, when to cut a release.</p>
+      <p>Nobody has a popular benchmark for <i>that</i>, because measuring maintainer judgment
+        is genuinely new. Issue-resolution benchmarks like SWE-bench measure whether a model
+        can write a patch that passes hidden tests — a real and valuable thing, but a different
+        one. Predicting the <i>direction</i> a senior maintainer will take a project is a
+        separate skill, and it's the one vanguarstew is built to measure and optimize.</p>
+
+      <h2>The proof we're building toward</h2>
+      <p>The goal isn't a number you have to trust us on. It's a <b>verifiable
+        demonstration</b>:</p>
+
+      <div class="callout">
+        <span class="k">The receipt</span>
+        <p>Freeze a repository people recognize at a past commit. Before revealing what came
+          next, the agent predicts the maintainers' next actions. Then show it called them
+          right — the release, the module, the refactor — against the actual git history anyone
+          can pull up on GitHub themselves.</p>
+      </div>
+
+      <p>That's the whole point of building on real history: the receipt is public and
+        independently checkable. You don't have to believe our benchmark; you can verify the
+        prediction yourself.</p>
+
+      <h2>The flywheel</h2>
+      <p>This is why the contribution-scoring mechanism matters so much. It isn't
+        bureaucracy — it's the engine:</p>
+      <ul>
+        <li>Contributors improve the agent's <b>real predictive accuracy</b> — how often it
+          names the modules, kinds of work, and releases that maintainers actually produced
+          next, on repos it has never seen.</li>
+        <li>The benchmark scores each change, anti-gamed and on held-out targets, so only
+          genuine improvement counts.</li>
+        <li>The leaderboard shows verifiable maintainer-foresight climbing over time.</li>
+        <li>That climbing record, plus the frozen-repo demonstration, is the proof — which
+          draws more contributors, who push the accuracy higher.</li>
+      </ul>
+      <p>Every merged improvement makes the agent measurably better at anticipating real
+        maintainers, and that improvement is public and checkable. That's the loop.</p>
+
+      <h2>What's next</h2>
+      <p>Two milestones make this concrete:</p>
+      <ul>
+        <li><b>M7 — a legible foresight metric.</b> Turn the internal composite score into a
+          single, objective accuracy figure an outsider instantly understands and can verify
+          against real history — did it predict the actual modules, kinds, and releases — and
+          make it the leaderboard's headline.</li>
+        <li><b>M8 — the verifiable demonstration.</b> A clean, fair, reproducible frozen-repo
+          prediction on a well-known repository — freeze commit, model, and cutoff stated up
+          front — plus the public record of the metric climbing over a real track of merged,
+          genuinely-improving pull requests.</li>
+      </ul>
+
+      <div class="close-card">
+        <h3>We're not trying to win an argument about frameworks</h3>
+        <p>We're trying to prove, in public and in a way anyone can check, that an AI can learn
+          to maintain software like a senior maintainer — and to get measurably better at it
+          every week. The leaderboard is where that proof accumulates, one merged pull request
+          at a time.</p>
+        <div class="close-cta">
+          <a class="btn btn-primary" href="../../leaderboard/">View the leaderboard <span>→</span></a>
+          <a class="btn btn-ghost" href="https://github.com/gittensor-vanguard/vanguarstew">View the repo <span>→</span></a>
+        </div>
+      </div>
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brandmark" style="font-size:1rem"><span class="dot"></span>vanguarstew</span>
+    <span>a repository-maintainer agent &amp; its benchmark</span>
+    <span class="sp"></span>
+    <a href="../">Blog</a>
+    <a href="../../">Home</a>
+    <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub</a>
+  </div>
+</footer>
+</body>
+</html>
