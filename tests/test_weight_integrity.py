@@ -21,6 +21,7 @@ from benchmark.weight_integrity import (  # noqa: E402
     failed_checks,
     integrity_headline,
 )
+from scripts import weight_integrity as cli  # noqa: E402
 
 
 def _names(result):
@@ -385,7 +386,58 @@ def test_cli_strict_exit_codes(tmp_path):
 
 
 def test_cli_missing_and_non_object_files(tmp_path):
-    assert _run_cli(tmp_path / "does-not-exist.json", "--strict").returncode == 1
+    # A bad path or a non-object artifact is an input error -> exit 2 with a clean message
+    # (distinct from the --strict gate-failure exit 1), matching the sibling CLIs.
+    missing = _run_cli(tmp_path / "does-not-exist.json", "--strict")
+    assert missing.returncode == 2
+    assert "artifact not found" in missing.stderr and "Traceback" not in missing.stderr
     arr = tmp_path / "arr.json"
     arr.write_text("[1, 2, 3]")
-    assert _run_cli(arr, "--strict").returncode == 1
+    non_object = _run_cli(arr, "--strict")
+    assert non_object.returncode == 2
+    assert "must be a JSON object" in non_object.stderr
+
+
+def test_cli_directory_path_exits_two(tmp_path):
+    # A directory artifact path is an OSError (IsADirectoryError on POSIX), not a
+    # FileNotFoundError -- it must exit 2 with an actionable message, not a raw errno.
+    result = _run_cli(tmp_path)
+    assert result.returncode == 2
+    assert "directory" in result.stderr or "not readable" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "Traceback" not in err
