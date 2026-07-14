@@ -108,14 +108,18 @@ def load_context(repo_path: str) -> dict:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        except (ValueError, UnicodeDecodeError, OSError) as exc:
             # A present-but-unreadable context file must not abort solve(): fall back to
             # rebuilding the knowable-at-T context from the frozen git checkout (leakage-safe —
             # the checkout is frozen at T), exactly as when the file is absent. This is the
             # repo's "degrade rather than crash on malformed frozen input" posture (spec 001).
             #
             # Catch only the specific failure modes, never a bare Exception:
-            #   - json.JSONDecodeError: truncated/partial write from an interrupted freeze;
+            #   - ValueError: malformed JSON. json.JSONDecodeError (truncated/partial write from
+            #     an interrupted freeze) subclasses ValueError, so the invalid-JSON behavior is
+            #     unchanged; the broader catch also covers a bare ValueError from an oversized
+            #     integer literal (>4300 digits), which json.load raises directly since Python 3.11
+            #     instead of a JSONDecodeError, mirroring agent/llm.py::chat_json.
             #   - UnicodeDecodeError:   non-UTF-8 / binary content;
             #   - OSError (incl. PermissionError, IsADirectoryError): the file cannot be read.
             # The git rebuild cannot recover the GitHub-derived issues/PRs/labels a partial file
