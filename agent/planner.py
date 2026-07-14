@@ -54,8 +54,13 @@ _PR_NUMBER = re.compile(
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
 _MIN_SUBJECT_PHRASE = 8
 
+# A recent-commit kind must *recur* — appear at least this many times — before deterministic
+# gap-fill will plan a momentum item for it. A single occurrence is noise, not a theme worth
+# forcing into the plan ahead of the LLM's own priorities.
+_GAP_FILL_MIN_COUNT = 2
+
 _PLAN_KINDS = frozenset({
-    "feature", "bugfix", "refactor", "docs", "release", "dep", "triage",
+    "feature", "bugfix", "refactor", "docs", "release", "dep", "build", "triage",
 })
 
 # Conventional-Commit prefix on a commit subject: "feat:", "fix(scope):", "docs!:". This block
@@ -66,9 +71,11 @@ _PLAN_KINDS = frozenset({
 _CC_PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
 
 # Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Only types a plan item can
-# express appear here; types with no plan-kind equivalent (test, ci, perf, style, revert,
-# build) are dropped rather than mis-binned under a neighboring kind, since a wrong hint is
-# worse than none.
+# express appear here; types with no plan-kind equivalent (test, ci, perf, style, revert) are
+# dropped rather than mis-binned under a neighboring kind, since a wrong hint is worse than
+# none. ``build`` *is* mapped (#1559): the objective anchor (benchmark/score.py ``commit_kind``)
+# classifies ``build`` as its own kind, so a ``build:`` hint tracks the scorer instead of being
+# a wrong hint — the reason it was previously dropped no longer holds.
 _CC_TYPE_TO_PLAN_KIND = {
     "feat": "feature", "feature": "feature",
     "fix": "bugfix", "bugfix": "bugfix", "bug": "bugfix",
@@ -76,6 +83,7 @@ _CC_TYPE_TO_PLAN_KIND = {
     "refactor": "refactor",
     "release": "release",
     "chore": "dep", "deps": "dep", "dep": "dep",
+    "build": "build",
 }
 
 # Release tooling (standard-version / release-please) cuts versions under a chore/build type:
@@ -97,7 +105,7 @@ SYSTEM = (
 # constants so tests can lock the contract without parsing full LLM prompts.
 PLAN_ITEM_SCHEMA = (
     '  "title": short imperative title,\n'
-    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
+    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","build","triage",\n'
     '  "rationale": why this, now, given the philosophy,\n'
     '  "theme": the higher-level direction this advances,\n'
     '  "files": optional list of repo-relative paths or top-level modules likely touched.'
@@ -107,7 +115,7 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
     "Concrete specificity matters: for each non-triage item, include `files` naming the "
     "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
     "Pick `kind` to match the maintainer commit type the action would produce "
-    "(bugfix/fix, feature/feat, docs, release, refactor, dep). When several kinds recur in "
+    "(bugfix/fix, feature/feat, docs, release, refactor, dep, build). When several kinds recur in "
     "recent history, plan separate items so each kind is covered."
 )
 
@@ -608,6 +616,34 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     return out[:n]
 
 
+def gap_fill_missing_kinds(plan, context: dict, n: int) -> list:
+    """Prepend deterministic momentum items for recurring recent-commit kinds the plan omits.
+
+    An LLM plan can leave a kind the revealed window keeps producing (e.g. ``build``) uncovered,
+    which zeroes that kind's objective ``kind_recall``. For each kind that recurs in recent
+    history — ``_recent_kind_counts`` count at least ``_GAP_FILL_MIN_COUNT`` — but appears on no
+    plan item, prepend one generic momentum item. The item shape mirrors ``heuristic_plan``'s
+    momentum items ("Continue {kind} work" / "{kind} momentum"); the prepend + ``[:n]`` cap
+    mirror the deterministic queue-fallback in ``reconcile_plan_with_queue``. ``_recent_kind_counts``
+    is already ordered most-frequent-first, so the fills land in that order ahead of the plan. A
+    kind already present on any item is never duplicated, and the result is capped to ``n``.
+    """
+    plan = _normalize_plan(plan)
+    present = {item.get("kind") for item in plan}
+    fills = []
+    for kind, count in _recent_kind_counts(context):
+        if count < _GAP_FILL_MIN_COUNT or kind in present:
+            continue
+        fills.append({
+            "title": f"Continue {kind} work",
+            "kind": kind,
+            "rationale": f"recent history shows recurring {kind} changes ({count} recent) the "
+                         "plan left uncovered",
+            "theme": f"{kind} momentum",
+        })
+    return (fills + plan)[:n]
+
+
 def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
@@ -635,6 +671,10 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         else:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
+    # Cover recurring recent-commit kinds the LLM omitted (e.g. ``build``) before queue
+    # reconciliation, so an ignored-queue review item still lands first — the maintainer
+    # value that a strong maintainer clears the queue before greenfield work is preserved.
+    plan = gap_fill_missing_kinds(plan, context, n)
     return reconcile_plan_with_queue(plan, context, n)
 
 

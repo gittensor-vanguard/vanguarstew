@@ -14,6 +14,7 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
+    _PLAN_KINDS,
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
@@ -35,6 +36,7 @@ from agent.planner import (  # noqa: E402
     _release_cadence_signal,
     _safe_prs,
     _significant_tokens,
+    gap_fill_missing_kinds,
     plan_next_actions,
     reconcile_plan_with_queue,
 )
@@ -803,9 +805,11 @@ def test_commit_plan_kind_release_tooling_cut_reads_as_release_not_dep():
     assert _commit_plan_kind("chore(release): 1.4.0") == "release"
     assert _commit_plan_kind("chore(main): release 1.2.3") == "release"
     assert _commit_plan_kind("build(release): v2.0.0") == "release"
-    # An ordinary chore stays dep; an ordinary build has no plan-kind equivalent.
+    # An ordinary chore stays dep; an ordinary build now maps to the `build` plan kind (#1559):
+    # the objective anchor maps `build`, so it is no longer a wrong hint. Release-tooling
+    # precedence above still wins — a build-authored version cut reads as `release`.
     assert _commit_plan_kind("chore: update editorconfig") == "dep"
-    assert _commit_plan_kind("build: switch to bazel") is None
+    assert _commit_plan_kind("build: switch to bazel") == "build"
 
 
 def test_commit_plan_kind_drops_unexpressible_and_unknown_subjects():
@@ -868,3 +872,87 @@ def test_planner_prompt_omits_kind_note_without_conventional_commits():
     ctx = {"open_prs": [], "recent_commits": [{"subject": "Add streaming export"}]}
     plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
     assert "Recent maintainer activity by kind" not in captured["user"]
+
+
+# --- #1559: build plan kind + kind-coverage gap-fill -------------------------------------
+
+
+def test_build_commit_maps_to_build_plan_kind():
+    # A `build:` / `build(scope):` subject now maps to the `build` plan kind (previously dropped
+    # as unexpressible). The objective anchor (benchmark/score.py `commit_kind`) maps `build`,
+    # so the hint tracks the scorer instead of being a wrong hint.
+    assert _commit_plan_kind("build: switch to bazel") == "build"
+    assert _commit_plan_kind("build(deps): bump the toolchain") == "build"
+
+
+def test_build_release_tooling_cut_still_outranks_build_kind():
+    # Release-tooling precedence is preserved: a version cut authored under `build` reads as
+    # `release`, not the new `build` kind (mirrors _RELEASE_TOOLING_TYPES / the objective anchor).
+    assert _commit_plan_kind("build(release): 2.0.0") == "release"
+    assert _commit_plan_kind("build: release v1.4.0") == "release"
+
+
+def test_build_is_a_valid_plan_kind_and_survives_normalization():
+    # `build` is a first-class plan kind now, so a `build` item is not coerced to `triage`.
+    assert "build" in _PLAN_KINDS
+    item = _normalize_plan_item({"title": "Switch CI to bazel", "kind": "BUILD"})
+    assert item["kind"] == "build"
+
+
+def test_gap_fill_prepends_recurring_kind_the_plan_omitted():
+    ctx = {"recent_commits": [
+        {"subject": "build: bazel step one"},
+        {"subject": "build: bazel step two"},
+        {"subject": "feat: exporter"},
+    ]}
+    plan = [{"title": "Ship the exporter", "kind": "feature"}]
+    out = gap_fill_missing_kinds(plan, ctx, 5)
+    assert out[0]["kind"] == "build"              # recurring (2x) build kind prepended
+    assert out[0]["theme"] == "build momentum"    # mirrors heuristic_plan momentum items
+    assert out[-1]["kind"] == "feature"           # the original item is preserved after the fill
+    assert sum(1 for i in out if i["kind"] == "feature") == 1  # feat recurs once -> not gap-filled
+
+
+def test_gap_fill_does_not_duplicate_a_kind_already_planned():
+    ctx = {"recent_commits": [
+        {"subject": "build: bazel step one"},
+        {"subject": "build: bazel step two"},
+    ]}
+    plan = [{"title": "Migrate the build to bazel", "kind": "build"}]
+    out = gap_fill_missing_kinds(plan, ctx, 5)
+    assert [i["kind"] for i in out] == ["build"]  # no duplicate build item prepended
+
+
+def test_gap_fill_ignores_single_occurrence_kinds():
+    ctx = {"recent_commits": [{"subject": "build: a one-off bazel tweak"}]}
+    plan = [{"title": "Write user documentation", "kind": "docs"}]
+    out = gap_fill_missing_kinds(plan, ctx, 5)
+    assert [i["kind"] for i in out] == ["docs"]   # build appears once -> below threshold
+
+
+def test_gap_fill_is_capped_to_n():
+    ctx = {"recent_commits": [
+        {"subject": "build: a"}, {"subject": "build: b"},
+        {"subject": "docs: c"}, {"subject": "docs: d"},
+    ]}
+    plan = [{"title": "Ship the exporter", "kind": "feature"}]
+    out = gap_fill_missing_kinds(plan, ctx, 1)
+    assert len(out) == 1
+
+
+def test_plan_next_actions_gap_fills_omitted_recurring_kind():
+    # End-to-end: an LLM plan that omits a recurring build kind gets a deterministic build item,
+    # while the LLM's own item survives.
+    ctx = {"open_prs": [], "recent_commits": [
+        {"subject": "build: bazel one"}, {"subject": "build: bazel two"},
+        {"subject": "fix: loader race"},
+    ]}
+
+    class _LLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return [{"title": "Fix the loader race", "kind": "bugfix"}]
+
+    out = plan_next_actions(ctx, {}, 5, _LLM(api_key="offline"))
+    kinds = [i["kind"] for i in out]
+    assert "build" in kinds    # recurring (2x) build kind gap-filled in
+    assert "bugfix" in kinds   # the LLM's own item is preserved
