@@ -239,10 +239,13 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out = llm.chat_json(SYSTEM, user, stub=stub)
     if not isinstance(out, dict):
         out = dict(stub)
-    out["action"] = _normalize_action(out.get("action"))
+    raw_action = _normalize_action(out.get("action"))
+    out["action"] = _guard_planning_action(raw_action, request)
     out["labels"] = _normalize_labels(out.get("labels"))
     out["reviewer"] = _normalize_reviewer(out.get("reviewer"))
-    out["rationale"] = _normalize_rationale(out.get("rationale"))
+    out["rationale"] = _guard_planning_rationale(
+        _normalize_rationale(out.get("rationale")), raw_action, out["action"],
+    )
     out["patch"] = _normalize_patch(out.get("patch"))
     out["version_bump"] = _normalize_version_bump(out.get("version_bump"))
     return out
@@ -250,6 +253,28 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
 
 def _is_planning_request(request: str) -> bool:
     return isinstance(request, str) and "plan the next" in request.lower()
+
+
+def _guard_planning_action(action: str, request: str) -> str:
+    """Fold reject → plan for planning-only requests (#1562).
+
+    A planning request proposes no code diff, so a repo merge bar that governs code
+    contributions cannot make the planning request itself out of scope.
+    """
+    if action == "reject" and _is_planning_request(request):
+        return "plan"
+    return action
+
+
+def _guard_planning_rationale(rationale: str, raw_action: str, action: str) -> str:
+    """Replace an out-of-scope rejection rationale after the planning guard fires."""
+    if raw_action == "reject" and action == "plan":
+        return (
+            "A planning request proposes no code change, so the repository merge bar "
+            "applies to contributions, not to producing a maintainer plan; the plan "
+            "is in scope."
+        )
+    return rationale
 
 
 def _planning_version_bump_note(context: dict, request: str) -> str:

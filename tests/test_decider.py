@@ -14,6 +14,8 @@ from agent.decider import (  # noqa: E402
     _LENS_SYSTEMS,
     SYSTEM,
     VALID_ACTIONS,
+    _guard_planning_action,
+    _guard_planning_rationale,
     _is_planning_request,
     _normalize_action,
     _normalize_labels,
@@ -344,3 +346,64 @@ def test_decide_prompt_surfaces_planning_bump_note():
     decide(ctx, {}, "plan the next 5 maintainer actions", CapturingLLM())
     synthesis = captured["users"][-1]
     assert "forward planning" in synthesis and "version_bump" in synthesis
+
+
+_CODE_ONLY_PHILOSOPHY = {
+    "summary": "Library that only merges code changes.",
+    "merge_bar": (
+        "Only accepts code changes (features, refactors, fixes, CI improvements); "
+        "anything that is not a code contribution is rejected as out of scope."
+    ),
+    "direction": "Incremental hardening.",
+}
+
+
+class _RejectPlanningLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        if system == SYSTEM:
+            return {
+                "action": "reject",
+                "labels": [],
+                "reviewer": None,
+                "version_bump": None,
+                "patch": None,
+                "rationale": (
+                    "The request asks for planning future maintainer actions, not a code "
+                    "contribution. The repository merge bar only accepts code changes, so "
+                    "the request is rejected as out of scope."
+                ),
+            }
+        return {"verdict": "code-only merge bar", "reasoning": "narrow scope"}
+
+
+def test_planning_request_not_rejected_under_code_only_merge_bar():
+    out = decide(
+        {}, _CODE_ONLY_PHILOSOPHY,
+        "plan the next 5 maintainer actions", _RejectPlanningLLM(),
+    )
+    assert out["action"] == "plan"
+    assert "out of scope" not in out["rationale"].lower()
+    assert "in scope" in out["rationale"].lower()
+
+
+def test_code_contribution_still_rejected_under_code_only_merge_bar():
+    out = decide(
+        {}, _CODE_ONLY_PHILOSOPHY,
+        "merge PR #42, which adds a heavy new runtime dependency", _RejectPlanningLLM(),
+    )
+    assert out["action"] == "reject"
+
+
+def test_guard_planning_action_rewrites_reject_only_for_planning_requests():
+    assert _guard_planning_action("reject", "plan the next 5 maintainer actions") == "plan"
+    assert _guard_planning_action("reject", "merge PR #9") == "reject"
+    assert _guard_planning_action("merge", "plan the next 3 maintainer actions") == "merge"
+
+
+def test_guard_planning_rationale_replaces_rejection_text_after_correction():
+    rationale = "Rejected as out of scope because merge bar only accepts code."
+    out = _guard_planning_rationale(rationale, "reject", "plan")
+    assert "out of scope" not in out.lower()
+    assert _guard_planning_rationale(rationale, "reject", "reject") == rationale
