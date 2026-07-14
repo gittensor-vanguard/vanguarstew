@@ -33,6 +33,11 @@ _CASES = [
     "see www.github.com/o/r/pull/900 next",
     "clone from github.com/o/r to start",
     "notgithub.com/o/r/pull/900 is fine",
+    # raw-content CDN deep-links (ref in the 3rd path segment): masked; bare root + look-alike stay
+    "pinned to https://raw.githubusercontent.com/o/r/v3.0-release/setup.py here",
+    "fetch raw.githubusercontent.com/o/r/next-milestone/README.md now",
+    "clone raw.githubusercontent.com/o/r to start",
+    "notraw.githubusercontent.com/o/r/main/a.py is fine",
     # trailing punctuation around a link
     "see https://github.com/o/r/issues/5, next",
     "see https://github.com/o/r/pull/9.",

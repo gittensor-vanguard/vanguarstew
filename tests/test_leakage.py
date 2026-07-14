@@ -38,6 +38,29 @@ def test_strip_forward_refs_masks_scheme_less_github_deeplinks():
     assert strip_forward_refs("notgithub.com/o/r/pull/900") == "notgithub.com/o/r/pull/900"
 
 
+def test_strip_forward_refs_masks_raw_githubusercontent_deeplinks():
+    # raw.githubusercontent.com is a different host than github.com, so it is NOT covered by the
+    # github.com matcher. Its `owner/repo/<ref>/<path>` URL embeds a git ref (branch/tag/commit)
+    # as its third segment -- the same forward-reference leak the tree/blob/releases cases mask on
+    # github.com proper, e.g. a future release tag or milestone branch (#1429).
+    for text in (
+        "pinned to https://raw.githubusercontent.com/o/r/v3.0-release/setup.py here",
+        "fetch raw.githubusercontent.com/o/r/next-milestone/README.md now",
+        "http://raw.githubusercontent.com/o/r/deadbeef/main.py cached",
+    ):
+        out = strip_forward_refs(text)
+        assert "<link>" in out and "raw.githubusercontent.com" not in out, text
+    # Trailing sentence punctuation is peeled back out of the mask, like the github.com case.
+    assert (strip_forward_refs("see raw.githubusercontent.com/o/r/main/a.py.")
+            == "see <link>.")
+    # A bare owner/repo root carries no ref segment, so (like github.com/o/r) it is left intact.
+    assert (strip_forward_refs("clone raw.githubusercontent.com/o/r to start")
+            == "clone raw.githubusercontent.com/o/r to start")
+    # The host boundary holds: a look-alike host must not be masked.
+    assert (strip_forward_refs("notraw.githubusercontent.com/o/r/main/a.py")
+            == "notraw.githubusercontent.com/o/r/main/a.py")
+
+
 def test_strip_forward_refs_preserves_plain_numbers():
     # 0-9a-f matches bare digits too (0-9 is a subset) -- a plain count/stat/year
     # is not a SHA and must survive the scrub.

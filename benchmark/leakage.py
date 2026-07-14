@@ -46,6 +46,20 @@ _GH_LINK = re.compile(
     re.I,
 )
 
+# The raw-content CDN (``raw.githubusercontent.com``) is a *different host*, not a subdomain of
+# ``github.com``, so ``_GH_LINK`` never matches it. Its links have no link-type segment: the
+# path is ``owner/repo/<ref>/<file...>``, and that third segment is itself a git ref (branch,
+# tag, or commit-ish) — the very forward reference the ``tree``/``blob``/``releases`` cases mask
+# on ``github.com`` proper (#1429). Require the ref segment (>= ``owner/repo/ref``) so a bare
+# ``owner/repo`` root, which carries no ref, is left intact just like the ``github.com`` case.
+_RAW_LINK = re.compile(
+    r"(?<![\w.])(?:https?://)?raw\.githubusercontent\.com"    # raw CDN host, optional scheme
+    r"/[^\s" + re.escape(_URL_STOP) + r"]+"                    # owner
+    r"/[^\s" + re.escape(_URL_STOP) + r"]+"                    # repo
+    r"/[^\s" + re.escape(_URL_STOP) + r"]+",                   # ref (+ any trailing file path)
+    re.I,
+)
+
 # Trailing sentence punctuation the greedy id/path segment may swallow; we peel
 # it back off so a trailing ".", ",", ";", or "!" stays in the surrounding prose
 # rather than vanishing into <link>. Query ("?") / fragment ("#") separators are
@@ -98,6 +112,7 @@ def strip_forward_refs(text: str) -> str:
     if not text:
         return text
     text = _GH_LINK.sub(_mask_link, text)
+    text = _RAW_LINK.sub(_mask_link, text)
     text = _ISSUE_REF.sub("#ref", text)
     text = _SHA.sub(lambda m: "<sha>" if _looks_like_sha(m.group(0)) else m.group(0), text)
     return text
