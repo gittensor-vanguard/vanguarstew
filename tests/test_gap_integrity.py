@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -19,6 +21,7 @@ from benchmark.gap_integrity import (  # noqa: E402
     failed_checks,
     integrity_headline,
 )
+from scripts import gap_integrity as gap_cli  # noqa: E402
 
 
 def _report(tuned_mean=0.62, held_mean=0.57, tuned_scored=2, held_scored=1, gap=None):
@@ -271,6 +274,37 @@ def test_cli_strict_passes_for_consistent_artifact(tmp_path):
     assert json.loads(result.stdout)["passed"] is True
 
 
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    result = _run_cli(str(tmp_path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        gap_cli.load_artifact(str(tmp_path / "gen.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        gap_cli.load_artifact(str(tmp_path / "gen.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
+
+
 def test_cli_strict_exits_nonzero_on_inconsistent(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text(json.dumps(_report(gap=0.99)), encoding="utf-8")
@@ -284,7 +318,7 @@ def test_cli_reports_clean_error_for_missing_file(tmp_path):
     result = _run_cli(str(missing), "--strict")
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    assert "No such file" in result.stderr
+    assert "artifact not found" in result.stderr
 
 
 def test_cli_reports_clean_error_for_non_object_artifact(tmp_path):
