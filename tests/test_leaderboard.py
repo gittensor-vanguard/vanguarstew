@@ -20,6 +20,7 @@ from benchmark.leaderboard import (  # noqa: E402
     leaderboard_headline,
     rank,
 )
+from scripts import leaderboard as leaderboard_cli  # noqa: E402
 
 
 class _Weird:
@@ -282,7 +283,7 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     result = _run_cli(f"a={good}", f"b={missing}")
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    assert str(missing) in result.stderr
+    assert f"artifact not found: {missing}" in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
@@ -302,6 +303,28 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     result = _run_cli(str(path))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_single(0.5)), encoding="utf-8")
+    result = _run_cli(f"a={good}", f"b={tmp_path}")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        leaderboard_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
 
 def test_cli_still_ranks_well_formed_artifacts(tmp_path):
