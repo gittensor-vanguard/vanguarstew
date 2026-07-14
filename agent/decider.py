@@ -19,7 +19,7 @@ import json
 import logging
 
 from agent.context import context_for_agent
-from agent.planner import _release_cadence_signal
+from agent.planner import _release_pressure, _release_recently_shipped
 
 logger = logging.getLogger(__name__)
 
@@ -253,16 +253,14 @@ def _is_planning_request(request: str) -> bool:
 
 
 def _planning_version_bump_note(context: dict, request: str) -> str:
-    """Ask for version_bump on planning requests when release cadence or tags are visible."""
+    """Ask for version_bump on planning requests only when release pressure is building."""
     if not _is_planning_request(request):
         return ""
-    ctx = context_for_agent(context) if isinstance(context, dict) else {}
-    has_tags = isinstance(ctx.get("releases"), list) and bool(ctx.get("releases"))
-    if not (_release_cadence_signal(context) or has_tags):
+    if _release_recently_shipped(context) or not _release_pressure(context):
         return ""
     return (
         "\nThe request is forward planning: even when action is plan, set version_bump to "
-        "major, minor, or patch when release cadence or frozen tags indicate the next cut.\n"
+        "major, minor, or patch because release timing pressure is building at freeze.\n"
     )
 
 

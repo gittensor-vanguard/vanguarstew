@@ -84,6 +84,14 @@ _CC_TYPE_TO_PLAN_KIND = {
 # the anchor classifies them. The body regex matches benchmark/score.py `_RELEASE_TAG_SUBJECT`.
 _RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
 _RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
+# Release-subject patterns aligned with benchmark/score.py (agent/ must not import benchmark/).
+_RELEASE_KW = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
+_RELEASE_TAG_SUBJECT = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
+
+# Release-timing thresholds (#1561): computable signals at freeze T, not narrative cadence.
+_RECENT_RELEASE_SHIPPED_WINDOW = 3
+_RELEASE_PRESSURE_MIN_COMMITS = 3
+_RELEASE_PRESSURE_MIN_DAYS = 3.0
 
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
@@ -112,7 +120,19 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
 )
 
 RELEASE_CADENCE_GUIDANCE = (
-    "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
+    "Release timing signal: ~{commits_since} commits since the last release cut at freeze — "
+    "pressure is building. Include one `release`-kind plan item."
+)
+
+RELEASE_SUPPRESS_GUIDANCE = (
+    "Release timing signal: a release cut appears in the most recent commits at freeze — "
+    "do NOT include a `release`-kind plan item for this planning horizon."
+)
+
+RELEASE_NEUTRAL_GUIDANCE = (
+    "Release timing signal: ~{commits_since} commits since the last release cut at freeze — "
+    "no release pressure yet. Do NOT include a `release`-kind item based on overall repo "
+    "cadence alone; only add one when the timing signal above indicates pressure."
 )
 
 
@@ -234,20 +254,117 @@ def _recent_kinds_note(context: dict) -> str:
     )
 
 
+def _is_release_cut_subject(subject) -> bool:
+    """True when a commit subject signals a version cut (aligned with benchmark/score.py)."""
+    if not isinstance(subject, str):
+        return False
+    m = _CC_PREFIX_RE.match(subject)
+    if m:
+        cc_type = m.group(1).lower()
+        if cc_type == "release":
+            return True
+        if cc_type in _RELEASE_TOOLING_TYPES:
+            body = subject[m.end():].lstrip(" :\t")
+            return bool(_RELEASE_CUT_BODY_RE.match(body))
+        return False
+    return bool(_RELEASE_KW.search(subject) or _RELEASE_TAG_SUBJECT.match(subject))
+
+
+def _parse_iso_date(value) -> float | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _commit_date_epoch(commit: dict) -> float | None:
+    if not isinstance(commit, dict):
+        return None
+    return _parse_iso_date(commit.get("date"))
+
+
+def _commits_since_last_release(context: dict) -> int | None:
+    """Commits from HEAD until the newest release cut in ``recent_commits`` (0 = just shipped)."""
+    commits = _recent_commits(context)
+    if not commits:
+        return None
+    for i, commit in enumerate(commits):
+        if not isinstance(commit, dict):
+            continue
+        if _is_release_cut_subject(commit.get("subject")):
+            return i
+    return len(commits)
+
+
+def _release_recently_shipped(context: dict) -> bool:
+    since = _commits_since_last_release(context)
+    if since == 0:
+        return True
+    window = _RECENT_RELEASE_SHIPPED_WINDOW
+    for commit in _recent_commits(context)[:window]:
+        if isinstance(commit, dict) and _is_release_cut_subject(commit.get("subject")):
+            return True
+    return False
+
+
+def _days_since_last_release(context: dict) -> float | None:
+    commits = _recent_commits(context)
+    if not commits:
+        return None
+    head_ts = _commit_date_epoch(commits[0]) if isinstance(commits[0], dict) else None
+    if head_ts is None and isinstance(context, dict):
+        frozen = context_for_agent(context).get("frozen_at")
+        if isinstance(frozen, dict):
+            head_ts = _parse_iso_date(frozen.get("date"))
+    if head_ts is None:
+        return None
+    for commit in commits:
+        if not isinstance(commit, dict):
+            continue
+        if _is_release_cut_subject(commit.get("subject")):
+            rel_ts = _commit_date_epoch(commit)
+            if rel_ts is None:
+                return None
+            return max(0.0, (head_ts - rel_ts) / 86400.0)
+    return None
+
+
+def _release_pressure(context: dict) -> bool:
+    """True when frozen context shows release-cadence pressure (building, not just shipped)."""
+    if _release_recently_shipped(context):
+        return False
+    since = _commits_since_last_release(context)
+    if since is None:
+        return False
+    if since >= _RELEASE_PRESSURE_MIN_COMMITS:
+        return True
+    days = _days_since_last_release(context)
+    return days is not None and days >= _RELEASE_PRESSURE_MIN_DAYS
+
+
 def _release_cadence_signal(context: dict) -> bool:
-    """True when recent commits show a release cut (mirrors heuristic_plan cadence)."""
-    return any(
-        _commit_plan_kind(commit.get("subject")) == "release"
-        for commit in _recent_commits(context)
-        if isinstance(commit, dict)
-    )
+    """Backward-compatible alias: cadence pressure, not mere presence of any release commit."""
+    return _release_pressure(context)
+
+
+def _release_timing_note(context: dict) -> str:
+    """Inject positive, negative, or neutral release guidance from computable freeze signals."""
+    since = _commits_since_last_release(context)
+    if since is None:
+        return ""
+    if _release_recently_shipped(context):
+        return f"\n{RELEASE_SUPPRESS_GUIDANCE}\n"
+    if _release_pressure(context):
+        return f"\n{RELEASE_CADENCE_GUIDANCE.format(commits_since=since)}\n"
+    return f"\n{RELEASE_NEUTRAL_GUIDANCE.format(commits_since=since)}\n"
 
 
 def _release_cadence_note(context: dict) -> str:
-    """Inject release-item guidance only when history evidences release cadence."""
-    if not _release_cadence_signal(context):
-        return ""
-    return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+    """Alias kept for tests and callers — routes to window-aware timing notes (#1561)."""
+    return _release_timing_note(context)
 
 
 def _pr_queue_note(context: dict) -> str:
