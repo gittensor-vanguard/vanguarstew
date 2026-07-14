@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -413,6 +415,64 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
     )
     assert proc.returncode == 0
     assert "CONSISTENT" in proc.stderr
+
+
+# --- #1613: load_artifact reports a clean per-type error, not a raw errno/traceback --------
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.row_integrity", *args],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    proc = _run_cli(str(missing))
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "not found" in proc.stderr
+    assert str(missing) in proc.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
+    proc = _run_cli(str(tmp_path))
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "[Errno" not in proc.stderr
+    assert "is a directory" in proc.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file-permission checks")
+def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
+    path = tmp_path / "noread.json"
+    path.write_text(json.dumps(_artifact()), encoding="utf-8")
+    path.chmod(0)
+    try:
+        proc = _run_cli(str(path))
+    finally:
+        path.chmod(0o644)
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "[Errno" not in proc.stderr
+    assert "not readable" in proc.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    path = tmp_path / "list.json"
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    proc = _run_cli(str(path))
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "must be a JSON object" in proc.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "invalid.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    proc = _run_cli(str(path))
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "not valid JSON" in proc.stderr
 
 
 # --- non-finite (NaN/Infinity) numeric fields must fail checks, not raise (#927) ----------
