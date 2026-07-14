@@ -115,6 +115,14 @@ def test_compare_eval_artifacts_treats_non_finite_scores_as_unavailable():
     diff = compare_eval_artifacts({"composite_mean": inf}, {"composite_mean": -inf})
     assert diff["composite_mean"] == {"baseline": None, "candidate": None, "delta": None}
 
+    # An oversized int (json.load parses a long integer literal into a Python int too large for a
+    # float) must be treated as unavailable, not crash the diff with OverflowError (#1596).
+    huge = 10 ** 400
+    diff = compare_eval_artifacts({"composite_mean": 0.5}, {"composite_mean": huge})
+    assert diff["composite_mean"] == {"baseline": 0.5, "candidate": None, "delta": None}
+    diff = compare_eval_artifacts({"composite_mean": huge}, {"composite_mean": 0.6})
+    assert diff["composite_mean"]["baseline"] is None and diff["composite_mean"]["candidate"] == 0.6
+
     diff = compare_eval_artifacts(
         {"composite_mean": 0.5, "judge_report": {"disagreement_rate": nan}},
         {"composite_mean": 0.6, "judge_report": {"disagreement_rate": 0.25}},

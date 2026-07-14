@@ -13,9 +13,15 @@ import sys
 
 def _numeric(value) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        number = float(value)
-        if math.isfinite(number):
-            return number
+        try:
+            if math.isfinite(value):
+                return float(value)
+        except OverflowError:
+            # A Python int too large to convert to a float (json.load parses an oversized
+            # integer literal into one) raises OverflowError in math.isfinite/float(); treat it
+            # as unavailable rather than crashing the diff -- matching the OverflowError guard the
+            # sibling integrity modules already carry (#616/#927).
+            return None
     return None
 
 
