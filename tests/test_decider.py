@@ -14,6 +14,8 @@ from agent.decider import (  # noqa: E402
     _LENS_SYSTEMS,
     SYSTEM,
     VALID_ACTIONS,
+    _guard_planning_action,
+    _guard_planning_rationale,
     _is_planning_request,
     _normalize_action,
     _normalize_labels,
@@ -344,3 +346,93 @@ def test_decide_prompt_surfaces_planning_bump_note():
     decide(ctx, {}, "plan the next 5 maintainer actions", CapturingLLM())
     synthesis = captured["users"][-1]
     assert "forward planning" in synthesis and "version_bump" in synthesis
+
+
+# ── issue #1562: a planning request is never a code contribution, so a code-only merge bar
+#    must not be able to reject the planning request itself as "out of scope" ──────────────
+
+# A repo (like openclaw/openclaw in #1562) whose merge_bar emphasizes it only accepts code.
+_CODE_ONLY_PHILOSOPHY = {
+    "summary": "A library that only merges code changes.",
+    "values": ["code-only", "stability-over-features"],
+    "merge_bar": (
+        "Only accepts code changes (features, refactors, fixes, CI improvements); "
+        "anything that is not a code contribution is rejected as out of scope."
+    ),
+    "direction": "Incremental hardening of the existing surface.",
+    "evidence": ["rejects non-code proposals"],
+}
+
+
+class _OutOfScopeRejectLLM:
+    """Reproduces openclaw/openclaw (#1562): the synthesis call rejects the request as
+    "out of scope" because the repo's merge bar only accepts code changes. A planning-only
+    request proposes no code, so that rejection is a misread of the decider's own inputs."""
+
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        if system == SYSTEM:  # final synthesis call
+            return {
+                "action": "reject",
+                "labels": [],
+                "reviewer": None,
+                "version_bump": None,
+                "patch": None,
+                "rationale": (
+                    "The request asks for planning future maintainer actions, a project "
+                    "management task, not a code contribution. The repository's merge bar "
+                    "only accepts code changes, so the request is rejected as out of scope."
+                ),
+            }
+        return {"verdict": "the merge bar only accepts code changes", "reasoning": "narrow scope"}
+
+
+def test_planning_request_not_rejected_by_code_only_merge_bar():
+    # Regression for #1562: BEFORE the fix decide() returned "reject" here (the synthesis
+    # LLM rejects a plan as out of scope under a code-only merge bar); a plan proposes no
+    # code, so it must classify as "plan" regardless of how restrictive the merge bar reads.
+    out = decide(
+        {}, _CODE_ONLY_PHILOSOPHY,
+        "plan the next 5 maintainer actions", _OutOfScopeRejectLLM(),
+    )
+    assert out["action"] == "plan"
+    assert out["action"] != "reject"
+    # The decision object must not contradict itself: once the action is corrected to "plan",
+    # the merge_bar-derived "rejected as out of scope" rationale is replaced with the reason
+    # the planning request is in scope, so action and rationale agree.
+    assert "out of scope" not in out["rationale"].lower()
+    assert "in scope" in out["rationale"].lower()
+
+
+def test_code_contribution_still_rejected_under_same_merge_bar():
+    # Companion: the guard is narrow. A genuine code-contribution request against the same
+    # code-only merge bar must STILL be rejectable — the fix must not blanket-disable reject.
+    out = decide(
+        {}, _CODE_ONLY_PHILOSOPHY,
+        "merge PR #42, which adds a heavy new runtime dependency", _OutOfScopeRejectLLM(),
+    )
+    assert out["action"] == "reject"
+
+
+def test_guard_planning_action_only_rewrites_reject_for_planning_requests():
+    planning = "plan the next 5 maintainer actions"
+    # a planning request can never be rejected as out of scope -> folded to "plan"
+    assert _guard_planning_action("reject", planning) == "plan"
+    # every other action on a planning request is left untouched
+    for action in ("plan", "merge", "release", "triage", "label"):
+        assert _guard_planning_action(action, planning) == action
+    # a non-planning request is never rewritten, including "reject"
+    assert _guard_planning_action("reject", "merge PR #9") == "reject"
+    assert _guard_planning_action("reject", "review PR #1") == "reject"
+
+
+def test_guard_planning_rationale_only_rewrites_a_corrected_reject():
+    original = "rejected as out of scope: not a code contribution"
+    # only the reject -> plan correction rewrites the rationale, to a consistent, in-scope one
+    fixed = _guard_planning_rationale(original, "reject", "plan")
+    assert "out of scope" not in fixed.lower() and "in scope" in fixed.lower()
+    # a reject that stayed reject keeps its rationale (a genuine code-contribution rejection)
+    assert _guard_planning_rationale(original, "reject", "reject") == original
+    # an action the model itself chose as plan is left as-is (guard did not fire)
+    assert _guard_planning_rationale("planning now", "plan", "plan") == "planning now"

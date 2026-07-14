@@ -239,10 +239,12 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out = llm.chat_json(SYSTEM, user, stub=stub)
     if not isinstance(out, dict):
         out = dict(stub)
-    out["action"] = _normalize_action(out.get("action"))
+    raw_action = _normalize_action(out.get("action"))
+    out["action"] = _guard_planning_action(raw_action, request)
     out["labels"] = _normalize_labels(out.get("labels"))
     out["reviewer"] = _normalize_reviewer(out.get("reviewer"))
-    out["rationale"] = _normalize_rationale(out.get("rationale"))
+    out["rationale"] = _guard_planning_rationale(
+        _normalize_rationale(out.get("rationale")), raw_action, out["action"])
     out["patch"] = _normalize_patch(out.get("patch"))
     out["version_bump"] = _normalize_version_bump(out.get("version_bump"))
     return out
@@ -250,6 +252,41 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
 
 def _is_planning_request(request: str) -> bool:
     return isinstance(request, str) and "plan the next" in request.lower()
+
+
+def _guard_planning_action(action: str, request: str) -> str:
+    """Keep a planning-only request from being rejected as "out of scope" (issue #1562).
+
+    A request to *plan* proposes no code diff, so it is categorically not a code
+    contribution: a repo's merge_bar/philosophy ("only accepts code changes") can rightly
+    reject a *contribution*, but it can never make the surrounding planning request itself
+    out of scope. So for a planning-only request a "reject" call is never correct — fold it
+    back to "plan", independent of how restrictively the repo's merge_bar reads. This is
+    deliberately narrow: it fires only for planning requests, so a genuine code contribution
+    against the same code-only merge bar can still be rejected.
+    """
+    if action == "reject" and _is_planning_request(request):
+        return "plan"
+    return action
+
+
+def _guard_planning_rationale(rationale: str, raw_action: str, action: str) -> str:
+    """Keep the rationale consistent when the planning guard corrects a reject (issue #1562).
+
+    When :func:`_guard_planning_action` has folded a ``reject`` into ``plan`` for a planning
+    request, the synthesized rationale still argues the request is "out of scope" — the exact
+    merge_bar-derived text the guard exists to neutralize — so the decision object would
+    contradict itself (``action == "plan"`` beside a rejection rationale). Replace it with the
+    deterministic reason the action was corrected: a planning request proposes no code change,
+    so the repo's merge bar does not apply to the request itself. Fires only on that
+    correction (``raw_action == "reject"`` and ``action == "plan"``); otherwise the model's own
+    rationale is returned unchanged.
+    """
+    if raw_action == "reject" and action == "plan":
+        return ("A planning request proposes no code change, so the repository's merge bar "
+                "governs code contributions, not the request itself; the plan is in scope "
+                "and is produced as requested.")
+    return rationale
 
 
 def _planning_version_bump_note(context: dict, request: str) -> str:
