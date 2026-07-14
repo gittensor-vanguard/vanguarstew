@@ -34,7 +34,15 @@ import json
 
 
 def _round(value):
-    return round(float(value), 4) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        return round(float(value), 4)
+    except OverflowError:
+        # A Python int too large to convert to a float (json.load parses an oversized integer
+        # literal into one) raises OverflowError; treat it as unavailable rather than crashing the
+        # feed builder -- matching the sibling OverflowError guards (#616/#927).
+        return None
 
 
 def _dict(value) -> dict:

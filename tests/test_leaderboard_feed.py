@@ -400,3 +400,17 @@ def test_to_anchor_entry_tolerates_non_dict_artifact():
         entry = to_anchor_entry("v0.5.0", bad, bad, timestamp="t")
         assert entry == {
             "anchor": "v0.5.0", "timestamp": "t", "public_score": None, "private_score": None}, bad
+
+
+def test_to_leaderboard_entry_tolerates_oversized_int_composite_delta():
+    # json.load parses a long integer literal into a Python int too large for a float; _round must
+    # report it as None rather than crash the feed builder with OverflowError (#1599).
+    big = 10 ** 400
+    combined = {
+        "band": "neutral", "label": "neutral",
+        "public": {"composite_deltas": {"composite_mean": big}},
+        "private": {"composite_deltas": {"composite_mean": 0.0}},
+    }
+    entry = to_leaderboard_entry(combined, pr_number=7, timestamp="2026-07-14T00:00:00+00:00")
+    assert entry["public"]["composite_delta"] is None
+    assert entry["private"]["composite_delta"] == 0.0
