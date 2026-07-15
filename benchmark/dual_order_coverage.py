@@ -8,12 +8,14 @@ judging. A ``--generalization`` artifact reports coverage per ``tuned``/``held_o
 
 Pure analysis: no I/O, never mutates its input. Missing or non-integer counts, a zero-task slice, or
 an internally inconsistent ``dual_order_tasks > tasks`` yield ``None`` coverage rather than being
-silently clamped or defaulted.
+silently clamped or defaulted. The headline degrades to ``n/a`` on a non-finite or oversized
+coverage rather than printing ``nan%`` or raising ``OverflowError``.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.comparability import artifact_kind
 
@@ -31,8 +33,19 @@ def _is_int(value) -> bool:
 
 
 def _is_ratio(value) -> bool:
-    """A plain 0..1-style float/int for headline formatting (bools excluded)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A finite, non-boolean real number for headline percent formatting.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, and a hand-edited or degenerate
+    ``coverage`` can be an oversized int. Without the finite guard the headline prints
+    ``nan%`` / ``inf%`` or raises ``OverflowError`` inside ``:.1%``. Matching ``skip_share``
+    and ``error_repo_share``: reject those as non-numeric so the headline degrades to ``n/a``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dual_order_tasks(slice_: dict) -> int | None:
@@ -126,7 +139,8 @@ def summarize_dual_order_coverage(artifact) -> dict:
 def dual_order_coverage_headline(summary: dict) -> str:
     """A one-line human summary of a :func:`summarize_dual_order_coverage` result.
 
-    Degrades to ``n/a`` when coverage is ``None`` rather than raising in the percent formatter.
+    Degrades to ``n/a`` when coverage is missing, non-finite, or oversized rather than raising
+    in the percent formatter.
     """
     summary = _dict(summary)
     coverage = summary.get("coverage")

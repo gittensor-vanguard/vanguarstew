@@ -12,6 +12,7 @@ if ROOT not in sys.path:
 from benchmark.dual_order_coverage import (  # noqa: E402
     _combined,
     _coverage,
+    _is_ratio,
     _slice_coverage,
     dual_order_coverage_headline,
     summarize_dual_order_coverage,
@@ -231,6 +232,26 @@ def test_headline_reports_and_degrades_gracefully():
     # Finite coverage but missing whole-number counts drops the detail clause.
     assert dual_order_coverage_headline({"coverage": 0.4, "dual_order_tasks": None, "tasks": 10}) == (
         "dual-order coverage: 40.0%")
+
+
+def test_is_ratio_rejects_non_finite_and_bool():
+    assert _is_ratio(0.4) and _is_ratio(0)
+    assert not _is_ratio(float("nan"))
+    assert not _is_ratio(float("inf"))
+    assert not _is_ratio(True)
+    assert not _is_ratio("0.4")
+
+
+def test_is_ratio_guards_an_oversized_int_overflow():
+    assert not _is_ratio(10**400)
+    assert not _is_ratio(-(10**400))
+
+
+def test_headline_degrades_on_non_finite_or_oversized_coverage():
+    assert dual_order_coverage_headline({"coverage": float("nan")}) == "dual-order coverage: n/a"
+    assert dual_order_coverage_headline({"coverage": float("inf")}) == "dual-order coverage: n/a"
+    assert dual_order_coverage_headline({"coverage": 10**400}) == "dual-order coverage: n/a"
+    assert "nan%" not in dual_order_coverage_headline({"coverage": float("nan")})
 
 
 # --- CLI: success + every error path (incl. the OSError/permission branch) ------------------------
