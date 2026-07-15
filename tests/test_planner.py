@@ -14,11 +14,15 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
+    CONFIG_SURFACE_GUIDANCE,
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
+    _automation_surface_signal,
     _commit_plan_kind,
+    _config_surface_note,
     _explicit_pr_number,
+    _is_automation_subject,
     _is_review_item,
     _matched_pr,
     _normalize_files,
@@ -784,6 +788,62 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
     plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.0.0"}]},
                       {}, 2, CapturingLLM(api_key="offline"))
     assert RELEASE_CADENCE_GUIDANCE in captured["user"]
+
+
+# --- #1640: config-surface directive gated on real automation evidence ---------------------
+
+def test_is_automation_subject_matches_only_tooling_markers():
+    # real automation markers
+    assert _is_automation_subject("build(deps): bump actions/checkout from 6.0.2 to 6.0.3") is True
+    assert _is_automation_subject("chore(deps-dev): update ruff") is True
+    assert _is_automation_subject("[pre-commit.ci] pre-commit autoupdate") is True
+    assert _is_automation_subject("Bump lodash via dependabot") is True
+    # human subjects that merely mention the same words must NOT count (false positive = regression)
+    assert _is_automation_subject("docs: document our pre-commit setup") is False
+    assert _is_automation_subject("chore: bump version from 1.2.0 to 1.3.0") is False
+    assert _is_automation_subject("feat: add streaming export") is False
+    assert _is_automation_subject(None) is False
+
+
+def test_automation_surface_signal_needs_a_stream_not_a_one_off():
+    one = {"recent_commits": [{"subject": "build(deps): bump x from 1 to 2"},
+                              {"subject": "feat: a"}, {"subject": "fix: b"}]}
+    assert _automation_surface_signal(one) is False   # a lone bump is not a pattern
+    stream = {"recent_commits": [{"subject": "build(deps): bump x from 1 to 2"},
+                                 {"subject": "[pre-commit.ci] pre-commit autoupdate"},
+                                 {"subject": "feat: a"}]}
+    assert _automation_surface_signal(stream) is True
+    assert _automation_surface_signal({"recent_commits": [{"subject": "feat: a"}]}) is False
+    assert _automation_surface_signal({}) is False
+
+
+def test_config_surface_note_only_with_automation_evidence():
+    assert _config_surface_note({"recent_commits": [{"subject": "feat: a"}, {"subject": "fix: b"}]}) == ""
+    note = _config_surface_note({"recent_commits": [
+        {"subject": "build(deps): bump actions/checkout from 6.0.2 to 6.0.3"},
+        {"subject": "[pre-commit.ci] pre-commit autoupdate"}]})
+    assert CONFIG_SURFACE_GUIDANCE in note
+
+
+def test_planner_prompt_includes_config_surface_only_with_automation():
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Fix loader", "kind": "bugfix"}]
+
+    # source-driven history → byte-identical prompt, no config directive (must not regress it)
+    plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "feat: a"}, {"subject": "fix: b"}]},
+                      {}, 2, CapturingLLM(api_key="offline"))
+    assert CONFIG_SURFACE_GUIDANCE not in captured["user"]
+
+    # automation-churn history → the directive appears
+    plan_next_actions({"open_prs": [], "recent_commits": [
+        {"subject": "build(deps): bump actions/checkout from 6.0.2 to 6.0.3"},
+        {"subject": "[pre-commit.ci] pre-commit autoupdate"}]},
+        {}, 2, CapturingLLM(api_key="offline"))
+    assert CONFIG_SURFACE_GUIDANCE in captured["user"]
 
 
 

@@ -115,6 +115,20 @@ RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
 )
 
+CONFIG_SURFACE_GUIDANCE = (
+    "Recent history shows a steady stream of automation churn — dependency/GitHub-Actions bumps "
+    "and pre-commit autoupdates. That work lands under config-surface modules (e.g. `.github`, "
+    "`.pre-commit-config`, dependency manifests), which the objective anchor scores by changed "
+    "path just like source. Include one plan item covering that surface, with `files` naming the "
+    "relevant config paths (e.g. `.github/workflows/`, `.pre-commit-config.yaml`)."
+)
+
+# Markers that only automation tooling emits — used to gate the config-surface directive on real
+# evidence, not human vocabulary. A ``(deps)``/``(deps-dev)`` Conventional-Commit scope, the fixed
+# pre-commit.ci subject, and dependabot/renovate self-references all qualify; a human "docs:
+# document our pre-commit setup" or "chore: bump version 1.2.0" deliberately does NOT.
+_AUTOMATION_SCOPE_RE = re.compile(r"^[a-z]+\((?:deps|deps-dev)\)!?:", re.I)
+
 
 def _pr_title(pr: dict) -> str:
     """Return a stripped PR title when it is a string; else empty."""
@@ -248,6 +262,49 @@ def _release_cadence_note(context: dict) -> str:
     if not _release_cadence_signal(context):
         return ""
     return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+
+
+def _is_automation_subject(subject) -> bool:
+    """True when a commit subject is one automation tooling emits (dep/action bump, pre-commit.ci).
+
+    Keys on markers only the tools produce so a human subject that merely *mentions* pre-commit or
+    a version bump ("docs: document our pre-commit setup", "chore: bump version from 1.2.0") is not
+    misread as automation — a false positive would spend a plan slot on config work that isn't
+    coming (worse than a miss), so this stays deliberately narrow.
+    """
+    if not isinstance(subject, str):
+        return False
+    s = subject.strip()
+    if _AUTOMATION_SCOPE_RE.match(s):
+        return True
+    low = s.lower()
+    return "[pre-commit.ci]" in low or "dependabot" in low or "renovate" in low
+
+
+def _automation_surface_signal(context: dict) -> bool:
+    """True when recent history shows a *steady stream* (>=2) of automation/config churn.
+
+    Requiring two, not one, keeps a lone incidental bump from steering the plan toward a config
+    surface a repo doesn't actually churn — the objective anchor penalizes a wrong module as much
+    as a missed one, so the bar to fire is evidence of an ongoing pattern.
+    """
+    n = sum(
+        1
+        for commit in _recent_commits(context)
+        if isinstance(commit, dict) and _is_automation_subject(commit.get("subject"))
+    )
+    return n >= 2
+
+
+def _config_surface_note(context: dict) -> str:
+    """Inject config-surface guidance only when automation churn is evidenced (#1640).
+
+    A source-driven repo (no automation markers) must see a byte-identical prompt, so this returns
+    the empty string there and never shifts that plan.
+    """
+    if not _automation_surface_signal(context):
+        return ""
+    return f"\n{CONFIG_SURFACE_GUIDANCE}\n"
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -616,6 +673,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Repository state:\n{_render(context)}\n"
         f"{_recent_kinds_note(context)}"
         f"{_release_cadence_note(context)}"
+        f"{_config_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"
