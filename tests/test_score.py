@@ -337,6 +337,19 @@ def test_is_release_subject_rejects_incidental_versions():
     assert not is_release_subject("add retry logic")
 
 
+def test_is_release_subject_rejects_a_version_led_subject_with_trailing_prose():
+    # A subject that only *leads* with a version and then describes other work is an ordinary
+    # bugfix/refactor/docs commit, not a version cut. The tag-subject regex must span the whole
+    # subject (not just anchor at the start), so a leading version followed by prose is rejected.
+    for subj in ("3.12 compatibility fixes", "2.0 rewrite kickoff", "1.5 migration guide",
+                 "1.2.0 is now the minimum supported version"):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+    # A bare version tag (optionally release-/v-prefixed) is still a genuine cut.
+    for subj in ("1.2.0", "v1.2.3", "release 1.4.0", "Release v2.0"):
+        assert is_release_subject(subj), subj
+
+
 def test_is_release_subject_accepts_two_component_tags():
     # parse_semver already tolerates a missing patch component ("1.4" -> (1, 4, 0));
     # is_release_subject must recognize the same bare two-component tags as releases.
