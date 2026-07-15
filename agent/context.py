@@ -213,12 +213,20 @@ def _context_from_git(repo_path: str) -> dict:
     if not head:
         raise RuntimeError(f"git-only context fallback: {repo_path} has no commits (HEAD does not resolve)")
     freeze_date = _git(repo_path, "show", "-s", "--format=%cI", head).strip() or None
-    log = _git(repo_path, "log", "--pretty=format:%H%x09%s", "-n", "50")
+    # Record the committer ISO date (%cI) per commit so `recent_commits` is `{sha, date,
+    # subject}`, matching `benchmark/freeze.py::build_context` verbatim (same `%H%x09%cI%x09%s`
+    # format, same `split("\t", 2)` / `len(parts) == 3` parse, same key order). The agent prompt
+    # serializes `recent_commits` as-is, so without the date the agent saw per-commit dates on
+    # the frozen path but not on this fallback — the last parity gap between the two git-only
+    # builders (#1307, closing #1275; the `_forward_signal_scrubbed` and empty-repo gaps the
+    # same audit found are already closed above).
+    log = _git(repo_path, "log", "--pretty=format:%H%x09%cI%x09%s", "-n", "50")
     commits = []
     for line in log.splitlines():
-        if "\t" in line:
-            h, subj = line.split("\t", 1)
-            commits.append({"sha": h[:10], "subject": _mask_forward_refs(subj)})
+        parts = line.split("\t", 2)
+        if len(parts) == 3:
+            h, date, subj = parts
+            commits.append({"sha": h[:10], "date": date, "subject": _mask_forward_refs(subj)})
     # `git tag --merged` selects tags whose target commit is reachable from T; it does NOT
     # filter by when the tag was created. An annotated tag cut after T from a commit already
     # present at T would leak a future release into knowable-at-T context. Filter to tags

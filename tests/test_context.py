@@ -712,3 +712,90 @@ def test_context_from_git_masks_forward_refs_in_subjects_and_readme():
         assert "Roadmap" in ctx["readme_excerpt"]           # substantive prose preserved
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+# --- git-only builder parity: recent_commits[].date and the full-context invariant (#1307) ---
+
+def _rev_parse(repo, ref="HEAD"):
+    out = subprocess.run(
+        ["git", "-C", repo, "rev-parse", ref],
+        check=True, capture_output=True, text=True,
+    )
+    return out.stdout.strip()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_recent_commits_include_date_matching_build_context():
+    # `build_context` records `{sha, date, subject}` per commit; the git-only fallback dropped
+    # `date`, so the agent saw per-commit dates on the frozen path but not the fallback path.
+    # Both builders must emit the same shape and the same sha/date for each commit (#1307/#1275).
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        _write(repo, "a.txt")
+        _git(repo, "add", "-A", date="2024-01-10T12:00:00+00:00")
+        _git(repo, "commit", "-q", "-m", "feat: init", date="2024-01-10T12:00:00+00:00")
+        _write(repo, "b.txt")
+        _git(repo, "add", "-A", date="2024-02-20T09:30:00+00:00")
+        _git(repo, "commit", "-q", "-m", "fix: b", date="2024-02-20T09:30:00+00:00")
+
+        fallback = _context_from_git(repo)["recent_commits"]
+        harness = build_context(repo, "HEAD")["recent_commits"]
+
+        # Same shape (key set and order) — a future field added to one builder must be added to both.
+        for row in fallback:
+            assert list(row.keys()) == ["sha", "date", "subject"], row
+        # Same sha + date for every commit; the subject matches build_context's after scrubbing
+        # (the fallback masks inline, build_context relies on scrub_context — see the invariant test).
+        assert [(r["sha"], r["date"]) for r in fallback] == [(r["sha"], r["date"]) for r in harness]
+        assert all(r["date"] for r in fallback)     # non-empty committer ISO date
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_git_only_builders_are_in_full_parity():
+    # The invariant behind both git-only builders (docs/architecture.md, #1307):
+    #     scrub_context(build_context(repo, sha)) == _context_from_git(repo)
+    # apart from the deliberately distinct `_source` tag. This guards ALL fields at once, so a
+    # future edit that drifts either builder (a new/renamed field, a changed format) fails here
+    # rather than silently making the agent behave differently on the frozen vs. fallback path.
+    # The repo exercises the shapes the audit covered: forward refs (#N, deep-link, SHA), a merge
+    # commit, an annotated tag, and a README.
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        _write(
+            repo, "README.md",
+            "# Proj\nRoadmap: see #150 and https://github.com/o/r/pull/900; commit deadbeef1234.\n",
+        )
+        _write(repo, "a.txt")
+        _git(repo, "add", "-A", date="2024-01-10T12:00:00+00:00")
+        _git(repo, "commit", "-q", "-m", "feat: init (closes #150)", date="2024-01-10T12:00:00+00:00")
+
+        _git(repo, "checkout", "-q", "-b", "feature")
+        _write(repo, "b.txt")
+        _git(repo, "add", "-A", date="2024-01-11T12:00:00+00:00")
+        _git(repo, "commit", "-q", "-m", "fix: b (see github.com/o/r/issues/7)", date="2024-01-11T12:00:00+00:00")
+
+        _git(repo, "checkout", "-q", "main")
+        _git(repo, "merge", "-q", "--no-ff", "feature", "-m", "Merge branch feature",
+             date="2024-01-12T12:00:00+00:00")
+        # Tag at (not after) T so the #749 creator-date filter keeps it — the parity check
+        # should exercise a surfaced release, not one both builders correctly drop as a leak.
+        _git(repo, "tag", "-a", "v1.0.0", "-m", "release", date="2024-01-12T12:00:00+00:00")
+
+        head = _rev_parse(repo)
+        fallback = _context_from_git(repo)
+        frozen = scrub_context(build_context(repo, head))
+
+        # `_source` is the one intentional difference (git vs git-freeze); everything else matches.
+        assert fallback.pop("_source") == "git"
+        assert frozen.pop("_source") == "git-freeze"
+        assert fallback == frozen
+        # Sanity: the shared shape actually carried the fields the invariant is meant to protect.
+        assert fallback["recent_commits"][0]["date"]
+        assert fallback["_forward_signal_scrubbed"] is True
+        assert [r["tag"] for r in fallback["releases"]] == ["v1.0.0"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
