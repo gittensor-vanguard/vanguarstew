@@ -23,6 +23,7 @@ relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.repeatability import (
     DEFAULT_MAX_CV,
@@ -38,7 +39,18 @@ _CHECK_ROW_KEYS = ("name", "passed")
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A finite, non-boolean real number — guards gate headlines against ``NaN``/``inf``.
+
+    ``math.isfinite`` raises ``OverflowError`` for a Python ``int`` too large to convert to a
+    ``float``; catch it so an oversized ``cv`` degrades to ``n/a`` instead of crashing,
+    matching ``skip_share`` and :func:`benchmark.repeatability._is_number`.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:

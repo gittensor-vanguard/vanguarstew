@@ -19,6 +19,7 @@ Pure analysis: no I/O, never mutates its inputs, and an artifact with no usable 
 from __future__ import annotations
 
 import logging
+import math
 from statistics import mean, stdev
 
 from benchmark.run_clean import check_run_clean
@@ -30,8 +31,24 @@ DEFAULT_MAX_CV = 0.05
 DEFAULT_MIN_RUNS = 2
 
 
+def _is_number(value) -> bool:
+    """A finite, non-boolean real number — guards headline/`_round` against ``NaN``/``inf``.
+
+    ``math.isfinite`` raises ``OverflowError`` for a Python ``int`` too large to convert to a
+    ``float`` (a hand-edited or degenerate ``cv`` / spread field); guard it the same way
+    ``skip_share`` and the other benchmark modules do instead of crashing. Bools stay
+    non-numeric (``bool`` is a subclass of ``int``).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def _round(value):
-    return round(float(value), 3) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    return round(float(value), 3) if _is_number(value) else None
 
 
 def _coerce_runs(value) -> int | None:
@@ -190,7 +207,7 @@ def repeatability_headline(result: dict) -> str:
         return f"repeatability: inconclusive ({runs} run(s))"
     verdict = "STABLE" if result.get("stable") else "UNSTABLE"
     cv = result.get("cv")
-    cv_txt = f"{cv:.1%}" if isinstance(cv, (int, float)) and not isinstance(cv, bool) else "n/a"
+    cv_txt = f"{cv:.1%}" if _is_number(cv) else "n/a"
     return (
         f"repeatability: {verdict} over {result['runs']} runs "
         f"(mean {result.get('mean')}, cv {cv_txt})"

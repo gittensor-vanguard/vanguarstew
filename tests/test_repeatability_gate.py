@@ -21,6 +21,7 @@ from benchmark.repeatability import (  # noqa: E402
 )
 from benchmark.repeatability_gate import (  # noqa: E402
     _check_rows_list,
+    _is_number,
     check_repeatability,
     failed_checks,
     repeatability_gate_headline,
@@ -89,6 +90,30 @@ def test_gate_headline_stable_and_unstable():
     assert repeatability_gate_headline(stable).startswith("repeatability gate: STABLE")
     unstable = check_repeatability([_run(0.4), _run(0.8)])
     assert repeatability_gate_headline(unstable).startswith("repeatability gate: UNSTABLE")
+
+
+def test_gate_headline_degrades_on_non_finite_cv():
+    base = {"passed": True, "checks": [{"name": "a", "passed": True}], "runs": 2}
+    assert "cv n/a" in repeatability_gate_headline({**base, "cv": float("nan")})
+    assert "cv n/a" in repeatability_gate_headline({**base, "cv": float("inf")})
+    assert "cv n/a" in repeatability_gate_headline({**base, "cv": None})
+    assert "cv 5.0%" in repeatability_gate_headline({**base, "cv": 0.05})
+
+
+def test_gate_headline_degrades_on_oversized_int_cv_instead_of_crashing():
+    base = {"passed": True, "checks": [{"name": "a", "passed": True}], "runs": 2}
+    assert "cv n/a" in repeatability_gate_headline({**base, "cv": 10**400})
+    assert "cv n/a" in repeatability_gate_headline({**base, "cv": -(10**400)})
+
+
+def test_gate_is_number_guard():
+    assert _is_number(0.5) and _is_number(3)
+    assert not _is_number(float("nan"))
+    assert not _is_number(float("inf"))
+    assert not _is_number(True)
+    assert not _is_number("0.5")
+    assert not _is_number(10**400)
+    assert not _is_number(-(10**400))
 
 
 def test_gate_headline_no_checks():

@@ -13,7 +13,9 @@ if ROOT not in sys.path:
 
 from benchmark.repeatability import (  # noqa: E402
     DEFAULT_MAX_CV,
+    _is_number,
     _repeatability_artifacts,
+    _round,
     assess_repeatability,
     repeatability_headline,
 )
@@ -220,6 +222,44 @@ def test_headline_reports_stable_unstable_and_inconclusive():
     assert "inconclusive" in repeatability_headline(assess_repeatability([_run(0.6)]))
     assert repeatability_headline({}) == "repeatability: no scored runs"
     assert DEFAULT_MAX_CV == 0.05
+
+
+def test_headline_degrades_on_non_finite_cv():
+    base = {"stable": True, "runs": 2, "min_runs": 2, "mean": 0.5}
+    assert "cv n/a" in repeatability_headline({**base, "cv": float("nan")})
+    assert "cv n/a" in repeatability_headline({**base, "cv": float("inf")})
+    assert "cv n/a" in repeatability_headline({**base, "cv": None})
+    assert "cv 5.0%" in repeatability_headline({**base, "cv": 0.05})
+
+
+def test_headline_degrades_on_oversized_int_cv_instead_of_crashing():
+    base = {"stable": True, "runs": 2, "min_runs": 2, "mean": 0.5}
+    assert "cv n/a" in repeatability_headline({**base, "cv": 10**400})
+    assert "cv n/a" in repeatability_headline({**base, "cv": -(10**400)})
+
+
+def test_is_number_guard():
+    assert _is_number(0.5) and _is_number(3)
+    assert not _is_number(float("nan"))
+    assert not _is_number(float("inf"))
+    assert not _is_number(True)
+    assert not _is_number("0.5")
+
+
+def test_is_number_guards_an_oversized_int_overflow():
+    assert not _is_number(10**400)
+    assert not _is_number(-(10**400))
+    assert not _is_number(-(10**309))
+
+
+def test_round_returns_none_for_non_finite_or_oversized():
+    assert _round(0.1234) == 0.123
+    assert _round(float("nan")) is None
+    assert _round(float("inf")) is None
+    assert _round(10**400) is None
+    assert _round(-(10**400)) is None
+    assert _round(True) is None
+    assert _round("0.5") is None
 
 
 def test_cv_uses_sample_standard_deviation():
