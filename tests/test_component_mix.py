@@ -139,8 +139,36 @@ def test_single_repo_run_has_no_scored_repos_key_and_keeps_real_means():
 
 
 def test_bool_scored_repos_is_not_treated_as_an_unscored_placeholder():
+    # bool is a subclass of int in Python, so `scored_repos: False` would satisfy a bare
+    # `isinstance(scored, int)` check and `not False` is True -- masking would fire on a run
+    # that never reported a real repo count at all. `_is_number` explicitly excludes bool
+    # (`isinstance(value, bool)` check) so this artifact falls through untouched.
     art = {
         "repos": 1, "scored_repos": False,
+        "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4},
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_mean"] == 0.6
+    assert out["objective_mean"] == 0.4
+
+
+def test_float_zero_scored_repos_masks_placeholder():
+    # scored_repos is documented as an int, but a hand-edited or degenerate artifact could carry
+    # a float 0.0 -- _is_number accepts floats, so this must mask exactly like the int 0 case.
+    art = {
+        "repos": 2, "scored_repos": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+
+
+def test_fractional_scored_repos_does_not_mask():
+    # A non-zero float is truthy regardless of being fractional -- confirms masking keys off
+    # falsiness, not off `scored_repos` being an int.
+    art = {
+        "repos": 2, "scored_repos": 0.5,
         "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4},
     }
     out = summarize_component_mix(art)
@@ -175,6 +203,26 @@ def test_generalization_masks_only_the_unscored_partition():
     out = summarize_component_mix(art)
     assert out["kind"] == "generalization"
     assert out["judge_mean"] is None
+    assert out["partitions"]["tuned"]["judge_mean"] is None
+    assert out["partitions"]["tuned"]["objective_mean"] is None
+    assert out["partitions"]["held_out"]["judge_mean"] == 0.6
+    assert out["partitions"]["held_out"]["objective_mean"] == 0.4
+
+
+def test_generalization_masks_unscored_partition_with_missing_composite_parts():
+    # The unscored partition here carries no composite_parts at all (not just a placeholder
+    # 0.0) -- must still mask cleanly to None instead of falling through to a raised error, and
+    # must not affect the sibling partition that did score.
+    art = {
+        "tuned": {"scored_repos": 0},
+        "held_out": {
+            "scored_repos": 2,
+            "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4},
+        },
+        "generalization_gap": None,
+    }
+    out = summarize_component_mix(art)
+    assert out["kind"] == "generalization"
     assert out["partitions"]["tuned"]["judge_mean"] is None
     assert out["partitions"]["tuned"]["objective_mean"] is None
     assert out["partitions"]["held_out"]["judge_mean"] == 0.6
