@@ -25,6 +25,7 @@ from agent.context import (  # noqa: E402
     _mask_forward_refs,
     context_for_agent,
     load_context,
+    repo_layout,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
 from agent.philosophy import _render as render_philosophy_context  # noqa: E402
@@ -365,18 +366,134 @@ def test_load_context_falls_back_to_git_on_permission_denied():
         shutil.rmtree(repo, ignore_errors=True)
 
 
+def test_repo_layout_surfaces_dotfile_trees_and_top_level_files():
+    # The objective anchor attributes a changed path to its top-level entry, so a dotfile tree
+    # (`.github/workflows/ci.yml` -> `.github`) and a top-level file (`NEWS` -> `news`) are
+    # modules a plan can name, exactly like a source package. The layout must therefore surface
+    # BOTH -- filtering to non-dot directories would hide the only modules some repos ever
+    # change. Freeze/VCS artifacts are not repo structure and stay out.
+    repo = tempfile.mkdtemp()
+    try:
+        os.makedirs(os.path.join(repo, ".ci-workflows", "jobs"))
+        os.makedirs(os.path.join(repo, "mylib"))
+        os.makedirs(os.path.join(repo, ".git", "objects"))
+        for name in ("CHANGES", "LICENSE", ".toolconfig.yaml", CONTEXT_FILE):
+            _write(repo, name)
+        _write(os.path.join(repo, ".ci-workflows", "jobs"), "build.yml")
+        assert repo_layout(repo) == [
+            ".ci-workflows/", ".toolconfig.yaml", "CHANGES", "LICENSE", "mylib/",
+        ]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_repo_layout_degrades_to_empty_when_the_path_cannot_be_listed():
+    # The layout is optional prompt context: an unusable repo_path must omit it, never raise
+    # out of solve(). Covers a missing directory, a path that is a FILE (NotADirectoryError),
+    # an unreadable directory (PermissionError), a NUL byte (ValueError, which never reaches
+    # the OS call), and non-string / empty inputs.
+    missing = os.path.join(tempfile.mkdtemp(), "nope")
+    assert repo_layout(missing) == []
+    handle, as_file = tempfile.mkstemp()
+    os.close(handle)
+    try:
+        assert repo_layout(as_file) == []       # NotADirectoryError, not a crash
+    finally:
+        os.unlink(as_file)
+    locked = tempfile.mkdtemp()
+    os.chmod(locked, 0o000)
+    try:
+        if os.geteuid() != 0:                   # root ignores the mode bits entirely
+            assert repo_layout(locked) == []    # PermissionError, not a crash
+    finally:
+        os.chmod(locked, 0o755)
+        shutil.rmtree(locked, ignore_errors=True)
+    assert repo_layout("/tmp/a\0b") == []       # ValueError, not a crash
+    assert repo_layout("") == []
+    assert repo_layout(None) == []
+    assert repo_layout(["not", "a", "path"]) == []
+
+
+def test_repo_layout_caps_the_entry_count():
+    # A pathological repo root must not crowd the commit history out of the prompt. The cap is
+    # applied BEFORE each entry is taken, so a zero/negative/non-int limit cannot yield one
+    # entry off the end of the check.
+    repo = tempfile.mkdtemp()
+    try:
+        for i in range(6):
+            _write(repo, f"f{i}.txt")
+        assert repo_layout(repo, limit=2) == ["f0.txt", "f1.txt"]
+        assert repo_layout(repo, limit=0) == []          # a zero cap yields nothing, not f0
+        assert len(repo_layout(repo, limit=-1)) == 6     # negative -> default, never one entry
+        assert len(repo_layout(repo, limit=None)) == 6   # non-int -> default, not a TypeError
+        assert len(repo_layout(repo)) == 6      # default limit leaves a normal repo intact
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_derives_repo_layout_and_never_trusts_the_context_file():
+    # `build_context` never emits `repo_layout`, so a value in the file could only come from a
+    # hand-authored or tampered artifact. It must be overwritten by the real checkout listing,
+    # or invented paths would reach the plan's `files` from untrusted JSON.
+    repo = _repo_with_commit()
+    try:
+        payload = {"_source": "github-api", "repo_layout": ["invented/", "not-real.py"]}
+        with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        out = load_context(repo)
+        assert out["repo_layout"] == ["f.txt"]           # derived from the checkout
+        assert "invented/" not in out["repo_layout"]     # the tampered value is discarded
+        assert out["_source"] == "github-api"            # the rest of the file still survives
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_load_context_reads_a_valid_file_from_the_file_not_git():
-    # Happy path: a well-formed context file is returned verbatim, and it is read from the FILE
-    # (its `_source` marker survives) rather than being rebuilt from git.
+    # Happy path: a well-formed context file's GitHub-derived content is returned as written,
+    # and it is read from the FILE (its `_source` marker survives) rather than being rebuilt
+    # from git. `repo_layout` is derived from the checkout and added on top.
     repo = _repo_with_commit()
     try:
         payload = {"_source": "github-api", "open_prs": [{"number": 1, "title": "x"}]}
         with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
             json.dump(payload, f)
         out = load_context(repo)
-        assert out == payload
+        assert {k: v for k, v in out.items() if k != "repo_layout"} == payload
         assert out["_source"] == "github-api"  # from the file, not the git rebuild ("git")
+        assert out["repo_layout"] == ["f.txt"]  # .git and the freeze artifact stay out
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+@pytest.mark.parametrize("payload", ["[]", '"a string"', "7", "null"])
+def test_load_context_passes_through_valid_json_that_is_not_an_object(payload):
+    # A context file holding well-formed JSON that is not an object parses fine, so it never
+    # reaches the JSONDecodeError fallback. Attaching the layout must not assume a dict and
+    # `**`-explode a list/str/int (TypeError) -- the value passes through untouched, exactly as
+    # before, and `context_for_agent` remains the guard that normalizes it to {}.
+    repo = _repo_with_commit()
+    try:
+        with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+            f.write(payload)
+        out = load_context(repo)  # no raise
+        assert out == json.loads(payload)
+        assert context_for_agent(out) == {}
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_attaches_repo_layout_on_the_git_fallback_path_too():
+    # The fallback rebuilds context from git when the file is absent; the plan still needs the
+    # layout there, so both load paths must attach it.
+    repo = _repo_with_commit()
+    try:
+        out = load_context(repo)
+        assert out["_source"] == "git"
+        assert out["repo_layout"] == ["f.txt"]
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 

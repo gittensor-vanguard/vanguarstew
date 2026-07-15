@@ -115,6 +115,12 @@ RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
 )
 
+REPO_LAYOUT_GUIDANCE = (
+    "Ground each non-triage item's `files` in that listing — name the entries the item actually "
+    "touches (a path under a listed directory is fine), rather than a conventional source "
+    "layout this repository may not have."
+)
+
 
 def _pr_title(pr: dict) -> str:
     """Return a stripped PR title when it is a string; else empty."""
@@ -248,6 +254,66 @@ def _release_cadence_note(context: dict) -> str:
     if not _release_cadence_signal(context):
         return ""
     return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+
+
+def _repo_layout(context: dict) -> list:
+    """The frozen checkout's top-level entries, or ``[]`` when absent or malformed.
+
+    ``repo_layout`` is derived by ``agent.context.load_context``, but the planner is also
+    called directly with hand-built context (tests, callers, older frozen artifacts), so the
+    shape is guarded here rather than assumed: a non-list value, and any non-string or blank
+    entry within it, is dropped instead of reaching the prompt.
+
+    An entry carrying a rendering separator — a comma (the delimiter the note joins on) or a
+    newline — is dropped too. Repository filenames are not authored by this project, and the
+    note is the one place in ``agent/`` that renders them into a prompt: a name containing a
+    newline would otherwise occupy its own prompt line as free-standing text, and one
+    containing a comma would read as two entries while the stated count said otherwise.
+    """
+    if not isinstance(context, dict):
+        return []
+    raw = context.get("repo_layout")
+    if not isinstance(raw, list):
+        if raw is not None:
+            logger.warning(
+                "planner: repo_layout is %s, not a list; treating as empty",
+                type(raw).__name__,
+            )
+        return []
+    entries = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        name = entry.strip()
+        if not name or any(sep in name for sep in (",", "\n", "\r")):
+            continue
+        entries.append(name)
+    return entries
+
+
+def _repo_layout_note(context: dict) -> str:
+    """Prompt note grounding the plan's `files` in the repo's real top-level entries at T.
+
+    Without it the only concrete guidance is ``OBJECTIVE_ANCHOR_GUIDANCE``'s illustrative
+    examples (`src/loader.py`, `docs/`, `tests/`), which name a conventional source layout many
+    repositories do not have — so `files` gets filled with plausible-looking paths that are not
+    in the tree. Empty when the layout could not be read, so the prompt is unchanged rather
+    than carrying an empty list.
+
+    The note describes the listing as the repository's top-level entries and claims nothing
+    more. It deliberately does not assert that these are the only paths that exist: the listing
+    is top-level only (nested paths are legitimate and `OBJECTIVE_ANCHOR_GUIDANCE` asks for
+    them) and it is capped, so an exhaustiveness claim would be false — and would tell the plan
+    that a real module it had correctly identified does not exist.
+    """
+    entries = _repo_layout(context)
+    if not entries:
+        return ""
+    return (
+        f"\nRepository layout at the freeze commit — its top-level entries "
+        f"({len(entries)}): {', '.join(entries)}.\n"
+        f"{REPO_LAYOUT_GUIDANCE}\n"
+    )
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -614,6 +680,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
+        f"{_repo_layout_note(context)}"
         f"{_recent_kinds_note(context)}"
         f"{_release_cadence_note(context)}"
         f"{_pr_queue_note(context)}\n"
