@@ -295,7 +295,11 @@ def _release_context_note(context: dict) -> str:
                 break
     if not tags:
         return ""
-    lines = "\n".join(f"- {tag}" for tag in tags[:3])
+    # `releases` is the oldest-first window both git-context builders produce
+    # (`tags[-10:]` off a `--sort=creatordate` listing), so the three newest
+    # tags are the tail of the list, reversed to display newest first.
+    recent_tags = list(reversed(tags[-3:]))
+    lines = "\n".join(f"- {tag}" for tag in recent_tags)
     return (
         f"\nRecent release tags at freeze (newest first):\n{lines}\n"
         "When action is release or version_bump is set, infer major/minor/patch from "

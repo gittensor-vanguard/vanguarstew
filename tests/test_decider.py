@@ -325,9 +325,24 @@ def test_decide_offline_runs_lenses_without_network_and_keeps_stub_shape():
 
 
 def test_release_context_note_surfaces_frozen_tags():
-    note = _release_context_note({"releases": [{"tag": "v2.1.0"}, {"tag": "v2.0.3"}]})
+    # `releases` is oldest-first, the shape both git-context builders produce
+    # (`tags[-10:]` off a `--sort=creatordate` listing) -- the note must show
+    # the newest tags first, not the oldest end of the window (#1635).
+    note = _release_context_note({"releases": [
+        {"tag": "v1.0.0"}, {"tag": "v2.0.3"}, {"tag": "v2.1.0"},
+    ]})
     assert "v2.1.0" in note
     assert "version_bump" in note
+    tag_lines = [line for line in note.splitlines() if line.startswith("- ")]
+    assert tag_lines == ["- v2.1.0", "- v2.0.3", "- v1.0.0"]
+
+
+def test_release_context_note_shows_only_the_three_newest_tags():
+    note = _release_context_note({"releases": [
+        {"tag": t} for t in ("v1.0.0", "v1.1.0", "v1.2.0", "v1.3.0", "v1.4.0")
+    ]})
+    tag_lines = [line for line in note.splitlines() if line.startswith("- ")]
+    assert tag_lines == ["- v1.4.0", "- v1.3.0", "- v1.2.0"]
 
 
 def test_release_context_note_empty_when_no_releases():
