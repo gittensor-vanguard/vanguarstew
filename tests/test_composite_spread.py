@@ -41,6 +41,60 @@ def test_generalization_reads_tuned_partition():
     assert out["spread"] == 0.4
 
 
+def test_unscored_multi_run_masks_means_and_spread_to_none():
+    # A multi-repo run that scored no repos emits scored_repos == 0 with placeholder 0.0 component
+    # means (averages over empty lists) -- an infra/transient outcome, not a real score. Reading
+    # them publishes a fabricated 0.0 spread; they must degrade to None. Mirrors component_mix and
+    # the scored_repos guard in component_floor._scored_metric / promotion._scored_composite.
+    art = {
+        "repos": 3,
+        "scored_repos": 0,
+        "skipped": 3,
+        "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        "per_repo": [{"repo": "a", "tasks": 0}],
+    }
+    out = summarize_composite_spread(art)
+    assert out["kind"] == "multi"
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+    assert out["spread"] is None
+    assert "n/a" in composite_spread_headline(out)
+
+
+def test_unscored_tuned_partition_masks_generalization_spread():
+    # The headline partition of a --generalization artifact is tuned; an unscored tuned partition
+    # must mask the reported means/spread even when held_out scored.
+    art = {
+        "tuned": {"scored_repos": 0, "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}},
+        "held_out": {"scored_repos": 2, "composite_parts": {"judge_mean": 0.5, "objective_mean": 0.3}},
+        "generalization_gap": 0.1,
+    }
+    out = summarize_composite_spread(art)
+    assert out["kind"] == "generalization"
+    assert out["judge_mean"] is None
+    assert out["spread"] is None
+
+
+def test_single_repo_run_keeps_real_zero_spread():
+    # A genuine single-repo run carries no scored_repos key and keeps its real 0.0 means and spread.
+    art = {"composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}}
+    out = summarize_composite_spread(art)
+    assert out["judge_mean"] == 0.0
+    assert out["spread"] == 0.0
+
+
+def test_scored_multi_run_keeps_real_spread():
+    # A multi-repo run that DID score repos (scored_repos > 0) keeps its real spread.
+    art = {
+        "per_repo": [{"repo": "a", "tasks": 3}],
+        "scored_repos": 1,
+        "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5},
+    }
+    out = summarize_composite_spread(art)
+    assert out["spread"] == 0.2
+
+
 def test_missing_parts_yield_none_spread():
     out = summarize_composite_spread({"composite_mean": 0.5})
     assert out["spread"] is None

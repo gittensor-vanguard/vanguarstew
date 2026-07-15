@@ -47,8 +47,26 @@ def _headline_partition(artifact: dict) -> dict:
     return artifact
 
 
+def _unscored(slice_: dict) -> bool:
+    """True when the headline slice explicitly scored no repos.
+
+    A multi-repo run that scored no repos reports ``scored_repos == 0`` with placeholder ``0.0``
+    component means (averages over empty lists) -- an infra/transient outcome, not the agent
+    scoring zero. Reading those placeholders publishes a fabricated ``0.0`` spread as if it were a
+    real judge-vs-objective gap. Mirrors the ``scored_repos`` guard in
+    :func:`benchmark.component_floor._scored_metric`, :func:`benchmark.promotion._scored_composite`,
+    and the sibling :func:`benchmark.component_mix`. A single-repo run carries no ``scored_repos``
+    key and keeps its real means (including a genuine ``0.0``).
+    """
+    scored = slice_.get("scored_repos")
+    return _is_number(scored) and not scored
+
+
 def _headline_parts(artifact: dict) -> dict:
-    parts = _headline_partition(artifact).get("composite_parts")
+    partition = _headline_partition(artifact)
+    if _unscored(partition):
+        return {"judge_mean": None, "objective_mean": None}
+    parts = partition.get("composite_parts")
     if not isinstance(parts, dict):
         if parts is not None:
             logger.warning(
