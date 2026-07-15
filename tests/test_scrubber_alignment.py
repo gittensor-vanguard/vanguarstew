@@ -49,6 +49,14 @@ _CASES = [
     "supports 2500000 requests, 1234567 users, year 2024",
     # markdown / bracket delimiters
     "[x](https://github.com/o/r/pull/7) and (github.com/o/r/issues/3)",
+    # raw.githubusercontent.com: ref + path, trailing slash, dotted tag, query/fragment,
+    # bare owner/repo (untouched), look-alike host (untouched)
+    "see https://raw.githubusercontent.com/o/r/v3.0-release/path/file.py next",
+    "see https://raw.githubusercontent.com/o/r/v3.0-release/ next",
+    "see https://raw.githubusercontent.com/o/r/v1.2.3/src/a.py?token=x#L1 next",
+    "see raw.githubusercontent.com/o/r/main/README.md next",
+    "https://raw.githubusercontent.com/o/r",
+    "https://notraw.githubusercontent.com/o/r/v3.0-release/x",
     # empty / whitespace
     "",
     "   ",

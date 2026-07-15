@@ -46,6 +46,24 @@ _GH_LINK = re.compile(
     re.I,
 )
 
+# The raw-content CDN (``raw.githubusercontent.com``) is a *different host*, not a subdomain of
+# ``github.com``, so ``_GH_LINK`` never matches it. Its path is ``owner/repo/<ref>[/file...]`` —
+# the third segment is itself a git ref (branch, tag, or commit-ish), the same forward signal
+# the ``tree``/``blob``/``releases/tag`` cases already mask on ``github.com`` (#1429).
+#
+# Owner and repo are single path segments (no ``/`` inside) so a trailing slash after the ref
+# (``.../v3.0-release/``), a dotted tag, a file path, and ``?query``/``#fragment`` stay inside
+# the third segment and get masked with it. A bare ``owner/repo`` root (no ref) is left intact,
+# mirroring the ``github.com/owner/repo`` policy; ``(?<![\w.])`` keeps look-alike hosts out.
+_RAW_SEGMENT = r"[^\s/" + re.escape(_URL_STOP) + r"]+"
+_RAW_LINK = re.compile(
+    r"(?<![\w.])(?:https?://)?raw\.githubusercontent\.com"
+    + r"/" + _RAW_SEGMENT                                   # owner
+    + r"/" + _RAW_SEGMENT                                   # repo
+    + r"/[^\s" + re.escape(_URL_STOP) + r"]+",              # ref + optional /path?query#frag
+    re.I,
+)
+
 # Trailing sentence punctuation the greedy id/path segment may swallow; we peel
 # it back off so a trailing ".", ",", ";", or "!" stays in the surrounding prose
 # rather than vanishing into <link>. Query ("?") / fragment ("#") separators are
@@ -98,6 +116,7 @@ def strip_forward_refs(text: str) -> str:
     if not text:
         return text
     text = _GH_LINK.sub(_mask_link, text)
+    text = _RAW_LINK.sub(_mask_link, text)
     text = _ISSUE_REF.sub("#ref", text)
     text = _SHA.sub(lambda m: "<sha>" if _looks_like_sha(m.group(0)) else m.group(0), text)
     return text

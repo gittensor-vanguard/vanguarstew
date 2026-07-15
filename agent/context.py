@@ -53,6 +53,19 @@ _GH_LINK = re.compile(
     re.I,
 )
 
+# The raw-content CDN is a separate host from ``github.com``, so ``_GH_LINK`` never matches it.
+# Path shape is ``owner/repo/<ref>[/file...]`` — the third segment IS the forward-looking ref
+# (mirrors ``benchmark/leakage.py`` #1429). Owner/repo are single segments so a trailing slash
+# after the ref, dotted tags, file paths, and ``?query``/``#fragment`` stay in the match.
+_RAW_SEGMENT = r"[^\s/" + re.escape(_URL_STOP) + r"]+"
+_RAW_LINK = re.compile(
+    r"(?<![\w.])(?:https?://)?raw\.githubusercontent\.com"
+    + r"/" + _RAW_SEGMENT
+    + r"/" + _RAW_SEGMENT
+    + r"/[^\s" + re.escape(_URL_STOP) + r"]+",
+    re.I,
+)
+
 _TRAILING_PUNCT = ".,;!"
 
 _ISSUE_REF = re.compile(r"#\d+")
@@ -100,6 +113,7 @@ def _mask_forward_refs(text: str) -> str:
     if not text:
         return text
     text = _GH_LINK.sub(_mask_link, text)
+    text = _RAW_LINK.sub(_mask_link, text)
     text = _ISSUE_REF.sub("#ref", text)
     text = _SHA.sub(lambda m: "<sha>" if _looks_like_sha(m.group(0)) else m.group(0), text)
     return text

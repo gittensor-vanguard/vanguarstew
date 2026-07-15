@@ -290,6 +290,44 @@ def test_strip_forward_refs_preserves_bare_repo_url():
         assert url in out and "<link>" not in out
 
 
+def test_strip_forward_refs_masks_raw_githubusercontent_deeplinks():
+    # raw.githubusercontent.com is a separate host from github.com; a URL with a ref segment
+    # embeds the same forward signal tree/blob/releases already mask (#1429 / review on #1602).
+    cases = [
+        # with path
+        "see https://raw.githubusercontent.com/o/r/v3.0-release/path/file.py next",
+        # trailing slash after ref (must not leak the tag)
+        "see https://raw.githubusercontent.com/o/r/v3.0-release/ next",
+        # ref only (no file path)
+        "see https://raw.githubusercontent.com/o/r/v3.0-release next",
+        # dotted tag + query + fragment
+        "see https://raw.githubusercontent.com/o/r/v1.2.3/src/a.py?token=x#L1 next",
+        # scheme-less
+        "see raw.githubusercontent.com/o/r/main/README.md next",
+        # branch with slash-less name + sentence punct
+        "see https://raw.githubusercontent.com/o/r/feature-x/app.py.",
+    ]
+    for text in cases:
+        out = strip_forward_refs(text)
+        assert "raw.githubusercontent.com" not in out, text
+        assert "v3.0-release" not in out and "v1.2.3" not in out, text
+        assert "<link>" in out, text
+
+
+def test_strip_forward_refs_keeps_bare_raw_owner_repo():
+    # A bare raw CDN owner/repo root carries no ref and must survive, like github.com/o/r.
+    for url in (
+        "https://raw.githubusercontent.com/o/r",
+        "raw.githubusercontent.com/o/r",
+    ):
+        assert strip_forward_refs(url) == url, url
+    # Look-alike host must not be masked.
+    assert (
+        strip_forward_refs("https://notraw.githubusercontent.com/o/r/v3.0-release/x")
+        == "https://notraw.githubusercontent.com/o/r/v3.0-release/x"
+    )
+
+
 def test_scrub_context_scrubs_release_tag_on_git_freeze_shape():
     # The default git-freeze path emits releases as {"tag": t} with no "name" key, so a
     # forward-reference in the tag is a release's only identifier and must still be scrubbed.
