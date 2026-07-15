@@ -284,7 +284,27 @@ def test_cli_reports_clean_error_for_missing_file(tmp_path):
     result = _run_cli(str(missing), "--strict")
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    assert "No such file" in result.stderr
+    assert "artifact not found" in result.stderr
+
+
+def test_cli_reports_clean_error_for_directory_path(tmp_path):
+    result = _run_cli(str(tmp_path), "--strict")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "artifact path is a directory, not a file" in result.stderr
+
+
+def test_cli_reports_clean_error_for_unreadable_file(tmp_path):
+    path = tmp_path / "locked.json"
+    path.write_text(json.dumps(_report()), encoding="utf-8")
+    path.chmod(0o000)
+    try:
+        result = _run_cli(str(path), "--strict")
+    finally:
+        path.chmod(0o644)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "not readable" in result.stderr
 
 
 def test_cli_reports_clean_error_for_non_object_artifact(tmp_path):
@@ -301,6 +321,7 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     result = _run_cli(str(path))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
 
 
 def test_default_tolerance_is_zero():
