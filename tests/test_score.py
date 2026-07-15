@@ -414,6 +414,58 @@ def test_objective_component_not_penalized_by_incidental_release_word():
     assert objective_component(obj) == 1.0
 
 
+def test_is_release_subject_rejects_leading_version_with_prose():
+    # A subject that merely OPENS with a version but then describes other work is not a version
+    # cut — its title just happens to lead with a number. Only a subject that *is* the tag (a
+    # bare version, an optional pre-release/build suffix, optional trailing trivia) is a release.
+    # Residual of #57/#431: those fixed mid-subject versions and incidental release/changelog
+    # words, but `<version> <descriptive words>` was still matched by the leading-tag regex.
+    for subj in (
+        "3.12 compatibility fixes",
+        "2.0 rewrite kickoff",
+        "1.5 migration guide",
+        "2.0 support",
+        "1.26.4 dependency audit",
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+    # Bare tags, pre-release suffixes, and genuine release-tooling cuts with trailing non-word
+    # trivia (a PR ref, a `[skip ci]` tag) are still releases.
+    for subj in (
+        "v2.0",
+        "2.0",
+        "1.4.0",
+        "2024.11",
+        "1.4.0-rc1",
+        "chore(release): 2.0.0 (#123)",
+        "chore(release): 1.4.0 [skip ci]",
+    ):
+        assert is_release_subject(subj), subj
+
+
+def test_objective_component_not_penalized_by_leading_version_subject():
+    # Downstream of the fix above: a bugfix commit whose subject opens with a version must not
+    # fabricate a release axis. A plan that perfectly foresaw the touched module scores a clean
+    # objective_component instead of being docked for a phantom release it correctly never
+    # predicted (mirrors test_objective_component_not_penalized_by_incidental_release_word).
+    from benchmark.score import objective_component
+
+    revealed = [{
+        "subject": "3.12 compatibility fixes",
+        "files": ["core/compat.py", "core/compat_util.py"],
+    }]
+    plan = [{
+        "title": "fix core.compat for Python 3.12",
+        "kind": "bugfix",
+        "files": ["core/compat.py", "core/compat_util.py"],
+    }]
+    obj = objective_score(plan, revealed)
+    assert obj["release_signaled"] is False
+    assert "release" not in obj["actual_kinds"]
+    assert obj["module_recall"] == 1.0
+    assert objective_component(obj) == 1.0
+
+
 def test_is_release_subject_accepts_chore_build_release_cuts():
     # Release tooling authors the version-cut commit under a chore/build type: standard-version
     # (`chore(release): X.Y.Z`), release-please (`chore(main): release X.Y.Z`), and the plain
