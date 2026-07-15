@@ -109,6 +109,48 @@ def test_multi_repo_reads_top_level_parts():
     assert out["judge_fraction"] == 0.75
 
 
+def test_unscored_run_masks_placeholder_component_means():
+    # A multi-repo run that scored no repos reports scored_repos: 0 with placeholder 0.0 means
+    # (averages over empty lists). Surfacing those as real judge/objective means is a fabricated,
+    # self-contradictory row; they must be masked to None like component_floor already does.
+    art = {
+        "repos": 3, "scored_repos": 0, "skipped": 3, "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        "per_repo": [{"repo": "a", "tasks": 0}],
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+    assert out["judge_fraction"] is None
+    assert out["objective_fraction"] is None
+
+
+def test_single_repo_zero_keeps_real_means():
+    # A single-repo run carries no scored_repos key; a genuine 0.0 is a real score, not a
+    # placeholder, and must be preserved (only the scored_repos == 0 case is masked).
+    out = summarize_component_mix(_single(0.0, 0.0))
+    assert out["judge_mean"] == 0.0
+    assert out["objective_mean"] == 0.0
+
+
+def test_unscored_generalization_partition_masks_only_that_slice():
+    # Each partition is masked on its OWN scored_repos. A tuned partition that scored no repos
+    # masks tuned (and the mirrored top-level) to None, while a scored held_out keeps its means.
+    art = {
+        "generalization_gap": 0.0,
+        "tuned": {"scored_repos": 0,
+                  "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}},
+        "held_out": {"scored_repos": 2,
+                     "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4}},
+    }
+    out = summarize_component_mix(art)
+    assert out["kind"] == "generalization"
+    assert out["judge_mean"] is None                                   # mirrors tuned
+    assert out["partitions"]["tuned"]["judge_mean"] is None
+    assert out["partitions"]["held_out"]["judge_mean"] == 0.6
+    assert out["partitions"]["held_out"]["judge_fraction"] == 0.6
+
+
 def test_non_dict_artifact_treated_as_invalid():
     out = summarize_component_mix(None)
     assert out["kind"] == "invalid"

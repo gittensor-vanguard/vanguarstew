@@ -35,6 +35,15 @@ def _round3(value) -> float | None:
     return round(float(value), 3)
 
 
+def _empty_mix() -> dict:
+    return {
+        "judge_mean": None,
+        "objective_mean": None,
+        "judge_fraction": None,
+        "objective_fraction": None,
+    }
+
+
 def _mix_from_parts(parts) -> dict:
     if not isinstance(parts, dict):
         if parts is not None:
@@ -42,12 +51,7 @@ def _mix_from_parts(parts) -> dict:
                 "component_mix: composite_parts is %s, not an object; treating as empty",
                 type(parts).__name__,
             )
-        return {
-            "judge_mean": None,
-            "objective_mean": None,
-            "judge_fraction": None,
-            "objective_fraction": None,
-        }
+        return _empty_mix()
     judge = _round3(parts.get("judge_mean"))
     objective = _round3(parts.get("objective_mean"))
     if judge is None or objective is None:
@@ -80,7 +84,20 @@ def _mix_from_parts(parts) -> dict:
 
 
 def _slice_mix(slice_) -> dict:
-    return _mix_from_parts(_dict(slice_).get("composite_parts"))
+    """Blend fractions for one artifact slice, masking a slice that scored no repos.
+
+    A multi-repo slice with ``scored_repos == 0`` reports placeholder ``composite_parts`` means
+    of ``0.0`` (averages over empty lists) -- an infra/transient outcome, not real component
+    scores. Those are masked to ``None`` so a zero-scored run's fabricated means never surface as
+    real component scores, mirroring ``component_floor._scored_metric`` and the ``composite_spread``
+    sibling. A single-repo slice carries no ``scored_repos`` key and keeps its genuine values
+    (including a real ``0.0``).
+    """
+    slice_ = _dict(slice_)
+    scored = slice_.get("scored_repos")
+    if _is_number(scored) and not scored:
+        return _empty_mix()
+    return _mix_from_parts(slice_.get("composite_parts"))
 
 
 def summarize_component_mix(artifact) -> dict:
