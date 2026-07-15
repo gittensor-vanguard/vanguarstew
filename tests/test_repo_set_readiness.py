@@ -6,10 +6,13 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import scripts.repo_set_readiness as readiness_cli  # noqa: E402
 from benchmark.repo_set import (  # noqa: E402
     CURATED_REPO_SET,
     EXAMPLE_REPO_SET,
@@ -258,3 +261,37 @@ def test_cli_passes_for_curated_json():
     )
     assert proc.returncode == 0
     assert "READY" in proc.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "directory" in proc.stderr
+
+
+def test_load_config_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        readiness_cli.load_config(str(tmp_path / "repo-set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "config path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_config_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        readiness_cli.load_config(str(tmp_path / "repo-set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
