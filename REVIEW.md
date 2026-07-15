@@ -105,10 +105,10 @@ offline mode returns each file's own fixed stub regardless of the prompt, so it 
 measure whether a PR changed the agent's actual reasoning. The real score-delta is a
 maintainer-bot-run live comparison against both repo targets.
 
-### `mult:contribution` — everything else (×0.2)
+### `mult:contribution` — everything else (×0.05)
 
 PRs to `benchmark/`, `tests/`, `docs/`, `.github/`, or any other non-`agent/` surface get a
-single flat label, `mult:contribution` (×0.2), on merge — there's no "agent performance"
+single flat label, `mult:contribution` (×0.05), on merge — there's no "agent performance"
 to measure for harness/tooling work, so it isn't put through the banding pipeline. This
 replaces the old graduated `mult:core-correctness`/`capability`/`enhancement`/`maintenance`/
 `docs` ladder, which scored a maintainer's *read* of a diff rather than a measured effect —
@@ -119,6 +119,9 @@ exactly the gap the `perf:*` system above closes for `agent/`.
   affect scoring.
 - No label ⇒ zero (this repo's `default_label_multiplier` is `0.0`) — matches the *(none)*
   row above for `agent/` PRs with no measurable improvement.
+- This repo's `label_multipliers` entry in the subnet's `master_repositories.json`
+  (`entrius/gittensor`) is the single source of truth for the value above; if it changes
+  on-chain, update this section in lockstep.
 
 ## Rejections
 

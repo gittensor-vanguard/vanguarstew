@@ -33,5 +33,8 @@ Edit this file when policy changes; code, tests, and CI follow.
 
 ## Scoring (gittensor SN74)
 
-- `mult:*` labels SHALL be the sole source of label-based multiplier tiers.
+- `perf:*` labels SHALL be the measured multiplier ladder for `agent/` PRs; `mult:contribution`
+  SHALL be the flat multiplier label for all other merged PRs. See `REVIEW.md` for current
+  values — this repo's `label_multipliers` entry in the subnet's `master_repositories.json`
+  (`entrius/gittensor`) is the source of truth.
 - The 3-axis rubric (repo, maintainer, legibility) SHALL feed into emission weight.

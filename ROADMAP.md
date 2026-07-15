@@ -84,9 +84,11 @@ vulnerable to.
   other (sounding better to the judge while the objective anchor quietly drops) is
   rejected, not counted as improvement. #1295
 - [x] Merge-block + ceiling label: a measured regression is a hard merge block for
-  `agent/` PRs, not just a label cap; a large, clean win on every axis (≥5× the noise
-  floor, both components improving) earns a new ceiling label, `mult:breakthrough`
-  (×3.0), above `mult:core-correctness` (×2.0). #1302
+  `agent/` PRs, not just a label cap; #1302 originally added a ceiling label for a
+  large, clean win on every axis (≥5× the noise floor, both components improving),
+  `mult:breakthrough` (×3.0), above `mult:core-correctness` (×2.0). **Superseded:**
+  neither label is live on-chain — the graduated ladder was replaced by the flat
+  `mult:contribution` label (see `REVIEW.md`), which is what the subnet actually pays.
 - [x] `REVIEW.md` "Evidence requirement for `agent/` PRs": documents the full tier ladder
   (blocked/neutral/eligible/breakthrough) and what each requires.
 - [x] Public CI smoke check (`agent-benchmark-smoke.yml`): crash/output-shape check on
