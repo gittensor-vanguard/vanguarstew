@@ -233,6 +233,41 @@ def test_failed_checks_logs_warning_for_skipped_rows(caplog):
     assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
+def test_failed_checks_skips_row_missing_name():
+    # Previously: KeyError('name') when a dict row carried only ``passed``.
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    assert failed_checks({
+        "checks": [
+            {"name": "min_tuned", "passed": False},
+            {"passed": False},
+        ],
+    }) == ["min_tuned"]
+
+
+def test_failed_checks_skips_non_str_name_and_non_bool_passed():
+    assert failed_checks({"checks": [{"name": 123, "passed": False}]}) == []
+    assert failed_checks({"checks": [{"name": "min_tuned", "passed": 0}]}) == []
+    assert failed_checks({
+        "checks": [
+            {"name": "min_tuned", "passed": False},
+            {"name": 99, "passed": False},
+            {"name": "both_tiers", "passed": "no"},
+        ],
+    }) == ["min_tuned"]
+
+
+def test_readiness_headline_excludes_malformed_rows_from_denominator():
+    # One valid failure + one malformed row → NOT READY 1/1 (malformed excluded), no TypeError.
+    headline = readiness_headline({
+        "passed": False,
+        "checks": [
+            {"name": "min_tuned", "passed": False},
+            {"name": 123, "passed": False},
+        ],
+    })
+    assert headline == "readiness: NOT READY (1/1 checks failed: min_tuned)"
+
+
 def test_check_readiness_does_not_mutate_the_config():
     config = json.loads(json.dumps(VALID))
     before = json.dumps(config, sort_keys=True)
