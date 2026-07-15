@@ -207,8 +207,8 @@ def repeatability_headline(result: dict) -> str:
     if runs < min_runs:
         return f"repeatability: inconclusive ({runs} run(s))"
     verdict = "STABLE" if result.get("stable") else "UNSTABLE"
-    cv = result.get("cv")
-    cv_txt = f"{cv:.1%}" if _is_number(cv) else "n/a"
+    # Finite/oversized guard via `_is_number` — bare isinstance lets nan%/OverflowError through.
+    cv_txt = f"{result.get('cv'):.1%}" if _is_number(result.get("cv")) else "n/a"
     return (
         f"repeatability: {verdict} over {result['runs']} runs "
         f"(mean {result.get('mean')}, cv {cv_txt})"

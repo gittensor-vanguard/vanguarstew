@@ -147,6 +147,17 @@ def failed_checks(result: dict) -> list[str]:
     ]
 
 
+def _cv_text(cv) -> str:
+    """Percent-format a CV, or ``n/a`` when it is missing/non-finite/oversized.
+
+    Routes through the shared :func:`benchmark.repeatability._is_number` finite guard
+    (imported into this module) — never a bare ``isinstance`` — so a hand-edited
+    ``NaN``/``Inf``/oversized ``cv`` cannot print ``nan%``/``inf%`` or raise
+    ``OverflowError`` inside the percent formatter.
+    """
+    return f"{cv:.1%}" if _is_number(cv) else "n/a"
+
+
 def repeatability_gate_headline(result: dict) -> str:
     """A one-line human summary of a :func:`check_repeatability` result."""
     result = _dict(result)
@@ -155,9 +166,7 @@ def repeatability_gate_headline(result: dict) -> str:
         return "repeatability gate: no checks evaluated"
     if result.get("passed"):
         runs = result.get("runs")
-        cv = result.get("cv")
-        cv_txt = f"{cv:.1%}" if _is_number(cv) else "n/a"
-        return f"repeatability gate: STABLE ({runs} runs, cv {cv_txt})"
+        return f"repeatability gate: STABLE ({runs} runs, cv {_cv_text(result.get('cv'))})"
     failed = failed_checks(result)
     return (f"repeatability gate: UNSTABLE ({len(failed)}/{len(checks)} checks failed: "
             f"{', '.join(failed)})")

@@ -12,16 +12,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import benchmark.repeatability as _repeatability_mod  # noqa: E402
+import benchmark.repeatability_gate as _gate_mod  # noqa: E402
 from benchmark.repeatability import (  # noqa: E402
     DEFAULT_MIN_RUNS,
     _coerce_runs,
     _effective_min_runs,
-    _is_number,
     assess_repeatability,
     repeatability_headline,
 )
 from benchmark.repeatability_gate import (  # noqa: E402
     _check_rows_list,
+    _cv_text,
     check_repeatability,
     failed_checks,
     repeatability_gate_headline,
@@ -93,22 +95,47 @@ def test_gate_headline_stable_and_unstable():
 
 
 def test_gate_headline_degrades_on_non_finite_or_oversized_cv():
+    # Exercises the production gate headline path (not a free-floating helper import).
     checks = [{"name": "a", "passed": True}]
-    assert "cv n/a" in repeatability_gate_headline(
-        {"passed": True, "checks": checks, "runs": 2, "cv": float("nan")})
-    assert "cv n/a" in repeatability_gate_headline(
-        {"passed": True, "checks": checks, "runs": 2, "cv": float("inf")})
-    assert "cv n/a" in repeatability_gate_headline(
-        {"passed": True, "checks": checks, "runs": 2, "cv": 10**400})
-    assert "inf%" not in repeatability_gate_headline(
-        {"passed": True, "checks": checks, "runs": 2, "cv": float("inf")})
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400, -(10**400)):
+        text = repeatability_gate_headline(
+            {"passed": True, "checks": checks, "runs": 2, "cv": bad})
+        assert text.startswith("repeatability gate: STABLE")
+        assert "cv n/a" in text
+        assert "nan%" not in text
+        assert "inf%" not in text
 
 
-def test_is_number_shared_with_repeatability_rejects_non_finite():
-    assert _is_number(0.01)
-    assert not _is_number(float("nan"))
-    assert not _is_number(float("inf"))
-    assert not _is_number(10**400)
+def test_gate_cv_text_uses_shared_finite_is_number():
+    # The gate module must bind the shared finite helper — not a local isinstance remake.
+    assert _gate_mod._is_number is _repeatability_mod._is_number
+    assert _cv_text(0.05) == "5.0%"
+    assert _cv_text(float("nan")) == "n/a"
+    assert _cv_text(float("inf")) == "n/a"
+    assert _cv_text(10**400) == "n/a"
+    assert _cv_text(None) == "n/a"
+
+
+def test_gate_headline_routes_cv_through_module_is_number(monkeypatch):
+    # Prove repeatability_gate_headline reads `_is_number` from THIS module's namespace
+    # (the imported finite helper), so restoring a weak local isinstance would fail CI.
+    calls: list = []
+    real = _gate_mod._is_number
+
+    def spy(value):
+        calls.append(value)
+        return real(value)
+
+    monkeypatch.setattr(_gate_mod, "_is_number", spy)
+    text = repeatability_gate_headline({
+        "passed": True,
+        "checks": [{"name": "a", "passed": True}],
+        "runs": 2,
+        "cv": float("nan"),
+    })
+    assert "cv n/a" in text
+    assert len(calls) == 1
+    assert isinstance(calls[0], float) and calls[0] != calls[0]  # NaN
 
 
 def test_gate_headline_no_checks():
