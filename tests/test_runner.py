@@ -47,7 +47,7 @@ def _tiny_repo(dirpath, n=16, prefix="feat"):
 
 SINGLE_REPO_KEYS = {
     "tasks", "baseline", "tally", "decisive_margin", "composite_mean",
-    "composite_parts", "weights", "rows", "judge_order_stats", "judge_report",
+    "composite_parts", "foresight", "weights", "rows", "judge_order_stats", "judge_report",
     "offline", "github_enriched", "judge_dual_order",
 }
 
@@ -101,6 +101,22 @@ def test_run_replay_composite_parts_match_rows():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_replay_foresight_breakdown_matches_row_count():
+    d = _tiny_repo(tempfile.mkdtemp())
+    try:
+        n = 3
+        res = run_replay(d, agent_file=AGENT, n_tasks=n, horizon=3, seed=0)
+        foresight = res["foresight"]
+        # Module recall is always applicable, so its sample size tracks the task count exactly.
+        assert foresight["module_recall_n"] == n
+        assert foresight["module_recall_mean"] is None or 0.0 <= foresight["module_recall_mean"] <= 1.0
+        for key in ("kind_recall_n", "release_accuracy_n"):
+            assert foresight[key] <= n
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_run_replay_too_small_repo_errors_cleanly():
     d = _tiny_repo(tempfile.mkdtemp(), n=5)
     try:
@@ -123,6 +139,29 @@ def test_run_multi_replay_produces_valid_composite_mean():
         assert res["scored_repos"] >= 1
         assert isinstance(res["composite_mean"], (int, float))
         assert 0.0 <= res["composite_mean"] <= 1.0
+    finally:
+        shutil.rmtree(a, ignore_errors=True)
+        shutil.rmtree(b, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_multi_replay_combines_per_repo_foresight():
+    a = _tiny_repo(tempfile.mkdtemp(), prefix="alpha")
+    b = _tiny_repo(tempfile.mkdtemp(), prefix="beta")
+    try:
+        res = run_multi_replay([a, b], agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
+        foresight = res["foresight"]
+        # module_recall_n sums across every scored repo's own foresight (always applicable),
+        # matching how it is combined rather than a fixed expectation on task counts.
+        expected_n = sum(
+            repo["foresight"]["module_recall_n"]
+            for repo in res["per_repo"] if repo.get("tasks", 0) > 0
+        )
+        assert expected_n > 0
+        assert foresight["module_recall_n"] == expected_n
+        for repo in res["per_repo"]:
+            if repo.get("tasks", 0) > 0:
+                assert "foresight" in repo
     finally:
         shutil.rmtree(a, ignore_errors=True)
         shutil.rmtree(b, ignore_errors=True)

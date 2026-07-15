@@ -27,7 +27,9 @@ from benchmark.leakage import scrub_context
 from benchmark.repo_set import RepoSetError, is_placeholder_source, load_repo_set
 from benchmark.score import (
     base_from_releases,
+    combine_foresight_breakdowns,
     composite_score,
+    foresight_breakdown,
     objective_component,
     objective_score,
     trajectory_overlap,
@@ -196,6 +198,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 round(sum(objective_parts) / len(objective_parts), 3) if objective_parts else 0.0
             ),
         },
+        "foresight": foresight_breakdown([r["objective"] for r in rows]),
         "weights": {"judge": w_judge, "objective": w_objective},
         "rows": rows,
         "judge_order_stats": judge_order_stats,
@@ -352,6 +355,7 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
     composites = []
     judge_parts = []
     objective_parts = []
+    foresight_parts = []
     judge_orders = []
     tally = {"challenger": 0, "baseline": 0, "tie": 0}
     try:
@@ -377,6 +381,7 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
                 parts = res.get("composite_parts", {})
                 judge_parts.append(parts.get("judge_mean", 0.0))
                 objective_parts.append(parts.get("objective_mean", 0.0))
+                foresight_parts.append(res.get("foresight"))
                 judge_orders.extend(
                     r.get("judge_order")
                     for r in _rows_list(res.get("rows"), "replay rows")
@@ -398,6 +403,7 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
             "judge_mean": _mean(judge_parts),
             "objective_mean": _mean(objective_parts),
         },
+        "foresight": combine_foresight_breakdowns(foresight_parts),
         "judge_order_stats": judge_order_stats,
         "judge_report": build_judge_report(tally, judge_order_stats),
         "per_repo": per_repo,

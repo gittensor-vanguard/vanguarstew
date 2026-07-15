@@ -92,6 +92,55 @@ def test_render_single_repo_includes_headline_and_judge():
     assert "Tasks: 3" in md
 
 
+def test_render_single_repo_includes_foresight_breakdown():
+    art = _single_repo()
+    art["foresight"] = {
+        "module_recall_mean": 0.667, "module_recall_n": 3,
+        "kind_recall_mean": 1.0, "kind_recall_n": 2,
+        "release_accuracy": 0.0, "release_accuracy_n": 1,
+    }
+    md = render_report(art)
+    assert "Foresight — modules: 66.7% (n=3), kinds: 100.0% (n=2), release: 0.0% (n=1)" in md
+
+
+def test_render_foresight_defaults_to_na_when_absent():
+    # An artifact predating the M7 foresight breakdown (or one that never populated it) must
+    # still render every axis as n/a rather than a crash or a fabricated 0%.
+    md = render_report(_single_repo())
+    assert "Foresight — modules: n/a (n=0), kinds: n/a (n=0), release: n/a (n=0)" in md
+
+
+def test_render_tolerates_malformed_foresight(caplog):
+    art = _single_repo()
+    art["foresight"] = "not-a-dict"
+    with caplog.at_level(logging.WARNING):
+        md = render_report(art)
+    assert "Foresight — modules: n/a (n=0)" in md
+    assert any("foresight is str" in r.message for r in caplog.records)
+
+
+def test_render_treats_unscored_partition_foresight_as_unavailable():
+    art = _generalization()
+    art["tuned"] = {
+        "repos": 1,
+        "scored_repos": 0,
+        "skipped": 1,
+        "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        "foresight": {
+            "module_recall_mean": None, "module_recall_n": 0,
+            "kind_recall_mean": None, "kind_recall_n": 0,
+            "release_accuracy": None, "release_accuracy_n": 0,
+        },
+        "per_repo": [{"repo_name": "tuned-a", "error": "no usable tasks", "tasks": 0}],
+    }
+    md = render_report(art)
+    tuned_section = md.split("### Held-out")[0]
+    assert "Foresight — modules: n/a (n=0)" in tuned_section
+    # the held-out partition (no foresight key at all) still degrades cleanly, not a crash
+    assert "Foresight" in md.split("### Held-out")[1]
+
+
 def test_render_multi_repo_includes_per_repo_table():
     md = render_report(_multi_repo())
     assert "# Benchmark report (multi-repo)" in md
