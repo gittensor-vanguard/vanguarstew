@@ -17,11 +17,21 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from agent.context import context_for_agent
 from agent.planner import _release_cadence_signal
 
 logger = logging.getLogger(__name__)
+
+# A semver core (major.minor[.patch]) with an optional leading `v` and an optional
+# pre-release/build suffix we deliberately ignore ("v1.2.0-rc1", "1.0.0.dev0"). This mirrors
+# the objective anchor's version resolution (`benchmark/score.py` `_SEMVER` / `parse_semver` /
+# `base_from_releases`) so the base this module reports to the model is the same base the
+# anchor scores `bump_match` against. We deliberately do NOT import from ``benchmark/``
+# (``agent/`` must not depend on it — a miner-only split is planned); keep the two aligned,
+# as ``_CC_PREFIX_RE`` in agent/planner.py already does for commit kinds.
+_SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
 
 SYSTEM = (
     "You are an experienced repository maintainer making a concrete decision. Decide as the "
@@ -276,30 +286,118 @@ def _planning_version_bump_note(context: dict, request: str) -> str:
     )
 
 
+def _parse_semver(text):
+    """First semver core in ``text`` -> ``(major, minor, patch)``, or None.
+
+    Mirrors ``benchmark.score.parse_semver``: tolerant of a leading ``v`` and of a missing
+    patch (``1.2`` -> ``(1, 2, 0)``), and ignores any pre-release/build suffix. A non-string
+    (a frozen tag may arrive as a number) carries no version rather than raising in ``re``.
+    """
+    if not isinstance(text, str):
+        return None
+    match = _SEMVER_RE.search(text)
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
+
+
+def _release_version(rel):
+    """Resolve one frozen release to ``(raw_tag, version)``, or None when it carries none.
+
+    Mirrors ``benchmark.score.base_from_releases``' per-release resolution exactly, down to
+    the falsy-candidate skip and returning the raw candidate: a release is authoritatively
+    versioned by its ``tag``, and the display ``name`` is only a fallback consulted when the
+    tag is absent or not semver-shaped. Resolving each release to a single representative
+    version *before* ranking is what stops a lower release's name (e.g. an old entry titled
+    "Preview of 9.0") from outranking another release's real tag. A non-dict row (malformed
+    frozen context) carries no version rather than raising.
+    """
+    if not isinstance(rel, dict):
+        return None
+    for candidate in (rel.get("tag"), rel.get("name")):
+        if not candidate:
+            continue
+        version = _parse_semver(str(candidate))
+        if version is not None:
+            return candidate, version
+    return None
+
+
+def _ranked_releases(releases) -> list:
+    """Frozen releases that carry a version, as ``(raw_tag, version)``, highest version first.
+
+    ``_ranked_releases(r)[0][0]`` is exactly ``benchmark.score.base_from_releases(r)`` — the
+    base the anchor scores ``bump_match`` against — and an empty list means the same "no known
+    base" the anchor degrades to. The sort is stable and ``base_from_releases`` replaces its
+    best only on a strictly greater version, so tied versions resolve to the same first
+    occurrence in both.
+    """
+    ranked = [resolved for resolved in (_release_version(rel) for rel in releases)
+              if resolved is not None]
+    ranked.sort(key=lambda resolved: resolved[1], reverse=True)
+    return ranked
+
+
+def _tag_text(tag) -> str:
+    """A frozen release tag as prompt-ready display text.
+
+    Rendering only: ``_release_version`` deliberately carries the raw candidate so it stays an
+    exact mirror of the anchor's ``base_from_releases``, which never coerces or strips.
+    """
+    return str(tag).strip()
+
+
+def _release_tag_text(rel) -> str:
+    """The raw tag/name text of a frozen release, for a release that carries no version."""
+    if not isinstance(rel, dict):
+        return ""
+    for field in ("tag", "name"):
+        value = rel.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _release_context_note(context: dict) -> str:
-    """Surface frozen release tags so release/version_bump calls have a concrete base."""
+    """Surface the frozen releases the next version cut would bump from, highest version first.
+
+    The frozen ``releases`` list is NOT ordered newest-last-to-first by contract: the git
+    freeze builders emit it oldest-first (``benchmark/freeze.py`` and
+    ``agent/context.py`` both take ``tags[-10:]`` off a ``--sort=creatordate`` listing),
+    while the GitHub-enriched path appends in API order. So the note cannot trust position —
+    it ranks by parsed semver, exactly as the objective anchor's ``base_from_releases`` picks
+    the base for ``bump_match`` (the highest tag, not the last one). Reporting any other tag
+    as the current version points the model's ``version_bump`` at the wrong base.
+
+    A release carrying no parseable version can't inform a bump level, so it is dropped from
+    the ranking exactly as the anchor drops it. When NO release carries one there is no base
+    to report: the tags are still listed (they remain real cadence evidence) but without a
+    base or an ordering claim, rather than under a false one.
+    """
     if not isinstance(context, dict):
         return ""
     ctx = context_for_agent(context)
     releases = ctx.get("releases")
     if not isinstance(releases, list) or not releases:
         return ""
-    tags = []
-    for rel in releases:
-        if not isinstance(rel, dict):
-            continue
-        for field in ("tag", "name"):
-            value = rel.get(field)
-            if isinstance(value, str) and value.strip():
-                tags.append(value.strip())
-                break
-    if not tags:
-        return ""
-    lines = "\n".join(f"- {tag}" for tag in tags[:3])
+    ranked = _ranked_releases(releases)
+    if not ranked:
+        tags = [text for text in (_release_tag_text(rel) for rel in releases) if text]
+        if not tags:
+            return ""
+        lines = "\n".join(f"- {tag}" for tag in tags[:3])
+        return (
+            f"\nFrozen release tags at freeze (no parseable version):\n{lines}\n"
+            "When action is release or version_bump is set, infer major/minor/patch from "
+            "maintainer cadence and these tags.\n"
+        )
+    base = _tag_text(ranked[0][0])
+    lines = "\n".join(f"- {_tag_text(tag)}" for tag, _version in ranked[:3])
     return (
-        f"\nRecent release tags at freeze (newest first):\n{lines}\n"
+        f"\nCurrent version at freeze: {base} — the base the next version cut bumps from.\n"
+        f"Release tags known at freeze, highest version first:\n{lines}\n"
         "When action is release or version_bump is set, infer major/minor/patch from "
-        "maintainer cadence and these tags.\n"
+        f"maintainer cadence and the step from {base} to the next cut.\n"
     )
 
 

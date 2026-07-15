@@ -22,7 +22,9 @@ from agent.decider import (  # noqa: E402
     _normalize_rationale,
     _normalize_reviewer,
     _normalize_version_bump,
+    _parse_semver,
     _planning_version_bump_note,
+    _ranked_releases,
     _release_context_note,
     _run_lens,
     decide,
@@ -330,10 +332,76 @@ def test_release_context_note_surfaces_frozen_tags():
     assert "version_bump" in note
 
 
+# The frozen `releases` list arrives OLDEST-first from both git-only builders (each takes
+# `tags[-10:]` off a `--sort=creatordate` listing) but NEWEST-first from the GitHub-enriched
+# path, so the note must rank by version and never by position. This abridges the same
+# oldest-first shape the real benchmark produces at pluggy freeze `018dda653f`, where the note
+# reported `0.13.0` as current while the anchor scored the bump against `1.6.0`.
+_FROZEN_OLDEST_FIRST = [
+    {"tag": "0.13.0"}, {"tag": "1.0.0"}, {"tag": "1.4.0"}, {"tag": "1.5.0"}, {"tag": "1.6.0"},
+]
+
+
+def test_release_context_note_reports_the_highest_version_as_the_base():
+    note = _release_context_note({"releases": _FROZEN_OLDEST_FIRST})
+    assert "Current version at freeze: 1.6.0" in note
+    # The oldest tag must never be presented as the base the next cut bumps from.
+    assert "Current version at freeze: 0.13.0" not in note
+    # Highest-first ordering, and the stale tail is what gets dropped by the 3-tag cap.
+    assert note.index("- 1.6.0") < note.index("- 1.5.0") < note.index("- 1.4.0")
+    assert "0.13.0" not in note
+
+
+def test_ranked_releases_base_matches_the_objective_anchor():
+    """The base the note reports must BE the base `bump_match` is scored against.
+
+    `agent/` must not import `benchmark/`, so `_release_version` mirrors
+    `benchmark.score.base_from_releases`; this pins the two together (the alignment
+    discipline `tests/test_scrubber_alignment.py` already applies to the leakage mirror).
+    """
+    from benchmark.score import base_from_releases
+
+    for releases in (
+        _FROZEN_OLDEST_FIRST,
+        list(reversed(_FROZEN_OLDEST_FIRST)),                     # GitHub-enriched order
+        [{"tag": "hatchling-v1.28.0"}, {"tag": "hatch-v1.17.0"}, {"tag": "hatchling-v1.30.1"}],
+        [{"tag": "not-a-version"}, {"name": "v3.2.1"}],           # name fallback
+        [{"tag": "v1.0.0"}, {"name": "Preview of 9.0"}],          # a name must not outrank a tag
+        [{"tag": "v1.0.0"}, {"tag": "1.0.0"}],                    # tie -> the first max wins
+        [{"tag": "v2.0.0"}, {"tag": "latest"}],                   # unversioned alongside real
+        [{"tag": "latest"}, 42, None, {}],                        # no base, exactly as the anchor
+        [],
+    ):
+        ranked = _ranked_releases(releases)
+        base = ranked[0][0] if ranked else None
+        assert base == base_from_releases(releases), releases
+
+
+def test_parse_semver_matches_the_objective_anchor():
+    from benchmark.score import parse_semver
+
+    for text in ("v1.2.0", "1.2", "1.0.0.dev0", "hatchling-v1.30.1", "v1.2.0-rc1",
+                 "not-a-version", "", 42, None, ["v1.0.0"]):
+        assert _parse_semver(text) == parse_semver(text), text
+
+
+def test_release_context_note_degrades_on_unusable_releases():
+    # No parseable version anywhere: list the tags, but claim no base and no ordering.
+    note = _release_context_note({"releases": [{"tag": "latest"}, 42, {"tag": "nightly"}]})
+    assert "latest" in note and "Current version at freeze" not in note
+    assert "highest version first" not in note
+    # Malformed rows are skipped, not crashed on, and never shadow a real versioned release.
+    assert "Current version at freeze: v2.0.0" in _release_context_note(
+        {"releases": [42, None, ["v9.9.9"], {"tag": "v2.0.0"}]}
+    )
+
+
 def test_release_context_note_empty_when_no_releases():
     assert _release_context_note({}) == ""
     assert _release_context_note({"releases": []}) == ""
     assert _release_context_note({"releases": [{"tag": ""}]}) == ""
+    assert _release_context_note({"releases": "v1.0.0"}) == ""
+    assert _release_context_note(None) == ""
 
 
 def test_is_planning_request():
