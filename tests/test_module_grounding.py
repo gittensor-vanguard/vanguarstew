@@ -36,12 +36,21 @@ from agent.context import (
 from agent.philosophy import _render as render_philosophy_context
 from agent.planner import (
     MAX_PLAN_ITEM_FILES,
+    MIN_PLAN_MODULE_BUDGET,
     OBJECTIVE_ANCHOR_GUIDANCE,
+    _enforce_module_budget,
     _normalize_files,
     _normalize_plan_item,
+    _top_module,
 )
 from agent.planner import _render as render_planner_context
+from benchmark.score import _top_module as score_top_module
 from benchmark.score import module_recall
+
+# A repo whose revealed window touched every module in its layout -- so an ungoverned shotgun
+# would score a perfect module_recall and an honest plan has real modules to get right.
+_LAYOUT = ("agent", "benchmark", "scripts", "docs", "tests", "blog", "specs", "tools")
+_REVEALED = [{"files": [f"{module}/x.py"]} for module in _LAYOUT]
 
 # --- repo_layout -----------------------------------------------------------------------------
 
@@ -201,35 +210,81 @@ def test_plan_item_files_are_capped():
     assert len(item["files"]) == MAX_PLAN_ITEM_FILES
 
 
-def test_the_cap_stops_a_shotgunned_plan_from_farming_module_recall():
-    """The guard has to hold at the *scoring* boundary, not just in the normalizer.
+def test_top_module_matches_the_scorer():
+    """The budget must count modules exactly as the anchor does, or it guards the wrong unit.
 
-    A single item naming every module in the layout would otherwise match every module that
-    actually changed and drive module_recall to a perfect 1.0 while predicting nothing.
+    ``agent/`` cannot import ``benchmark/``, so the derivation is duplicated; this pins the two
+    copies together (the same alignment discipline as tests/test_scrubber_alignment.py).
     """
-    revealed = [
-        {"files": ["agent/planner.py"]},
-        {"files": ["benchmark/score.py"]},
-        {"files": ["scripts/run_eval.py"]},
-        {"files": ["docs/architecture.md"]},
-        {"files": ["tests/test_score.py"]},
-        {"files": ["blog/post.md"]},
-        {"files": ["specs/001/spec.md"]},
-    ]
-    layout = ["agent", "benchmark", "scripts", "docs", "tests", "blog", "specs"]
+    for path in (
+        "agent/planner.py", "benchmark/score.py", "docs/", "README.md", ".gitignore",
+        "a/b/c.py", "Makefile", "", "tests/unit/test_x.py",
+    ):
+        assert _top_module(path) == score_top_module(path), path
 
+
+def test_the_cap_stops_a_single_item_shotgun_from_farming_module_recall():
+    """The guard has to hold at the *scoring* boundary, not just in the normalizer."""
     # Ungoverned: the raw shotgun matches every changed module.
-    farmed = [{"title": "Improve the repo", "kind": "refactor", "files": layout}]
-    assert module_recall(farmed, revealed)["module_recall"] == 1.0
+    farmed = [{"title": "Improve the repo", "kind": "refactor", "files": list(_LAYOUT)}]
+    assert module_recall(farmed, _REVEALED)["module_recall"] == 1.0
 
     # Through the planner's normalizer, the same item is capped and cannot sweep the anchor.
     capped = [_normalize_plan_item(dict(farmed[0]))]
-    assert module_recall(capped, revealed)["module_recall"] < 1.0
+    assert module_recall(capped, _REVEALED)["module_recall"] < 1.0
 
-    # An honest, focused prediction still scores exactly what it earned.
-    honest = [_normalize_plan_item({
-        "title": "Fix the planner",
-        "kind": "bugfix",
-        "files": ["agent/planner.py"],
-    })]
-    assert module_recall(honest, revealed)["matched_modules"] == ["agent"]
+
+def test_the_budget_stops_a_MULTI_item_shotgun_the_per_item_cap_cannot():
+    """The farmable unit is the plan-wide distinct-module set, not the per-item file list.
+
+    module_recall tokenizes the *whole plan*, so a per-item cap alone is defeated by simply
+    spreading the layout across several items -- five items naming five modules each still sweeps
+    every module. This is why the budget exists.
+    """
+    # Spread the layout across 4 items, each within MAX_PLAN_ITEM_FILES.
+    spread = [
+        _normalize_plan_item({"title": f"item {i}", "kind": "refactor",
+                              "files": list(_LAYOUT[i * 2:i * 2 + 2])})
+        for i in range(4)
+    ]
+    # The per-item cap alone leaves the anchor fully farmed...
+    assert module_recall(spread, _REVEALED)["module_recall"] == 1.0
+
+    # ...but the plan-wide budget bounds the distinct modules the plan may claim.
+    governed = _enforce_module_budget([dict(item) for item in spread])
+    named = {_top_module(p) for item in governed for p in item.get("files", [])}
+    assert len(named) <= max(MIN_PLAN_MODULE_BUDGET, len(governed) + 1)
+    assert module_recall(governed, _REVEALED)["module_recall"] < 1.0
+
+
+def test_the_budget_leaves_an_honest_plan_untouched():
+    """A focused plan spends few distinct modules however long it is, so it never hits the cap."""
+    honest = [
+        {"title": "Fix the planner", "kind": "bugfix",
+         "files": ["agent/planner.py", "tests/test_planner.py"]},
+        {"title": "Harden the scorer", "kind": "bugfix",
+         "files": ["agent/context.py", "tests/test_context.py"]},
+        {"title": "Review the open queue", "kind": "triage"},
+    ]
+    before = [dict(item) for item in honest]
+
+    assert _enforce_module_budget(honest) == before          # nothing dropped
+    assert module_recall(honest, _REVEALED)["matched_modules"] == ["agent", "tests"]
+
+
+def test_the_budget_keeps_the_earliest_highest_conviction_modules():
+    plan = [
+        {"title": "a", "files": ["agent/x.py"]},
+        {"title": "b", "files": ["benchmark/y.py"]},
+        {"title": "c", "files": ["docs/z.md"]},
+        {"title": "d", "files": ["blog/w.md"]},      # 4 items -> budget 5, still admitted
+    ]
+    _enforce_module_budget(plan)
+    assert [item.get("files") for item in plan] == [
+        ["agent/x.py"], ["benchmark/y.py"], ["docs/z.md"], ["blog/w.md"],
+    ]
+
+    # A single item may not spend the whole budget on new modules beyond it.
+    tight = [{"title": "only", "files": [f"{m}/x.py" for m in _LAYOUT]}]
+    _enforce_module_budget(tight)
+    assert len(tight[0]["files"]) == MIN_PLAN_MODULE_BUDGET   # 1 item -> floor of 3

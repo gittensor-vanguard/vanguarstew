@@ -110,7 +110,9 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
     "modules rather than guessing, and lean toward `module_activity` (where recent maintainer "
     "effort is concentrating), since work tends to continue where it has been. Name ONLY the "
     "module(s) an item genuinely touches: listing modules an item would not really change is "
-    "worse than naming none, and a plan that shotguns the whole layout will be rejected. "
+    "worse than naming none, and a plan that shotguns the whole layout will be rejected -- the "
+    "plan as a whole may name only about as many distinct modules as it has items, so spend "
+    "them on the ones you are most confident about. "
     "Pick `kind` to match the maintainer commit type the action would produce "
     "(bugfix/fix, feature/feat, docs, release, refactor, dep). When several kinds recur in "
     "recent history, plan separate items so each kind is covered."
@@ -128,6 +130,9 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
 # well above any honest item (so real plans are unaffected) and well below the layout size a
 # shotgun would need, and truncation is logged so the behavior is never silent.
 MAX_PLAN_ITEM_FILES = 5
+
+# Floor on the plan-wide module budget, so a one- or two-item plan is not over-constrained.
+MIN_PLAN_MODULE_BUDGET = 3
 
 RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
@@ -548,6 +553,73 @@ def _normalize_plan_item(item) -> dict | None:
     return normalized
 
 
+def _top_module(path: str):
+    """The top-level module a path belongs to, or None.
+
+    Mirrors ``benchmark.score._top_module`` (``agent/`` must not import ``benchmark/``): a nested
+    path takes its first segment (``agent/foo.py`` -> ``agent``); a top-level file strips one
+    extension (``README.md`` -> ``readme``), falling back to the bare name for a dotfile. The
+    budget below has to count modules the way the anchor does, or it would guard the wrong unit.
+    Kept aligned by ``tests/test_module_grounding.py::test_top_module_matches_the_scorer``.
+    """
+    if not isinstance(path, str):
+        return None
+    parts = [p for p in path.split("/") if p]
+    if not parts:
+        return None
+    if len(parts) > 1:
+        top = parts[0]
+    else:
+        top = parts[0].rsplit(".", 1)[0] or parts[0].lstrip(".")
+    return top.lower() if top else None
+
+
+def _enforce_module_budget(plan: list) -> list:
+    """Cap how many DISTINCT top-level modules a plan may name across all of its items.
+
+    The per-item cap (``MAX_PLAN_ITEM_FILES``) is not sufficient on its own, because the anchor
+    tokenizes the *whole plan*, not each item: five items naming five modules each still sweeps a
+    layout and drives module_recall to 1.0 while predicting nothing. The farmable unit is the
+    plan-wide distinct-module set, so that is what this bounds.
+
+    The budget is ``len(plan) + 1`` (floored at ``MIN_PLAN_MODULE_BUDGET``): a focused maintainer
+    action concentrates on one area, so a plan of N items honestly names about N modules, and the
+    slack absorbs the common code+tests pairing. Note the budget counts *distinct* modules, so an
+    honest plan whose every item touches ``agent/`` and ``tests/`` spends only two of it no matter
+    how long the plan is -- real plans are unaffected.
+
+    Modules are admitted in plan order (earliest items are the highest-conviction ones); once the
+    budget is spent, later paths naming a *new* module are dropped, while paths reusing an
+    already-admitted module are kept. Drops are logged, never silent.
+    """
+    budget = max(MIN_PLAN_MODULE_BUDGET, len(plan) + 1)
+    admitted: set = set()
+    dropped: list = []
+    for item in plan:
+        if not isinstance(item, dict) or not item.get("files"):
+            continue
+        kept = []
+        for path in item["files"]:
+            module = _top_module(path)
+            if module is None:
+                continue
+            if module in admitted or len(admitted) < budget:
+                admitted.add(module)
+                kept.append(path)
+            else:
+                dropped.append(path)
+        if kept:
+            item["files"] = kept
+        else:
+            item.pop("files", None)
+    if dropped:
+        logger.warning(
+            "plan: named more than %d distinct modules (budget for %d item(s)); dropped %r",
+            budget, len(plan), dropped,
+        )
+    return plan
+
+
 def _plan_list(plan, field: str = "plan") -> list:
     """Return ``plan`` when it is a list; otherwise treat as no plan items.
 
@@ -661,7 +733,9 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         else:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
-    return reconcile_plan_with_queue(plan, context, n)
+    # After reconciliation, so the budget is sized against the plan the agent actually returns
+    # (reconcile may prepend a review item), and so a reconciled item cannot slip past the cap.
+    return _enforce_module_budget(reconcile_plan_with_queue(plan, context, n))
 
 
 def _render(context: dict) -> str:
