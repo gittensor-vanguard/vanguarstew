@@ -21,8 +21,27 @@ from benchmark.score_integrity import (
 
 
 def load_artifact(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except OSError as exc:
+        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except ValueError as exc:
+        # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
+        # beyond the int-string-conversion limit (py3.11+); JSONDecodeError subclasses it.
+        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     if not isinstance(data, dict):
         raise ValueError(f"artifact must be a JSON object: {path}")
     return data
@@ -39,7 +58,9 @@ def main() -> None:
 
     try:
         artifact = load_artifact(args.artifact)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except SystemExit as exc:
+        raise SystemExit(exc.code) from None
+    except ValueError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
