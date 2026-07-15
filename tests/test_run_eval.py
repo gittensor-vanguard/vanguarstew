@@ -109,6 +109,35 @@ def test_check_score_floor_skipped_when_disabled():
     assert check_score_floor({"composite_mean": 0.1}, None) is None
 
 
+def test_check_score_floor_fails_closed_on_non_finite_composite():
+    # json round-trips NaN/Infinity verbatim. A non-finite composite_mean passed the isinstance
+    # float check, then `nan < fail_under` / `inf < fail_under` are both False -- silently PASSING
+    # the --fail-under gate on a run with no real score (a floor gate that fails OPEN). It must
+    # fail closed, reported like a missing composite.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        msg = check_score_floor({"composite_mean": bad}, 0.5)
+        assert msg is not None and "missing or non-numeric" in msg
+
+
+def test_check_score_floor_fails_closed_on_non_finite_generalization_partition():
+    # Same fail-open hole per generalization partition: a scored partition (scored_repos > 0)
+    # whose composite is NaN must fail closed, not slip through the < comparison.
+    result = {
+        "repo_set": "foo.json",
+        "tuned": {"composite_mean": float("nan"), "scored_repos": 2},
+        "held_out": {"composite_mean": 0.8, "scored_repos": 2},
+    }
+    msg = check_score_floor(result, 0.5)
+    assert msg is not None and "tuned composite_mean missing or non-numeric" in msg
+
+
+def test_check_score_floor_fails_closed_on_oversized_int_composite():
+    # An oversized int literal (json parses it verbatim) cannot convert to float; treat it as
+    # non-numeric and fail closed rather than raising OverflowError.
+    msg = check_score_floor({"composite_mean": 10 ** 400}, 0.5)
+    assert msg is not None and "missing or non-numeric" in msg
+
+
 def _generalization_result(tuned=0.6, held_out=0.6, tuned_scored=2, held_scored=1):
     return {
         "repo_set": "foo.json",

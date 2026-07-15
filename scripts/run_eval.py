@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
@@ -41,9 +42,22 @@ def result_summary_lines(result: dict) -> list[str]:
 
 
 def _numeric_score(value) -> float | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    return None
+    """A finite composite score, or ``None`` when there is no real number to gate.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, so a non-finite ``composite_mean`` would
+    otherwise reach the ``score < fail_under`` comparison -- where ``nan < x`` and ``inf < x`` are
+    both ``False``, silently PASSING a ``--fail-under`` gate on a run with no real score (a floor
+    gate that fails open). Treat a non-finite or un-convertible value as unavailable so
+    :func:`check_score_floor` fails closed, mirroring the ``math.isfinite`` guard the sibling gates
+    ``benchmark/promotion.py`` and ``benchmark/component_floor.py`` already apply. ``OverflowError``
+    guards an oversized int literal that cannot convert to float."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _is_unscored_placeholder(result: dict) -> bool:
