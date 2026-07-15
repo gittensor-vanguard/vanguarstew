@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
@@ -41,8 +42,22 @@ def result_summary_lines(result: dict) -> list[str]:
 
 
 def _numeric_score(value) -> float | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
+    """Return a finite float score, or ``None`` when the value is not a usable score.
+
+    ``json`` round-trips ``NaN``/``Infinity`` as floats, and an oversized int literal becomes a
+    Python ``int`` that raises ``OverflowError`` on ``float()``. Either would previously fail
+    open on ``--fail-under`` (``nan < x`` / ``inf < x`` are False) or crash. Booleans are
+    excluded (``isinstance(True, int)`` is True). Mirrors ``scripts/compare_eval._numeric`` and
+    ``benchmark/component_floor._is_number``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, OverflowError):
+        return None
+    if math.isfinite(number):
+        return number
     return None
 
 
