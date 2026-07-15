@@ -1,5 +1,6 @@
 """Tests for replay-result reporting/artifact helpers."""
 
+import decimal
 import json
 import os
 import shutil
@@ -176,6 +177,43 @@ def test_check_score_floor_single_repo_zero_below_floor_unchanged():
     # A single-repo run carries no scored_repos key, so its real 0.0 is still gated normally.
     msg = check_score_floor({"tasks": 3, "composite_mean": 0.0}, 0.5)
     assert msg is not None and "FAIL" in msg
+
+
+# --- #1644: a non-finite composite_mean must fail the floor closed, not pass it silently ----
+
+_NON_NUMERIC_COMPOSITES = [
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    10**400,  # too large for float() -- OverflowError, not a real score
+    "NaN",  # a string survives a JSON round-trip that quoted it; still not a real score
+    decimal.Decimal("0.9"),
+    complex(0.9, 0),
+]
+
+
+@pytest.mark.parametrize("bad", _NON_NUMERIC_COMPOSITES)
+def test_check_score_floor_fails_closed_on_non_finite_top_level_composite(bad):
+    msg = check_score_floor({"composite_mean": bad}, 0.5)
+    assert msg is not None
+    assert "FAIL" in msg and "missing or non-numeric" in msg
+    assert repr(bad) in msg
+
+
+@pytest.mark.parametrize("bad", _NON_NUMERIC_COMPOSITES)
+def test_check_score_floor_fails_closed_on_non_finite_generalization_partition(bad):
+    # Built by hand rather than via _generalization_result(): that helper computes
+    # generalization_gap as tuned - held_out, which raises for several of these bad values
+    # (e.g. OverflowError on the oversized int) well before check_score_floor is reached.
+    result = {
+        "repo_set": "foo.json",
+        "tuned": {"composite_mean": bad, "scored_repos": 2},
+        "held_out": {"composite_mean": 0.9, "scored_repos": 1},
+    }
+    msg = check_score_floor(result, 0.5)
+    assert msg is not None
+    assert "FAIL" in msg and "tuned" in msg and "missing or non-numeric" in msg
+    assert repr(bad) in msg
 
 
 # --- #573: non-list weight_sweep must not abort stderr reporting --------------------

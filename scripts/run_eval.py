@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
@@ -41,8 +42,22 @@ def result_summary_lines(result: dict) -> list[str]:
 
 
 def _numeric_score(value) -> float | None:
+    """A finite, non-boolean int/float score; ``None`` for anything else.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, so a hand-edited or degenerate artifact
+    can carry a non-finite ``composite_mean``. Without the finite guard, both ``nan < fail_under``
+    and ``inf < fail_under`` are ``False``, so the floor gate silently passes a score that isn't
+    real. ``float()`` also raises ``OverflowError`` on an oversized int literal -- mirroring the
+    same guard already applied by the sibling gates ``benchmark/promotion.py``,
+    ``benchmark/component_floor.py``, and ``scripts/compare_eval.py``.
+    """
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
+        try:
+            number = float(value)
+        except (TypeError, OverflowError):
+            return None
+        if math.isfinite(number):
+            return number
     return None
 
 
@@ -77,9 +92,10 @@ def check_score_floor(result: dict, fail_under: float | None) -> str | None:
             part = result.get(label) or {}
             if not part.get("scored_repos"):
                 continue
-            score = _numeric_score(part.get("composite_mean"))
+            raw = part.get("composite_mean")
+            score = _numeric_score(raw)
             if score is None:
-                return (f"FAIL: {label} composite_mean missing or non-numeric"
+                return (f"FAIL: {label} composite_mean missing or non-numeric ({raw!r})"
                         f" < --fail-under={fail_under}")
             if score < fail_under:
                 return (f"FAIL: {label} composite_mean={score:.3f}"
@@ -87,9 +103,10 @@ def check_score_floor(result: dict, fail_under: float | None) -> str | None:
         return None
     if _is_unscored_placeholder(result):
         return None  # nothing was scored — no real composite to gate against the floor
-    score = _numeric_score(result.get("composite_mean"))
+    raw = result.get("composite_mean")
+    score = _numeric_score(raw)
     if score is None:
-        return f"FAIL: composite_mean missing or non-numeric < --fail-under={fail_under}"
+        return f"FAIL: composite_mean missing or non-numeric ({raw!r}) < --fail-under={fail_under}"
     if score < fail_under:
         return f"FAIL: composite_mean={score:.3f} < --fail-under={fail_under}"
     return None
