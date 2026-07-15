@@ -13,10 +13,31 @@ import logging
 import os
 import re
 import subprocess
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
 CONTEXT_FILE = ".vanguarstew_context.json"
+
+# Conventional-Commit scope -- the "(scope)" in "fix(scripts): ...". The scope names the area a
+# maintainer worked in, so its frequency across recent commits is a knowable-at-T signal of where
+# effort is concentrating, which is the strongest deterministic predictor of what changes next.
+_CC_SCOPE_RE = re.compile(r"^\s*[a-z]+\(([^)]+)\)!?:", re.I)
+
+# Build/cache/tooling dirs are not maintainer-facing modules; they never appear in the revealed
+# window's changed paths, so listing them would only dilute the layout the planner grounds on.
+_LAYOUT_IGNORE = frozenset({
+    "node_modules", "venv", "env", "build", "dist", "egg-info",
+    "__pycache__", "site-packages",
+})
+
+# Cap on how many top-level modules the layout exposes. A repo with a pathological number of
+# top-level dirs must not crowd the rest of the context out of the 12k-char prompt budget.
+MAX_REPO_LAYOUT = 40
+
+# Cap on how many modules the activity ranking names. This is a *hint* at where effort is
+# concentrating, not an inventory -- a long list would invite naming all of them.
+MAX_MODULE_ACTIVITY = 8
 
 # README filenames probed by git-only context builders, in priority order. ``benchmark/freeze.py``
 # imports this tuple so freeze and agent fallback stay aligned (#749 tag filtering already does).
@@ -102,12 +123,84 @@ def _git(repo_path, *args):
     return out.stdout.strip()
 
 
+def repo_layout(repo_path: str, limit: int = MAX_REPO_LAYOUT) -> list:
+    """The repo's real top-level modules, read from the frozen checkout.
+
+    Grounds the plan in the module names that actually exist (the same names
+    ``benchmark.score`` derives its structural ground truth from) instead of generic guesses.
+    Knowable-at-T and leakage-safe: the checkout is the tree *at* T, so listing it reveals
+    nothing about what came after. Hidden entries (``.git``, dotfiles) and build/cache dirs are
+    excluded; an unreadable path degrades to ``[]`` rather than aborting solve().
+    """
+    try:
+        entries = os.listdir(repo_path)
+    except OSError as exc:
+        logger.warning("repo_layout: cannot list %s (%s); no layout grounding", repo_path, exc)
+        return []
+    mods = sorted(
+        e for e in entries
+        if not e.startswith(".")
+        and e not in _LAYOUT_IGNORE
+        and not e.endswith(".egg-info")
+        and os.path.isdir(os.path.join(repo_path, e))
+    )
+    return mods[:limit]
+
+
+def module_activity(recent_commits, layout=None, limit: int = MAX_MODULE_ACTIVITY) -> list:
+    """The repo's real modules, ranked by recent Conventional-Commit scope frequency.
+
+    Derived only from commit subjects already present in the frozen context, so it adds no new
+    leakage surface -- those subjects are scrubbed of forward references before the agent sees
+    them. A subject without a parseable scope contributes nothing; a repo that does not use
+    scopes simply yields ``[]`` and the planner falls back to the layout alone.
+
+    Scopes are intersected with ``layout`` when one is given. A commit scope is free text and
+    frequently names something that is *not* a top-level module (``fix(runner):`` for
+    ``benchmark/runner.py``, ``fix(ci):`` for a workflow). The objective anchor keys ground truth
+    on the first path segment of a changed path, so such a scope can never match -- surfacing it
+    here would point the planner at a module name that does not exist and cannot score. Ranking
+    only the modules that really are top-level keeps the hint aligned with what the anchor reads.
+    """
+    known = {m.lower() for m in layout if isinstance(m, str)} if isinstance(layout, list) else set()
+    counts: Counter = Counter()
+    for commit in _agent_context_list(recent_commits, "recent_commits"):
+        if not isinstance(commit, dict):
+            continue
+        subject = commit.get("subject")
+        if not isinstance(subject, str):
+            continue
+        match = _CC_SCOPE_RE.match(subject)
+        if not match:
+            continue
+        # "fix(agent/context):" and "fix(agent,cli):" both name `agent` as the top-level module,
+        # matching how benchmark.score keys ground truth on the first path segment.
+        scope = match.group(1).split(",")[0].split("/")[0].split(".")[0].strip().lower()
+        if not scope:
+            continue
+        # With no layout to check against (an unreadable checkout) we cannot tell a real module
+        # from a free-text scope, so keep the raw ranking rather than dropping the signal.
+        if known and scope not in known:
+            continue
+        counts[scope] += 1
+    return [mod for mod, _ in counts.most_common(limit)]
+
+
+def _with_layout(context, repo_path: str):
+    """Attach the knowable-at-T repo layout to a freshly-loaded context (dicts only)."""
+    if isinstance(context, dict) and "repo_layout" not in context:
+        context["repo_layout"] = repo_layout(repo_path)
+    return context
+
+
 def load_context(repo_path: str) -> dict:
     path = os.path.join(repo_path, CONTEXT_FILE)
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                # The frozen file carries the GitHub-derived state; the layout is read from the
+                # checkout beside it, so both paths (file and git rebuild) ground identically.
+                return _with_layout(json.load(f), repo_path)
         except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
             # A present-but-unreadable context file must not abort solve(): fall back to
             # rebuilding the knowable-at-T context from the frozen git checkout (leakage-safe —
@@ -128,7 +221,7 @@ def load_context(repo_path: str) -> dict:
                 "load_context: %s unreadable (%s bytes, %s: %s); rebuilding from git",
                 path, size, type(exc).__name__, exc,
             )
-    return _context_from_git(repo_path)
+    return _with_layout(_context_from_git(repo_path), repo_path)
 
 
 def _agent_context_list(items, field: str) -> list:
@@ -191,6 +284,11 @@ def context_for_agent(context: dict) -> dict:
         out[key] = items
     for key in ("recent_commits", "releases", "milestones", "labels"):
         out[key] = _agent_context_list(out.get(key), key)
+    # Structural grounding (#1535): the repo's real top-level modules, and where recent maintainer
+    # effort actually landed. Both are knowable-at-T. Derived here rather than trusted from the
+    # incoming context so a malformed frozen artifact cannot inject a bogus shape.
+    out["repo_layout"] = _agent_context_list(out.get("repo_layout"), "repo_layout")
+    out["module_activity"] = module_activity(out.get("recent_commits"), out["repo_layout"])
     if out.get("_issues_truncated") is True:
         # Defense in depth for older frozen artifacts that still carry a partial backlog.
         out["open_issues"] = []

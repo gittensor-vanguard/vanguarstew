@@ -131,5 +131,6 @@ def _render(context: dict) -> str:
     keep = {k: ctx.get(k) for k in (
         "frozen_at", "recent_commits", "open_issues", "open_prs",
         "labels", "milestones", "releases", "readme_excerpt",
+        "repo_layout", "module_activity",
     )}
     return json.dumps(keep, indent=1)[:12000]

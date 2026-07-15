@@ -367,16 +367,19 @@ def test_load_context_falls_back_to_git_on_permission_denied():
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_load_context_reads_a_valid_file_from_the_file_not_git():
-    # Happy path: a well-formed context file is returned verbatim, and it is read from the FILE
-    # (its `_source` marker survives) rather than being rebuilt from git.
+    # Happy path: every field of a well-formed context file survives unchanged, and it is read
+    # from the FILE (its `_source` marker survives) rather than being rebuilt from git. The
+    # knowable-at-T `repo_layout` is attached from the checkout beside it (#1535), so the result
+    # is the file's content plus that one derived key -- nothing from the file is altered.
     repo = _repo_with_commit()
     try:
         payload = {"_source": "github-api", "open_prs": [{"number": 1, "title": "x"}]}
         with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
             json.dump(payload, f)
         out = load_context(repo)
-        assert out == payload
+        assert {k: out[k] for k in payload} == payload
         assert out["_source"] == "github-api"  # from the file, not the git rebuild ("git")
+        assert set(out) - set(payload) == {"repo_layout"}
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 

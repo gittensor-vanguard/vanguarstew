@@ -106,10 +106,28 @@ PLAN_ITEM_SCHEMA = (
 OBJECTIVE_ANCHOR_GUIDANCE = (
     "Concrete specificity matters: for each non-triage item, include `files` naming the "
     "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
+    "Draw those from `repo_layout` -- the repo's ACTUAL top-level modules -- so you name real "
+    "modules rather than guessing, and lean toward `module_activity` (where recent maintainer "
+    "effort is concentrating), since work tends to continue where it has been. Name ONLY the "
+    "module(s) an item genuinely touches: listing modules an item would not really change is "
+    "worse than naming none, and a plan that shotguns the whole layout will be rejected. "
     "Pick `kind` to match the maintainer commit type the action would produce "
     "(bugfix/fix, feature/feat, docs, release, refactor, dep). When several kinds recur in "
     "recent history, plan separate items so each kind is covered."
 )
+
+# Hard cap on `files` per plan item -- an anti-farming guard, not a formatting nicety.
+#
+# The objective anchor scores module recall by matching the path segments of `files` against the
+# modules that actually changed (benchmark.score._plan_tokens), and it caps nothing: a plan item
+# naming every module in the repo would match every changed module and drive recall to 1.0
+# without predicting anything. That vector is cheap precisely *because* `repo_layout` now hands
+# the model the real module names, so the guard ships with the signal that enables it.
+#
+# A genuine maintainer action is focused -- it touches one area, occasionally a couple. Five is
+# well above any honest item (so real plans are unaffected) and well below the layout size a
+# shotgun would need, and truncation is logged so the behavior is never silent.
+MAX_PLAN_ITEM_FILES = 5
 
 RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
@@ -482,6 +500,14 @@ def _normalize_files(value) -> list:
             path = item.strip() if isinstance(item, str) else str(item).strip()
             if path:
                 out.append(path)
+        if len(out) > MAX_PLAN_ITEM_FILES:
+            # Anti-farming (see MAX_PLAN_ITEM_FILES): keep the item's leading, highest-conviction
+            # paths and drop the tail rather than letting a shotgunned list farm module recall.
+            logger.warning(
+                "plan: item listed %d files (max %d); truncating -- dropped %r",
+                len(out), MAX_PLAN_ITEM_FILES, out[MAX_PLAN_ITEM_FILES:],
+            )
+            out = out[:MAX_PLAN_ITEM_FILES]
         return out
     logger.warning(
         "plan: LLM returned a non-list files field (%s: %r); dropping",
@@ -643,5 +669,6 @@ def _render(context: dict) -> str:
     keep = {k: ctx.get(k) for k in (
         "frozen_at", "recent_commits", "open_issues", "open_prs",
         "labels", "milestones", "releases", "readme_excerpt",
+        "repo_layout", "module_activity",
     )}
     return json.dumps(keep, indent=1)[:12000]
