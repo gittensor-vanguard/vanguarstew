@@ -4,6 +4,7 @@ Covers the M2 addition: the judge weighs the decision process (philosophy + reas
 not just plan direction — so when plans are equal, sounder reasoning breaks the tie.
 """
 
+import json
 import logging
 import os
 import random
@@ -443,6 +444,187 @@ def test_render_handles_non_dict_submission():
     """_render must not crash on non-dict submissions."""
     assert "error" in _render(None)
     assert "error" in _render("not a dict")
+
+
+def _verbose_submission(n_items=5, n_evidence=13):
+    """A submission the size a real LLM emits: ~8.5k chars, well past the render budget."""
+    return {
+        "philosophy": {
+            "summary": "S" * 200,
+            "values": ["correctness-first", "docs-first"],
+            "merge_bar": "M" * 750,
+            "direction": "D" * 450,
+            "evidence": [f"evidence {i}: " + ("e" * 180) for i in range(n_evidence)],
+        },
+        "plan": [
+            {
+                "title": f"Action {i}",
+                "kind": "bugfix",
+                "rationale": f"rationale {i}: " + ("r" * 550),
+                "theme": f"theme {i}",
+                "files": [f"mylib/mod_{i}.py"],
+            }
+            for i in range(n_items)
+        ],
+        "rationale": "planned maintainer actions",
+    }
+
+
+def test_render_of_an_oversized_submission_is_valid_json():
+    """The judge must never be handed a document sliced mid-token.
+
+    Load-bearing: rendering used to be `json.dumps(...)[:4500]`, so any submission past the
+    budget reached the judge as an unterminated string — malformed JSON it cannot parse.
+    """
+    rendered = _render(_verbose_submission())
+    assert len(rendered) > 4000, "fixture must actually exercise the budget"
+    json.loads(rendered)  # must not raise
+
+
+def test_verbose_philosophy_cannot_evict_the_plan():
+    """A long philosophy must not push the plan out of the judge's view.
+
+    `philosophy` serializes before `plan`, so under offset slicing a real ~4.2k-char
+    philosophy consumed the whole budget and the plan — the trajectory axis the judge cannot
+    score without — silently vanished. Each axis is fitted within half the budget, so both
+    survive: pinned to exact counts, since a `>=` would tolerate a silent shrink.
+    """
+    parsed = json.loads(_render(_verbose_submission()))
+    assert len(parsed["plan"]) == 3
+    assert parsed["plan"][0]["title"] == "Action 0"
+    # Every surviving item is whole, not a fragment.
+    assert all(item["files"] and item["theme"] for item in parsed["plan"])
+    # The philosophy is abridged, never deleted: the decision-process axis stays scoreable.
+    assert parsed["philosophy"]["summary"] and parsed["philosophy"]["merge_bar"]
+
+
+def test_render_reports_what_it_omitted():
+    """Elisions are declared to the judge rather than applied silently.
+
+    Pinned to literals rather than to the rendered output's own length — deriving both sides
+    from the same document would assert only self-consistency and pass on any budget split.
+    """
+    parsed = json.loads(_render(_verbose_submission()))
+    assert parsed["plan_items_omitted"] == 2
+    assert parsed["evidence_items_omitted"] == 10
+    assert len(parsed["plan"]) == 3
+    assert len(parsed["philosophy"]["evidence"]) == 3
+
+
+def test_render_leaves_an_in_budget_submission_untouched():
+    """Control: a submission that fits is passed through whole, with no elision markers.
+
+    Proves the elision above is caused by the budget and not applied unconditionally — the
+    terse reference baselines render in full exactly as before.
+    """
+    small = {
+        "philosophy": {"summary": "terse", "evidence": ["a", "b"]},
+        "plan": [{"title": "Fix the loader", "kind": "bugfix", "files": ["mylib/loader.py"]}],
+        "rationale": "baseline",
+    }
+    parsed = json.loads(_render(small))
+    assert parsed == {
+        "philosophy": {"summary": "terse", "evidence": ["a", "b"]},
+        "plan": small["plan"],
+        "rationale": "baseline",
+    }
+    assert "plan_items_omitted" not in parsed
+    assert "evidence_items_omitted" not in parsed
+
+
+def test_a_plan_heavy_submission_that_fits_keeps_every_item():
+    """A plan may exceed half the budget when nothing is competing for the other half.
+
+    The half-budget split exists to stop one axis evicting the other, so it must apply only to
+    a submission that is actually over budget. A rich plan beside a terse philosophy fits whole
+    and must not be shed down to the half-budget share it never needed to respect.
+    """
+    plan = [
+        {"title": f"Action {i}", "kind": "bugfix", "files": [f"mylib/mod_{i}.py"],
+         "rationale": f"rationale {i}: " + ("r" * 180)}
+        for i in range(9)
+    ]
+    parsed = json.loads(_render({
+        "philosophy": {"summary": "terse but real"},
+        "plan": plan,
+        "rationale": "planned maintainer actions",
+    }))
+    assert parsed["plan"] == plan
+    assert "plan_items_omitted" not in parsed
+
+
+def test_an_oversized_field_is_clipped_not_deleted():
+    """An overlong section is abridged in place; no scored axis is dropped to make room.
+
+    The judge weighs trajectory and decision process equally, so a submission whose philosophy
+    alone blows the budget must still reach it as *both* a philosophy and a plan — shedding one
+    axis wholesale to fit the other would regress half the rubric.
+    """
+    for philosophy in ({"summary": "S" * 9000}, "a philosophy emitted as a bare string" * 300):
+        parsed = json.loads(_render({
+            "philosophy": philosophy,
+            "plan": [{"title": "Fix the loader", "kind": "bugfix"}],
+            "rationale": "r" * 9000,
+        }))
+        assert parsed["philosophy"], "philosophy must be abridged, never deleted"
+        assert parsed["plan"][0]["title"] == "Fix the loader"
+        assert parsed["rationale"]
+
+
+def test_render_survives_degenerate_submission_shapes():
+    """Every field an LLM can malform still renders as valid, in-budget JSON."""
+    cases = [
+        {"philosophy": None, "plan": None, "rationale": None},
+        {"philosophy": "not a dict", "plan": "not a list", "rationale": 42},
+        {"philosophy": {"evidence": "not a list"}, "plan": [], "rationale": ""},
+        {"philosophy": {"evidence": None}, "plan": [{"title": "t"}], "rationale": "r"},
+        {"philosophy": {"evidence": []}, "plan": ["a scalar plan item"], "rationale": "r"},
+        # A single item larger than the whole budget: abridged, never shown as a fragment.
+        {"philosophy": {}, "plan": [{"title": "T", "rationale": "x" * 9000}], "rationale": "r"},
+        # A rationale that alone blows the budget still yields valid, in-budget JSON.
+        {"philosophy": {}, "plan": [{"title": "keep me"}], "rationale": "y" * 9000},
+        # A philosophy with far more keys than the documented shape.
+        {"philosophy": {f"k{i}": "v" * 200 for i in range(60)}, "plan": [], "rationale": "r"},
+        # Bulk in NON-STRING leaves: no entries to shed, no strings to clip. The old slice was
+        # hard-capped, so exceeding the budget here would be a regression, not a lesser fix.
+        {"philosophy": ["reason " + "x" * 300 for _ in range(300)],
+         "plan": [{"title": "t"}], "rationale": "r"},
+        {"philosophy": {}, "plan": [{"title": "t"}], "rationale": ["y" * 400 for _ in range(100)]},
+        {"philosophy": {"summary": {"nested": ["z" * 400] * 100}}, "plan": [], "rationale": "r"},
+    ]
+    for submission in cases:
+        rendered = _render(submission)
+        assert len(rendered) <= 4500, submission
+        json.loads(rendered)  # must not raise
+
+
+def test_an_undocumented_shape_still_shows_the_judge_both_axes():
+    """The bounded fallback abridges; it does not drop an axis to make the budget.
+
+    A submission holding its bulk in non-string leaves cannot be reduced by shedding entries or
+    clipping strings, so it renders each section as clipped JSON text. Both axes must survive —
+    dropping one to fit would regress half the judge's rubric.
+    """
+    parsed = json.loads(_render({
+        "philosophy": ["reason " + "x" * 300 for _ in range(300)],
+        "plan": [{"title": "Fix the loader", "kind": "bugfix"}],
+        "rationale": "keep me",
+    }))
+    assert parsed["_abridged"] is True
+    assert "reason" in parsed["philosophy"]
+    assert "Fix the loader" in parsed["plan"]
+    assert "keep me" in parsed["rationale"]
+
+
+def test_render_normalizes_an_unusable_plan_to_an_empty_list():
+    """A plan that is not a list reaches the judge as an explicit empty plan.
+
+    `_plan_list` is the same normalization `_plan_substance` already applies, so the judge and
+    the offline ranker agree on what counts as a plan rather than the judge alone being shown a
+    raw `{"a": 1}`. Pinned because it changes what the judge reads for malformed submissions.
+    """
+    for bad in ("not a list", {"a": 1}, 42, None):
+        assert json.loads(_render({"philosophy": {}, "plan": bad, "rationale": "r"}))["plan"] == []
 
 def test_judge_order_handles_non_dict_context():
     from agent.llm import LLM

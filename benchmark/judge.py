@@ -55,14 +55,161 @@ def _parse_winner(text: str) -> str:
     return value if value in ("A", "B") else "tie"
 
 
+# Budget for the judge's view of ONE submission. `SYSTEM` above weighs the two axes — the plan
+# (trajectory) and the philosophy/reasoning (decision process) — EQUALLY, so no axis may take
+# the budget from the other: each is fitted within half before the whole is assembled.
+#
+# Rendering used to slice the serialized JSON (`json.dumps(...)[:4500]`), which cut mid-token:
+# the judge was handed syntactically invalid JSON, and because `philosophy` serializes first
+# and is unbounded, a long philosophy silently evicted the plan it exists to justify. Shedding
+# whole list entries, then clipping free-text *leaves* (a clipped leaf keeps the document
+# parseable; a sliced document does not), keeps every render valid and both axes present. The
+# total budget is deliberately unchanged — the defect was the allocation, not the size.
+_RENDER_BUDGET = 4500
+_AXIS_BUDGET = _RENDER_BUDGET // 2
+# Free-text leaves are clipped only as a last resort, in descending steps, so an ordinary
+# submission is never clipped and a pathological one still renders both axes.
+_TEXT_CLIPS = (800, 300, 80)
+
+
+def _fit_items(items, budget: int) -> tuple[list, int]:
+    """The longest prefix of ``items`` whose standalone JSON fits ``budget``, and how many
+    were dropped.
+
+    Whole entries are dropped from the tail — plan items arrive in priority order, so the tail
+    is the cheapest thing to lose — instead of cutting serialized text, so the result always
+    re-serializes as valid JSON. An entry larger than ``budget`` on its own yields an empty
+    prefix rather than a fragment; the caller declares it as omitted.
+
+    ``budget`` bounds this list *standalone*. Nesting it under a key re-indents every line, so
+    the fitted list is slightly larger in context: this is a pre-fit that stops one axis from
+    consuming the whole document, and :func:`_render` re-checks the assembled size, which is
+    authoritative. A non-list ``items`` (an LLM may emit a string or dict) is treated as no
+    entries rather than being iterated element-wise.
+
+    The prefix is grown from empty and stops at the first entry that does not fit, rather than
+    starting whole and popping: entry counts are LLM-controlled and unbounded, and this renders
+    on the scored path, so the work stays proportional to what is *kept* rather than to what was
+    submitted. Serialized size grows monotonically with the prefix, so both directions select
+    the same prefix.
+    """
+    if not isinstance(items, list):
+        return [], 0
+    kept: list = []
+    for item in items:
+        if len(json.dumps([*kept, item], indent=1)) > budget:
+            break
+        kept.append(item)
+    return kept, len(items) - len(kept)
+
+
+def _clip_text(value, cap: int):
+    """A string leaf clipped to ``cap`` characters and marked as clipped; other types pass
+    through.
+
+    Clipping a leaf — rather than the serialized document — is what keeps the render valid
+    JSON: the cut lands inside a string value, which stays a well-formed token.
+    """
+    if not isinstance(value, str) or len(value) <= cap:
+        return value
+    return value[:cap].rstrip() + " …[clipped]"
+
+
 def _render(submission: dict) -> str:
+    """The judge's view of one submission: always valid JSON, always within budget.
+
+    A submission whose document already fits is returned in full, unshed and unclipped — so the
+    terse reference baselines, and any submission the old slicing never truncated, render byte
+    for byte as before. Only an over-budget submission is reduced.
+
+    Reducing keeps both scored axes represented. The plan and the philosophy's ``evidence`` are
+    each pre-fitted to roughly half the budget so neither list can consume the document on its
+    own; the assembled size is then re-checked, and it — not the pre-fit — is authoritative. The
+    document is brought under ``_RENDER_BUDGET`` by shedding, in order of least value to the
+    judge: trailing ``evidence`` entries (redundant grounding — the philosophy's only unbounded
+    list, and where a verbose model spends most of its output), then trailing plan items, then
+    trailing philosophy fields, re-trying at successively tighter text clips. Whole entries are
+    shed and text is clipped at the leaf; the serialized document itself is never cut, which is
+    what keeps the render parseable.
+
+    A submission that is not the documented shape can hold its bulk in leaves with no entries to
+    shed and no strings to clip (``philosophy`` emitted as a large list, say). Such a submission
+    falls back to a ``_abridged`` render carrying each section as its own clipped JSON text, so
+    the budget holds by construction for any input rather than only for the documented shape.
+
+    Elisions are declared — ``plan_items_omitted``, ``evidence_items_omitted``,
+    ``philosophy_fields_omitted``, ``_abridged``, and a ``…[clipped]`` marker on any shortened
+    text — so the judge reads an openly abridged submission rather than a silently partial one.
+    A non-dict submission renders as an explicit error object, as before.
+    """
     if not isinstance(submission, dict):
         return json.dumps({"error": "non-dict submission"})
-    return json.dumps({
-        "philosophy": submission.get("philosophy"),
-        "plan": submission.get("plan"),
+
+    plan_items = _plan_list(submission.get("plan"))
+    philosophy = submission.get("philosophy")
+    whole = json.dumps({
+        "philosophy": philosophy,
+        "plan": plan_items,
         "rationale": submission.get("rationale"),
-    }, indent=1)[:4500]
+    }, indent=1)
+    if len(whole) <= _RENDER_BUDGET:
+        return whole  # already fits: rendered in full, nothing shed, nothing clipped
+
+    plan, _ = _fit_items(plan_items, _AXIS_BUDGET)
+    evidence = philosophy.get("evidence") if isinstance(philosophy, dict) else None
+    fields = list(philosophy) if isinstance(philosophy, dict) else None
+    if isinstance(evidence, list):
+        kept, _ = _fit_items(evidence, _AXIS_BUDGET)
+    else:
+        kept, evidence = None, None
+
+    def assemble(kept, plan, keys, clip):
+        phil = philosophy
+        if isinstance(philosophy, dict):
+            phil = {k: _clip_text(philosophy[k], clip) for k in keys}
+            if kept is not None and "evidence" in phil:
+                phil["evidence"] = [_clip_text(e, clip) for e in kept]
+        doc: dict = {
+            "philosophy": _clip_text(phil, clip),
+            "plan": [{k: _clip_text(v, clip) for k, v in i.items()}
+                     if isinstance(i, dict) else _clip_text(i, clip) for i in plan],
+            "rationale": _clip_text(submission.get("rationale"), clip),
+        }
+        if len(plan) < len(plan_items):
+            doc["plan_items_omitted"] = len(plan_items) - len(plan)
+        if kept is not None and len(kept) < len(evidence):
+            doc["evidence_items_omitted"] = len(evidence) - len(kept)
+        if keys is not None and len(keys) < len(fields):
+            doc["philosophy_fields_omitted"] = len(fields) - len(keys)
+        return json.dumps(doc, indent=1)
+
+    for clip in (_RENDER_BUDGET, *_TEXT_CLIPS):
+        kept_now = list(kept) if kept is not None else None
+        plan_now, keys_now = list(plan), (list(fields) if fields is not None else None)
+        while True:
+            rendered = assemble(kept_now, plan_now, keys_now, clip)
+            if len(rendered) <= _RENDER_BUDGET:
+                return rendered
+            if kept_now:
+                kept_now.pop()
+            elif len(plan_now) > 1:
+                plan_now.pop()
+            elif keys_now and len(keys_now) > 1:
+                keys_now.pop()
+            else:
+                break  # nothing left to shed at this clip level; clip harder
+
+    # Still over budget: the submission is not the documented shape at all — `philosophy` or
+    # `rationale` emitted as a large list, say, whose bulk sits in leaves this function has no
+    # entries to shed and no strings to clip. Render each section as its own clipped JSON text.
+    # Both axes stay present and readable, and the result is bounded by construction, which the
+    # structural path cannot guarantee for an arbitrary shape.
+    return json.dumps({
+        "philosophy": _clip_text(json.dumps(philosophy), _AXIS_BUDGET // 2),
+        "plan": _clip_text(json.dumps(plan), _AXIS_BUDGET // 2),
+        "rationale": _clip_text(json.dumps(submission.get("rationale")), _TEXT_CLIPS[1]),
+        "_abridged": True,
+    }, indent=1)
 
 
 # Generic, content-free titles/themes that pad a plan without proposing real work.
