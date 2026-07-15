@@ -13,8 +13,11 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
+    REVIEW_RESPONSE_SCHEMA,
+    SCOPE_FIT_GUIDANCE,
     VALUE_LABELS,
     _clip_text,
+    _issue_reference_note,
     _normalize_bool,
     _normalize_concerns,
     _normalize_review_action,
@@ -324,3 +327,54 @@ def test_review_pr_prompt_uses_pr_number_not_raw_number_field():
               None, llm)
     assert llm.last_user.startswith("PULL REQUEST #?: Add streaming export")
     assert "#True" not in llm.last_user
+
+
+def test_issue_reference_note_surfaces_refs_newest_first():
+    note = _issue_reference_note({
+        "title": "Harden loader (Fixes #10)",
+        "body": "Also closes #42 and refs #7; duplicate Fixes #10 again.",
+    })
+    assert "#42" in note and "#10" in note and "#7" in note
+    # Higher issue numbers first (newest-by-number); #10 appears once despite a duplicate.
+    assert note.index("#42") < note.index("#10") < note.index("#7")
+    assert note.count("#10") == 1
+
+
+def test_issue_reference_note_empty_on_malformed_or_missing_fields():
+    assert _issue_reference_note({}) == ""
+    assert _issue_reference_note({"title": 123, "body": ["not", "text"]}) == ""
+    assert _issue_reference_note({"title": "no refs here", "body": "plain prose"}) == ""
+    assert _issue_reference_note(None) == ""
+    assert _issue_reference_note("not a dict") == ""
+
+
+def test_issue_reference_note_caps_at_five():
+    body = " ".join(f"Fixes #{n}" for n in range(1, 12))
+    note = _issue_reference_note({"title": "big", "body": body})
+    listed = [line.strip() for line in note.splitlines() if line.strip().startswith("- #")]
+    assert listed == ["- #11", "- #10", "- #9", "- #8", "- #7"]
+    assert len(listed) == 5
+
+
+def test_review_prompt_locks_schema_guidance_and_issue_note():
+    # Named constants must appear in the user prompt so a rewrite cannot silently drop the
+    # response-shape / scope-fit contract (#1677).
+    llm = _CaptureUserLLM()
+    review_pr(
+        {"number": 3, "title": "Bump CI (Fixes #99)", "author": "a",
+         "body": "Closes #12.", "files": ["agent/review.py", "tests/test_review.py"],
+         "diff": ""},
+        None, llm,
+    )
+    assert REVIEW_RESPONSE_SCHEMA.strip() in llm.last_user
+    assert SCOPE_FIT_GUIDANCE in llm.last_user
+    assert "#99" in llm.last_user and "#12" in llm.last_user
+    assert "Issue references in this PR" in llm.last_user
+
+
+def test_review_prompt_omits_issue_note_when_no_refs():
+    llm = _CaptureUserLLM()
+    review_pr({"number": 1, "title": "Tidy docs", "body": "no links", "files": []}, None, llm)
+    assert REVIEW_RESPONSE_SCHEMA.strip() in llm.last_user
+    assert SCOPE_FIT_GUIDANCE in llm.last_user
+    assert "Issue references in this PR" not in llm.last_user

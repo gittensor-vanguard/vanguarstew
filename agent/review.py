@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,34 @@ ACTIONS = ["merge", "request-changes", "reject", "comment"]
 # surface (its real tier awaits a live score_pr_delta run, not a guess); "mult:contribution"
 # is the flat-rate tier for everything else (benchmark/, tests/, docs/, ci/).
 VALUE_LABELS = ["perf:pending", "mult:contribution"]
+
+# Response-shape contract locked by tests so a prompt rewrite cannot silently drop a field
+# the offline stub / normalize path already promises to callers.
+REVIEW_RESPONSE_SCHEMA = (
+    f'  "action": one of {ACTIONS},\n'
+    f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
+    'agent/ (its real value tier needs a live benchmark run, not a guess); '
+    '"mult:contribution" for everything else,\n'
+    '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
+    '  "tests_present": boolean — does it add or update tests,\n'
+    '  "summary": one sentence on what the PR does,\n'
+    '  "concerns": list of specific, actionable concerns (empty list if none),\n'
+    '  "recommendation": one or two sentences of advice to the maintainer.'
+)
+
+SCOPE_FIT_GUIDANCE = (
+    "Scope fit: set scope_ok true only when the change clearly addresses a referenced issue "
+    "(or an explicit in-PR motivation) and does not bring unrelated churn. Prefer the "
+    "issue numbers surfaced below when judging linkage."
+)
+
+# Bare ``#N`` / ``Fixes #N`` / ``closes #12`` in the PR title or body. Cap how many we surface
+# so a long changelog body cannot flood the prompt.
+_ISSUE_REF = re.compile(
+    r"(?:(?:fixes|closes|resolves|refs)\s+)?#\s*(\d+)\b",
+    re.I,
+)
+_ISSUE_REF_CAP = 5
 
 # Near-miss review verbs an LLM might answer with, mapped onto the canonical vocabulary.
 _ACTION_SYNONYMS = {
@@ -163,6 +192,39 @@ def _clip_text(value, limit: int) -> str:
     return value[:limit] if isinstance(value, str) else ""
 
 
+def _issue_reference_note(pr) -> str:
+    """Surface ``#N`` issue references from the PR title/body for the scope-fit judgment.
+
+    Higher issue numbers first (GitHub issues are issued ascending — so that is newest-first
+    by number), capped at ``_ISSUE_REF_CAP``. Empty / malformed title or body yields "" —
+    never raises.
+    """
+    if not isinstance(pr, dict):
+        return ""
+    blob = " ".join(
+        part for part in (pr.get("title"), pr.get("body")) if isinstance(part, str)
+    )
+    if not blob:
+        return ""
+    seen: list[int] = []
+    found: set[int] = set()
+    for match in _ISSUE_REF.finditer(blob):
+        try:
+            number = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        if number in found:
+            continue
+        found.add(number)
+        seen.append(number)
+    if not seen:
+        return ""
+    # Newest-by-number first, then cap so a long body cannot flood the prompt.
+    ordered = sorted(seen, reverse=True)[:_ISSUE_REF_CAP]
+    lines = "\n".join(f"- #{n}" for n in ordered)
+    return f"\nIssue references in this PR (newest first by number):\n{lines}\n"
+
+
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
     if not isinstance(pr, dict):
@@ -189,17 +251,11 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + f"by @{pr.get('author')}  (+{pr.get('additions', 0)}/-{pr.get('deletions', 0)})\n\n"
         + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
         + f"changed files: {', '.join(files[:30])}\n\n"
-        + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n\n"
+        + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n"
+        + f"{_issue_reference_note(pr)}"
+        + f"\n{SCOPE_FIT_GUIDANCE}\n\n"
         + "Return JSON with keys:\n"
-        + f'  "action": one of {ACTIONS},\n'
-        + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
-        + 'agent/ (its real value tier needs a live benchmark run, not a guess); '
-        + '"mult:contribution" for everything else,\n'
-        + '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
-        + '  "tests_present": boolean — does it add or update tests,\n'
-        + '  "summary": one sentence on what the PR does,\n'
-        + '  "concerns": list of specific, actionable concerns (empty list if none),\n'
-        + '  "recommendation": one or two sentences of advice to the maintainer.'
+        + f"{REVIEW_RESPONSE_SCHEMA}"
     )
     stub = {
         "action": "comment",
