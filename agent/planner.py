@@ -85,6 +85,38 @@ _CC_TYPE_TO_PLAN_KIND = {
 _RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
 _RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
 
+# Signatures of automated dependency/CI maintenance in a commit subject. Each alternative keys
+# on a marker one of these tools actually emits, never on a word a human might reuse:
+# - "[pre-commit.ci] pre-commit autoupdate" — pre-commit.ci's fixed subject;
+# - a dependabot/renovate self-reference;
+# - a Conventional-Commit deps scope: "build(deps):", "chore(deps-dev):", "fix(deps):";
+# - dependabot's bump phrasing: "bump actions/checkout from 6.0.3 to 7.0.0";
+# - renovate's default phrasing: "Update dependency lodash to v4.17.21".
+# Deliberately narrow, because a false positive is worse than a miss: it would inject the
+# directive into a source-driven repo and spend a plan slot on config work that is not coming.
+# So bare "pre-commit" is not enough ("docs: document our pre-commit setup" is a human writing
+# docs), "bump ... from ... to" excludes a hand-cut "bump version from 1.2.0 to 1.3.0" (that is
+# a release, scored by the release axis, not dependency churn), and the action reference must be
+# a real bump rather than any path containing "actions/" ("refactor: split transactions/ledger").
+_AUTOMATION_CHURN_RE = re.compile(
+    r"pre-commit\.ci"
+    r"|pre-commit\s+autoupdate"
+    r"|\bdependabot\b"
+    r"|\brenovate\b"
+    r"|\b(?:build|chore|ci|fix)\((?:deps|deps-dev)\)"
+    r"|\bbump\s+(?!version\b)\S+\s+from\s+\S+\s+to\s+"
+    r"|\bupdate\s+dependency\s+\S+\s+to\s+",
+    re.I,
+)
+
+# How many automation-authored subjects must appear in the frozen window before the config
+# surface counts as a *recurring* maintenance theme worth planning for. A handful of stray
+# bumps is noise; a steady stream is the repo's dominant real activity. Measured on the curated
+# set at the published freeze commits, the two populations are cleanly separated — source-driven
+# repos score 0/50 while automation-driven ones score 11-12/50 — so this sits in an empty gap
+# rather than on a cliff edge.
+_MIN_AUTOMATION_CHURN = 4
+
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
     "maintainer philosophy, plan the next concrete maintainer actions / PRs that should "
@@ -113,6 +145,17 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
 
 RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
+)
+
+MAINTENANCE_SURFACE_GUIDANCE = (
+    "Recent history shows recurring automated dependency/CI maintenance. On this repo that "
+    "churn IS a large share of real maintainer activity, and it lands on the config surface "
+    "rather than the source tree — so plan for it explicitly instead of only planning source "
+    "work. On those items, name the concrete paths THIS repo's churn actually touches, as the "
+    "subjects above evidence it: workflow/action bumps land in `.github/workflows/`, "
+    "pre-commit autoupdates in `.pre-commit-config.yaml`, and dependency pins in whichever "
+    "manifest this repo keeps them in (e.g. `requirements/`, `pyproject.toml`). Name them the "
+    "same way you would name a source module."
 )
 
 
@@ -248,6 +291,46 @@ def _release_cadence_note(context: dict) -> str:
     if not _release_cadence_signal(context):
         return ""
     return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+
+
+def _automation_churn_count(context: dict) -> int:
+    """How many frozen recent commits were authored by dependency/CI automation.
+
+    Reads the full frozen ``recent_commits`` list (like ``_recent_kinds_note``, and unlike the
+    12000-char JSON dump in ``_render``), so a long history's tail still counts. A non-dict
+    context, a non-list ``recent_commits``, a non-dict entry, and a non-string ``subject`` all
+    contribute nothing rather than raising inside ``re`` — the frozen context is external JSON.
+    """
+    count = 0
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        subject = commit.get("subject")
+        if isinstance(subject, str) and _AUTOMATION_CHURN_RE.search(subject):
+            count += 1
+    return count
+
+
+def _automation_churn_signal(context: dict) -> bool:
+    """True when automated dependency/CI maintenance *recurs* in the frozen window.
+
+    Gated on ``_MIN_AUTOMATION_CHURN`` so a stray bump does not read as a maintenance theme.
+    """
+    return _automation_churn_count(context) >= _MIN_AUTOMATION_CHURN
+
+
+def _maintenance_surface_note(context: dict) -> str:
+    """Inject config-surface guidance only when history evidences recurring automation churn.
+
+    Mirrors ``_release_cadence_note``: the directive is evidence-gated, so on a repo whose
+    history is source-driven the prompt is left byte-identical and the plan's slots are not
+    spent on config work that is not coming. A repo whose maintainers really do merge a steady
+    stream of dependency/action bumps and pre-commit autoupdates gets told to plan for it,
+    because on such a repo that is the most predictable work in the next window.
+    """
+    if not _automation_churn_signal(context):
+        return ""
+    return f"\n{MAINTENANCE_SURFACE_GUIDANCE}\n"
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -616,6 +699,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Repository state:\n{_render(context)}\n"
         f"{_recent_kinds_note(context)}"
         f"{_release_cadence_note(context)}"
+        f"{_maintenance_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"

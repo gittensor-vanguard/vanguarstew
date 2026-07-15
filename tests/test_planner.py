@@ -14,12 +14,16 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
+    MAINTENANCE_SURFACE_GUIDANCE,
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
+    _automation_churn_count,
+    _automation_churn_signal,
     _commit_plan_kind,
     _explicit_pr_number,
     _is_review_item,
+    _maintenance_surface_note,
     _matched_pr,
     _normalize_files,
     _normalize_plan,
@@ -754,6 +758,101 @@ def test_plan_prompt_includes_objective_anchor_guidance():
     assert OBJECTIVE_ANCHOR_GUIDANCE in llm.last_user
     assert '"files"' in llm.last_user
     assert RELEASE_CADENCE_GUIDANCE not in llm.last_user
+
+
+# One subject per detector signature, each matched by exactly ONE alternative, so every
+# alternative is pinned independently — deleting any single one must fail a test.
+_AUTOMATION_SUBJECTS = [
+    "[pre-commit.ci] weekly run (#690)",                      # pre-commit.ci marker
+    "Apply pre-commit autoupdate",                            # pre-commit autoupdate phrasing
+    "Merge pull request from dependabot/pip/urllib3-2.2",     # dependabot self-reference
+    "renovate: config migration",                             # renovate self-reference
+    "chore(deps): tidy the lockfile",                         # Conventional-Commit deps scope
+    "bump urllib3 from 2.0.0 to 2.2.1",                       # dependabot bump phrasing
+    "Update dependency lodash to v4.17.21",                   # renovate default phrasing
+]
+
+# Hand-written subjects that reuse automation vocabulary. A false positive is worse than a miss
+# (it spends a plan slot on config work that is not coming), so each must stay uncounted.
+_HUMAN_SUBJECTS = [
+    "refactor: simplify transactions/ledger.py",   # "actions/" inside an ordinary word
+    "refactor: split actions/handlers module",     # a real path, not an action bump
+    "docs: document our pre-commit setup",         # bare "pre-commit" written by a human
+    "chore: bump version from 1.2.0 to 1.3.0",     # a hand-cut release, not dependency churn
+    "fix: bump the retry ceiling for slow CI",
+    "feat: bump protocol version to 3",
+]
+
+
+def _churn(n):
+    """A frozen window with `n` automation-authored subjects, padded with source work."""
+    return {"recent_commits": [{"subject": _AUTOMATION_SUBJECTS[i % len(_AUTOMATION_SUBJECTS)]}
+                               for i in range(n)]
+            + [{"subject": "fix: loader race"}, {"subject": "feat: add export"}]}
+
+
+def test_maintenance_surface_note_fires_on_automation_but_not_on_source_history():
+    # THE LOAD-BEARING CASE. Reproduced from the curated set at the published freeze commits:
+    # pluggy's frozen window carries 11-12 automation subjects and its revealed window is ~87%
+    # `.github` + `.pre-commit-config`, while hatch/feedparser carry 0 and change only source
+    # dirs. The gate must separate exactly those two populations — firing on the first (so the
+    # plan can name the config surface the anchor scores) and staying silent on the second (so
+    # a plan slot is never spent on config work that is not coming).
+    assert MAINTENANCE_SURFACE_GUIDANCE in _maintenance_surface_note(_churn(11))
+    assert _maintenance_surface_note(_churn(0)) == ""
+    assert _maintenance_surface_note({"recent_commits": [{"subject": s} for s in _HUMAN_SUBJECTS]}) == ""
+
+
+def test_each_automation_signature_is_detected_and_no_human_subject_is():
+    # Pin every alternative separately: a subject matched by only one signature proves that
+    # signature carries its own weight, so none can be dropped or broken unnoticed.
+    for subject in _AUTOMATION_SUBJECTS:
+        assert _automation_churn_count({"recent_commits": [{"subject": subject}]}) == 1, subject
+    for subject in _HUMAN_SUBJECTS:
+        assert _automation_churn_count({"recent_commits": [{"subject": subject}]}) == 0, subject
+
+
+def test_automation_churn_signal_requires_recurrence_at_the_documented_threshold():
+    # A stray bump is noise, not a maintenance theme: the gate must hold until the subjects
+    # actually recur, so the boundary is pinned on both sides rather than left to drift.
+    assert _automation_churn_signal(_churn(3)) is False
+    assert _automation_churn_signal(_churn(4)) is True
+    assert _automation_churn_count(_churn(3)) == 3
+
+
+def test_automation_churn_count_degrades_on_every_malformed_frozen_shape():
+    # The frozen context is external JSON, so each of these is reachable; none may raise, and
+    # each must contribute nothing rather than being counted as churn.
+    assert _automation_churn_count(None) == 0
+    assert _automation_churn_count(42) == 0
+    assert _automation_churn_count({"recent_commits": None}) == 0
+    assert _automation_churn_count({"recent_commits": 7}) == 0
+    assert _automation_churn_count({"recent_commits": [None, 7, "dependabot", {}]}) == 0
+    assert _automation_churn_count({"recent_commits": [{"subject": None}, {"subject": ["x"]}]}) == 0
+    assert _maintenance_surface_note(None) == ""
+
+
+def test_planner_prompt_gains_config_surface_guidance_only_on_automation_history():
+    # End-to-end through plan_next_actions, each leg asserted separately against a control that
+    # differs ONLY in the frozen subjects — so the injected directive is attributable to the
+    # automation evidence and nothing else in the prompt.
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Fix loader", "kind": "bugfix"}]
+
+    llm = CapturingLLM(api_key="offline")
+    plan_next_actions({"open_prs": [], **_churn(0)}, {}, 2, llm)
+    control = captured["user"]
+    assert MAINTENANCE_SURFACE_GUIDANCE not in control
+
+    plan_next_actions({"open_prs": [], **_churn(11)}, {}, 2, llm)
+    assert MAINTENANCE_SURFACE_GUIDANCE in captured["user"]
+    # The control proves causation: the source-history prompt is otherwise unchanged, so a
+    # source-driven repo's plan is generated from a byte-identical prompt to today's.
+    assert ".github/workflows/" in captured["user"]
 
 
 def test_release_cadence_signal_detects_release_subjects():
