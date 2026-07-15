@@ -238,6 +238,7 @@ def test_is_ratio_rejects_non_finite_and_bool():
     assert _is_ratio(0.4) and _is_ratio(0)
     assert not _is_ratio(float("nan"))
     assert not _is_ratio(float("inf"))
+    assert not _is_ratio(float("-inf"))
     assert not _is_ratio(True)
     assert not _is_ratio("0.4")
 
@@ -248,10 +249,12 @@ def test_is_ratio_guards_an_oversized_int_overflow():
 
 
 def test_headline_degrades_on_non_finite_or_oversized_coverage():
-    assert dual_order_coverage_headline({"coverage": float("nan")}) == "dual-order coverage: n/a"
-    assert dual_order_coverage_headline({"coverage": float("inf")}) == "dual-order coverage: n/a"
-    assert dual_order_coverage_headline({"coverage": 10**400}) == "dual-order coverage: n/a"
-    assert "nan%" not in dual_order_coverage_headline({"coverage": float("nan")})
+    # Covers NaN, +inf, -inf, and oversized ints explicitly.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400, -(10**400)):
+        text = dual_order_coverage_headline({"coverage": bad})
+        assert text == "dual-order coverage: n/a"
+        assert "nan%" not in text
+        assert "inf%" not in text
 
 
 # --- CLI: success + every error path (incl. the OSError/permission branch) ------------------------

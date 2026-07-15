@@ -155,6 +155,7 @@ def test_is_number_rejects_non_finite_and_bool():
     assert _is_number(0.5) and _is_number(0)
     assert not _is_number(float("nan"))
     assert not _is_number(float("inf"))
+    assert not _is_number(float("-inf"))
     assert not _is_number(True)
     assert not _is_number("0.5")
 
@@ -166,14 +167,13 @@ def test_is_number_guards_an_oversized_int_overflow():
 
 def test_headline_degrades_on_non_finite_or_oversized_share():
     # Hand-edited / degenerate shares must not print nan%/inf% or raise OverflowError.
-    assert "n/a" in error_repo_share_headline(
-        {"repos": 2, "error_repos": 1, "error_share": float("nan")})
-    assert "n/a" in error_repo_share_headline(
-        {"repos": 2, "error_repos": 1, "error_share": float("inf")})
-    assert "n/a" in error_repo_share_headline(
-        {"repos": 2, "error_repos": 1, "error_share": 10**400})
-    assert "nan%" not in error_repo_share_headline(
-        {"repos": 2, "error_repos": 1, "error_share": float("nan")})
+    # Covers NaN, +inf, -inf, and oversized ints explicitly.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400, -(10**400)):
+        text = error_repo_share_headline(
+            {"repos": 2, "error_repos": 1, "error_share": bad})
+        assert "n/a" in text
+        assert "nan%" not in text
+        assert "inf%" not in text
 
 
 # --- CLI: success + every error path -------------------------------------------------------------

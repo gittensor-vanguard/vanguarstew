@@ -10,7 +10,8 @@ Pure analysis: no I/O, never mutates its input. The share is always a decimal fr
 (the headline renders it as a percentage); a slice with no countable repo yields a ``None`` share.
 A single-repo run counts as one repo (its own top-level ``error``); when ``per_repo`` is present the
 top-level ``error`` is ignored, so an error is never double-counted. The headline degrades to ``n/a``
-on a non-finite or oversized share rather than printing ``nan%`` or raising ``OverflowError``.
+on a non-finite (``NaN`` / ``+Infinity`` / ``-Infinity``) or oversized share rather than printing
+``nan%`` / ``inf%`` or raising ``OverflowError``.
 """
 
 from __future__ import annotations
@@ -31,11 +32,11 @@ def _is_int(value) -> bool:
 def _is_number(value) -> bool:
     """A finite, non-boolean real number — guards the headline percent formatter.
 
-    ``json`` round-trips ``NaN``/``Infinity`` verbatim, and a hand-edited or degenerate
+    ``json`` round-trips ``NaN``/``±Infinity`` verbatim, and a hand-edited or degenerate
     ``error_share`` can be an oversized int. Without the finite guard the headline prints
     ``nan%`` / ``inf%`` or raises ``OverflowError`` inside ``:.1%``. Matching ``skip_share``
     (#1502) and the other share/outlook helpers: reject those as non-numeric so the headline
-    degrades to ``n/a``.
+    degrades to ``n/a``. ``math.isfinite`` covers ``NaN``, ``+inf``, and ``-inf`` alike.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
