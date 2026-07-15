@@ -83,12 +83,11 @@ vulnerable to.
   AND neither the judge nor the objective component may regress. Trading one axis for the
   other (sounding better to the judge while the objective anchor quietly drops) is
   rejected, not counted as improvement. #1295
-- [x] Merge-block + ceiling label: a measured regression is a hard merge block for
-  `agent/` PRs, not just a label cap; a large, clean win on every axis (≥5× the noise
-  floor, both components improving) earns a new ceiling label, `mult:breakthrough`
-  (×3.0), above `mult:core-correctness` (×2.0). #1302
-- [x] `REVIEW.md` "Evidence requirement for `agent/` PRs": documents the full tier ladder
-  (blocked/neutral/eligible/breakthrough) and what each requires.
+- [x] Merge-block + top band: a measured regression is a hard merge block for `agent/` PRs, not
+  just a label cap; a large, clean win on every axis (≥5× the noise floor, both components
+  improving) earns the top band, `perf:xl` (×4.0). #1302
+- [x] `REVIEW.md` "Evidence requirement for `agent/` PRs": documents the full band ladder
+  (`perf:xs`–`perf:xl`, and the `blocked` regression case) and what each requires.
 - [x] Public CI smoke check (`agent-benchmark-smoke.yml`): crash/output-shape check on
   every `agent/`-touching PR, offline-safe (no secrets, safe on fork PRs) — explicitly
   documented as *not* the scoring evidence itself.

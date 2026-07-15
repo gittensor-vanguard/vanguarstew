@@ -172,6 +172,38 @@ def test_decide_survives_non_string_action_field():
     assert out["rationale"] == "needs a regression test"
 
 
+class _RejectingLLM:
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return {
+            "action": "reject",
+            "labels": [],
+            "reviewer": None,
+            "version_bump": None,
+            "patch": None,
+            "rationale": "out of scope: this repo only accepts code changes",
+        }
+
+
+def test_planning_request_is_never_rejected_as_out_of_scope():
+    # #1562: the identical planning request returned "plan" on one repo and "reject" on another
+    # (the LLM read a repo's "only merges code changes" philosophy as grounds to reject the
+    # planning request itself). A planning request asks for a plan; it is never a contribution to
+    # reject, so a "reject" verdict is coerced back to "plan".
+    out = decide({}, {}, "plan the next 5 maintainer actions", _RejectingLLM())
+    assert out["action"] == "plan"
+    # the other fields are untouched by the coercion
+    assert "out of scope" in out["rationale"]
+
+
+def test_non_planning_request_may_still_be_rejected():
+    # The coercion is scoped to planning requests only — a real reject verdict on a concrete
+    # contribution review must survive.
+    out = decide({}, {}, "review PR #42", _RejectingLLM())
+    assert out["action"] == "reject"
+
+
 def test_normalize_version_bump_accepts_canonical_levels():
     for level in ("major", "minor", "patch"):
         assert _normalize_version_bump(level) == level

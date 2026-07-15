@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -446,6 +448,35 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     result = _run_cli(str(path))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    # A directory passed where a file is expected makes open() raise IsADirectoryError;
+    # the CLI must report it cleanly, not dump a raw traceback (#612). Uses a real
+    # directory rather than patching open(), so no global builtins side effects.
+    result = _run_cli(str(tmp_path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root bypasses file-permission bits, so an unreadable file cannot be simulated",
+)
+def test_cli_unreadable_file_reports_clean_error(tmp_path):
+    # A real file with its read bit cleared makes open() raise PermissionError; the CLI
+    # must report it cleanly. Real chmod, no monkeypatching of builtins.open.
+    path = tmp_path / "artifact.json"
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0)
+    try:
+        result = _run_cli(str(path))
+    finally:
+        os.chmod(path, 0o644)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "not readable" in result.stderr
 
 
 def test_cli_still_renders_a_well_formed_artifact(tmp_path):
