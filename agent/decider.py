@@ -20,6 +20,7 @@ import logging
 
 from agent.context import context_for_agent
 from agent.planner import _release_cadence_signal
+from benchmark.score import base_from_releases
 
 logger = logging.getLogger(__name__)
 
@@ -277,29 +278,26 @@ def _planning_version_bump_note(context: dict, request: str) -> str:
 
 
 def _release_context_note(context: dict) -> str:
-    """Surface frozen release tags so release/version_bump calls have a concrete base."""
+    """Surface the freeze-T release base that ``bump_match`` is scored against.
+
+    Frozen ``releases`` may be oldest-first (git builders) or newest-first (GitHub API),
+    so a positional slice labeled "newest first" is wrong for one of the two producers and
+    can point ``version_bump`` at a stale base. Report the highest parsed version instead —
+    the same tag ``benchmark.score.base_from_releases`` feeds the objective anchor.
+    """
     if not isinstance(context, dict):
         return ""
     ctx = context_for_agent(context)
     releases = ctx.get("releases")
     if not isinstance(releases, list) or not releases:
         return ""
-    tags = []
-    for rel in releases:
-        if not isinstance(rel, dict):
-            continue
-        for field in ("tag", "name"):
-            value = rel.get(field)
-            if isinstance(value, str) and value.strip():
-                tags.append(value.strip())
-                break
-    if not tags:
+    base = base_from_releases(releases)
+    if not base:
         return ""
-    lines = "\n".join(f"- {tag}" for tag in tags[:3])
     return (
-        f"\nRecent release tags at freeze (newest first):\n{lines}\n"
+        f"\nCurrent release at freeze (highest frozen version): {base}\n"
         "When action is release or version_bump is set, infer major/minor/patch from "
-        "maintainer cadence and these tags.\n"
+        "maintainer cadence relative to this base.\n"
     )
 
 
