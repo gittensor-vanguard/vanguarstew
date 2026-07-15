@@ -34,7 +34,17 @@ import json
 
 
 def _round(value):
-    return round(float(value), 4) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    # json parses an arbitrarily long integer literal into a Python int, and float() raises
+    # OverflowError for one too large to convert -- so an oversized composite delta/score must
+    # be treated as non-numeric here rather than crashing the feed builder. Mirrors the
+    # oversized-int guards merged across the codebase (repo_task_mean #1571, gap_outlook #1479,
+    # skip_share #1502, acceptance, component_floor).
+    try:
+        return round(float(value), 4)
+    except OverflowError:
+        return None
 
 
 def _dict(value) -> dict:
