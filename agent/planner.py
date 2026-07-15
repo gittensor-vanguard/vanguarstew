@@ -54,8 +54,13 @@ _PR_NUMBER = re.compile(
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
 _MIN_SUBJECT_PHRASE = 8
 
+# Plan-item `kind` vocabulary. Every entry except "triage" maps to a normalized commit kind in
+# the objective anchor's `benchmark/score.py::_PLAN_KIND`, so a plan can name any kind the
+# anchor actually scores. "triage" is a maintainer action, not a commit kind, and deliberately
+# maps to nothing there — it is the fallback for an item that names no recognizable kind.
 _PLAN_KINDS = frozenset({
     "feature", "bugfix", "refactor", "docs", "release", "dep", "triage",
+    "build", "ci", "test", "perf", "style", "revert",
 })
 
 # Conventional-Commit prefix on a commit subject: "feat:", "fix(scope):", "docs!:". This block
@@ -65,10 +70,12 @@ _PLAN_KINDS = frozenset({
 # two aligned, as agent/context.py already does for forward-reference scrubbing.
 _CC_PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
 
-# Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Only types a plan item can
-# express appear here; types with no plan-kind equivalent (test, ci, perf, style, revert,
-# build) are dropped rather than mis-binned under a neighboring kind, since a wrong hint is
-# worse than none.
+# Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Every type the anchor's own
+# classifier (`benchmark/score.py::_COMMIT_KIND`) recognizes has an entry here, so a kind the
+# anchor reads out of a subject is one the plan can name back. No type is dropped for lack of
+# an equivalent: a dropped type is invisible to `_recent_kinds_note`, which then describes a
+# history the repo does not have, and unnameable by the plan, which pins `kind_recall` at 0.000
+# for any repo whose work lands under it.
 _CC_TYPE_TO_PLAN_KIND = {
     "feat": "feature", "feature": "feature",
     "fix": "bugfix", "bugfix": "bugfix", "bug": "bugfix",
@@ -76,6 +83,12 @@ _CC_TYPE_TO_PLAN_KIND = {
     "refactor": "refactor",
     "release": "release",
     "chore": "dep", "deps": "dep", "dep": "dep",
+    "build": "build",
+    "ci": "ci",
+    "test": "test", "tests": "test",
+    "perf": "perf",
+    "style": "style",
+    "revert": "revert",
 }
 
 # Release tooling (standard-version / release-please) cuts versions under a chore/build type:
@@ -97,7 +110,8 @@ SYSTEM = (
 # constants so tests can lock the contract without parsing full LLM prompts.
 PLAN_ITEM_SCHEMA = (
     '  "title": short imperative title,\n'
-    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
+    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","build","ci",\n'
+    '          "test","perf","style","revert","triage",\n'
     '  "rationale": why this, now, given the philosophy,\n'
     '  "theme": the higher-level direction this advances,\n'
     '  "files": optional list of repo-relative paths or top-level modules likely touched.'
@@ -107,8 +121,9 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
     "Concrete specificity matters: for each non-triage item, include `files` naming the "
     "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
     "Pick `kind` to match the maintainer commit type the action would produce "
-    "(bugfix/fix, feature/feat, docs, release, refactor, dep). When several kinds recur in "
-    "recent history, plan separate items so each kind is covered."
+    "(bugfix/fix, feature/feat, docs, release, refactor, dep, build, ci, test, perf, style, "
+    "revert). When several kinds recur in recent history, plan separate items so each kind is "
+    "covered."
 )
 
 RELEASE_CADENCE_GUIDANCE = (
