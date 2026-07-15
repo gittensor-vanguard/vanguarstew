@@ -79,6 +79,21 @@ def test_to_leaderboard_entry_shape_and_values():
     assert entry["private"]["composite_delta"] == combined["private"]["composite_deltas"]["composite_mean"]
 
 
+def test_oversized_int_composite_delta_is_unavailable_not_a_crash():
+    # json parses an arbitrarily long integer literal into a Python int; float() raises
+    # OverflowError for one too large to convert, so an oversized composite delta must degrade to
+    # None rather than crashing the feed builder (mirrors repo_task_mean #1571).
+    big = 10 ** 400
+    combined = {
+        "band": "neutral", "label": "neutral",
+        "public": {"composite_deltas": {"composite_mean": big}},
+        "private": {"composite_deltas": {"composite_mean": 0.0}},
+    }
+    entry = to_leaderboard_entry(combined, pr_number=7, timestamp="2026-07-10T00:00:00+00:00")
+    assert entry["public"]["composite_delta"] is None
+    assert entry["private"]["composite_delta"] == 0.0
+
+
 def test_to_leaderboard_entry_generalization_delta_matches_band():
     # A --generalization score carries composite_deltas as {tuned, held_out} (no composite_mean, as
     # score_pr_delta builds it). The published delta must be the MINIMUM of the partitions -- the

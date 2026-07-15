@@ -240,6 +240,16 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     if not isinstance(out, dict):
         out = dict(stub)
     out["action"] = _normalize_action(out.get("action"))
+    # A planning request ("plan the next N maintainer actions") asks for a plan — it is never a
+    # code contribution to accept or reject. The action list still offers "reject", so the LLM
+    # sometimes reads a repo's "only merges code changes" philosophy as grounds to reject the
+    # planning request itself as out-of-scope (observed on openclaw/openclaw #1562, while the
+    # identical request returned "plan" on entrius/gittensor). Coerce that back to "plan":
+    # the requested plan already exists in the `plan` field; the decision is not a merge/close
+    # verdict on a contribution.
+    if _is_planning_request(request) and out["action"] == "reject":
+        logger.debug("decide: a planning request cannot be rejected as out-of-scope; using 'plan'")
+        out["action"] = "plan"
     out["labels"] = _normalize_labels(out.get("labels"))
     out["reviewer"] = _normalize_reviewer(out.get("reviewer"))
     out["rationale"] = _normalize_rationale(out.get("rationale"))

@@ -47,6 +47,17 @@ def test_compare_eval_artifacts_reports_composite_and_part_deltas():
     assert diff["judge_report"]["disagreement_rate"]["delta"] == 0.25
 
 
+def test_oversized_int_composite_mean_is_unavailable_not_a_crash():
+    # json parses an arbitrarily long integer literal into a Python int; float() raises
+    # OverflowError for one too large to convert, so an oversized composite_mean must degrade to
+    # unavailable rather than crashing the comparison (mirrors repo_task_mean #1571).
+    big = 10 ** 400
+    diff = compare_eval_artifacts({"composite_mean": 0.5}, {"composite_mean": big})
+    assert diff["composite_mean"]["baseline"] == 0.5
+    assert diff["composite_mean"]["candidate"] is None
+    assert diff["composite_mean"]["delta"] is None
+
+
 def test_unscored_candidate_masks_composite_parts_like_composite_mean():
     # An all-skipped run (scored_repos: 0) reports composite_mean AND composite_parts as
     # placeholder 0.0 means. composite_mean is masked to None; the parts must be too, or the diff
