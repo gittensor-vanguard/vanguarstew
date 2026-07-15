@@ -130,6 +130,33 @@ RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
 )
 
+# Prompt fragment for config-surface planning (#1640). Kept as a named constant so tests can
+# assert prompt inclusion without parsing the full LLM user message.
+CONFIG_SURFACE_GUIDANCE = (
+    "Recent history shows a steady stream of automation churn — dependency/GitHub-Actions bumps "
+    "and pre-commit autoupdates. That work lands under config-surface modules (e.g. `.github`, "
+    "`.pre-commit-config`, dependency manifests), which the objective anchor scores by changed "
+    "path just like source. Include one plan item covering that surface, with `files` naming the "
+    "relevant config paths (e.g. `.github/workflows/`, `.pre-commit-config.yaml`)."
+)
+
+# Markers that only automation tooling emits — used to gate the config-surface directive on real
+# evidence, not human vocabulary. Matched against a *case-folded* subject so BUILD(DEPS): and
+# build(deps): are treated identically (same for [pre-commit.ci] / Dependabot / Renovate).
+# A ``(deps)``/``(deps-dev)`` Conventional-Commit scope, the fixed pre-commit.ci subject, and
+# dependabot/renovate self-references all qualify; a human "docs: document our pre-commit setup"
+# or "chore: bump version 1.2.0" deliberately does NOT.
+_AUTOMATION_SCOPE_RE = re.compile(r"^[a-z]+\((?:deps|deps-dev)\)!?:")
+
+# Minimum distinct automation subjects in recent history before the config-surface note fires.
+# A lone bump is common noise even on source-driven repos; requiring two matches the
+# "steady stream" claim in CONFIG_SURFACE_GUIDANCE and mirrors how release cadence waits for
+# an evidenced pattern rather than a single noisy subject. On public freeze windows where
+# weighted module weight is mostly config (e.g. pluggy-style), recent history routinely carries
+# ≥2 of these markers; firing on 1 would steer source-led plans toward config work that is
+# not coming (a wrong module costs as much as a missed one).
+_AUTOMATION_STREAM_MIN = 2
+
 REPO_LAYOUT_GUIDANCE = (
     "Ground each non-triage item's `files` in that listing — name the entries the item actually "
     "touches (a path under a listed directory is fine), rather than a conventional source "
@@ -269,6 +296,62 @@ def _release_cadence_note(context: dict) -> str:
     if not _release_cadence_signal(context):
         return ""
     return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+
+
+def _is_automation_subject(subject) -> bool:
+    """True when a commit subject is one automation tooling emits (dep/action bump, pre-commit.ci).
+
+    Keys on markers only the tools produce so a human subject that merely *mentions* pre-commit or
+    a version bump ("docs: document our pre-commit setup", "chore: bump version from 1.2.0") is not
+    misread as automation — a false positive would spend a plan slot on config work that isn't
+    coming (worse than a miss), so this stays deliberately narrow.
+
+    Every check runs on a case-folded subject so ``BUILD(DEPS):``, ``Build(Deps):``, and
+    ``[Pre-Commit.CI]`` match the same way as their lower-case forms — no mixed ``re.I`` /
+    substring-lower rules.
+    """
+    if not isinstance(subject, str):
+        return False
+    s = subject.strip().lower()
+    if not s:
+        return False
+    if _AUTOMATION_SCOPE_RE.match(s):
+        return True
+    return "[pre-commit.ci]" in s or "dependabot" in s or "renovate" in s
+
+
+def _automation_surface_signal(context: dict) -> bool:
+    """True when recent history shows a *steady stream* of automation/config churn.
+
+    Requires ``_AUTOMATION_STREAM_MIN`` matching subjects (default 2), not one: a lone
+    incidental bump must not steer the plan toward a config surface the repo does not
+    actually churn. The objective anchor penalizes a wrong module as much as a missed
+    one, so the bar to fire is evidence of an ongoing pattern (see the constant's
+    docstring and issue #1640's pluggy freeze windows, which carry ≫2 markers).
+
+    Malformed history is ignored rather than raising: non-dict commits, missing
+    ``subject`` keys, and non-string subjects contribute zero to the count.
+    """
+    n = 0
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        if _is_automation_subject(commit.get("subject")):
+            n += 1
+            if n >= _AUTOMATION_STREAM_MIN:
+                return True
+    return False
+
+
+def _config_surface_note(context: dict) -> str:
+    """Inject config-surface guidance only when automation churn is evidenced (#1640).
+
+    A source-driven repo (no automation markers) must see a byte-identical prompt, so this
+    returns the empty string there and never shifts that plan.
+    """
+    if not _automation_surface_signal(context):
+        return ""
+    return f"\n{CONFIG_SURFACE_GUIDANCE}\n"
 
 
 def _repo_layout(context: dict) -> list:
@@ -698,6 +781,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"{_repo_layout_note(context)}"
         f"{_recent_kinds_note(context)}"
         f"{_release_cadence_note(context)}"
+        f"{_config_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"
