@@ -22,9 +22,12 @@ def load_artifact(path: str) -> dict:
     except OSError as exc:
         print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        # A non-UTF-8 file raises UnicodeDecodeError (a ValueError, not an OSError) mid-read.
-        print(f"artifact is not valid UTF-8 JSON ({path}): {exc}", file=sys.stderr)
+    except ValueError as exc:
+        # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
+        # beyond the int-string-conversion limit (py3.11+); JSONDecodeError and
+        # UnicodeDecodeError both subclass it, so one arm covers invalid JSON, oversized
+        # ints, and non-UTF-8 files.
+        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     if not isinstance(data, dict):
         print(f"artifact must be a JSON object: {path}", file=sys.stderr)

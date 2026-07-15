@@ -181,6 +181,15 @@ def test_cli_non_utf8_file(tmp_path):
     assert cli.run([str(path)]) == 2
 
 
+def test_cli_oversized_int_literal(tmp_path, capsys):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an oversized int literal.
+    path = _write(tmp_path, "huge.json", '{"repos": ' + "9" * 5000 + "}")
+    assert cli.run([path]) == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "not valid JSON" in err
+
+
 def test_cli_unreadable_path_is_handled(tmp_path):
     assert cli.run([str(tmp_path)]) == 2
 

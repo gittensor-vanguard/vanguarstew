@@ -32,6 +32,8 @@ _LOADER_MODULES = [
     "generalization_gate",
     "composite_spread",
     "disagreement_outlook",
+    "dual_order_coverage",
+    "scored_fraction",
 ]
 
 
