@@ -85,6 +85,51 @@ _CC_TYPE_TO_PLAN_KIND = {
 _RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
 _RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
 
+# Release-subject detection for the *recency* signal (commits-since-last-release), aligned with
+# the objective anchor's ``benchmark/score.py::is_release_subject`` — the exact detector the
+# score's ``release_signaled`` uses. This is intentionally broader than ``_commit_plan_kind``,
+# which recognizes a release only under a Conventional-Commit prefix (it drops bare version-tag
+# subjects on purpose, since a wrong *kind* hint is worse than none). For recency we want to
+# catch a release however it was written — a bare "v1.4.0" / "Release 1.2.0" tag-style subject
+# too — so the signal tracks what the score actually counts as a release, not a subset. Kept in
+# lockstep with the anchor (``agent/`` must not import from ``benchmark/`` — a split is planned).
+_RELEASE_KW_RE = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
+
+# Conventional-Commit types the anchor recognizes as *non-release* (``benchmark/score.py``
+# ``_COMMIT_KIND`` minus the release type). Under one of these — outside release tooling — the
+# prefix is authoritative and the subject is decisively not a cut, even if it contains an
+# incidental "release" word or a version body ("revert: release 1.2.0", "fix: 2.0.0"). Kept in
+# lockstep with the anchor so the recency signal counts exactly what ``release_signaled`` does.
+_KNOWN_NONRELEASE_CC_TYPES = frozenset({
+    "feat", "feature", "fix", "bugfix", "bug", "docs", "doc", "refactor", "perf", "test",
+    "tests", "build", "deps", "dep", "ci", "chore", "style", "revert",
+})
+
+
+def _is_release_subject(subject) -> bool:
+    """True for a genuine release/version-cut commit subject (mirrors the anchor's detector).
+
+    When the subject carries a Conventional-Commit prefix, that prefix is authoritative: only
+    release-tooling types (``chore``/``build``) cut a version, and then only when the body is
+    itself a version-tag subject. Any *known* non-tooling prefix — ``fix:``, ``ci:``,
+    ``docs:``, and especially ``revert: release 1.2.0`` (the opposite of a cut) — is decisively
+    not a release and must not fall through to the keyword/version scan. An *unknown* prefix
+    (not in the anchor's vocabulary) is not authoritative, so it does fall through, exactly as
+    ``benchmark/score.py::is_release_subject`` does. The recency signal keys on the same
+    definition the score uses for ``release_signaled``.
+    """
+    if not isinstance(subject, str):
+        return False
+    m = _CC_PREFIX_RE.match(subject)
+    if m:
+        cc_type = m.group(1).lower()
+        if cc_type in _RELEASE_TOOLING_TYPES:
+            body = subject[m.end():].lstrip(" :\t")
+            return bool(_RELEASE_CUT_BODY_RE.match(body))
+        if cc_type in _KNOWN_NONRELEASE_CC_TYPES:
+            return False
+    return bool(_RELEASE_KW_RE.search(subject) or _RELEASE_CUT_BODY_RE.match(subject))
+
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
     "maintainer philosophy, plan the next concrete maintainer actions / PRs that should "
@@ -111,8 +156,29 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
     "recent history, plan separate items so each kind is covered."
 )
 
+# Commits accumulated since the most recent release cut, at or below which a release was
+# clearly *just* done — so another one is not yet due regardless of the repo's overall
+# cadence "vibe". A freeze point sitting right after a release must not over-predict the next
+# one (the openclaw miss in #1561). The window is small and inclusive: 0 commits since means
+# the most recent commit *is* the release cut.
+_RELEASE_JUST_CUT_WINDOW = 2
+
+# Commits since the last release, at or above which unreleased work has visibly piled up on a
+# repo that does cut releases — so a release is warranted for *this* window even though one is
+# not staring the maintainer in the face (the entrius/gittensor miss in #1561, ~one release
+# per day with a full window of unreleased commits). Between the two thresholds the signal is
+# genuinely ambiguous and no directive is injected either way.
+_RELEASE_PRESSURE_COMMITS = 5
+
 RELEASE_CADENCE_GUIDANCE = (
-    "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
+    "Recent history shows release-cadence activity and unreleased commits have accumulated "
+    "since the last release cut — include one `release`-kind item in the plan."
+)
+
+RELEASE_JUST_CUT_GUIDANCE = (
+    "A release was cut very recently and little has landed since — do NOT plan another "
+    "`release`-kind item unless the frozen state specifically calls for one; predicting a "
+    "release every window regardless of the actual signal is miscalibrated."
 )
 
 
@@ -243,11 +309,46 @@ def _release_cadence_signal(context: dict) -> bool:
     )
 
 
+def _commits_since_last_release(context: dict) -> int | None:
+    """Commits between the freeze point and the most recent release cut, or ``None``.
+
+    ``recent_commits`` is newest-first (``benchmark/freeze.py`` writes ``git log`` order), so
+    the index of the first release-kind subject *is* the number of non-release commits that
+    have landed since that release: 0 means the most recent commit is itself the release cut,
+    a larger number means unreleased work has piled up on top of it.
+
+    Returns ``None`` when no release cut appears in the frozen window at all — there is then
+    no cadence to reason about, distinct from ``0`` (a release just happened). This is the
+    computable, frozen-at-T signal #1561 asks for, replacing a fixed prior driven by the
+    repo's narrative "vibe" with the specific window's own state.
+    """
+    for idx, commit in enumerate(_recent_commits(context)):
+        if isinstance(commit, dict) and _is_release_subject(commit.get("subject")):
+            return idx
+    return None
+
+
 def _release_cadence_note(context: dict) -> str:
-    """Inject release-item guidance only when history evidences release cadence."""
-    if not _release_cadence_signal(context):
+    """Inject calibrated release guidance from the window's *own* frozen signal, not a prior.
+
+    Three cases, keyed on commits-since-last-release:
+    - no release in the window: stay silent (nothing to steer toward or away from);
+    - a release cut within the last ``_RELEASE_JUST_CUT_WINDOW`` commits: steer *away* from
+      predicting another one (the openclaw over-prediction);
+    - ``_RELEASE_PRESSURE_COMMITS`` or more commits since the last release on a repo that does
+      cut releases: steer *toward* one (the entrius/gittensor under-prediction).
+
+    The ambiguous middle band emits nothing, so the LLM is nudged only when the frozen state
+    actually warrants it.
+    """
+    since = _commits_since_last_release(context)
+    if since is None:
         return ""
-    return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+    if since <= _RELEASE_JUST_CUT_WINDOW:
+        return f"\n{RELEASE_JUST_CUT_GUIDANCE}\n"
+    if since >= _RELEASE_PRESSURE_COMMITS:
+        return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+    return ""
 
 
 def _pr_queue_note(context: dict) -> str:

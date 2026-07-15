@@ -17,8 +17,11 @@ from agent.planner import (  # noqa: E402
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
+    RELEASE_JUST_CUT_GUIDANCE,
     _commit_plan_kind,
+    _commits_since_last_release,
     _explicit_pr_number,
+    _is_release_subject,
     _is_review_item,
     _matched_pr,
     _normalize_files,
@@ -763,13 +766,88 @@ def test_release_cadence_signal_detects_release_subjects():
     assert _release_cadence_signal({}) is False
 
 
-def test_release_cadence_note_only_when_history_signals_cadence():
+def _commits(*subjects):
+    """Build a newest-first recent_commits list from subject strings."""
+    return [{"subject": s} for s in subjects]
+
+
+def test_release_cadence_note_silent_when_no_release_in_window():
     assert _release_cadence_note({}) == ""
-    note = _release_cadence_note({"recent_commits": [{"subject": "release: 2.0"}]})
+    assert _release_cadence_note({"recent_commits": _commits("fix: loader", "feat: export")}) == ""
+
+
+def test_release_cadence_note_steers_away_right_after_a_release():
+    # The most recent commit *is* the release cut, written as a bare version tag exactly like
+    # openclaw's (over-prediction #1561): another release is not due, so the note must steer
+    # away, not toward — even though the repo's cadence "vibe" is rapid.
+    note = _release_cadence_note({"recent_commits": _commits("v2.0.0-beta.2")})
+    assert RELEASE_JUST_CUT_GUIDANCE in note
+    assert RELEASE_CADENCE_GUIDANCE not in note
+    # A release one commit back is still "just cut".
+    note = _release_cadence_note({"recent_commits": _commits("fix: a", "chore(release): 1.0.0")})
+    assert RELEASE_JUST_CUT_GUIDANCE in note
+
+
+def test_release_cadence_note_steers_toward_when_unreleased_work_piled_up():
+    # A repo that cuts releases, with a full window of unreleased commits on top of the last
+    # release (entrius/gittensor under-prediction #1561): a release is warranted for this window.
+    ctx = {"recent_commits": _commits(
+        "fix: a", "feat: b", "fix: c", "refactor: d", "docs: e", "chore(release): 1.0.0",
+    )}
+    note = _release_cadence_note(ctx)
     assert RELEASE_CADENCE_GUIDANCE in note
+    assert RELEASE_JUST_CUT_GUIDANCE not in note
 
 
-def test_planner_prompt_includes_release_cadence_only_with_history():
+def test_release_cadence_note_silent_in_ambiguous_middle_band():
+    # More than "just cut" but short of "pressure" (3 commits since, between the two
+    # thresholds): genuinely ambiguous, so inject nothing either way.
+    ctx = {"recent_commits": _commits("fix: a", "feat: b", "fix: c", "chore(release): 1.0.0")}
+    assert _commits_since_last_release(ctx) == 3
+    assert _release_cadence_note(ctx) == ""
+
+
+def test_commits_since_last_release_counts_from_freeze_point():
+    assert _commits_since_last_release({}) is None
+    assert _commits_since_last_release({"recent_commits": _commits("fix: a", "feat: b")}) is None
+    assert _commits_since_last_release({"recent_commits": _commits("release: 2.0")}) == 0
+    assert _commits_since_last_release(
+        {"recent_commits": _commits("fix: a", "fix: b", "chore(release): 1.0.0")}
+    ) == 2
+
+
+def test_release_subject_detector_matches_the_objective_anchor():
+    # The recency signal must count exactly what the score's release_signaled counts, so the
+    # planner-local detector is a faithful mirror of benchmark/score.py::is_release_subject
+    # (agent/ can't import from benchmark/ — a split is planned — so parity is asserted here).
+    from benchmark.score import is_release_subject  # noqa: E402
+    cases = [
+        "v1.4.0", "v1.4.0-beta.2", "Release 1.2.0", "release: 2.0", "chore(release): 1.4.0",
+        "chore(main): release 1.2.3", "build(release): 2.0.0", "chore: 2.0.0",
+        "chore: release v1.2.3", "fix: 2.0.0", "ci: 3.0.0", "docs: 1.4.0",
+        "revert: release 1.2.0", "fix: crash in v1.2.0 parser", "bump lodash to v4.17.21",
+        "feat: add export", "changelog update", "bump version to 3.0", "wip: release 1.0",
+        "Merge branch main", "v10", "v1", "", 42, None,
+    ]
+    for c in cases:
+        assert _is_release_subject(c) is is_release_subject(c), c
+
+
+def test_commits_since_last_release_detects_bare_version_tag_subjects():
+    # openclaw cuts releases as bare version-tag subjects ("v1.4.0-beta.2"), not under a
+    # Conventional-Commit prefix. The recency signal must still see them (it mirrors the
+    # anchor's is_release_subject), otherwise the over-prediction case #1561 goes undetected.
+    assert _commits_since_last_release({"recent_commits": _commits("v1.4.0")}) == 0
+    assert _commits_since_last_release(
+        {"recent_commits": _commits("fix: ui glitch", "Release 1.2.0")}
+    ) == 1
+    # An incidental version mid-subject or a revert is NOT a release cut (anchor parity).
+    assert _commits_since_last_release(
+        {"recent_commits": _commits("fix: crash in v1.2.0 parser", "revert: release 1.2.0")}
+    ) is None
+
+
+def test_planner_prompt_release_guidance_tracks_the_window_signal():
     captured = {}
 
     class CapturingLLM(LLM):
@@ -777,13 +855,27 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
             captured["user"] = user
             return [{"title": "Fix loader", "kind": "bugfix"}]
 
-    plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "fix: a"}]},
+    # No release in the window: no directive either way.
+    plan_next_actions({"open_prs": [], "recent_commits": _commits("fix: a")},
                       {}, 2, CapturingLLM(api_key="offline"))
     assert RELEASE_CADENCE_GUIDANCE not in captured["user"]
+    assert RELEASE_JUST_CUT_GUIDANCE not in captured["user"]
 
-    plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.0.0"}]},
+    # Release just cut: steer away from predicting another.
+    plan_next_actions({"open_prs": [], "recent_commits": _commits("chore(release): 1.0.0")},
                       {}, 2, CapturingLLM(api_key="offline"))
+    assert RELEASE_JUST_CUT_GUIDANCE in captured["user"]
+    assert RELEASE_CADENCE_GUIDANCE not in captured["user"]
+
+    # Unreleased work piled up: steer toward a release.
+    plan_next_actions(
+        {"open_prs": [], "recent_commits": _commits(
+            "fix: a", "feat: b", "fix: c", "refactor: d", "docs: e", "chore(release): 1.0.0",
+        )},
+        {}, 2, CapturingLLM(api_key="offline"),
+    )
     assert RELEASE_CADENCE_GUIDANCE in captured["user"]
+    assert RELEASE_JUST_CUT_GUIDANCE not in captured["user"]
 
 
 
