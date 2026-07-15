@@ -80,7 +80,24 @@ def _mix_from_parts(parts) -> dict:
 
 
 def _slice_mix(slice_) -> dict:
-    return _mix_from_parts(_dict(slice_).get("composite_parts"))
+    """Judge/objective mix for one slice, masked when it scored no repos.
+
+    A multi-repo slice that scored no repos reports ``scored_repos: 0`` alongside placeholder
+    ``0.0`` component means (averages over empty lists) -- an infra/transient outcome, not the
+    agent actually scoring zero. Masking both the means and their derived fractions here mirrors
+    the guard :func:`benchmark.component_floor._scored_metric` already applies, so a zero-scored
+    slice never publishes a self-contradictory row. A single-repo slice carries no ``scored_repos``
+    key and keeps its real values (including a genuine ``0.0``).
+    """
+    slice_ = _dict(slice_)
+    mix = _mix_from_parts(slice_.get("composite_parts"))
+    scored = slice_.get("scored_repos")
+    if _is_number(scored) and not scored:
+        mix["judge_mean"] = None
+        mix["objective_mean"] = None
+        mix["judge_fraction"] = None
+        mix["objective_fraction"] = None
+    return mix
 
 
 def summarize_component_mix(artifact) -> dict:

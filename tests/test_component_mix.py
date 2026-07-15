@@ -99,6 +99,107 @@ def test_generalization_missing_partition_parts():
     assert out["partitions"]["held_out"]["judge_fraction"] is None
 
 
+# --- unscored placeholder must not be published as a real component score ------------------
+# `run_multi_replay` reports `scored_repos: 0` with placeholder means of `0.0` (averages over
+# empty lists). Masking drops those placeholders to `None`, mirroring the same `scored_repos`
+# guard `component_floor._scored_metric` already applies -- while a genuinely scored run whose
+# components are really `0.0` is preserved.
+
+
+def test_unscored_multi_repo_placeholder_masks_means():
+    art = {
+        "repos": 3, "scored_repos": 0, "skipped": 3, "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        "per_repo": [{"repo": "a", "tasks": 0}],
+    }
+    out = summarize_component_mix(art)
+    assert out["kind"] == "multi"
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+    assert out["judge_fraction"] is None
+    assert out["objective_fraction"] is None
+
+
+def test_genuine_zero_scored_run_keeps_real_means():
+    # Control: same 0.0 means, but scored_repos > 0 means the run really scored 0.0. It must keep
+    # its real values -- proving scored_repos, not the numeric 0.0, marks the placeholder.
+    art = {
+        "repos": 2, "scored_repos": 2, "skipped": 0, "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_mean"] == 0.0
+    assert out["objective_mean"] == 0.0
+
+
+def test_single_repo_run_has_no_scored_repos_key_and_keeps_real_means():
+    out = summarize_component_mix(_single(0.0, 0.0))
+    assert out["judge_mean"] == 0.0
+    assert out["objective_mean"] == 0.0
+
+
+def test_bool_scored_repos_is_not_treated_as_an_unscored_placeholder():
+    art = {
+        "repos": 1, "scored_repos": False,
+        "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4},
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_mean"] == 0.6
+    assert out["objective_mean"] == 0.4
+
+
+def test_unscored_run_with_missing_composite_parts_does_not_crash():
+    out = summarize_component_mix({"repos": 2, "scored_repos": 0, "skipped": 2})
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+
+
+def test_unscored_run_with_malformed_composite_parts_does_not_crash():
+    out = summarize_component_mix({"repos": 2, "scored_repos": 0, "composite_parts": 42})
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+
+
+def test_generalization_masks_only_the_unscored_partition():
+    art = {
+        "tuned": {
+            "scored_repos": 0,
+            "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        },
+        "held_out": {
+            "scored_repos": 2,
+            "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4},
+        },
+        "generalization_gap": None,
+    }
+    out = summarize_component_mix(art)
+    assert out["kind"] == "generalization"
+    assert out["judge_mean"] is None
+    assert out["partitions"]["tuned"]["judge_mean"] is None
+    assert out["partitions"]["tuned"]["objective_mean"] is None
+    assert out["partitions"]["held_out"]["judge_mean"] == 0.6
+    assert out["partitions"]["held_out"]["objective_mean"] == 0.4
+
+
+def test_generalization_masks_both_partitions_when_both_unscored():
+    art = {
+        "tuned": {
+            "scored_repos": 0,
+            "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        },
+        "held_out": {
+            "scored_repos": 0,
+            "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        },
+        "generalization_gap": None,
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+    assert out["partitions"]["tuned"]["judge_mean"] is None
+    assert out["partitions"]["held_out"]["judge_mean"] is None
+
+
 def test_multi_repo_reads_top_level_parts():
     art = {
         "per_repo": [{"repo": "a", "tasks": 3}],
