@@ -450,6 +450,31 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     assert "Traceback" not in result.stderr
 
 
+def test_cli_reports_a_clean_error_for_oversized_int_literal(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an oversized int
+    # literal (py3.11+); the CLI must exit 1 with a clean message (#1692).
+    path = tmp_path / "huge.json"
+    path.write_text('{"composite_mean": ' + "9" * 5000 + "}", encoding="utf-8")
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "not valid JSON" in result.stderr
+    assert "UTF-8" not in result.stderr
+    assert str(path) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_non_utf8_file(tmp_path):
+    # Non-UTF-8 mid-read raises UnicodeDecodeError (a ValueError subclass); keep the
+    # distinct UTF-8 message rather than letting it fall through as a traceback (#1692).
+    path = tmp_path / "latin1.json"
+    path.write_bytes(b'{"composite_mean": 0.5, "x": \xff}')
+    result = _run_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "not valid UTF-8 JSON" in result.stderr
+    assert str(path) in result.stderr
+
+
 def test_cli_directory_path_reports_clean_error(tmp_path):
     # A directory passed where a file is expected makes open() raise IsADirectoryError;
     # the CLI must report it cleanly, not dump a raw traceback (#612). Uses a real
