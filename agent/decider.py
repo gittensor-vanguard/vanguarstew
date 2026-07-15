@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from agent.context import context_for_agent
 from agent.planner import _release_cadence_signal
@@ -276,30 +277,51 @@ def _planning_version_bump_note(context: dict, request: str) -> str:
     )
 
 
+# Mirrors benchmark/score.py parse_semver — agent/ must not import benchmark/.
+_SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
+
+
+def _parse_semver(text) -> tuple[int, int, int] | None:
+    if not isinstance(text, str):
+        return None
+    m = _SEMVER.search(text)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+
+
+def _highest_semver_release_tag(releases) -> str | None:
+    """Return the tag the objective anchor uses as base_version at freeze T."""
+    best_tag, best_ver = None, None
+    for rel in releases if isinstance(releases, list) else []:
+        if not isinstance(rel, dict):
+            continue
+        for field in ("tag", "name"):
+            value = rel.get(field)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            ver = _parse_semver(value.strip())
+            if ver is not None and (best_ver is None or ver > best_ver):
+                best_tag, best_ver = value.strip(), ver
+                break
+    return best_tag
+
+
 def _release_context_note(context: dict) -> str:
-    """Surface frozen release tags so release/version_bump calls have a concrete base."""
+    """Surface the frozen release base the objective anchor scores bump_match against."""
     if not isinstance(context, dict):
         return ""
     ctx = context_for_agent(context)
     releases = ctx.get("releases")
     if not isinstance(releases, list) or not releases:
         return ""
-    tags = []
-    for rel in releases:
-        if not isinstance(rel, dict):
-            continue
-        for field in ("tag", "name"):
-            value = rel.get(field)
-            if isinstance(value, str) and value.strip():
-                tags.append(value.strip())
-                break
-    if not tags:
+    base = _highest_semver_release_tag(releases)
+    if not base:
         return ""
-    lines = "\n".join(f"- {tag}" for tag in tags[:3])
     return (
-        f"\nRecent release tags at freeze (newest first):\n{lines}\n"
-        "When action is release or version_bump is set, infer major/minor/patch from "
-        "maintainer cadence and these tags.\n"
+        f"\nCurrent release base at freeze (highest semver tag): {base}\n"
+        "When action is release or version_bump is set, infer major/minor/patch relative "
+        "to this base and maintainer cadence.\n"
     )
 
 

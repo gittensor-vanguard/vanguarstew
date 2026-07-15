@@ -324,10 +324,18 @@ def test_decide_offline_runs_lenses_without_network_and_keeps_stub_shape():
     }
 
 
-def test_release_context_note_surfaces_frozen_tags():
-    note = _release_context_note({"releases": [{"tag": "v2.1.0"}, {"tag": "v2.0.3"}]})
+def test_release_context_note_surfaces_highest_semver_base():
+    note = _release_context_note({"releases": [{"tag": "v2.0.3"}, {"tag": "v2.1.0"}]})
     assert "v2.1.0" in note
-    assert "version_bump" in note
+    assert "highest semver" in note
+    assert "newest first" not in note
+
+
+def test_release_context_note_picks_highest_not_oldest_first_list():
+    releases = [{"tag": "0.13.0"}, {"tag": "0.13.1"}, {"tag": "1.6.0"}]
+    note = _release_context_note({"releases": releases})
+    assert "1.6.0" in note
+    assert "0.13.0" not in note
 
 
 def test_release_context_note_empty_when_no_releases():
