@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,30 @@ ACTIONS = ["merge", "request-changes", "reject", "comment"]
 # surface (its real tier awaits a live score_pr_delta run, not a guess); "mult:contribution"
 # is the flat-rate tier for everything else (benchmark/, tests/, docs/, ci/).
 VALUE_LABELS = ["perf:pending", "mult:contribution"]
+
+# Prompt fragments for the review JSON schema and scope-fit guidance. Kept as named
+# constants so tests can lock the contract without parsing full LLM prompts.
+REVIEW_RESPONSE_SCHEMA = (
+    f'  "action": one of {ACTIONS},\n'
+    f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
+    'agent/ (its real value tier needs a live benchmark run, not a guess); '
+    '"mult:contribution" for everything else,\n'
+    '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
+    '  "tests_present": boolean — does it add or update tests,\n'
+    '  "summary": one sentence on what the PR does,\n'
+    '  "concerns": list of specific, actionable concerns (empty list if none),\n'
+    '  "recommendation": one or two sentences of advice to the maintainer.'
+)
+
+SCOPE_FIT_GUIDANCE = (
+    "Scope fit matters: when issue numbers appear in the title or body, judge scope_ok "
+    "against those references — the PR should address them without unrelated churn. "
+    "When no issue reference is present, say so in concerns if the change looks opportunistic."
+)
+
+# Issue / PR-style back-references in free text (`#12`, `Fixes #12`). Order-preserving;
+# duplicates are dropped when building the note.
+_ISSUE_REF_RE = re.compile(r"#(\d+)\b")
 
 # Near-miss review verbs an LLM might answer with, mapped onto the canonical vocabulary.
 _ACTION_SYNONYMS = {
@@ -163,6 +188,34 @@ def _clip_text(value, limit: int) -> str:
     return value[:limit] if isinstance(value, str) else ""
 
 
+def _issue_reference_note(pr: dict) -> str:
+    """Surface issue numbers cited in the PR title/body so scope_ok has concrete anchors."""
+    if not isinstance(pr, dict):
+        return ""
+    chunks = []
+    for field in ("title", "body"):
+        value = pr.get(field)
+        if isinstance(value, str) and value.strip():
+            chunks.append(value)
+    if not chunks:
+        return ""
+    text = "\n".join(chunks)
+    seen: list[str] = []
+    for match in _ISSUE_REF_RE.finditer(text):
+        num = match.group(1)
+        if num not in seen:
+            seen.append(num)
+        if len(seen) >= 3:
+            break
+    if not seen:
+        return ""
+    lines = "\n".join(f"- #{num}" for num in seen)
+    return (
+        f"\nIssue references cited in this PR (order of appearance):\n{lines}\n"
+        "When judging scope_ok, check the diff against these issues first.\n"
+    )
+
+
 def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     """Return a maintainer review of a PR: action, value tier, scope/tests, concerns, advice."""
     if not isinstance(pr, dict):
@@ -187,19 +240,13 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy is not None else "")
         + f"PULL REQUEST #{number if number is not None else '?'}: {pr.get('title')}\n"
         + f"by @{pr.get('author')}  (+{pr.get('additions', 0)}/-{pr.get('deletions', 0)})\n\n"
-        + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
+        + f"description:\n{_clip_text(pr.get('body'), 1500)}\n"
+        + f"{_issue_reference_note(pr)}\n"
         + f"changed files: {', '.join(files[:30])}\n\n"
         + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n\n"
+        + f"{SCOPE_FIT_GUIDANCE}\n\n"
         + "Return JSON with keys:\n"
-        + f'  "action": one of {ACTIONS},\n'
-        + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
-        + 'agent/ (its real value tier needs a live benchmark run, not a guess); '
-        + '"mult:contribution" for everything else,\n'
-        + '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
-        + '  "tests_present": boolean — does it add or update tests,\n'
-        + '  "summary": one sentence on what the PR does,\n'
-        + '  "concerns": list of specific, actionable concerns (empty list if none),\n'
-        + '  "recommendation": one or two sentences of advice to the maintainer.'
+        + f"{REVIEW_RESPONSE_SCHEMA}"
     )
     stub = {
         "action": "comment",

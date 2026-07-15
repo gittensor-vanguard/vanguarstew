@@ -13,8 +13,11 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
+    REVIEW_RESPONSE_SCHEMA,
+    SCOPE_FIT_GUIDANCE,
     VALUE_LABELS,
     _clip_text,
+    _issue_reference_note,
     _normalize_bool,
     _normalize_concerns,
     _normalize_review_action,
@@ -324,3 +327,53 @@ def test_review_pr_prompt_uses_pr_number_not_raw_number_field():
               None, llm)
     assert llm.last_user.startswith("PULL REQUEST #?: Add streaming export")
     assert "#True" not in llm.last_user
+
+
+class _PromptCaptureLLM:
+    def __init__(self, payload):
+        self.payload = payload
+        self.last_user = ""
+
+    def chat_json(self, system, user, stub=None):
+        self.last_user = user
+        return self.payload
+
+
+def test_issue_reference_note_surfaces_cited_issues():
+    note = _issue_reference_note({
+        "title": "Fix loader race",
+        "body": "Fixes #10\nAlso relates to #12 and duplicates #10.",
+    })
+    assert "#10" in note
+    assert "#12" in note
+    assert "scope_ok" in note
+    # Dedup + order of appearance (first #10, then #12).
+    assert note.index("#10") < note.index("#12")
+
+
+def test_issue_reference_note_empty_when_no_references():
+    assert _issue_reference_note({}) == ""
+    assert _issue_reference_note({"title": "chore: tidy", "body": "no link"}) == ""
+    assert _issue_reference_note({"title": 42, "body": None}) == ""
+    assert _issue_reference_note("not a dict") == ""
+
+
+def test_review_prompt_includes_schema_and_scope_fit_guidance():
+    llm = _PromptCaptureLLM({
+        "action": "comment",
+        "value_label": "mult:contribution",
+        "scope_ok": True,
+        "tests_present": True,
+        "summary": "offline",
+        "concerns": [],
+        "recommendation": "ok",
+    })
+    review_pr(
+        {"number": 1, "title": "Fix bug", "body": "Fixes #42", "files": ["tests/t.py"]},
+        None,
+        llm,
+    )
+    assert REVIEW_RESPONSE_SCHEMA.strip() in llm.last_user
+    assert SCOPE_FIT_GUIDANCE in llm.last_user
+    assert '"scope_ok"' in llm.last_user
+    assert "#42" in llm.last_user
