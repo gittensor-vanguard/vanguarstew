@@ -17,7 +17,8 @@ and the other benchmark gates.
 The companion ``scripts/repeatability_gate.py`` exits non-zero when any check fails.
 
 Pure evaluation: no I/O, never mutates its inputs, and unscored or malformed artifacts fail the
-relevant checks rather than raising.
+relevant checks rather than raising. Headline CV formatting degrades on a non-finite or oversized
+value (via :func:`benchmark.repeatability._is_number`) rather than printing ``nan%`` / ``inf%``.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from benchmark.repeatability import (
     DEFAULT_MAX_CV,
     DEFAULT_MIN_RUNS,
     _effective_min_runs,
+    _is_number,
     _repeatability_artifacts,
     assess_repeatability,
 )
@@ -35,10 +37,6 @@ from benchmark.repeatability import (
 logger = logging.getLogger(__name__)
 
 _CHECK_ROW_KEYS = ("name", "passed")
-
-
-def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _dict(value) -> dict:

@@ -13,7 +13,9 @@ if ROOT not in sys.path:
 
 from benchmark.repeatability import (  # noqa: E402
     DEFAULT_MAX_CV,
+    _is_number,
     _repeatability_artifacts,
+    _round,
     assess_repeatability,
     repeatability_headline,
 )
@@ -220,6 +222,31 @@ def test_headline_reports_stable_unstable_and_inconclusive():
     assert "inconclusive" in repeatability_headline(assess_repeatability([_run(0.6)]))
     assert repeatability_headline({}) == "repeatability: no scored runs"
     assert DEFAULT_MAX_CV == 0.05
+
+
+def test_is_number_rejects_non_finite_and_oversized():
+    assert _is_number(0.05) and _is_number(0)
+    assert not _is_number(float("nan"))
+    assert not _is_number(float("inf"))
+    assert not _is_number(True)
+    assert not _is_number(10**400)
+    assert not _is_number(-(10**400))
+
+
+def test_round_returns_none_on_non_finite_or_oversized():
+    assert _round(0.1234) == 0.123
+    assert _round(float("nan")) is None
+    assert _round(float("inf")) is None
+    assert _round(10**400) is None
+    assert _round(True) is None
+
+
+def test_headline_degrades_on_non_finite_or_oversized_cv():
+    base = {"stable": True, "runs": 2, "min_runs": 2, "mean": 0.5}
+    assert "cv n/a" in repeatability_headline({**base, "cv": float("nan")})
+    assert "cv n/a" in repeatability_headline({**base, "cv": float("inf")})
+    assert "cv n/a" in repeatability_headline({**base, "cv": 10**400})
+    assert "nan%" not in repeatability_headline({**base, "cv": float("nan")})
 
 
 def test_cv_uses_sample_standard_deviation():

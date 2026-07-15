@@ -16,6 +16,7 @@ from benchmark.repeatability import (  # noqa: E402
     DEFAULT_MIN_RUNS,
     _coerce_runs,
     _effective_min_runs,
+    _is_number,
     assess_repeatability,
     repeatability_headline,
 )
@@ -89,6 +90,25 @@ def test_gate_headline_stable_and_unstable():
     assert repeatability_gate_headline(stable).startswith("repeatability gate: STABLE")
     unstable = check_repeatability([_run(0.4), _run(0.8)])
     assert repeatability_gate_headline(unstable).startswith("repeatability gate: UNSTABLE")
+
+
+def test_gate_headline_degrades_on_non_finite_or_oversized_cv():
+    checks = [{"name": "a", "passed": True}]
+    assert "cv n/a" in repeatability_gate_headline(
+        {"passed": True, "checks": checks, "runs": 2, "cv": float("nan")})
+    assert "cv n/a" in repeatability_gate_headline(
+        {"passed": True, "checks": checks, "runs": 2, "cv": float("inf")})
+    assert "cv n/a" in repeatability_gate_headline(
+        {"passed": True, "checks": checks, "runs": 2, "cv": 10**400})
+    assert "inf%" not in repeatability_gate_headline(
+        {"passed": True, "checks": checks, "runs": 2, "cv": float("inf")})
+
+
+def test_is_number_shared_with_repeatability_rejects_non_finite():
+    assert _is_number(0.01)
+    assert not _is_number(float("nan"))
+    assert not _is_number(float("inf"))
+    assert not _is_number(10**400)
 
 
 def test_gate_headline_no_checks():
