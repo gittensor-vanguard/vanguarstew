@@ -83,17 +83,11 @@ vulnerable to.
   AND neither the judge nor the objective component may regress. Trading one axis for the
   other (sounding better to the judge while the objective anchor quietly drops) is
   rejected, not counted as improvement. #1295
-- [x] Merge-block: a measured regression is a hard merge block for `agent/` PRs, not just a
-  label cap; a large, clean win on every axis earns the top band. #1302
-
-  _Superseded by M6._ This shipped with a `mult:breakthrough` (×3.0) ceiling above
-  `mult:core-correctness` (×2.0). Registration on gittensor replaced that `mult:*` ladder with
-  the measured `perf:xs`–`perf:xl` bands (×0.5–×4.0) plus a flat `mult:contribution` (×0.05),
-  which is what the subnet's `label_multipliers` actually pays today — **`mult:breakthrough` and
-  `mult:core-correctness` no longer exist on-chain, so a PR labeled with either would earn zero.**
-  See [REVIEW.md](REVIEW.md#contribution-value-labels) for the live ladder.
-- [x] `REVIEW.md` "Evidence requirement for `agent/` PRs": documents the full tier ladder
-  (blocked/neutral/eligible/breakthrough) and what each requires.
+- [x] Merge-block + top band: a measured regression is a hard merge block for `agent/` PRs, not
+  just a label cap; a large, clean win on every axis (≥5× the noise floor, both components
+  improving) earns the top band, `perf:xl` (×4.0). #1302
+- [x] `REVIEW.md` "Evidence requirement for `agent/` PRs": documents the full band ladder
+  (`perf:xs`–`perf:xl`, and the `blocked` regression case) and what each requires.
 - [x] Public CI smoke check (`agent-benchmark-smoke.yml`): crash/output-shape check on
   every `agent/`-touching PR, offline-safe (no secrets, safe on fork PRs) — explicitly
   documented as *not* the scoring evidence itself.

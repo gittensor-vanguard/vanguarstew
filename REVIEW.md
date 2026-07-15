@@ -109,13 +109,7 @@ maintainer-bot-run live comparison against both repo targets.
 
 PRs to `benchmark/`, `tests/`, `docs/`, `.github/`, or any other non-`agent/` surface get a
 single flat label, `mult:contribution` (×0.05), on merge — there's no "agent performance"
-to measure for harness/tooling work, so it isn't put through the banding pipeline. This
-replaces the old graduated `mult:core-correctness`/`capability`/`enhancement`/`maintenance`/
-`docs` ladder, which scored a maintainer's *read* of a diff rather than a measured effect —
-exactly the gap the `perf:*` system above closes for `agent/`. Those `mult:*` tiers — and the
-`mult:breakthrough` ceiling that briefly sat above them — are **retired**: they are not in this
-repo's on-chain `label_multipliers`, so a PR carrying one would fall through to
-`default_label_multiplier` and earn **zero**.
+to measure for harness/tooling work, so it isn't put through the banding pipeline.
 
 The deliberate gap between `mult:contribution` (×0.05) and even `perf:xs` (×0.5) is the point:
 harness and docs work is welcome and merges on its own merits, but the emission weight is
