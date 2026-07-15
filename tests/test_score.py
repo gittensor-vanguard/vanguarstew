@@ -323,6 +323,10 @@ def test_is_release_subject_accepts_genuine_releases():
     assert is_release_subject("Release v1.2.0")
     assert is_release_subject("v1.2.0")
     assert is_release_subject("1.2.0")
+    assert is_release_subject("v1.2.0-rc1")
+    assert is_release_subject("v1.2.0+build.5")
+    assert is_release_subject("v1.2.0 (#123)")
+    assert is_release_subject("v1.2.0 [skip ci]")
     assert is_release_subject("release: 2.0.0")
     assert is_release_subject("bump version to 2.0.0")
     assert is_release_subject("update the changelog for the next cut")
@@ -333,8 +337,23 @@ def test_is_release_subject_rejects_incidental_versions():
     assert not is_release_subject("chore(deps): bump lodash to v4.17.21")
     assert not is_release_subject("upgrade numpy to 1.26.4")
     assert not is_release_subject("fix crash in v1.2.0 parser")
+    assert not is_release_subject("3.12 compatibility fixes")
+    assert not is_release_subject("2.0 rewrite kickoff")
+    assert not is_release_subject("1.5 migration guide")
     assert not is_release_subject("docs: mention support for Python 3.11.0")
     assert not is_release_subject("add retry logic")
+
+
+def test_leading_version_plus_prose_does_not_credit_release_axis():
+    revealed = [{"subject": "3.12 compatibility fixes", "files": ["core/compat.py"]}]
+    plan = [{"title": "fix core.compat for Python 3.12", "kind": "bugfix", "files": ["core/compat.py"]}]
+
+    obj = objective_score(plan, revealed)
+
+    assert obj["release_signaled"] is False
+    assert "release" not in obj["actual_kinds"]
+    assert obj["actual_kinds"] == []
+    assert obj["module_recall"] == 1.0
 
 
 def test_is_release_subject_accepts_two_component_tags():
