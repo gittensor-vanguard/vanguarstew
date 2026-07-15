@@ -105,20 +105,28 @@ offline mode returns each file's own fixed stub regardless of the prompt, so it 
 measure whether a PR changed the agent's actual reasoning. The real score-delta is a
 maintainer-bot-run live comparison against both repo targets.
 
-### `mult:contribution` — everything else (×0.2)
+### `mult:contribution` — everything else (×0.05)
 
 PRs to `benchmark/`, `tests/`, `docs/`, `.github/`, or any other non-`agent/` surface get a
-single flat label, `mult:contribution` (×0.2), on merge — there's no "agent performance"
-to measure for harness/tooling work, so it isn't put through the banding pipeline. This
-replaces the old graduated `mult:core-correctness`/`capability`/`enhancement`/`maintenance`/
-`docs` ladder, which scored a maintainer's *read* of a diff rather than a measured effect —
-exactly the gap the `perf:*` system above closes for `agent/`.
+single flat label, `mult:contribution` (×0.05), on merge — there's no "agent performance"
+to measure for harness/tooling work, so it isn't put through the banding pipeline.
+
+The deliberate gap between `mult:contribution` (×0.05) and even `perf:xs` (×0.5) is the point:
+harness and docs work is welcome and merges on its own merits, but the emission weight is
+reserved for measured improvements to the agent.
 
 - Only labels applied by the maintainer bot (or matedev01) count toward the multiplier.
 - Area labels (`agent`, `benchmark`, `leakage`) are organizational only and do **not**
   affect scoring.
 - No label ⇒ zero (this repo's `default_label_multiplier` is `0.0`) — matches the *(none)*
   row above for `agent/` PRs with no measurable improvement.
+
+> **Authority for these numbers.** Every multiplier on this page is paid out from vanguarstew's
+> entry in the gittensor subnet's `master_repositories.json`
+> ([`entrius/gittensor`](https://github.com/entrius/gittensor), `gittensor/validator/weights/`).
+> That registry is the source of truth — if this page and the registry disagree, **the registry
+> wins and this page is the bug**. `scripts/score_pr_delta.py`'s `BAND_MULTIPLIERS` mirrors the
+> `perf:*` half and must be updated in lockstep with both.
 
 ## Rejections
 

@@ -14,10 +14,28 @@ from benchmark.report import DEFAULT_GAP_INSPECT_THRESHOLD, render_report
 
 
 def load_artifact(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except OSError as exc:
+        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except json.JSONDecodeError as exc:
+        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     if not isinstance(data, dict):
-        raise ValueError(f"artifact must be a JSON object: {path}")
+        print(f"artifact must be a JSON object: {path}", file=sys.stderr)
+        raise SystemExit(1) from None
     return data
 
 
@@ -30,11 +48,9 @@ def main() -> None:
                          f"(default {DEFAULT_GAP_INSPECT_THRESHOLD})")
     args = ap.parse_args()
 
-    try:
-        artifact = load_artifact(args.artifact)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        print(str(exc), file=sys.stderr)
-        sys.exit(1)
+    # load_artifact prints a clean message and raises SystemExit(1) on any bad path or
+    # bad JSON, so main() needs no error handling of its own here.
+    artifact = load_artifact(args.artifact)
 
     md = render_report(artifact, gap_inspect_threshold=args.gap_threshold)
     if args.out:

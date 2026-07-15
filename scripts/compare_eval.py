@@ -13,7 +13,15 @@ import sys
 
 def _numeric(value) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        number = float(value)
+        # json parses an arbitrarily long integer literal into a Python int, and float() raises
+        # OverflowError for one too large to convert -- so an oversized composite_mean must be
+        # treated as non-numeric here rather than crashing the whole comparison. Mirrors the
+        # oversized-int guards merged across the codebase (repo_task_mean #1571, gap_outlook
+        # #1479, skip_share #1502, acceptance, component_floor).
+        try:
+            number = float(value)
+        except OverflowError:
+            return None
         if math.isfinite(number):
             return number
     return None
