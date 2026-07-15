@@ -266,11 +266,14 @@ def test_cli_non_object_artifact(tmp_path):
     assert cli.run([_write(tmp_path, "arr.json", "[1, 2, 3]")]) == 2
 
 
-def test_cli_non_utf8_file(tmp_path):
-    # A non-UTF-8 file raises UnicodeDecodeError mid-read; the CLI must exit 2, not crash.
+def test_cli_non_utf8_file(tmp_path, capsys):
+    # A non-UTF-8 file raises UnicodeDecodeError mid-read; keep the distinct UTF-8 message.
     path = tmp_path / "latin1.json"
     path.write_bytes(b'{"tasks": 10, "judge_order_stats": \xff}')
     assert cli.run([str(path)]) == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "not valid UTF-8 JSON" in err
 
 
 def test_cli_oversized_int_literal(tmp_path, capsys):
@@ -280,6 +283,7 @@ def test_cli_oversized_int_literal(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "Traceback" not in err
     assert "not valid JSON" in err
+    assert "UTF-8" not in err
 
 
 def test_cli_unreadable_path_is_handled(tmp_path):
