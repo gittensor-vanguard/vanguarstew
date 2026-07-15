@@ -273,6 +273,15 @@ def test_cli_non_utf8_file(tmp_path):
     assert cli.run([str(path)]) == 2
 
 
+def test_cli_oversized_int_literal(tmp_path, capsys):
+    # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal beyond the
+    # int-string-conversion limit; the loader caught only JSONDecodeError, so this dumped a raw
+    # traceback and exited 1. It must exit 2 with a clean message, like the CLIs hardened in #1563.
+    body = '{"tasks": ' + "9" * 4400 + "}"
+    assert cli.run([_write(tmp_path, "huge.json", body)]) == 2
+    assert "not valid JSON" in capsys.readouterr().err
+
+
 def test_cli_unreadable_path_is_handled(tmp_path):
     # Reading a directory raises IsADirectoryError (an OSError, like PermissionError) — exit 2.
     assert cli.run([str(tmp_path)]) == 2
