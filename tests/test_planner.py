@@ -14,6 +14,8 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
+    _CC_TYPE_TO_PLAN_KIND,
+    _PLAN_KINDS,
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
@@ -40,6 +42,7 @@ from agent.planner import (  # noqa: E402
     plan_next_actions,
     reconcile_plan_with_queue,
 )
+from benchmark.score import commit_kind, plan_kind  # noqa: E402
 
 CTX = {"open_prs": [{"number": 7, "title": "Add streaming export"}]}
 
@@ -848,6 +851,36 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
 
 
 
+def test_every_plan_kind_names_a_kind_the_objective_anchor_scores():
+    # THE invariant. `kind_recall` compares `plan_kind(item["kind"])` against
+    # `commit_kind(subject)`, so a plan kind the anchor maps to None can never match any
+    # revealed kind -- the vocabularies drifting apart silently pins kind_recall at 0.000 for
+    # every repo whose work lands under the missing kind. `agent/` must not import
+    # `benchmark/` (a miner-only split is planned), so this test is what keeps the two
+    # vocabularies from diverging again. Exhaustive over _PLAN_KINDS, not a sample.
+    for kind in _PLAN_KINDS - {"triage"}:
+        assert plan_kind(kind) is not None, f"plan kind {kind!r} maps to no scored commit kind"
+    # "triage" is a maintainer action, not a commit kind: it maps to nothing on purpose.
+    assert plan_kind("triage") is None
+
+    # Closure: every kind this module derives from history must itself be nameable by a plan
+    # item. Otherwise `_recent_kinds_note` reports a kind that `_normalize_plan_item` then
+    # coerces to "triage" when the model echoes it back -- reintroducing this exact bug.
+    assert set(_CC_TYPE_TO_PLAN_KIND.values()) <= _PLAN_KINDS
+
+    # And a recognized CC type must round-trip to the same kind the anchor reads out of the
+    # very same subject -- not merely to *some* kind. (Scoped to the plain-type branch; the
+    # release-tooling branch is covered separately below.)
+    for subject in ("build(deps): bump actions/checkout from 6 to 7", "ci: cache pip downloads",
+                    "test: cover the loader race", "perf: memoize the tokenizer",
+                    "style: reformat", "revert: undo the cut"):
+        planned = _commit_plan_kind(subject)
+        assert plan_kind(planned) == commit_kind(subject), (
+            f"{subject!r}: plan says {planned!r} -> {plan_kind(planned)!r}, "
+            f"anchor reads {commit_kind(subject)!r}"
+        )
+
+
 def test_commit_plan_kind_maps_conventional_prefixes_to_plan_vocabulary():
     assert _commit_plan_kind("feat: add exporter") == "feature"
     assert _commit_plan_kind("fix(parser)!: handle empty input") == "bugfix"
@@ -856,27 +889,63 @@ def test_commit_plan_kind_maps_conventional_prefixes_to_plan_vocabulary():
     assert _commit_plan_kind("chore: tidy the Makefile") == "dep"
     assert _commit_plan_kind("deps: bump lodash") == "dep"
     assert _commit_plan_kind("release: 2.0") == "release"
+    # Types the anchor scores that the plan vocabulary now names rather than dropping.
+    assert _commit_plan_kind("build: switch to bazel") == "build"
+    assert _commit_plan_kind("ci: cache pip downloads") == "ci"
+    assert _commit_plan_kind("test: cover the loader race") == "test"
+    assert _commit_plan_kind("perf: memoize the tokenizer") == "perf"
+    assert _commit_plan_kind("style: reformat") == "style"
+    assert _commit_plan_kind("revert: undo the cut") == "revert"
 
 
-def test_commit_plan_kind_release_tooling_cut_reads_as_release_not_dep():
+def test_normalize_keeps_the_kinds_the_anchor_scores_instead_of_coercing_to_triage():
+    # The bug in one line: an item whose kind is outside _PLAN_KINDS is coerced to "triage",
+    # and `plan_kind("triage")` is None -- so a plan that correctly anticipated a `build`
+    # window scored kind_recall 0.000 because its prediction was rewritten before scoring.
+    for kind in ("build", "ci", "test", "perf", "style", "revert"):
+        item = _normalize_plan_item({"title": "Refresh the pinned CI actions", "kind": kind})
+        assert item["kind"] == kind, f"{kind!r} was rewritten to {item['kind']!r}"
+        assert plan_kind(item["kind"]) is not None
+    # An unrecognized kind is still coerced to triage rather than passed through.
+    assert _normalize_plan_item({"title": "x", "kind": "wat"})["kind"] == "triage"
+    assert _normalize_plan_item({"title": "x", "kind": 7})["kind"] == "triage"
+
+
+def test_recent_kinds_note_surfaces_the_kinds_the_anchor_scores():
+    # `_recent_kinds_note` reports history through _CC_TYPE_TO_PLAN_KIND, so a dropped type
+    # was invisible: a repo whose dominant recent activity is `ci`/`build` was described to
+    # the planner as if that work did not exist. It is real history and must be reported.
+    ctx = {"recent_commits": [
+        {"subject": "ci: cache pip downloads"}, {"subject": "ci: pin the runner"},
+        {"subject": "build(deps): bump actions/checkout from 6.0.2 to 6.0.3"},
+        {"subject": "fix: handle empty feed"},
+        {"subject": "build(release): 2.0.0"},   # a version cut is a release, not a build
+    ]}
+    note = _recent_kinds_note(ctx)
+    assert "ci (2)" in note
+    assert "build (1)" in note
+    assert "bugfix (1)" in note
+    assert "release (1)" in note
+
+
+def test_commit_plan_kind_release_tooling_cut_reads_as_release_not_dep_or_build():
     # standard-version / release-please author the cut under chore/build (mirrors the
-    # objective anchor's classification in benchmark/score.py).
+    # objective anchor's classification in benchmark/score.py). The release-tooling check runs
+    # BEFORE the type map, so giving `build` a plan kind must not steal the version cut.
     assert _commit_plan_kind("chore(release): 1.4.0") == "release"
     assert _commit_plan_kind("chore(main): release 1.2.3") == "release"
     assert _commit_plan_kind("build(release): v2.0.0") == "release"
-    # An ordinary chore stays dep; an ordinary build has no plan-kind equivalent.
+    # An ordinary chore stays dep; an ordinary build (no version body) reads as build.
     assert _commit_plan_kind("chore: update editorconfig") == "dep"
-    assert _commit_plan_kind("build: switch to bazel") is None
+    assert _commit_plan_kind("build: switch to bazel") == "build"
+    assert _commit_plan_kind("build(deps): bump actions/checkout from 6.0.2 to 6.0.3") == "build"
 
 
-def test_commit_plan_kind_drops_unexpressible_and_unknown_subjects():
-    # Types the plan "kind" vocabulary cannot express are dropped, not mis-binned.
-    assert _commit_plan_kind("test: cover the loader race") is None
-    assert _commit_plan_kind("ci: cache pip downloads") is None
-    assert _commit_plan_kind("perf: memoize the tokenizer") is None
+def test_commit_plan_kind_drops_unknown_subjects():
     # Merge commits, prefix-less subjects, and non-strings carry no kind.
     assert _commit_plan_kind("Merge pull request from fork/branch") is None
     assert _commit_plan_kind("Add streaming export") is None
+    assert _commit_plan_kind("cleanup: tidy") is None   # not a Conventional-Commit type
     assert _commit_plan_kind(None) is None
     assert _commit_plan_kind(123) is None
 
