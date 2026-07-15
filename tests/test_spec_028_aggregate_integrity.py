@@ -4,8 +4,10 @@ malformed-result robustness, logging, and pure evaluation. Offline, deterministi
 """
 
 import copy
+import json
 import logging
 import os
+import subprocess
 import sys
 
 import pytest
@@ -118,6 +120,48 @@ def test_generalization_without_per_repo_fails():
     result = check_aggregate_integrity(report)
     assert result["passed"] is False
     assert failed_checks(result) == ["artifact_shape"]
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.aggregate_integrity", *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_cli_missing_artifact_reports_clean_error(tmp_path):
+    result = _run_cli(str(tmp_path / "missing.json"))
+    assert result.returncode == 1
+    assert "artifact not found" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_directory_artifact_reports_clean_error(tmp_path):
+    result = _run_cli(str(tmp_path))
+    assert result.returncode == 1
+    assert "artifact path is a directory, not a file" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_invalid_json_reports_clean_error(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{", encoding="utf-8")
+    result = _run_cli(str(bad))
+    assert result.returncode == 1
+    assert "artifact is not valid JSON" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_non_object_artifact_reports_clean_error(tmp_path):
+    bad = tmp_path / "list.json"
+    bad.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    result = _run_cli(str(bad))
+    assert result.returncode == 1
+    assert "artifact must be a JSON object" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 # --- Slice selection ------------------------------------------------------------------------
