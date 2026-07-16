@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 
 import pytest
 
@@ -239,3 +240,68 @@ def test_generate_tasks_preserves_large_revealed_file_list():
         assert changed_modules(revealed) == expected_modules
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+# --- `horizon_days` (time-window) mode -------------------------------------------------
+# Both regressions below were found by running the real curated/hidden repo sets through
+# task_uniformity + task_independence, not by construction: a commit-count horizon hides
+# them because it measures the wrong dimension.
+
+def _dated_repo(dirpath, dates):
+    """A linear history whose commits land on the given ISO dates."""
+    os.makedirs(dirpath, exist_ok=True)
+    _run(dirpath, "init", "-q", "-b", "main")
+    _run(dirpath, "config", "user.email", "t@t.t")
+    _run(dirpath, "config", "user.name", "t")
+    for i, when in enumerate(dates):
+        full = os.path.join(dirpath, f"f{i}.txt")
+        with open(full, "w", encoding="utf-8") as f:
+            f.write(str(i))
+        _run(dirpath, "add", "-A")
+        stamp = f"{when}T12:00:00+00:00"
+        subprocess.run(["git", "-C", dirpath, "commit", "-q", "-m", f"c{i}"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       env={**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp})
+    return dirpath
+
+
+def test_horizon_days_skips_freeze_points_whose_window_is_empty():
+    # A slow repo's quiet stretch: calendar time after the freeze does not mean any maintainer
+    # action landed in it. An empty revealed window is an unscoreable task.
+    dates = [f"2019-01-{d:02d}" for d in range(1, 16)] + ["2019-09-01", "2019-09-02"]
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _dated_repo(os.path.join(tmp, "r"), dates)
+        tasks = generate_tasks(repo, num_tasks=3, min_history=2, horizon_days=30)
+    assert tasks, "expected at least one scoreable task"
+    assert all(t["revealed"] for t in tasks), "a task was generated with an empty window"
+
+
+def test_horizon_days_spaces_freeze_points_by_days_not_commit_index():
+    # 40 commits one day apart: any commit-index stride puts every freeze inside one 30-day
+    # window, so each task's judged future would contain the next task's frozen present.
+    dates = [f"2019-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(120)]
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _dated_repo(os.path.join(tmp, "r"), dates)
+        tasks = generate_tasks(repo, num_tasks=3, min_history=2, horizon_days=30)
+    assert len(tasks) >= 2
+    stamps = sorted(t["freeze_date"] for t in tasks)
+    gaps = [(datetime.fromisoformat(b) - datetime.fromisoformat(a)).days
+            for a, b in zip(stamps, stamps[1:])]
+    assert all(g > 30 for g in gaps), f"freeze points overlap inside one window: {gaps}d"
+
+
+def test_horizon_days_records_span_and_freeze_date():
+    dates = [f"2019-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(120)]
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _dated_repo(os.path.join(tmp, "r"), dates)
+        tasks = generate_tasks(repo, num_tasks=2, min_history=2, horizon_days=30)
+    assert all(t["horizon_days"] == 30 and t["freeze_date"] for t in tasks)
+
+
+def test_commit_horizon_mode_records_neither():
+    # No horizon_days -> unchanged task shape (the integrity gates stay in commit mode).
+    dates = [f"2019-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(40)]
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _dated_repo(os.path.join(tmp, "r"), dates)
+        tasks = generate_tasks(repo, num_tasks=2, horizon=5, min_history=2)
+    assert tasks and all("horizon_days" not in t and "freeze_date" not in t for t in tasks)
