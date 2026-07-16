@@ -23,6 +23,12 @@ Neither checks that the windows are the **same length** — this does. The check
    empty list, or a non-list all fail);
 3. ``uniform_window_length`` — every task's ``revealed`` window has the same length.
 
+A TIME-horizon task set (taskgen's ``horizon_days`` mode) carries its span per task and reports
+``uniform_window_span`` instead: there, equal weight means an equal *span*, not an equal commit
+count — a 90-day window over a busy month reveals more commits than over a quiet one, and that
+variance is the design (a maintainer's week off averages out rather than dominating a 5-commit
+sample). Same invariant (equal-weight samples), measured along the horizon's own dimension.
+
 The companion ``scripts/task_uniformity.py`` exits non-zero when the windows are uneven.
 
 Pure evaluation: no I/O, never mutates its input, and a malformed/non-list task set simply fails
@@ -129,8 +135,25 @@ def check_task_uniformity(tasks) -> dict:
         "every task has a non-empty revealed window" if windows_present
         else "a task has a missing, empty, or non-list revealed window")
 
+    # A TIME-horizon task set (taskgen's `horizon_days` mode) carries its span per task. There,
+    # equal weight means an equal *span*, NOT an equal commit count: a 90-day window over a busy
+    # month legitimately reveals more commits than over a quiet one, and that variance is the
+    # design — the point of a time window is that a maintainer's week off averages out instead of
+    # dominating a 5-commit sample. Checking commit-count uniformity there would fail every honest
+    # run. The invariant is unchanged (tasks must be equal-weight samples); only the dimension it
+    # is measured in follows the horizon.
+    spans = [t.get("horizon_days") for t in dict_tasks]
+    time_mode = all_dicts and bool(spans) and all(
+        isinstance(s, int) and not isinstance(s, bool) and s > 0 for s in spans)
     distinct = sorted({n for n in lengths if n is not None})
-    if not windows_present:
+    if time_mode:
+        distinct_spans = sorted(set(spans))
+        uniform = len(distinct_spans) == 1
+        add("uniform_window_span", uniform,
+            f"all {len(spans)} windows span {distinct_spans[0]} day(s) "
+            f"(revealed lengths {distinct} vary by design)" if uniform
+            else f"window spans differ: {distinct_spans} day(s)")
+    elif not windows_present:
         add("uniform_window_length", False, "cannot compare window lengths (a window is missing)")
     else:
         uniform = len(distinct) == 1
