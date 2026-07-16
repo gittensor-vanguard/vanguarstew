@@ -55,14 +55,152 @@ def _parse_winner(text: str) -> str:
     return value if value in ("A", "B") else "tie"
 
 
+# Hard cap on a rendered submission in the pairwise prompt. The defect is not the size —
+# it is allocating it by slicing the serialized JSON mid-token (#1706), which hands the
+# judge invalid JSON and lets an unbounded philosophy evict the plan (the trajectory axis).
+_RENDER_BUDGET = 4500
+_CLIP_MARKER = "…[clipped]"
+
+
+def _clip_str(text: str, cap: int) -> str:
+    """Clip a string leaf so the result — *including* the marker — fits in ``cap`` chars.
+
+    The marker is reserved inside the cap (not appended after it); otherwise a value of
+    length ``cap`` would grow past budget when marked, which is what sank #1711.
+    """
+    if len(text) <= cap:
+        return text
+    if cap <= 0:
+        return ""
+    if cap <= len(_CLIP_MARKER):
+        return _CLIP_MARKER[:cap]
+    return text[: cap - len(_CLIP_MARKER)] + _CLIP_MARKER
+
+
+def _dumps(payload: dict) -> str:
+    return json.dumps(payload, indent=1)
+
+
+def _abridge_philosophy(phil):
+    """One reduction step on philosophy: shed a trailing evidence entry, else clip strings."""
+    if isinstance(phil, str):
+        return _clip_str(phil, max(64, len(phil) // 2))
+    if not isinstance(phil, dict):
+        return phil
+    out = dict(phil)
+    evidence = out.get("evidence")
+    if isinstance(evidence, list) and evidence:
+        out["evidence"] = evidence[:-1]
+        out["_elided_evidence"] = int(out.get("_elided_evidence") or 0) + 1
+        return out
+    clipped = False
+    for key, value in list(out.items()):
+        if key.startswith("_"):
+            continue
+        if isinstance(value, str) and len(value) > 64:
+            out[key] = _clip_str(value, max(64, len(value) // 2))
+            clipped = True
+    if clipped:
+        return out
+    # Still too large with no evidence and no long strings — keep a compact summary only.
+    summary = out.get("summary")
+    return {
+        "summary": _clip_str(summary, 240) if isinstance(summary, str) else None,
+        "_elided": "philosophy compacted",
+    }
+
+
+def _normalize_plan_for_render(plan):
+    """Keep a list plan intact; mark a non-list plan explicitly instead of silently dropping it."""
+    if plan is None or isinstance(plan, list):
+        return plan
+    return {"_malformed_plan": type(plan).__name__}
+
+
+def _abridge_to_budget(payload: dict, budget: int = _RENDER_BUDGET) -> dict:
+    """Structurally shrink ``payload`` until ``json.dumps`` fits ``budget``.
+
+    Order of reduction (least → most damaging to the scored axes):
+    1. clip ``rationale``
+    2. shed philosophy ``evidence`` / clip philosophy free-text leaves
+    3. shed trailing plan items (last resort — trajectory axis)
+
+    Always returns a dict that serializes to valid JSON within ``budget``.
+    """
+    payload = dict(payload)
+    if len(_dumps(payload)) <= budget:
+        return payload
+
+    payload["_abridged"] = True
+    payload["plan"] = _normalize_plan_for_render(payload.get("plan"))
+
+    rationale = payload.get("rationale")
+    if isinstance(rationale, str) and len(rationale) > 240:
+        payload["rationale"] = _clip_str(rationale, 240)
+        if len(_dumps(payload)) <= budget:
+            return payload
+
+    for _ in range(32):
+        if len(_dumps(payload)) <= budget:
+            return payload
+        phil = payload.get("philosophy")
+        if isinstance(phil, (dict, str)):
+            payload["philosophy"] = _abridge_philosophy(phil)
+            continue
+        break
+
+    for _ in range(64):
+        if len(_dumps(payload)) <= budget:
+            return payload
+        plan = payload.get("plan")
+        if isinstance(plan, list) and plan:
+            payload["plan"] = plan[:-1]
+            payload["_elided_plan_items"] = int(payload.get("_elided_plan_items") or 0) + 1
+            continue
+        break
+
+    if len(_dumps(payload)) <= budget:
+        return payload
+    # Guaranteed fit: drop free text, keep a short plan skeleton if any remains.
+    plan = payload.get("plan")
+    slim_plan = None
+    if isinstance(plan, list):
+        slim_plan = []
+        for item in plan[:5]:
+            if isinstance(item, dict):
+                title = item.get("title")
+                slim_plan.append({
+                    "title": _clip_str(title, 80) if isinstance(title, str) else None,
+                })
+            else:
+                slim_plan.append({"title": _clip_str(str(item), 80)})
+    final = {
+        "_abridged": True,
+        "philosophy": {"_elided": True},
+        "plan": slim_plan if slim_plan else plan,
+        "rationale": None,
+    }
+    if len(_dumps(final)) <= budget:
+        return final
+    return {"_abridged": True, "error": "submission exceeded budget after abridging"}
+
+
 def _render(submission: dict) -> str:
+    """Serialize a submission for the pairwise prompt — always valid JSON within budget.
+
+    Never byte-slices the dump: a mid-token cut produces unterminated JSON and lets an
+    unbounded philosophy silently evict the plan (#1706). Structural abridging keeps every
+    render parseable and prefers shedding philosophy bulk before plan items.
+    """
     if not isinstance(submission, dict):
         return json.dumps({"error": "non-dict submission"})
-    return json.dumps({
+    payload = {
         "philosophy": submission.get("philosophy"),
-        "plan": submission.get("plan"),
+        # Mark a non-list plan explicitly up front — never silently coerce it to [] (#1711).
+        "plan": _normalize_plan_for_render(submission.get("plan")),
         "rationale": submission.get("rationale"),
-    }, indent=1)[:4500]
+    }
+    return _dumps(_abridge_to_budget(payload, _RENDER_BUDGET))
 
 
 # Generic, content-free titles/themes that pad a plan without proposing real work.
