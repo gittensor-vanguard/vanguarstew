@@ -222,12 +222,14 @@
       fetch('../anchor.json', {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }),
     ]).then(function(results){
       var data = results[0], anchor = results[1];
-      if(!Array.isArray(data) || data.length === 0){
-        document.getElementById('jr-empty').style.display = 'block';
+      if(!Array.isArray(data)) data = [];
+      if(data.length === 0){
+        // No PRs scored against the current anchor yet -- show the table's empty state, but still
+        // draw the journey chart so the fixed anchor (base) bar stays visible on its own.
         document.getElementById('prs-empty').style.display = 'block';
-        return;
+      } else {
+        renderTable(data);
       }
-      renderTable(data);
       renderJourney(data, anchor);
     }).catch(function(){
       document.getElementById('jr-empty').style.display = 'block';
