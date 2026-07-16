@@ -249,6 +249,48 @@ def test_cli_broken_symlink_exits_two(tmp_path):
     assert "Errno" not in proc.stderr
 
 
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX permission bits are not enforced on Windows; root bypasses them too",
+)
+def test_cli_unreadable_file_reports_clean_error(tmp_path):
+    # Real chmod (no builtins.open monkeypatch): PermissionError must yield the actionable
+    # "not readable" message, never a raw errno string.
+    path = tmp_path / "artifact.json"
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.repeatability_gate", str(path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        os.chmod(path, 0o644)
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
+    assert "not readable" in proc.stderr
+    assert str(path) in proc.stderr
+
+
+def test_cli_oversized_int_literal_exits_two(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an oversized int literal.
+    path = tmp_path / "huge.json"
+    path.write_text('{"composite_mean": ' + "9" * 5000 + "}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repeatability_gate", str(path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "not valid JSON" in proc.stderr
+    assert str(path) in proc.stderr
+
+
 def test_cli_symlink_to_directory_exits_two(tmp_path):
     # A symlink whose target is a directory must still fail closed with an actionable message
     # (IsADirectoryError on POSIX, PermissionError on Windows) — not a raw errno.
