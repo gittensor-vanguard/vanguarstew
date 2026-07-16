@@ -31,20 +31,41 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 
 
 def _round(value):
+    """A published scalar rounded to 4dp, or ``None`` when it is not a finite number.
+
+    ``None`` is this feed's established "unavailable" sentinel — every other unusable value
+    already lands on it — so a value that cannot be published honestly becomes ``null`` rather
+    than something a reader has to interpret.
+
+    Two ways a value fails to be publishable:
+
+    - **Non-finite.** This feed is JSON served to a browser, and ``json.dumps`` emits ``NaN`` /
+      ``Infinity`` *bare* — literals the JSON spec does not define and ``JSON.parse`` rejects —
+      so one poisoned scalar takes the whole leaderboard down rather than blanking one cell.
+      These are not only a hand-edited artifact's problem: a delta is a *difference*, and
+      ``compare_eval._delta`` rounds ``candidate - baseline`` after checking each operand but
+      never re-checks the result, so two finite composites can overflow to ``inf`` and reach
+      here through ``score_pr_delta``, whose own ``_delta`` tests only ``isinstance``.
+    - **Oversized int.** ``json`` parses an arbitrarily long integer literal into a Python
+      ``int``, and ``float()`` raises ``OverflowError`` for one too large to convert (#1599).
+      ``float()`` runs first below, so ``math.isfinite`` can never be handed such an int.
+
+    Guarding both halves is what the sibling readers already do —
+    ``benchmark/leaderboard.py``'s identically-named ``_round`` via its ``_is_number``,
+    ``scripts/compare_eval._numeric``, ``benchmark/gap_outlook._is_number`` — and it matches
+    this module's coerce-or-default, don't-crash policy.
+    """
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
-    # json parses an arbitrarily long integer literal into a Python int, and float() raises
-    # OverflowError for one too large to convert -- so an oversized composite delta/score must
-    # be treated as non-numeric here rather than crashing the feed builder. Mirrors the
-    # oversized-int guards merged across the codebase (repo_task_mean #1571, gap_outlook #1479,
-    # skip_share #1502, acceptance, component_floor).
     try:
-        return round(float(value), 4)
+        number = float(value)
     except OverflowError:
         return None
+    return round(number, 4) if math.isfinite(number) else None
 
 
 def _dict(value) -> dict:
