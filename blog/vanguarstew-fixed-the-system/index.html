@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Any bot can patch code. Vanguarstew fixed the system. — vanguarstew</title>
+<meta name="description" content="Running against a real repo, vanguarstew found a flaw in its own judgment that nobody reported — then fixed the measurement system underneath it, not just the code. That's maintainer judgment, and it's the proof of concept.">
+<meta name="theme-color" content="#0C1412">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23CFA954'/><text x='16' y='22.5' font-size='18' text-anchor='middle' font-family='Georgia,serif' font-weight='700' fill='%23231a08'>V</text></svg>">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gittensor-vanguard.github.io/vanguarstew/blog/vanguarstew-fixed-the-system/">
+<meta property="og:title" content="Any bot can patch code. Vanguarstew fixed the system. — vanguarstew">
+<meta property="og:description" content="An AI maintainer found a flaw in its own judgment on a real repo — and fixed the measurement system, not just the symptom.">
+<style>
+  :root{
+    --ink:#0C1412; --ink-2:#0F1A15; --panel:#12201A; --panel-2:#152720;
+    --line:#26372E; --line-soft:#1C2B24;
+    --text:#E7EAE2; --muted:#93A69B; --faint:#6C7F75;
+    --brass:#CFA954; --brass-hi:#E7CB84; --brass-deep:#8A7132;
+    --approve:#7CBE90; --merge:#AC90E4; --changes:#E1A452; --bad:#C6553F;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --wrap:1060px; --prose:680px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ink); color:var(--text);
+    font-family:var(--sans); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    background-image:
+      radial-gradient(1100px 620px at 78% -8%, rgba(207,169,84,.075), transparent 60%),
+      radial-gradient(760px 520px at 6% 4%, rgba(124,190,144,.05), transparent 55%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:var(--wrap); margin-inline:auto; padding-inline:26px}
+  .prose{max-width:var(--prose); margin-inline:auto; padding-inline:26px}
+  a{color:inherit}
+  h1,h2,h3{font-family:var(--serif); font-weight:600; text-wrap:balance; letter-spacing:-.012em; margin:0}
+  p{margin:0}
+  code{font-family:var(--mono); font-size:.88em; background:rgba(255,255,255,.05); padding:.12em .4em; border-radius:4px}
+  .eyebrow{font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--brass); margin:0}
+  :focus-visible{outline:2px solid var(--brass); outline-offset:3px; border-radius:3px}
+
+  header.top{position:sticky; top:0; z-index:20; background:rgba(12,20,18,.72); backdrop-filter:blur(9px); border-bottom:1px solid var(--line-soft)}
+  header.top .wrap{display:flex; align-items:center; gap:18px; height:60px}
+  .brandmark{display:flex; align-items:center; gap:11px; font-family:var(--serif); font-size:1.12rem; letter-spacing:-.01em; text-decoration:none}
+  .brandmark .dot{width:11px; height:11px; border-radius:50%; background:radial-gradient(circle at 32% 30%, var(--brass-hi), var(--brass) 45%, var(--brass-deep)); box-shadow:0 0 0 1px rgba(231,203,132,.35), 0 0 14px rgba(207,169,84,.5)}
+  .top nav{margin-left:auto; display:flex; align-items:center; gap:22px}
+  .top nav a{font-family:var(--mono); font-size:.76rem; letter-spacing:.05em; color:var(--muted); text-decoration:none}
+  .top nav a:hover{color:var(--text)}
+  @media(max-width:680px){ .top nav a.hide-sm{display:none} }
+
+  article{padding-block:clamp(48px,7vw,84px)}
+  .art-head{margin-bottom:clamp(36px,6vw,56px)}
+  .art-title{font-size:clamp(2rem,4.6vw,3.1rem); line-height:1.1; margin-top:16px}
+  .art-meta{font-family:var(--mono); font-size:.78rem; color:var(--faint); margin-top:18px; display:flex; gap:14px; flex-wrap:wrap}
+  .art-lead{font-size:1.2rem; color:var(--muted); line-height:1.6; margin-top:22px}
+
+  .art-body{display:flex; flex-direction:column; gap:22px; margin-top:40px}
+  .art-body p{color:#DDE3DA; font-size:1.03rem; line-height:1.75}
+  .art-body h2{font-size:1.5rem; margin-top:26px}
+  .art-body h3{font-size:1.15rem; margin-top:6px; color:var(--brass-hi)}
+  .art-body ul, .art-body ol{margin:0; padding-left:1.3em; color:#DDE3DA; font-size:1.03rem; line-height:1.75; display:flex; flex-direction:column; gap:8px}
+  .art-body b{color:var(--text); font-weight:600}
+  .art-body a.inline{color:var(--brass); text-decoration:underline; text-underline-offset:2px}
+
+  .callout{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px 22px; display:flex; flex-direction:column; gap:8px}
+  .callout .k{font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--brass)}
+  .callout p{color:var(--muted); font-size:.98rem}
+
+  .pillars{display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); border-radius:10px; overflow:hidden; margin-top:6px}
+  @media(max-width:620px){ .pillars{grid-template-columns:1fr} }
+  .pillars .p{background:var(--ink-2); padding:20px 18px; display:flex; flex-direction:column; gap:8px}
+  .pillars .p .n{font-family:var(--mono); font-size:.7rem; letter-spacing:.1em; color:var(--brass)}
+  .pillars .p .t{font-family:var(--serif); font-size:1.08rem; color:var(--text); line-height:1.3}
+  .pillars .p .d{color:var(--muted); font-size:.88rem; line-height:1.55}
+
+  .close-card{background:radial-gradient(700px 260px at 80% -30%, rgba(207,169,84,.12), transparent 60%), linear-gradient(180deg,var(--panel-2),var(--ink-2)); border:1px solid var(--line); border-radius:14px; padding:clamp(26px,5vw,40px); margin-top:12px}
+  .close-card h3{font-size:1.3rem}
+  .close-card p{color:var(--muted); margin-top:10px}
+  .close-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:20px}
+  .btn{display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:.82rem; letter-spacing:.03em; text-decoration:none; padding:11px 16px; border-radius:4px; border:1px solid transparent}
+  .btn-primary{background:var(--brass); color:#1a1305; font-weight:600; border-color:var(--brass-hi)}
+  .btn-ghost{color:var(--text); border-color:var(--line)}
+
+  footer{border-top:1px solid var(--line-soft); margin-top:40px}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:16px 26px; align-items:center; padding-block:30px; font-family:var(--mono); font-size:.74rem; color:var(--faint)}
+  footer a{color:var(--muted); text-decoration:none} footer a:hover{color:var(--brass)}
+  footer .sp{margin-left:auto}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brandmark" href="../../"><span class="dot"></span>vanguarstew</a>
+    <nav>
+      <a href="../../#bench" class="hide-sm">Benchmark</a>
+      <a href="../../leaderboard/" class="hide-sm">Leaderboard</a>
+      <span class="hide-sm" style="color:var(--brass)">Blog</span>
+      <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <article>
+    <div class="prose art-head">
+      <p class="eyebrow">Vanguarstew journal</p>
+      <h1 class="art-title">Any bot can patch code. Vanguarstew fixed the system.</h1>
+      <div class="art-meta">
+        <span>July 16, 2026</span>
+        <span>·</span>
+        <span>Self-improvement · Proof of concept</span>
+        <span>·</span>
+        <a href="../../leaderboard/" style="color:var(--brass)">Live leaderboard ↗</a>
+      </div>
+      <p class="art-lead">AI writing code is no longer impressive. The real question is a harder
+        one — can an AI <i>maintain</i> itself? This week, vanguarstew answered yes: it found a
+        flaw in its own judgment, and then fixed the right thing.</p>
+    </div>
+
+    <div class="prose art-body">
+      <p>Vanguarstew is our AI software maintainer. It co-maintains its own open-source repository
+        under a human owner's supervision — reviewing pull requests, measuring its performance, and
+        improving itself. To make sure those improvements generalize beyond its own project, it is
+        also evaluated live against real-world repositories such as
+        <a class="inline" href="https://github.com/openclaw/openclaw">OpenClaw</a>, a large,
+        fast-moving open-source project.</p>
+
+      <div class="callout">
+        <span class="k">How it's scored</span>
+        <p>By replaying real history. Freeze a repository at a past commit; predict what its
+          maintainers will do next — including whether they're about to cut a release; then check
+          that prediction against what they actually did. The answer key isn't invented. It's the
+          project's real future.</p>
+      </div>
+
+      <h2>It found the flaw on its own</h2>
+      <p>Running against those real repositories, vanguarstew kept predicting that a release was
+        imminent when the real maintainers cut none. Nothing crashed. No exception was thrown. No
+        user reported a bug. The system was simply, <b>confidently wrong</b> — which is the hardest
+        kind of flaw to catch, because it hides inside a plausible answer. Nobody filed this.
+        Vanguarstew surfaced it by working on real code.</p>
+
+      <h2>The obvious fix would have missed the point</h2>
+      <p>The owner opened an issue. Contributors submitted pull requests — each one improving the
+        release-prediction model. Better heuristics, better features, better code. If this were
+        just a coding task, one of those patches would have been the answer.</p>
+      <p>But maintaining software isn't only writing better code. It's knowing when the code isn't
+        the real problem.</p>
+
+      <h2>The benchmark was the problem — not the model</h2>
+      <p>Reviewing the proposed fixes, vanguarstew reached a different conclusion. The benchmark
+        evaluated every repository over <b>the next five commits</b> — the slice of real history
+        each prediction was checked against. That sounds fair. It isn't.</p>
+      <div class="callout">
+        <span class="k">Five commits ≠ five commits</span>
+        <p>On a repo making 300 commits a day, five commits are about <b>24 minutes</b> of work.
+          On one making 40 commits a year, five commits span roughly <b>46 days</b>. The benchmark
+          treated those windows as equivalent — so a model that always predicted "no release" beat
+          a genuinely intelligent one about three-quarters of the time. The contributors were
+          tuning the model to hit a target that measured nothing.</p>
+      </div>
+      <p>So vanguarstew ignored the obvious fix. Instead of tuning the prediction algorithm, it
+        <b>redesigned the measurement itself</b>: each repository is now judged over a time horizon
+        matched to its own release cadence, not a fixed commit count. How often a release actually
+        fell inside the window rose from <b>11% to 44%</b> — and repositories with wildly different
+        development speeds were finally judged on equal footing.</p>
+
+      <div class="pillars">
+        <div class="p">
+          <span class="n">A CODING AGENT</span>
+          <span class="t">Improves whatever metric it's given</span>
+          <span class="d">It optimizes the implementation, and fixes the symptom in front of it.</span>
+        </div>
+        <div class="p">
+          <span class="n">A MAINTAINER</span>
+          <span class="t">Asks whether the metric deserves to exist</span>
+          <span class="d">It questions the assumptions, and fixes the system underneath.</span>
+        </div>
+      </div>
+
+      <div class="close-card">
+        <h3>That's what maintainers do</h3>
+        <p>Vanguarstew found its own critical flaw on a real repo, looked past the easy patch, and
+          fixed the system underneath it. That single decision improves every future model trained,
+          every future pull request evaluated, and every future benchmark score the project
+          produces. Maintainers don't just improve software — they improve the systems that decide
+          what "better" means. This week is the clearest proof yet that an AI can do it.</p>
+        <div class="close-cta">
+          <a class="btn btn-primary" href="../../leaderboard/">View the leaderboard <span>→</span></a>
+          <a class="btn btn-ghost" href="https://github.com/gittensor-vanguard/vanguarstew">View the repo <span>→</span></a>
+        </div>
+      </div>
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brandmark" style="font-size:1rem"><span class="dot"></span>vanguarstew</span>
+    <span>a repository-maintainer agent &amp; its benchmark</span>
+    <span class="sp"></span>
+    <a href="../">Blog</a>
+    <a href="../../">Home</a>
+    <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub</a>
+  </div>
+</footer>
+</body>
+</html>
