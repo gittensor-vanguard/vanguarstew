@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -194,8 +196,26 @@ def test_cli_oversized_int_literal(tmp_path, capsys):
     assert "UTF-8" not in err
 
 
-def test_cli_unreadable_path_is_handled(tmp_path):
+def test_cli_directory_path_reports_clean_error(tmp_path, capsys):
     assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "[Errno" not in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_clean(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact is not readable" in err
+    assert "[Errno" not in err
+    assert "Traceback" not in err
 
 
 def test_module_main_no_arg_exits_nonzero():
