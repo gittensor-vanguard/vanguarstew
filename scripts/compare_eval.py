@@ -7,12 +7,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 
 
 def _numeric(value) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
+        # json parses an arbitrarily long integer literal into a Python int, and float() raises
+        # OverflowError for one too large to convert -- so an oversized composite_mean must be
+        # treated as non-numeric here rather than crashing the whole comparison. Mirrors the
+        # oversized-int guards merged across the codebase (repo_task_mean #1571, gap_outlook
+        # #1479, skip_share #1502, acceptance, component_floor).
+        try:
+            number = float(value)
+        except OverflowError:
+            return None
+        if math.isfinite(number):
+            return number
     return None
 
 
@@ -33,6 +44,18 @@ def _effective_composite_mean(artifact: dict):
     return artifact.get("composite_mean")
 
 
+def _effective_composite_parts(artifact: dict) -> dict:
+    """The ``composite_parts`` (``judge_mean``/``objective_mean``), or an empty mapping when
+    nothing was scored. The component means an unscored run reports are ``_mean([])`` placeholders
+    of ``0.0`` — exactly like its placeholder ``composite_mean`` — so they must be masked the same
+    way, or the diff self-contradicts (a ``None`` composite delta alongside a fabricated component
+    drop). Mirrors :func:`_effective_composite_mean`."""
+    if not isinstance(artifact, dict) or _is_scored_unavailable(artifact):
+        return {}
+    parts = artifact.get("composite_parts")
+    return parts if isinstance(parts, dict) else {}
+
+
 def _delta(candidate, baseline) -> float | None:
     c = _numeric(candidate)
     b = _numeric(baseline)
@@ -43,11 +66,11 @@ def _delta(candidate, baseline) -> float | None:
 
 def _metric_triplet(baseline: dict, candidate: dict, key: str) -> dict:
     if key == "composite_mean":
-        base = _effective_composite_mean(baseline)
-        cand = _effective_composite_mean(candidate)
+        base = _numeric(_effective_composite_mean(baseline))
+        cand = _numeric(_effective_composite_mean(candidate))
     else:
-        base = baseline.get(key) if isinstance(baseline, dict) else None
-        cand = candidate.get(key) if isinstance(candidate, dict) else None
+        base = _numeric(baseline.get(key)) if isinstance(baseline, dict) else None
+        cand = _numeric(candidate.get(key)) if isinstance(candidate, dict) else None
     return {
         "baseline": base,
         "candidate": cand,
@@ -161,8 +184,8 @@ def compare_eval_artifacts(baseline: dict, candidate: dict) -> dict:
         return {"generalization": _generalization_diff(baseline, candidate)}
 
     parts = {}
-    base_parts = baseline.get("composite_parts") or {}
-    cand_parts = candidate.get("composite_parts") or {}
+    base_parts = _effective_composite_parts(baseline)
+    cand_parts = _effective_composite_parts(candidate)
     for key in ("judge_mean", "objective_mean"):
         if key in base_parts or key in cand_parts:
             parts[key] = _metric_triplet(base_parts, cand_parts, key)

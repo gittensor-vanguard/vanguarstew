@@ -14,12 +14,22 @@ import shutil
 import subprocess
 import tarfile
 
-from agent.context import CONTEXT_FILE
+from agent.context import CONTEXT_FILE, README_PROBE_NAMES
 from benchmark.leakage import scrub_context
 
 
 def _git(repo, *args, check=True):
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        # The git binary is not installed / not on PATH: subprocess.run raises FileNotFoundError
+        # at the spawn site, before any exit code exists. Translate it into the same clean
+        # RuntimeError this wrapper already raises when git runs and fails, so a missing git
+        # surfaces as an actionable error instead of a raw traceback.
+        raise RuntimeError(
+            "the `git` CLI is required but was not found on PATH; install it from "
+            "https://git-scm.com/downloads"
+        ) from exc
     if check and r.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout
@@ -165,7 +175,7 @@ def build_context(repo: str, commit: str, lookback: int = 50) -> dict:
             continue  # tag created after T — a leak; drop it
         tags.append(name)
     readme = ""
-    for name in ("README.md", "README.rst", "README", "docs/README.md"):
+    for name in README_PROBE_NAMES:
         content = file_at(repo, commit, name)
         if content:
             readme = content[:4000]

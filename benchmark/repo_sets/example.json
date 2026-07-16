@@ -1,29 +1,29 @@
 {
   "name": "example",
   "description": "EXAMPLE / starter leakage-safe repo set. The sources below are placeholders (OWNER/...) and are NOT operational — copy this file, replace them with vetted repos, and load that curated config for real scoring. The schema and freeze-window hints are the contract this demonstrates.",
-  "strategy": "Mix RECENT repos (freeze windows past a model's training cutoff) with OBSCURE repos (low-traffic, unlikely to be memorized). Prefer recent commit windows and rotate freeze points so a memorized outcome cannot win. Reserve some repos as held_out to score generalization on codebases the agent was never tuned against.",
+  "strategy": "All OBSCURE + OLD. Pin every freeze window `before 2021-01-01` so the maintainer decisions being predicted are HUMAN — a window in the LLM-assisted era makes 'predict what the maintainer did next' circular. Memorization is defended by obscurity (low-traffic, long-lived repos), not by recency: a leakage probe found the scoring model would not recall commit sequences for any repo, famous or obscure, so the retired recent-tier hedge guarded a door that was not open. Set `horizon_days` per repo to its own median release-cycle length (clamped to [14, 90]) so the revealed window means the same thing on every repo — a fixed commit count is ~24 minutes of work on a fast repo and ~46 days on a slow one. Reserve some repos as held_out to score generalization on codebases the agent was never tuned against.",
   "repos": [
     {
-      "name": "recent-active-a",
-      "source": "https://github.com/OWNER/recent-active-a",
-      "tier": "recent",
+      "name": "obscure-lib-a",
+      "source": "https://github.com/OWNER/obscure-lib-a",
+      "tier": "obscure",
       "held_out": false,
       "freeze_window": {
-        "after": "2025-09-01",
-        "recent_bias": true,
-        "min_history": 40
+        "before": "2021-01-01",
+        "min_history": 40,
+        "horizon_days": 60
       },
-      "notes": "Active repo; choose freeze points after the training cutoff so the future isn't memorized."
+      "notes": "Low-traffic library; obscurity is the leakage defense and the pre-2021 bound keeps the ground truth human. horizon_days = this repo's own median release cycle."
     },
     {
-      "name": "recent-active-b",
-      "source": "https://github.com/OWNER/recent-active-b",
-      "tier": "recent",
+      "name": "obscure-lib-b",
+      "source": "https://github.com/OWNER/obscure-lib-b",
+      "tier": "obscure",
       "held_out": false,
       "freeze_window": {
-        "after": "2025-10-15",
-        "recent_bias": true,
-        "rotation_seed": 7
+        "before": "2021-01-01",
+        "rotation_seed": 7,
+        "horizon_days": 30
       },
       "notes": "Rotate freeze points deterministically so repeated runs don't reuse the same answer window."
     },
@@ -33,21 +33,23 @@
       "tier": "obscure",
       "held_out": false,
       "freeze_window": {
-        "min_history": 30
+        "before": "2021-01-01",
+        "min_history": 30,
+        "horizon_days": 90
       },
-      "notes": "Low-traffic library; obscurity is the leakage defense here rather than recency."
+      "notes": "A slow-releasing repo: its median cycle is long, so its window is clamped at the 90d ceiling."
     },
     {
-      "name": "heldout-recent-d",
-      "source": "https://github.com/OWNER/heldout-recent-d",
-      "tier": "recent",
+      "name": "heldout-obscure-d",
+      "source": "https://github.com/OWNER/heldout-obscure-d",
+      "tier": "obscure",
       "held_out": true,
       "freeze_window": {
-        "after": "2025-11-01",
-        "before": "2026-04-01",
-        "recent_bias": true
+        "before": "2020-06-01",
+        "min_history": 25,
+        "horizon_days": 14
       },
-      "notes": "Held out from tuning; used only to measure generalization (see #52)."
+      "notes": "Held out from tuning; used only to measure generalization (see #52). A frequent releaser, so its window sits at the 14d floor."
     },
     {
       "name": "heldout-obscure-e",
@@ -55,8 +57,10 @@
       "tier": "obscure",
       "held_out": true,
       "freeze_window": {
+        "before": "2021-01-01",
         "min_history": 25,
-        "rotation_seed": 3
+        "rotation_seed": 3,
+        "horizon_days": 45
       },
       "notes": "Held-out obscure repo; the hardest bar — unseen and unlikely to be memorized."
     }

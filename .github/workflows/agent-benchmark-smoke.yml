@@ -1,0 +1,90 @@
+name: Agent benchmark smoke
+
+# Crash/shape smoke test for PRs touching agent/. Runs the SAME repo-set against the PR's
+# agent and the base branch's agent, both in offline-stub mode (no cost, no network, no
+# secrets — safe on fork PRs). This does NOT measure reasoning-quality improvement: offline
+# mode returns each file's own deterministic stub regardless of prompt content, so it can
+# only catch crashes and output-shape regressions, not "did this PR make the agent smarter."
+#
+# The real score-delta that decides a perf:* band is a maintainer-bot-run LIVE benchmark
+# comparison against BOTH the public curated set and a private, undisclosed repo set
+# (scripts/score_pr_delta.py + combine_dual_target(), see REVIEW.md § Contribution value
+# labels). That step needs a funded model key and a curated hidden set, so it is not run
+# unattended on every push.
+
+on:
+  pull_request:
+    paths:
+      - "agent/**"
+      - "agent.py"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install 3.12
+      - run: uv sync --extra dev
+
+      - name: Run PR agent (offline stub) against the curated set
+        run: |
+          uv run python -m scripts.run_eval \
+            --agent agent.py --repo-set benchmark/repo_sets/curated.json \
+            --tasks 2 --horizon 3 --api-key offline \
+            --out /tmp/candidate.json
+
+      - name: Run base-branch agent (offline stub) for comparison
+        run: |
+          git worktree add /tmp/base-checkout origin/${{ github.event.pull_request.base.ref }}
+          cd /tmp/base-checkout
+          uv run --project "$GITHUB_WORKSPACE" python -m scripts.run_eval \
+            --agent agent.py --repo-set benchmark/repo_sets/curated.json \
+            --tasks 2 --horizon 3 --api-key offline \
+            --out /tmp/baseline.json
+
+      - name: Score the delta (shape/crash check only — see workflow header)
+        run: |
+          uv run python -m scripts.score_pr_delta /tmp/baseline.json /tmp/candidate.json \
+            --out /tmp/delta_report.json
+          echo "---"
+          cat /tmp/delta_report.json
+
+      # Rendered for every run, including fork PRs: the job summary needs no token permission,
+      # so the smoke result is always reported somewhere even when the PR comment can't be posted.
+      - name: Render the smoke result
+        run: |
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/delta_report.json"))
+          body = (
+              "**Agent benchmark smoke check** (offline stub — crash/shape only, "
+              "not a reasoning-quality score)\n\n"
+              f"- Ran clean: yes\n"
+              f"- Composite deltas: `{json.dumps(report.get('composite_deltas'))}`\n\n"
+              "This does not determine a perf:* label. That requires a maintainer-bot-run "
+              "live benchmark comparison against both the public and private repo targets "
+              "— see REVIEW.md."
+          )
+          open("/tmp/comment.md", "w").write(body)
+          PY
+          cat /tmp/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # A `pull_request` event from a fork gets a read-only GITHUB_TOKEN no matter what the
+      # `permissions:` block above requests, so `gh pr comment` fails with "Resource not
+      # accessible by integration (addComment)" and takes the whole job down with it. Every
+      # contributor PR comes from a fork (#221), so only comment on a same-repo PR; the job
+      # summary rendered above carries the result for the rest.
+      - name: Comment the smoke result on the PR
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md

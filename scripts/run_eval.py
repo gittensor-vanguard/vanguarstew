@@ -8,9 +8,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
+from benchmark.repo_set import RepoSetError
 from benchmark.runner import (
     run_generalization_report,
     run_multi_replay,
@@ -40,13 +42,48 @@ def result_summary_lines(result: dict) -> list[str]:
 
 
 def _numeric_score(value) -> float | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
+    """Return a finite float score, or ``None`` when the value is not a usable score.
+
+    ``json`` round-trips ``NaN``/``Infinity`` as floats, and an oversized int literal becomes a
+    Python ``int`` that raises ``OverflowError`` on ``float()``. Either would previously fail
+    open on ``--fail-under`` (``nan < x`` / ``inf < x`` are False) or crash. Booleans are
+    excluded (``isinstance(True, int)`` is True). Mirrors ``scripts/compare_eval._numeric`` and
+    ``benchmark/component_floor._is_number``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, OverflowError):
+        return None
+    if math.isfinite(number):
+        return number
     return None
 
 
+def _is_unscored_placeholder(result: dict) -> bool:
+    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder.
+
+    A ``run_multi_replay`` that scored no repos reports ``scored_repos == 0`` with a placeholder
+    ``composite_mean`` of ``0.0`` (an average over an empty list) — an infra/transient outcome,
+    not the agent scoring zero. Mirrors the guard ``benchmark/report.py`` and
+    ``scripts/compare_eval.py`` already apply. A ``bool`` ``scored_repos`` is not a real count
+    (``isinstance(False, int)`` is True in Python) and is rejected, and a single-repo run carries
+    no ``scored_repos`` key at all, so both keep their real ``composite_mean``.
+    """
+    scored = result.get("scored_repos")
+    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
+
+
 def check_score_floor(result: dict, fail_under: float | None) -> str | None:
-    """Return an error message when ``composite_mean`` is below ``fail_under``, else None."""
+    """Return an error message when ``composite_mean`` is below ``fail_under``, else None.
+
+    An unscored multi-repo run (``scored_repos == 0`` with a placeholder ``composite_mean`` of
+    ``0.0``) has no real score to gate, so it is skipped (returns ``None``) instead of being
+    reported as "0.000 below threshold". A genuinely scored run whose composite is really ``0.0``
+    (``scored_repos > 0``, or a single-repo run with no ``scored_repos`` key) is still gated
+    normally.
+    """
     if fail_under is None:
         return None
     # Generalization reports nest composite_mean under tuned/held_out — no top-level field.
@@ -57,17 +94,19 @@ def check_score_floor(result: dict, fail_under: float | None) -> str | None:
                 continue
             score = _numeric_score(part.get("composite_mean"))
             if score is None:
-                return (f"score floor {fail_under}: {label} composite_mean "
-                        "missing or non-numeric")
+                return (f"FAIL: {label} composite_mean missing or non-numeric"
+                        f" < --fail-under={fail_under}")
             if score < fail_under:
-                return (f"score floor {fail_under}: {label} composite_mean "
-                        f"{score:.3f} below threshold")
+                return (f"FAIL: {label} composite_mean={score:.3f}"
+                        f" < --fail-under={fail_under}")
         return None
+    if _is_unscored_placeholder(result):
+        return None  # nothing was scored — no real composite to gate against the floor
     score = _numeric_score(result.get("composite_mean"))
     if score is None:
-        return f"score floor {fail_under}: composite_mean missing or non-numeric"
+        return f"FAIL: composite_mean missing or non-numeric < --fail-under={fail_under}"
     if score < fail_under:
-        return f"score floor {fail_under}: composite_mean {score:.3f} below threshold"
+        return f"FAIL: composite_mean={score:.3f} < --fail-under={fail_under}"
     return None
 
 
@@ -150,15 +189,20 @@ def main() -> None:
         w_judge=args.w_judge, w_objective=args.w_objective,
         dual_order_judge=not args.single_order_judge,
     )
-    if args.repo_set and args.generalization:
-        result = run_generalization_report(args.repo_set, **common)
-    elif args.repo_set:
-        partition = "held_out" if args.held_out and args.repo_set_partition == "tuned" else args.repo_set_partition
-        result = run_multi_replay(repo_set=args.repo_set, repo_set_partition=partition, **common)
-    elif args.repos:
-        result = run_multi_replay(args.repos, **common)
-    else:
-        result = run_replay(repo_path=args.repo, **common)
+    try:
+        if args.repo_set and args.generalization:
+            result = run_generalization_report(args.repo_set, **common)
+        elif args.repo_set:
+            partition = ("held_out" if args.held_out and args.repo_set_partition == "tuned"
+                        else args.repo_set_partition)
+            result = run_multi_replay(repo_set=args.repo_set, repo_set_partition=partition, **common)
+        elif args.repos:
+            result = run_multi_replay(args.repos, **common)
+        else:
+            result = run_replay(repo_path=args.repo, **common)
+    except (RuntimeError, RepoSetError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
     if args.sweep_weights:
         rows = result.get("rows")
         if rows:
@@ -167,7 +211,11 @@ def main() -> None:
             print("--sweep-weights needs a single-repo run (--repo); no per-task rows to sweep",
                   file=sys.stderr)
     if args.out:
-        write_result_artifact(args.out, result)
+        try:
+            write_result_artifact(args.out, result)
+        except OSError as exc:
+            print(f"cannot write --out {args.out}: {exc}", file=sys.stderr)
+            sys.exit(1)
     for line in result_summary_lines(result):
         print(line, file=sys.stderr)
     for row in _weight_sweep_rows(result):

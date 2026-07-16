@@ -19,8 +19,9 @@ Pure analysis: no I/O, never mutates its inputs, and an artifact with no usable 
 from __future__ import annotations
 
 import logging
-from statistics import mean, pstdev
+from statistics import mean, stdev
 
+from benchmark.run_clean import check_run_clean
 from benchmark.trend import headline_score
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,50 @@ DEFAULT_MIN_RUNS = 2
 
 def _round(value):
     return round(float(value), 3) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _coerce_runs(value) -> int | None:
+    """Return a non-negative run count, or ``None`` when ``value`` is not a usable integer."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        if value is not None:
+            logger.warning(
+                "repeatability: runs is %s, not a non-negative int; treating as absent",
+                type(value).__name__,
+            )
+        return None
+    return value if value >= 0 else None
+
+
+def _effective_min_runs(min_runs: int) -> int:
+    """Minimum scored repeats required; ``0`` means \"at least one scored run\" for gating."""
+    if isinstance(min_runs, bool) or not isinstance(min_runs, int):
+        return DEFAULT_MIN_RUNS
+    return max(0, min_runs)
+
+
+def _repeat_not_clean_detail(artifact) -> str | None:
+    """Return a short reason when ``artifact`` recorded errors, else ``None``.
+
+    Delegates to :func:`benchmark.run_clean.check_run_clean` so generalization
+    repeats scan both ``tuned`` and ``held_out`` per-repo failures the same way
+    the run-clean gate does.
+    """
+    if not isinstance(artifact, dict):
+        return None
+    clean = check_run_clean(artifact)
+    if clean.get("passed"):
+        return None
+    findings = clean.get("findings")
+    if isinstance(findings, list) and findings:
+        return str(findings[0])
+    checks = clean.get("checks")
+    if isinstance(checks, list):
+        for row in checks:
+            if isinstance(row, dict) and not row.get("passed"):
+                detail = row.get("detail")
+                if detail:
+                    return str(detail)
+    return "recorded errors"
 
 
 def _repeatability_artifacts(artifacts) -> list:
@@ -65,15 +110,11 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
       number ``<= max_cv``;
     - ``reason``: a short explanation when ``stable`` is False.
     """
-    scores = [
-        s for s in (headline_score(a) for a in _repeatability_artifacts(artifacts))
-        if s is not None
-    ]
-    runs = len(scores)
+    artifacts_list = _repeatability_artifacts(artifacts)
     result = {
         "stable": False,
-        "runs": runs,
-        "scores": scores,
+        "runs": 0,
+        "scores": [],
         "mean": None,
         "stddev": None,
         "cv": None,
@@ -85,12 +126,34 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
         "reason": "",
     }
 
-    if runs < min_runs:
-        result["reason"] = f"insufficient runs: {runs} scored < min_runs {min_runs}"
+    for idx, art in enumerate(artifacts_list):
+        dirty = _repeat_not_clean_detail(art)
+        if dirty is not None:
+            result["reason"] = f"repeat {idx + 1} not clean: {dirty}"
+            return result
+
+    scores = [
+        s for s in (headline_score(a) for a in artifacts_list)
+        if s is not None
+    ]
+    runs = len(scores)
+    result["runs"] = runs
+    result["scores"] = scores
+
+    if runs == 0:
+        result["reason"] = "no scored runs"
+        return result
+
+    required = _effective_min_runs(min_runs)
+    if runs < required:
+        result["reason"] = f"insufficient runs: {runs} scored < min_runs {required}"
         return result
 
     mu = round(mean(scores), 3)
-    sd = round(pstdev(scores), 3)
+    # The repeats are a *sample* of a noisy run — the CV estimates run-to-run spread to decide
+    # reproducibility, so use the sample (Bessel-corrected) standard deviation. Population stddev
+    # underestimates the spread by sqrt(n/(n-1)) (~1.41x at n=2), biasing the gate too lenient.
+    sd = round(stdev(scores), 3) if len(scores) > 1 else 0.0
     if sd == 0:
         cv = 0.0                       # identical runs — perfectly stable regardless of the mean
     elif mu == 0:
@@ -117,10 +180,14 @@ def assess_repeatability(artifacts, max_cv: float = DEFAULT_MAX_CV,
 
 def repeatability_headline(result: dict) -> str:
     """A one-line human summary of an :func:`assess_repeatability` result."""
-    if not isinstance(result, dict) or not result.get("runs"):
+    if not isinstance(result, dict):
         return "repeatability: no scored runs"
-    if result.get("runs", 0) < result.get("min_runs", DEFAULT_MIN_RUNS):
-        return f"repeatability: inconclusive ({result['runs']} run(s))"
+    runs = _coerce_runs(result.get("runs"))
+    if runs is None or runs == 0:
+        return "repeatability: no scored runs"
+    min_runs = _effective_min_runs(result.get("min_runs", DEFAULT_MIN_RUNS))
+    if runs < min_runs:
+        return f"repeatability: inconclusive ({runs} run(s))"
     verdict = "STABLE" if result.get("stable") else "UNSTABLE"
     cv = result.get("cv")
     cv_txt = f"{cv:.1%}" if isinstance(cv, (int, float)) and not isinstance(cv, bool) else "n/a"

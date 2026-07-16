@@ -90,11 +90,36 @@ def _baseline_list(items, field: str) -> list:
     return []
 
 
+def _safe_backlog(context, key: str) -> list:
+    """Return the frozen ``open_issues``/``open_prs`` list, or ``[]`` when it must not be trusted.
+
+    Fail-closed on ``_issues_truncated is True`` (#722/#957). ``fetch_context_at`` zeroes a
+    truncated backlog at the source, but a frozen ``.vanguarstew_context.json`` can still carry a
+    partial ``open_issues``/``open_prs`` alongside the flag — the "older frozen artifacts that
+    still carry a partial backlog" case that ``context_for_agent`` (defense in depth), the
+    planner's ``_safe_prs`` (#975), and ``open_issues_from_context`` (scoring) all already guard.
+    The reference opponent is the last consumer of the flag; without this guard it would plan
+    "review PR" / "address issue" items for a partial backlog the challenger's context zeroes out,
+    and the pairwise judge would score the challenger worse for backlog/queue work it was
+    structurally denied.
+
+    A non-dict ``context`` (``None`` or any malformed value) yields ``[]`` rather than raising,
+    matching ``_baseline_list``'s fail-soft posture and the ``isinstance`` guard the rest of this
+    module applies before reading a context."""
+    if not isinstance(context, dict):
+        return []
+    if context.get("_issues_truncated") is True:
+        return []
+    return _baseline_list(context.get(key), key)
+
+
 def _commit_subject(commit) -> str:
-    """Return a commit's ``subject`` when the entry is a dict; else empty.
+    """Return a commit's ``subject`` when the entry is a dict with a string subject; else empty.
 
     ``recent_commits`` entries come from the (unvalidated) frozen context; a malformed entry
-    that isn't a dict must not crash the heuristic baseline — log and skip it instead.
+    that isn't a dict — or whose ``subject`` isn't a string — must not crash the heuristic
+    baseline. A non-dict entry is logged and skipped; a non-string subject resolves to "" so it
+    never reaches the kind heuristic (which would raise on, e.g., an ``int``).
     """
     if not isinstance(commit, dict):
         logger.warning(
@@ -102,7 +127,8 @@ def _commit_subject(commit) -> str:
             type(commit).__name__, commit,
         )
         return ""
-    return commit.get("subject", "") or ""
+    subject = commit.get("subject", "")
+    return subject if isinstance(subject, str) else ""
 
 
 def _infer_kind(text: str) -> str:
@@ -133,7 +159,7 @@ def heuristic_philosophy(context: dict) -> dict:
         context = {}
     kinds = _commit_kinds(context)
     dominant = kinds.most_common(1)[0][0] if kinds else "triage"
-    n_issues = len(_baseline_list(context.get("open_issues"), "open_issues"))
+    n_issues = len(_safe_backlog(context, "open_issues"))
     return {
         "summary": f"Recent activity is dominated by {dominant} work; "
                    f"{n_issues} open issue(s) await triage.",
@@ -154,7 +180,7 @@ def heuristic_plan(context: dict, n: int = 5) -> list:
     items = []
 
     # 1. The backlog the maintainer can see right now.
-    for issue in _baseline_list(context.get("open_issues"), "open_issues"):
+    for issue in _safe_backlog(context, "open_issues"):
         title = _issue_title(issue)
         if not title:
             continue
@@ -213,7 +239,7 @@ def _review_queue_items(context: dict, limit: int) -> list:
     if not isinstance(context, dict):
         context = {}
     items = []
-    for pr in _baseline_list(context.get("open_prs"), "open_prs"):
+    for pr in _safe_backlog(context, "open_prs"):
         title = _pr_title(pr)
         if not title:
             continue
@@ -288,7 +314,7 @@ def queue_first_solve(repo_path=None, request="", context=None, n=5, **_kw) -> d
     ctx = context if context is not None else load_context(repo_path)
     plan = queue_first_plan(ctx, n)
     n_prs = sum(
-        1 for pr in _baseline_list(ctx.get("open_prs"), "open_prs") if _pr_title(pr)
+        1 for pr in _safe_backlog(ctx, "open_prs") if _pr_title(pr)
     )
     return {
         "philosophy": heuristic_philosophy(ctx),
@@ -305,7 +331,7 @@ def heuristic_solve(repo_path=None, request="", context=None, n=5, **_kw) -> dic
     """Deterministic reference maintainer derived from the repo's own recent patterns."""
     ctx = context if context is not None else load_context(repo_path)
     plan = heuristic_plan(ctx, n)
-    n_issues = len(_baseline_list(ctx.get("open_issues"), "open_issues"))
+    n_issues = len(_safe_backlog(ctx, "open_issues"))
     return {
         "philosophy": heuristic_philosophy(ctx),
         "plan": plan,
@@ -326,7 +352,7 @@ def stability_first_solve(repo_path=None, request="", context=None, n=5, **_kw) 
     """
     ctx = context if context is not None else load_context(repo_path)
     plan = stability_first_plan(ctx, n)
-    n_issues = len(_baseline_list(ctx.get("open_issues"), "open_issues"))
+    n_issues = len(_safe_backlog(ctx, "open_issues"))
     return {
         "philosophy": heuristic_philosophy(ctx),
         "plan": plan,

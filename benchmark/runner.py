@@ -40,15 +40,38 @@ logger = logging.getLogger(__name__)
 # runner's decoded winner label): a win is 1.0, a tie 0.5, a loss 0.0.
 _JUDGE_COMPONENT = {"challenger": 1.0, "tie": 0.5, "baseline": 0.0}
 
+# Wall-clock cap for cloning a repo-set source. `git clone` reaches out over the network, so
+# without a bound a slow, stalled, or unresponsive remote hangs the entire replay indefinitely.
+# Fail the source closed (RepoSetError) instead, so the run records a clean per-repo error.
+CLONE_TIMEOUT_SECONDS = 300
+
 
 def load_solve(agent_file: str = "agent.py"):
+    if not os.path.isfile(agent_file):
+        raise RuntimeError(
+            f"agent file {agent_file!r} does not exist or is not a regular file"
+        )
     root = os.path.dirname(os.path.abspath(agent_file))
     if root not in sys.path:
         sys.path.insert(0, root)
     spec = importlib.util.spec_from_file_location("vanguarstew_entry", agent_file)
+    if spec is None:
+        raise RuntimeError(
+            f"cannot load agent file {agent_file!r}: unsupported file type or missing loader"
+        )
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.solve
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise RuntimeError(
+            f"cannot load agent file {agent_file!r}: {exc}"
+        ) from exc
+    solve = getattr(module, "solve", None)
+    if not callable(solve):
+        raise RuntimeError(
+            f"agent file {agent_file!r} does not define a callable 'solve' entrypoint"
+        )
+    return solve
 
 
 # Backwards-compatible alias; opponents now live in benchmark.baselines.
@@ -79,8 +102,14 @@ def _materialize_repo_source(source: str, checkout_root: str | None) -> tuple[st
         raise RepoSetError(f"repo-set source not found locally: {source}")
     dest = os.path.join(checkout_root, f"repo_{len(os.listdir(checkout_root))}")
     try:
-        subprocess.run(["git", "clone", "-q", source, dest], check=True, capture_output=True,
-                       text=True)
+        # `--` ends option parsing so a source beginning with `-` is treated as a repo, never a
+        # git flag; `timeout` bounds a network clone so a stalled remote can't hang the replay.
+        subprocess.run(["git", "clone", "-q", "--", source, dest], check=True,
+                       capture_output=True, text=True, timeout=CLONE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise RepoSetError(
+            f"timed out cloning repo-set source {source!r} after {CLONE_TIMEOUT_SECONDS}s"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         raise RepoSetError(f"failed to clone repo-set source {source!r}: {exc.stderr.strip()}") from exc
     return dest, True
@@ -91,13 +120,14 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                enrich_github=False, github_token=None,
                recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
                w_judge=0.6, w_objective=0.4, dual_order_judge=True,
-               min_history=10, after=None, before=None) -> dict:
+               min_history=10, after=None, before=None, horizon_days=None) -> dict:
     solve = load_solve(agent_file)
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
     tasks = generate_tasks(
         repo_path, n_tasks, horizon, min_history=min_history,
-        recent_bias=recent_bias, rotation_seed=rotation_seed, after=after, before=before)
+        recent_bias=recent_bias, rotation_seed=rotation_seed, after=after, before=before,
+        horizon_days=horizon_days)
     if not tasks:
         return {"error": "no usable tasks (repo too small for horizon/min_history)", "tasks": 0}
 
@@ -115,7 +145,10 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 ctx = scrub_context(enrich_context(ctx, repo_path, token=github_token))
                 with open(os.path.join(dest, CONTEXT_FILE), "w", encoding="utf-8") as f:
                     json.dump(ctx, f, indent=1)
-            request = f"plan the next {horizon} maintainer actions"
+            # A time-horizon run asks for the same JUDGMENT over a period rather than a count of
+            # actions — "what lands in the next N days" is the question the ground truth answers.
+            request = (f"plan the maintainer actions for the next {horizon_days} days"
+                       if horizon_days else f"plan the next {horizon} maintainer actions")
             challenger = solve(
                 repo_path=dest, request=request,
                 model=model or "validator-managed-model",
@@ -297,17 +330,25 @@ def run_multi_replay(repos=None, repo_set=None, held_out=False, repo_set_partiti
             "selection": selection,
         }
         checkout_root = tempfile.mkdtemp(prefix="vanguarstew_repo_set_")
-        for entry in entries:
-            repo_path, cleanup = _materialize_repo_source(entry.source, checkout_root)
-            selected.append({
-                "repo": entry.source,
-                "repo_name": entry.name,
-                "tier": entry.tier,
-                "held_out": entry.held_out,
-                "freeze_window": dict(entry.freeze_window),
-                "repo_path": repo_path,
-                "cleanup": cleanup,
-            })
+        try:
+            for entry in entries:
+                repo_path, cleanup = _materialize_repo_source(entry.source, checkout_root)
+                selected.append({
+                    "repo": entry.source,
+                    "repo_name": entry.name,
+                    "tier": entry.tier,
+                    "held_out": entry.held_out,
+                    "freeze_window": dict(entry.freeze_window),
+                    "repo_path": repo_path,
+                    "cleanup": cleanup,
+                })
+        except BaseException:
+            # Materialization (placeholder rejection, clone failure/timeout, missing source)
+            # raises before the replay loop's try/finally is entered, so clean up the checkout
+            # root here — otherwise a failed setup leaks the temp dir and any repos already
+            # cloned into it.
+            shutil.rmtree(checkout_root, ignore_errors=True)
+            raise
     else:
         selected = [{"repo": repo, "repo_path": repo, "cleanup": False} for repo in repos]
 

@@ -3,7 +3,10 @@
 import copy
 import logging
 import os
+import stat
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -16,6 +19,7 @@ from benchmark.sample_adequacy import (  # noqa: E402
     failed_checks,
     sample_adequacy_headline,
 )
+from scripts import sample_adequacy as cli  # noqa: E402
 
 
 def _run(tasks, challenger=None, baseline=None, tie=None):
@@ -82,6 +86,30 @@ def test_a_missing_tally_fails_all_tasks_decided():
     assert result["decided"] is None
 
 
+def test_non_finite_task_count_fails_closed():
+    # json round-trips NaN/Infinity, so a degenerate artifact can carry a non-finite task count.
+    # Infinity must not clear run_scored (inf > 0) or enough_tasks (inf >= min); a non-finite
+    # total is treated as unavailable and both fail closed (mirrors #1457/#1465), with tasks None.
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_sample_adequacy(_run(bad, 3, 2, 1), min_tasks=3)
+        assert result["passed"] is False, bad
+        assert result["tasks"] is None, bad
+        assert {"run_scored", "enough_tasks"} <= set(failed_checks(result)), bad
+
+
+def test_non_finite_tally_and_tasks_do_not_pass_the_gate():
+    # A fully-degenerate artifact (Infinity task count AND a matching Infinity tally) must not
+    # sign off adequacy via inf >= min and inf == inf; every check fails closed.
+    result = check_sample_adequacy(
+        {"per_repo": [{"tasks": float("inf"),
+                       "tally": {"challenger": float("inf"), "baseline": 0, "tie": 0}}]},
+        min_tasks=5,
+    )
+    assert result["passed"] is False
+    assert set(_names(result)) == set(failed_checks(result))   # all three fail
+    assert result["tasks"] is None
+
+
 def test_a_tally_missing_a_key_fails_all_tasks_decided():
     result = check_sample_adequacy({"tasks": 5, "tally": {"challenger": 3, "tie": 0}}, min_tasks=3)
     assert result["passed"] is False
@@ -110,6 +138,93 @@ def test_a_generalization_run_sums_both_partitions():
     result = check_sample_adequacy(dict(_gen(4, 3), tally={"challenger": 4, "baseline": 2, "tie": 1}),
                                    min_tasks=6)
     assert result["tasks"] == 7
+    assert result["passed"] is True
+
+
+# --- a real multi-repo/generalization run reports its tally under per_repo, not top-level ------
+# run_multi_replay / run_generalization_report emit no top-level `tally`; each per_repo entry
+# carries its own. all_tasks_decided must sum those (as _total_tasks sums per-repo tasks) instead
+# of only reading a top-level tally that real cross-repo runs never emit.
+
+
+def _repo(tasks, ch, ba, ti):
+    return {"repo": "r", "tasks": tasks, "tally": {"challenger": ch, "baseline": ba, "tie": ti}}
+
+
+def test_generalization_partition_error_fails_run_scored():
+    gen = {
+        "tuned": {"error": "repo set test has no tuned repos to replay", "scored_repos": 0},
+        "held_out": {"per_repo": [_repo(5, 4, 1, 0), _repo(7, 5, 1, 1)]},
+        "generalization_gap": None,
+    }
+    result = check_sample_adequacy(gen, min_tasks=10)
+    assert result["passed"] is False
+    assert "run_scored" in failed_checks(result)
+    assert "tuned=" in next(c["detail"] for c in result["checks"] if c["name"] == "run_scored")
+
+
+def test_generalization_per_repo_error_on_tuned_fails_run_scored():
+    gen = {
+        "tuned": {"per_repo": [{"repo": "bad", "error": "clone failed", "tasks": 0}]},
+        "held_out": {"per_repo": [_repo(6, 4, 1, 1), _repo(6, 3, 2, 1)]},
+        "generalization_gap": None,
+    }
+    result = check_sample_adequacy(gen, min_tasks=10)
+    assert result["passed"] is False
+    assert "run_scored" in failed_checks(result)
+
+
+def test_real_multi_repo_run_with_per_repo_tallies_is_adequate():
+    result = check_sample_adequacy({"per_repo": [_repo(5, 4, 1, 0), _repo(5, 3, 1, 1)]}, min_tasks=6)
+    assert result["tasks"] == 10 and result["decided"] == 10
+    assert result["passed"] is True and "all_tasks_decided" not in failed_checks(result)
+
+
+def test_real_generalization_run_with_per_repo_tallies_is_adequate():
+    result = check_sample_adequacy({
+        "tuned": {"per_repo": [_repo(4, 3, 1, 0)]},
+        "held_out": {"per_repo": [_repo(3, 1, 1, 1)]},
+        "generalization_gap": 0.1,
+    }, min_tasks=6)
+    assert result["tasks"] == 7 and result["decided"] == 7 and result["passed"] is True
+
+
+def test_multi_repo_with_a_skipped_repo_is_fully_decided():
+    # A skipped (zero-task) repo carries no tally and decides nothing; the scored repo's tasks are
+    # still all accounted for, so decided == tasks over the run that actually scored.
+    result = check_sample_adequacy(
+        {"per_repo": [_repo(5, 4, 1, 0), {"repo": "b", "tasks": 0, "error": "too small"}]}, min_tasks=3)
+    assert result["tasks"] == 5 and result["decided"] == 5 and result["passed"] is True
+
+
+def test_multi_repo_undercounted_tally_fails_all_tasks_decided():
+    # Correctness of the aggregate, not just "did not crash": a per_repo tally that decides fewer
+    # tasks than the repo ran (a dropped task) must fail accounting, not pass.
+    result = check_sample_adequacy({"per_repo": [_repo(5, 3, 1, 0)]}, min_tasks=3)  # tally sums 4 != 5
+    assert result["decided"] == 4 and result["tasks"] == 5
+    assert result["passed"] is False and "all_tasks_decided" in failed_checks(result)
+
+
+def test_multi_repo_scored_entry_missing_tally_fails_closed():
+    # A scored per_repo entry with no tally cannot be accounted for -> fail closed (decided None).
+    result = check_sample_adequacy({"per_repo": [_repo(5, 4, 1, 0), {"repo": "b", "tasks": 3}]}, min_tasks=3)
+    assert result["decided"] is None and "all_tasks_decided" in failed_checks(result)
+
+
+def test_top_level_per_repo_is_not_double_counted_with_partitions():
+    # An artifact that carries BOTH a top-level per_repo (the complete multi-repo list) and
+    # tuned/held_out partition lists must count the tasks once, not sum both shapes. The
+    # top-level list wins, mirroring the sibling gates (coverage, tally_integrity, ...).
+    artifact = {
+        "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 3}],
+        "tuned": {"per_repo": [{"repo": "a", "tasks": 4}]},
+        "held_out": {"per_repo": [{"repo": "b", "tasks": 3}]},
+        "tally": {"challenger": 4, "baseline": 2, "tie": 1},  # decides all 7 real tasks
+    }
+    result = check_sample_adequacy(artifact, min_tasks=6)
+    assert result["tasks"] == 7                       # not 14 (double-counted)
+    assert result["decided"] == 7
+    assert "all_tasks_decided" not in failed_checks(result)
     assert result["passed"] is True
 
 
@@ -281,3 +396,74 @@ def test_check_sample_adequacy_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_sample_adequacy(run)
     assert run == snapshot
+
+
+# --- the CLI load_artifact must report a clean error, not a raw traceback (#1073) --------------
+# load_artifact caught FileNotFoundError / JSONDecodeError / non-object, but a path that reaches
+# open() and raises a non-FileNotFoundError OSError — a directory (IsADirectoryError) or an
+# unreadable file (PermissionError) — escaped as a raw traceback. Each read-failure mode is now
+# reported distinctly with exit code 2.
+
+
+def test_load_artifact_reads_a_valid_object(tmp_path):
+    path = tmp_path / "ok.json"
+    path.write_text('{"tasks": 3}', encoding="utf-8")
+    assert cli.load_artifact(str(path)) == {"tasks": 3}
+
+
+def test_load_artifact_missing_file_still_reports_not_found(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.load_artifact(str(tmp_path / "missing.json"))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "not found" in err and "is a directory" not in err and "permission" not in err.lower()
+
+
+def test_load_artifact_directory_path_exits_two_cleanly(tmp_path, capsys):
+    # A directory reaches open() and raises IsADirectoryError (POSIX) or PermissionError (Windows) —
+    # an OSError, not FileNotFoundError. It must surface as a clean exit(2) artifact-read error,
+    # never a raw traceback and never mistaken for "not found" / "invalid JSON".
+    d = tmp_path / "a_dir"
+    d.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        cli.load_artifact(str(d))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact" in err
+    assert "not found" not in err and "not valid JSON" not in err and "JSON object" not in err
+    if os.name == "posix":
+        assert "is a directory" in err  # IsADirectoryError branch on POSIX (CI)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file-mode permissions required")
+def test_load_artifact_unreadable_file_exits_two_cleanly(tmp_path, capsys):
+    # A real permission-denied file (os.chmod, not a mock): open() raises PermissionError (an
+    # OSError). It must exit 2 with a permission message, not a raw traceback.
+    locked = tmp_path / "locked.json"
+    locked.write_text('{"tasks": 1}', encoding="utf-8")
+    locked.chmod(0)
+    if os.access(str(locked), os.R_OK):
+        # Running as root (or a filesystem ignoring mode bits): the read isn't actually blocked.
+        locked.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        pytest.skip("cannot make a file unreadable in this environment (running as root?)")
+    try:
+        with pytest.raises(SystemExit) as exc:
+            cli.load_artifact(str(locked))
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "permission denied" in err.lower() and "not found" not in err
+    finally:
+        locked.chmod(stat.S_IRUSR | stat.S_IWUSR)  # let tmp_path cleanup remove it
+
+
+def test_load_artifact_still_reports_bad_json_and_non_object(tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli.load_artifact(str(bad))
+    assert "not valid JSON" in capsys.readouterr().err
+    lst = tmp_path / "list.json"
+    lst.write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli.load_artifact(str(lst))
+    assert "JSON object" in capsys.readouterr().err

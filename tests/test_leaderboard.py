@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -13,10 +15,16 @@ if ROOT not in sys.path:
 from benchmark.leaderboard import (  # noqa: E402
     _components,
     _leaderboard_entries,
+    _leaderboard_point,
     _leaderboard_unscored,
     leaderboard_headline,
     rank,
 )
+from scripts import leaderboard as leaderboard_cli  # noqa: E402
+
+
+class _Weird:
+    """A custom object that is not a (label, artifact) pair."""
 
 
 def _single(score, judge=None, objective=None):
@@ -126,6 +134,46 @@ def test_rank_logs_warning_for_non_list_entries(caplog):
     assert any("entries is int" in r.message for r in caplog.records)
 
 
+# --- a malformed *entry* inside a valid entries list must be skipped, not crash rank ----------
+# _leaderboard_entries (#532) guards a non-list container; _leaderboard_point extends that to the
+# entries. Only a 2-element list/tuple is a valid (label, artifact) pair; everything else is
+# skipped with a warning that names the offending value, and the scored entries around it rank.
+
+_MALFORMED_POINTS = [
+    42, 3.14, True, None, "ab", b"ab", (), ("only-one",), ("a", "b", "c"),
+    ["a", "b", "c"], {"label": "A"}, _Weird(),
+]
+
+
+def test_leaderboard_point_accepts_only_two_element_pairs():
+    assert _leaderboard_point(("A", {"composite_mean": 0.5})) == ("A", {"composite_mean": 0.5})
+    assert _leaderboard_point(["A", {"composite_mean": 0.5}]) == ("A", {"composite_mean": 0.5})
+    for bad in _MALFORMED_POINTS:
+        assert _leaderboard_point(bad) is None, bad
+
+
+def test_rank_survives_and_excludes_a_malformed_entry():
+    # A single malformed entry (wrong length, not a list/tuple, bytes, or a custom object) is
+    # skipped, and it is truly absent from the output: only the well-formed entries are ranked.
+    for bad in _MALFORMED_POINTS:
+        out = rank([("A", _single(0.55)), bad, ("B", _single(0.70))])
+        assert out["scored"] == 2 and out["total"] == 2, bad
+        assert [r["label"] for r in out["ranking"]] == ["B", "A"], bad   # ranked, malformed absent
+        assert out["best"]["label"] == "B"
+
+
+def test_rank_logs_the_index_and_content_of_a_malformed_entry(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.leaderboard"):
+        out = rank([("A", _single(0.5)), {"label": "B"}])
+    assert out["scored"] == 1
+    msg = " ".join(r.message for r in caplog.records)
+    assert "entries[1]" in msg          # the offending index
+    assert "dict" in msg                # the offending type
+    assert "label" in msg               # the actual entry content, for debugging
+
+
 def test_leaderboard_headline_names_the_leader_and_counts():
     out = rank([("A", _single(0.55)), ("B", _single(0.70)), ("C", _single(0.60))])
     line = leaderboard_headline(out)
@@ -204,6 +252,16 @@ def test_components_helper_reads_headline_partition_and_guards_non_dict():
     assert _components({}) == {"judge_mean": None, "objective_mean": None}
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf")])
+def test_non_finite_component_mean_is_none_in_row(bad):
+    # json round-trips NaN/Infinity verbatim; a non-finite composite_parts mean must degrade to
+    # None rather than surfacing as inf/nan in a leaderboard row (mirrors composite_spread #1397).
+    assert _components(_single(0.6, judge=bad, objective=0.5)) == {"judge_mean": None, "objective_mean": 0.5}
+    out = rank([("A", _single(0.6, judge=bad, objective=0.5))])
+    row = out["ranking"][0]
+    assert row["judge_mean"] is None and row["objective_mean"] == 0.5
+
+
 def test_rank_does_not_mutate_inputs():
     entries = [("A", _single(0.5, judge=0.6, objective=0.4)), ("B", _gen(0.6))]
     snapshot = copy.deepcopy(entries)
@@ -225,7 +283,7 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     result = _run_cli(f"a={good}", f"b={missing}")
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    assert str(missing) in result.stderr
+    assert f"artifact not found: {missing}" in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
@@ -245,6 +303,28 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     result = _run_cli(str(path))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_single(0.5)), encoding="utf-8")
+    result = _run_cli(f"a={good}", f"b={tmp_path}")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        leaderboard_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
 
 def test_cli_still_ranks_well_formed_artifacts(tmp_path):

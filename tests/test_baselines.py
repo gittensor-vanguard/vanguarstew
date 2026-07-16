@@ -26,6 +26,7 @@ from benchmark.baselines import (
     _issue_title,
     _pr_title,
     _review_queue_items,  # noqa: E402
+    _safe_backlog,
     empty_solve,
     get_baseline,
     heuristic_philosophy,
@@ -219,6 +220,53 @@ def test_queue_first_tolerates_non_list_open_prs():
     assert isinstance(out["plan"], list)
 
 
+# --- #722/#957: the baseline is the last _issues_truncated consumer; it must fail closed too. ---
+# fetch_context_at zeroes a truncated backlog at the source, but a frozen artifact can still carry
+# a partial open_issues/open_prs alongside _issues_truncated=True (the "older frozen artifacts"
+# case context_for_agent, planner._safe_prs, and open_issues_from_context all guard).
+
+_CTX_TRUNCATED = {
+    "recent_commits": [{"subject": "fix: patch the loader"}],
+    "open_issues": [{"title": "Memory leak"}],
+    "open_prs": [{"number": 7, "title": "Add streaming export"}],
+    "_issues_truncated": True,
+}
+
+
+def test_safe_backlog_returns_empty_for_non_dict_or_truncated_context():
+    # Robust to a non-dict context (None/list/str/int) — [] instead of AttributeError — and
+    # fails closed on the flag while leaving a normal context untouched.
+    for bad in (None, ["x"], "str", 42):
+        assert _safe_backlog(bad, "open_prs") == []
+    assert _safe_backlog(_CTX_TRUNCATED, "open_prs") == []
+    assert _safe_backlog(_CTX_WITH_QUEUE, "open_prs") == _CTX_WITH_QUEUE["open_prs"]
+
+
+def test_truncated_flag_fails_closed_only_when_boolean_true():
+    # Mirrors #957: only a literal True fails closed; a truthy non-bool (1/"true"/[1]) is not the
+    # flag and must NOT blank the queue, so a malformed value can't silently disarm the opponent.
+    assert not any(p["theme"] == "PR review queue" for p in queue_first_plan(_CTX_TRUNCATED, 5))
+    for not_true in (1, "true", [1]):
+        ctx = {**_CTX_WITH_QUEUE, "_issues_truncated": not_true}
+        assert any(p["theme"] == "PR review queue" for p in queue_first_plan(ctx, 5)), not_true
+
+
+def test_all_baselines_fail_closed_on_truncation():
+    # Both plan helpers and every solve entrypoint drop the partial backlog/queue on truncation.
+    assert queue_first_plan(_CTX_TRUNCATED, 5) == heuristic_plan(_CTX_TRUNCATED, 5)
+    for solve in (heuristic_solve, stability_first_solve, queue_first_solve):
+        plan = solve(context=_CTX_TRUNCATED, n=5)["plan"]
+        assert not any(p.get("theme") in ("PR review queue", "issue backlog") for p in plan), solve
+    assert "0 open issue(s)" in heuristic_philosophy(_CTX_TRUNCATED)["summary"]
+
+
+def test_non_truncated_baseline_still_uses_queue_and_backlog():
+    # Control: without the flag the baseline reviews the queue and addresses the backlog, isolating
+    # _issues_truncated as the sole cause of the fail-closed behavior above.
+    assert any(p["theme"] == "PR review queue" for p in queue_first_plan(_CTX_WITH_QUEUE, 5))
+    assert any(p["theme"] == "issue backlog" for p in heuristic_plan(_CTX_WITH_QUEUE, 5))
+
+
 def test_empty_baseline_proposes_nothing():
     out = empty_solve(context=CTX, n=5)
     assert out["plan"] == []
@@ -324,6 +372,37 @@ def test_commit_subject_tolerates_non_dict_entries():
     assert _commit_subject(None) == ""
     assert _commit_subject(42) == ""
     assert _commit_subject(["Fix", "loader"]) == ""
+
+
+def test_commit_subject_tolerates_a_non_string_subject():
+    # A dict entry whose subject isn't a string (a number, list, or nested object from an
+    # imperfect context producer) must resolve to "", never leaking a non-string into the
+    # kind heuristic. Mirrors _issue_title's handling of non-string titles.
+    assert _commit_subject({"subject": 123}) == ""
+    assert _commit_subject({"subject": ["Fix", "loader"]}) == ""
+    assert _commit_subject({"subject": None}) == ""
+    assert _commit_subject({"subject": {"nested": "obj"}}) == ""
+    assert _commit_subject({"subject": "Fix loader"}) == "Fix loader"
+
+
+def test_heuristic_baseline_survives_a_non_string_commit_subject():
+    # Regression: a non-string subject used to crash the kind heuristic with
+    # "AttributeError: 'int' object has no attribute 'lower'". It must instead be treated as
+    # empty (triage) while the well-formed commits around it are still classified and counted.
+    ctx = {
+        "recent_commits": [
+            {"subject": "Add release v1.2.0"},
+            {"subject": 123},
+            {"subject": "Fix parser crash"},
+        ],
+        "open_issues": [],
+    }
+    philosophy = heuristic_philosophy(ctx)
+    assert philosophy["values"]                       # did not crash
+    plan = heuristic_plan(ctx)
+    assert plan                                       # did not crash
+    # The malformed entry is counted as triage, not as a release/fix it isn't.
+    assert any(item["kind"] == "release" for item in plan)
 
 
 def test_commit_subject_logs_a_warning_for_non_dict_entries(caplog):

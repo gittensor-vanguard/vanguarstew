@@ -205,19 +205,33 @@ def base_from_releases(releases) -> str | None:
 
     Accepts the context `releases` shape (`[{"tag": "v1.2.0"}, ...]`) and returns the raw
     tag string of the highest semver, so it can be fed back as `base_version`.
+
+    A release is authoritatively versioned by its `tag`; the display `name` is only a
+    fallback consulted when the tag is absent or not semver-shaped. Each release is resolved
+    to a single representative version *before* comparing across releases, so a lower release's
+    name can never outrank another release's tag (an older release titled e.g. `Preview of 9.0`
+    must not override the real highest tag and hand a bogus `base_version` to bump scoring).
+
+    Missing or invalid input degrades to "no known base", never to a corrupt one: a non-list
+    `releases` and non-dict rows are skipped (#459), and a release whose tag and name are both
+    absent or non-semver contributes no version and is skipped rather than nulling out or
+    shadowing a real versioned release. The result is `None` when no release carries a
+    parseable version.
     """
     best_tag, best_ver = None, None
     for rel in _releases_list(releases):
         if not isinstance(rel, dict):
             continue
-        candidates = (rel.get("tag"), rel.get("name"))
-        for raw in candidates:
-            if not raw:
+        raw, ver = None, None
+        for candidate in (rel.get("tag"), rel.get("name")):
+            if not candidate:
                 continue
-            ver = parse_semver(str(raw))
-            if ver is not None and (best_ver is None or ver > best_ver):
-                best_tag, best_ver = raw, ver
+            parsed = parse_semver(str(candidate))
+            if parsed is not None:
+                raw, ver = candidate, parsed
                 break
+        if ver is not None and (best_ver is None or ver > best_ver):
+            best_tag, best_ver = raw, ver
     return best_tag
 
 
@@ -347,17 +361,30 @@ _COMMIT_KIND = {
     "release": "release",
 }
 
+# The only normalized non-release kinds under which release tooling legitimately cuts a
+# version (standard-version / release-please emit `chore(release): X.Y.Z`, `build(release):
+# X.Y.Z`, `chore: release vX.Y.Z`). Any other prefix with a version body is not a release cut.
+_RELEASE_TOOLING_KINDS = frozenset({"chore", "build"})
+
 
 def is_release_subject(text: str) -> bool:
     """True only for a genuine release/version-cut subject.
 
-    Matches explicit release wording (`release`, `changelog`, `bump version`) or a subject
-    that leads with a version tag (`v1.2.0`, `Release 1.2.0`). An incidental version elsewhere
-    in the subject (`bump lodash to v4.17.21`, `fix crash in v1.2.0 parser`) does not count.
+    A release subject is exactly one of:
+    - explicit release wording (``release``, ``changelog``, ``bump version``); or
+    - a subject that leads with a version tag (``v1.2.0``, ``Release 1.2.0``); or
+    - a version-cut body under a **release-tooling** Conventional-Commit type — only
+      ``chore``/``build`` — which is how standard-version / release-please author the cut:
+      ``chore(release): 1.4.0``, ``chore(main): release 1.2.3``, ``build(release): 2.0.0``,
+      or a bare ``chore: 2.0.0``.
 
-    When a Conventional-Commit prefix is present and maps to a non-release kind (`ci:`,
-    `docs:`, `fix:`, …), the prefix is authoritative — an incidental ``release``/``changelog``
-    mention in the body must not count as a version cut (#431).
+    Everything else is NOT a release, even when a version appears in the text:
+    - an incidental version mid-subject (``bump lodash to v4.17.21``, ``fix crash in v1.2.0
+      parser``); and
+    - a version body under any **non-tooling** CC prefix — ``fix: 2.0.0``, ``ci: 3.0.0``,
+      ``docs: 1.4.0``, and especially ``revert: release 1.2.0`` (the *opposite* of a cut).
+      Outside chore/build the prefix is authoritative, and neither an incidental
+      ``release``/``changelog`` word (#431) nor a version body makes it a cut.
 
     A non-string value (an LLM may emit a list/dict/number for a plan title) is never a
     release, so it returns False instead of raising inside `re`.
@@ -368,7 +395,16 @@ def is_release_subject(text: str) -> bool:
     if m:
         kind = _COMMIT_KIND.get(m.group(1).lower())
         if kind and kind != "release":
-            return False
+            # Only release *tooling* (chore/build) cuts a version under a non-release type. A
+            # version body under any other prefix is not a cut: `fix: 2.0.0`, `ci: 3.0.0`,
+            # `docs: 1.4.0`, and especially `revert: release 1.2.0` (the opposite of a cut).
+            if kind not in _RELEASE_TOOLING_KINDS:
+                return False
+            # For a chore/build type, count it only when the body after the prefix is itself a
+            # release-tag subject (a leading optional `release` then a version); an incidental
+            # release/changelog word with no version-cut body stays a non-release (#431).
+            body = text[m.end():].lstrip(" :\t")
+            return bool(_RELEASE_TAG_SUBJECT.match(body))
     return bool(_RELEASE_KW.search(text) or _RELEASE_TAG_SUBJECT.match(text))
 
 
@@ -394,15 +430,19 @@ def commit_kind(subject: str):
     """Normalized maintainer kind for a revealed commit subject, or None.
 
     Prefers a Conventional-Commit prefix (`feat:`, `fix(scope):`, `docs!:`), then falls
-    back to release subjects (`Release v1.2.0`, `bump version`). Merge commits and
-    prefix-less subjects carry no reliable kind and return None, as does a non-string
-    subject an LLM might emit.
+    back to release subjects (`Release v1.2.0`, `bump version`). A version-cut commit that
+    release tooling authors under a chore/build type (`chore(release): 1.4.0`) reads as a
+    `release`, not its literal CC type, so kind_recall credits release anticipation. Merge
+    commits and prefix-less subjects carry no reliable kind and return None, as does a
+    non-string subject an LLM might emit.
     """
     if not isinstance(subject, str):
         return None
     m = _CC_PREFIX.match(subject)
     if m:
         kind = _COMMIT_KIND.get(m.group(1).lower())
+        if kind and kind != "release" and is_release_subject(subject):
+            return "release"
         if kind:
             return kind
     if is_release_subject(subject):
@@ -621,6 +661,26 @@ def _objective_for_component(objective: dict) -> dict:
     return {k: objective[k] for k in _COMPONENT_SCORE_KEYS if k in objective}
 
 
+def _recall_for_component(obj: dict) -> float:
+    """Return a numeric module-recall value for :func:`objective_component`.
+
+  ``float(True)`` / ``float(False)`` would silently score bool recalls as 1.0 / 0.0; reject
+  booleans and other non-numeric values (falling back from a bool weighted recall to plain
+  ``module_recall`` when present).
+    """
+    recall = obj.get("weighted_module_recall")
+    if recall is None:
+        recall = obj.get("module_recall", 0.0)
+    elif isinstance(recall, bool):
+        recall = obj.get("module_recall", 0.0)
+    if isinstance(recall, bool) or not isinstance(recall, (int, float)):
+        return 0.0
+    try:
+        return float(recall)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def objective_component(objective: dict) -> float:
     """Collapse the objective anchor into a single value in [0, 1].
 
@@ -637,15 +697,17 @@ def objective_component(objective: dict) -> float:
     if not isinstance(objective, dict):
         return 0.0
     obj = _objective_for_component(objective)
-    recall = obj.get("weighted_module_recall")
-    if recall is None:
-        recall = obj.get("module_recall", 0.0)
-    try:
-        parts = [float(recall)]
-    except (ValueError, TypeError):
-        parts = [0.0]
+    recall = _recall_for_component(obj)
+    parts = [recall]
     if obj.get("actual_kinds"):
-        parts.append(float(obj.get("kind_recall", 0.0)))
+        kind = obj.get("kind_recall", 0.0)
+        if isinstance(kind, bool) or not isinstance(kind, (int, float)):
+            parts.append(0.0)
+        else:
+            try:
+                parts.append(float(kind))
+            except (ValueError, TypeError):
+                parts.append(0.0)
     if obj.get("release_signaled"):
         parts.append(1.0 if obj.get("release_predicted") else 0.0)
     if obj.get("bump_actual") is not None:

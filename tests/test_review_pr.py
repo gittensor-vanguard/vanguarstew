@@ -227,7 +227,7 @@ def test_main_renders_ghost_author_for_deleted_account(capsys):
         "tests_present": True,
         "concerns": [],
         "action": "comment",
-        "value_label": "mult:maintenance",
+        "value_label": "mult:contribution",
         "recommendation": "ship it",
     }
     with patch("scripts.review_pr._gh", side_effect=_gh_json(payload)):
@@ -271,9 +271,88 @@ def test_fetch_pr_propagates_gh_failure_without_a_json_decode_error():
             fetch_pr("o/r", 1)
 
 
-def test_main_surfaces_gh_failure_instead_of_a_json_decode_error(monkeypatch):
+def _run_main_cli(argv):
+    """Invoke main() as a real CLI process would see it: SystemExit instead of a raised
+    exception, and the message on stderr rather than a Python traceback."""
+    import subprocess as _subprocess
+    import sys as _sys
+    return _subprocess.run(
+        [_sys.executable, "-m", "scripts.review_pr", *argv],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_main_reports_a_clean_error_instead_of_a_raw_gh_failure(monkeypatch):
+    # main() must not let a gh failure escape as an uncaught RuntimeError -- it should print
+    # the real message to stderr and exit 1, the same posture as every other CLI in this repo.
     monkeypatch.setattr(sys, "argv", ["review_pr.py", "--repo", "o/r", "--pr", "1"])
     stderr = "GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)"
     with patch("subprocess.run", side_effect=_fake_run(returncode=1, stderr=stderr)):
-        with pytest.raises(RuntimeError, match="Could not resolve to a Repository"):
+        with pytest.raises(SystemExit) as exc:
             main()
+    assert exc.value.code == 1
+
+
+def test_main_reports_a_clean_error_instead_of_a_raw_pr_not_found(monkeypatch, capsys):
+    # fetch_pr's own ValueError ("PR #N not found") must be caught the same way as the gh
+    # RuntimeError, not just one of the two exception types.
+    monkeypatch.setattr(sys, "argv", ["review_pr.py", "--repo", "o/r", "--pr", "999"])
+    with patch("subprocess.run", side_effect=_fake_run(returncode=0, stdout="")):
+        with pytest.raises(SystemExit) as exc:
+            main()
+    assert exc.value.code == 1
+    assert "PR #999 not found in o/r" in capsys.readouterr().err
+
+
+def test_cli_reports_a_clean_error_for_a_real_gh_failure():
+    # Drive the actual subprocess entry point (not main() in-process) against a definitely
+    # nonexistent repo, using the real gh binary -- no Traceback on stderr, exit code 1.
+    result = _run_main_cli(["--repo", "definitely/not-a-real-repo-xyz123", "--pr", "1"])
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "not-a-real-repo-xyz123" in result.stderr
+
+
+def test_gh_translates_a_missing_binary_into_a_clean_runtimeerror(tmp_path, monkeypatch):
+    # When the `gh` binary is not on PATH, subprocess.run raises FileNotFoundError at the spawn
+    # site -- before any exit code exists. Point PATH at an empty dir so `gh` genuinely cannot
+    # be found (real spawn failure, no mock), and assert _gh maps it to a RuntimeError that
+    # main() already catches, not a bare OSError. Without the fix this raises FileNotFoundError.
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(RuntimeError) as exc:
+        _gh("pr", "view", "1", "-R", "o/r")
+    msg = str(exc.value)
+    assert "gh" in msg
+    assert "not found on PATH" in msg
+
+
+def test_cli_reports_a_clean_error_when_gh_is_not_installed(tmp_path):
+    # End-to-end: drive the real subprocess entry point with a PATH that has no `gh` on it, so
+    # the binary is genuinely missing. The CLI must exit 1 with the install hint on stderr and
+    # no raw Traceback -- the same posture it already has for a gh that runs and then fails.
+    import subprocess as _subprocess
+
+    env = {**os.environ, "PATH": str(tmp_path), "VANGUARSTEW_OFFLINE": "1"}
+    result = _subprocess.run(
+        [sys.executable, "-m", "scripts.review_pr", "--repo", "o/r", "--pr", "1"],
+        cwd=ROOT, capture_output=True, text=True, check=False, env=env,
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "gh" in result.stderr
+    assert "https://cli.github.com" in result.stderr
+
+
+def test_main_still_prints_the_review_for_a_well_formed_pr(monkeypatch, capsys):
+    payload = {
+        "number": 7, "title": "Add streaming export", "body": "Fixes #10",
+        "author": {"login": "octocat"}, "additions": 12, "deletions": 0,
+        "files": [{"path": "agent/export.py"}],
+    }
+    monkeypatch.setattr(sys, "argv", ["review_pr.py", "--repo", "o/r", "--pr", "7"])
+    with patch("scripts.review_pr._gh", side_effect=_gh_json(payload)):
+        main()
+    out = capsys.readouterr().out
+    assert "o/r#7" in out
+    assert "Add streaming export" in out
+    assert "@octocat" in out

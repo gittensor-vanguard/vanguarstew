@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 
 from benchmark.score import composite_score, objective_component, objective_score
@@ -104,12 +105,32 @@ def load_corpus(root: Path | str | None = None) -> list[dict]:
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim and a large JSON integer loads as an
+    arbitrary-precision ``int``, so a hand-edited or degenerate corpus scenario can carry a
+    non-finite or oversized ``expected`` value. Without the finite guard, ``_values_match`` calls
+    ``float(value)`` on it and raises (``OverflowError`` for an oversized int; ``NaN`` compares
+    falsely), crashing the calibration run instead of failing the scenario — contradicting this
+    module's "malformed entries fail validation rather than crashing" contract. Treating a
+    non-finite/oversized value as non-numeric matches ``score_integrity`` (#1336),
+    ``artifact_snapshot`` (#1316), and ``judge_gate``. ``OverflowError`` guards an oversized int.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _values_match(expected, actual, tolerance: float) -> bool:
     if isinstance(expected, bool):
         return expected is actual
+    # The numeric branch requires BOTH operands to pass the finite `_is_number` guard, so a
+    # non-finite/oversized value on *either* side — a corrupt `expected` OR a degenerate `actual`
+    # — never reaches float(). Such a comparison degrades to `==` (mismatch) instead of raising
+    # OverflowError and aborting the run, upholding the "fail rather than crash" contract (#1489).
     if _is_number(expected) and _is_number(actual):
         return abs(float(expected) - float(actual)) <= tolerance
     return expected == actual
@@ -187,6 +208,9 @@ def _failed_ids_list(failed) -> list[str]:
                 type(failed).__name__,
             )
         return []
+    # Scenario ids are strings; keep only non-empty strings. This never coerces an item to a
+    # number, so a non-finite/oversized value slipped into the list is simply dropped — there is
+    # no float() path here to raise OverflowError.
     return [item for item in failed if isinstance(item, str) and item.strip()]
 
 
@@ -201,7 +225,8 @@ def calibration_headline(result: dict) -> str:
     """One-line human summary of a :func:`check_calibration` result."""
     if not isinstance(result, dict):
         return "score calibration: no scenarios evaluated"
-    count = int(result.get("scenario_count") or 0)
+    raw_count = result.get("scenario_count")
+    count = int(raw_count) if _is_number(raw_count) else 0
     if count == 0:
         return "score calibration: no scenarios evaluated"
     if result.get("passed"):

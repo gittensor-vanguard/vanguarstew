@@ -27,6 +27,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,17 @@ DEFAULT_MIN_TASKS = 3
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats survive a save/load round trip (json.dump writes NaN/Infinity and
+    # json.load parses them back), but int() raises on them and a NaN/Infinity count is not
+    # a usable value anyway -- treat them as malformed, like a missing or wrong-typed field,
+    # matching benchmark/report.py (#616/#927). math.isfinite also raises OverflowError for
+    # ints too large for a float, which would crash float formatting the same way.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:
@@ -55,16 +66,64 @@ def _per_repo_list(items) -> list:
     return []
 
 
-def _checks_list(checks) -> list:
-    """Return ``checks`` when it is a list; otherwise treat as no gate checks."""
-    if isinstance(checks, list):
-        return checks
-    if checks is not None:
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return coverage gate-check rows for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers (scalars, dicts, tuples, ranges, strings, etc.) are warned and
+    treated as empty (never coerced). A usable row is a dict whose ``name`` is a ``str`` and
+    whose ``passed`` is a ``bool``; anything else is skipped with a warning.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
         logger.warning(
             "coverage: checks is %s, not a list; treating as empty",
             type(checks).__name__,
         )
-    return []
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "coverage: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "coverage: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        if not isinstance(row["name"], str):
+            logger.warning(
+                "coverage: checks[%s] name is %s, not str; skipping",
+                idx,
+                type(row["name"]).__name__,
+            )
+            continue
+        if type(row["passed"]) is not bool:
+            logger.warning(
+                "coverage: checks[%s] passed is %s, not bool; skipping",
+                idx,
+                type(row["passed"]).__name__,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "coverage: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _collect_per_repo_entries(result: dict) -> tuple[list, str]:
@@ -92,16 +151,27 @@ def _repo_tasks(entry: dict) -> int | None:
 
 
 def _partition_counts(entries: list) -> tuple[int, int, int]:
-    """Return ``(total, scored, skipped)`` ignoring malformed per-repo entries."""
+    """Return ``(total, scored, skipped)`` over per-repo entries.
+
+    A dict row with a numeric ``tasks`` count is scored (``tasks > 0``) or skipped (``tasks == 0``).
+    A non-empty string row is a corrupt/malformed entry — a real repo that produced no scored
+    tasks — so it counts as a *skipped* repo (into ``total`` and ``skipped``) rather than being
+    silently dropped and inflating the pass rate; that under-count is what let too many corrupt
+    repos slip past the ``max_skipped`` gate. Mirrors how #1362 (``error_repo_share``) and #1386
+    (``freeze_coverage``) count such a row in the bad bucket. Empty/whitespace strings and other
+    non-dict/non-string entries carry no repo signal and are ignored.
+    """
     total = scored = skipped = 0
     for entry in entries:
         tasks = _repo_tasks(entry)
-        if tasks is None:
-            continue
-        total += 1
-        if tasks > 0:
-            scored += 1
-        else:
+        if tasks is not None:
+            total += 1
+            if tasks > 0:
+                scored += 1
+            else:
+                skipped += 1
+        elif isinstance(entry, str) and entry.strip():
+            total += 1
             skipped += 1
     return total, scored, skipped
 
@@ -171,18 +241,26 @@ def check_coverage(result, min_repos: int = DEFAULT_MIN_REPOS,
 
 
 def failed_checks(result: dict) -> list:
-    """The names of the checks that failed in a :func:`check_coverage` result."""
+    """The names of the checks that failed in a :func:`check_coverage` result.
+
+    Malformed ``checks`` containers and unusable rows (missing keys, wrong types) are skipped
+    after logging a warning; they never raise.
+    """
     return [
         c["name"]
-        for c in _checks_list(_dict(result).get("checks"))
-        if isinstance(c, dict) and not c.get("passed")
+        for c in _check_rows_list(_dict(result).get("checks"))
+        if not c["passed"]
     ]
 
 
 def coverage_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_coverage` result."""
+    """A one-line human summary of a :func:`check_coverage` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"coverage: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = _checks_list(result.get("checks"))
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "coverage: no checks evaluated"
     if result.get("passed"):

@@ -68,6 +68,80 @@ reviewable, testable, and safe to build a launch on.
 - The system SHALL treat only files listed in `vanguarstew_agent_files.json` as the scored agent
   surface; changes outside that manifest SHALL NOT affect an agent's score.
 
+## Inputs
+
+The entrypoint signature is `solve(repo_path, request, model, api_base, api_key, n) → dict`.
+
+| Param | Type | Default | Meaning |
+| ----- | ---- | ------- | ------- |
+| `repo_path` | `str` | `"/tmp/task_repo"` | Path to the repo frozen at T, with a `vanguarstew_context.json` file containing only knowable-at-T state |
+| `request` | `str` | `"plan the next 5 maintainer actions"` | The maintainer decision being asked for |
+| `model` | `str` | `"validator-managed-model"` | Managed-inference model identifier |
+| `api_base` | `str` | `"http://validator-proxy/v1"` | Managed-inference endpoint URL |
+| `api_key` | `str` | `"per-run-proxy-token"` | Managed-inference credential |
+| `n` | `int` | `5` | Number of maintainer actions to plan |
+
+The system SHALL accept `model`, `api_base`, and `api_key` as the only inference surface;
+the agent SHALL NOT use any other endpoint, credential, or third-party key.
+
+## Outputs
+
+The system SHALL return a `dict` with every key below present on every invocation. A field
+with no value SHALL be `null` (for scalars) or `[]` (for sequences), never absent.
+
+| Key | Type | Optional | Source | Meaning |
+| --- | ---- | -------- | ------ | ------- |
+| `philosophy` | `dict` | no | `infer_philosophy()` | Inferred repo direction, values, and maintainer posture |
+| `plan` | `list` | no | `plan_next_actions()` | The next `n` planned maintainer actions/PRs |
+| `action` | `str \| null` | no | `decide()` | The concrete maintainer call — one of `merge`, `request-changes`, `reject`, `triage`, `release`, `patch`, `praise` |
+| `labels` | `list` | no | `decide()` | Recommended labels for the triaged/merged item |
+| `reviewer` | `str \| null` | no | `decide()` | Recommended reviewer handle, or `null` |
+| `version_bump` | `str \| null` | no | `decide()` | Recommended version bump (`major`/`minor`/`patch`), or `null` |
+| `patch` | `str \| null` | no | `decide()` | A unified diff when the action is `patch`, else `null` |
+| `rationale` | `str` | no | `decide()` | The reasoning the pairwise judge evaluates |
+| `logs` | `str` | no | — | Run-metadata summary of the executed steps |
+| `steps` | `int` | no | — | Number of steps executed in the maintainer workflow |
+| `cost` | `null` | no | — | Reserved for future cost tracking |
+| `success` | `bool` | no | — | Whether the invocation completed without error |
+| `_elapsed_s` | `float` | yes | — | Wall-clock seconds for the invocation (additional metadata) |
+
+- The system SHALL populate every non-optional key on every invocation.
+- The system MAY carry additional run-metadata keys (e.g. `_elapsed_s`); scorers SHALL ignore
+  unrecognized keys.
+
+## Offline mode
+
+Offline mode is gated by three conditions checked in `agent/llm.py::LLM.__init__`:
+
+- `VANGUARSTEW_OFFLINE=1` in the environment, **or**
+- `api_key == "offline"` (the literal string), **or**
+- `api_base` is falsy (empty, `None`, or whitespace-only)
+
+WHEN any of these conditions is met, `LLM.offline` SHALL be `True` and:
+
+- `LLM.chat()` SHALL return the deterministic stub `'{"_offline": true}'` without making a network call.
+- `LLM.chat_json(system, user, stub=…)` SHALL return `stub` verbatim when offline (or `{}` when
+  `stub` is `None`).
+
+WHILE offline, `solve()` SHALL still invoke the full maintainer workflow (load context →
+infer philosophy → plan → decide) and return a fully-shaped output dict, so the loop is
+exercisable in CI without a network or a key.
+
+## Errors
+
+`solve()` SHALL NOT raise on malformed model output. Per the constitution's robustness
+contract (`AGENTS.md` → Benchmark integrity):
+
+- IF the LLM emits a malformed field (non-string where a string is expected, non-list where a
+  list is expected), THEN `solve()` and the downstream scoring pipeline SHALL coerce and log a
+  warning, not crash.
+- One bad field SHALL NOT abort a replay run.
+
+`solve()` MAY propagate exceptions from the filesystem (`OSError` on unreadable frozen repo) or
+the inference transport (`urllib.error.URLError` / `http.client.HTTPException` on network
+failure). These are infrastructure failures, not contract violations; the benchmark harness
+(`benchmark/runner.py`) catches them.
+
 ## Out of scope
 
 - The managed-inference proxy / model hosting itself (validator-owned infrastructure).
@@ -79,7 +153,7 @@ reviewable, testable, and safe to build a launch on.
 
 ## Verification
 
-This contract is already exercised: `agent.py`'s `__main__` runs `solve()` offline, and the
-existing suite (`tests/`) covers the pieces (`philosophy`, `planner`, `decider`, `review`) it
-composes. A future task MAY add a `tests/test_solve_contract.py` asserting the output-shape and
-offline-determinism criteria directly; this spec adds no code and does not require it.
+- `tests/test_spec_001_solve.py` (this PR) exercises the entrypoint signature, offline
+  output shape, and determinism criteria directly.
+- Broader smoke coverage remains in `tests/test_smoke.py`; step-level contracts live in specs
+  006–010.

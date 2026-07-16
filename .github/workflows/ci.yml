@@ -66,3 +66,54 @@ jobs:
         env:
           VANGUARSTEW_OFFLINE: "1"
         run: python -m pytest -q --cov=agent --cov=benchmark --cov-report=term-missing --cov-fail-under=75
+
+  # A red base branch is worse than a red PR: every PR's own lint/test run checks out the
+  # FULL repo (not just its diff), so once test/main itself breaks, every other open PR's own
+  # checks start failing too -- for a reason that has nothing to do with that PR. This job only
+  # runs on a direct push to test/main (never on pull_request -- a PR's own red checks are
+  # already visible on the PR itself, no separate alert needed) and turns a base-branch break
+  # into one pinned, auto-updating issue instead of a silent status nobody is watching. #1360's
+  # lint break sat red on `test` for ~80 minutes through 3 more merges before anyone noticed.
+  notify-on-red:
+    if: always() && github.event_name == 'push'
+    needs: [lint, validate, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      ANY_FAILED: ${{ needs.lint.result == 'failure' || needs.validate.result == 'failure' || needs.test.result == 'failure' }}
+    steps:
+      - name: Open or update the base-branch-red tracking issue
+        if: env.ANY_FAILED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TITLE="CI is red on \`${{ github.ref_name }}\`"
+          BODY="\`${{ github.ref_name }}\` failed CI at $(date -u +%FT%TZ) (commit ${{ github.sha }}).
+
+          Every other open PR's own lint/test checks run against the FULL repo, so this failure
+          is now silently failing THEIR checks too, for a reason that has nothing to do with
+          their own diff -- fix this first before merging anything else.
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Jobs: lint=${{ needs.lint.result }}, validate=${{ needs.validate.result }}, test=${{ needs.test.result }}"
+          existing=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label bug,ci
+          fi
+
+      - name: Close the tracking issue once green again
+        if: env.ANY_FAILED == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TITLE="CI is red on \`${{ github.ref_name }}\`"
+          existing=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Green again as of commit ${{ github.sha }}."
+          fi

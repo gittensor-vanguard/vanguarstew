@@ -26,6 +26,7 @@ of 1; malformed/non-dict results fail the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -35,23 +36,81 @@ DEFAULT_TOLERANCE = 0.002
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats survive a save/load round trip (json.dump writes NaN/Infinity and
+    # json.load parses them back), but int() raises on them and a NaN/Infinity value is not
+    # usable anyway -- treat them as malformed, like a missing or wrong-typed field, matching
+    # row_integrity.py (#616/#927). math.isfinite also raises OverflowError for ints too large
+    # for a float, which would crash int()/formatting the same way.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _checks_list(checks) -> list:
-    """Return ``checks`` when it is a list; otherwise treat as no gate checks."""
-    if isinstance(checks, list):
-        return checks
-    if checks is not None:
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return score-integrity check rows for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers (scalars, dicts, tuples, ranges, strings, etc.) are warned and
+    treated as empty (never coerced). A usable row is a dict whose ``name`` is a ``str`` and
+    whose ``passed`` is a ``bool``; anything else is skipped with a warning.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
         logger.warning(
             "score_integrity: checks is %s, not a list; treating as empty",
             type(checks).__name__,
         )
-    return []
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "score_integrity: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "score_integrity: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        if not isinstance(row["name"], str):
+            logger.warning(
+                "score_integrity: checks[%s] name is %s, not str; skipping",
+                idx,
+                type(row["name"]).__name__,
+            )
+            continue
+        if type(row["passed"]) is not bool:
+            logger.warning(
+                "score_integrity: checks[%s] passed is %s, not bool; skipping",
+                idx,
+                type(row["passed"]).__name__,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "score_integrity: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _round3(value):
@@ -186,6 +245,19 @@ def _in_unit_interval(value) -> bool:
     return _is_number(value) and 0.0 <= float(value) <= 1.0
 
 
+def _partition_scored(part: dict) -> bool:
+    """True when a partition carries a composite score to verify.
+
+    A partition may omit ``scored_repos`` while still reporting ``composite_mean``; the previous
+    truthy ``scored_repos`` guard skipped those slices entirely.
+    """
+    part = _dict(part)
+    scored = part.get("scored_repos")
+    if _is_number(scored):
+        return int(scored) > 0
+    return _is_number(part.get("composite_mean"))
+
+
 def _scoring_slices(result: dict) -> list[tuple[str, dict]]:
     """Return labeled scoring slices to verify (generalization partitions or the run itself)."""
     tuned = result.get("tuned")
@@ -193,7 +265,7 @@ def _scoring_slices(result: dict) -> list[tuple[str, dict]]:
     if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
         slices = []
         for label, part in (("tuned", tuned), ("held_out", held_out)):
-            if isinstance(part, dict) and part.get("scored_repos"):
+            if isinstance(part, dict) and _partition_scored(part):
                 slices.append((label, part))
         return slices
     return [("run", result)]
@@ -274,17 +346,25 @@ def check_score_integrity(result, tolerance: float = DEFAULT_TOLERANCE) -> dict:
 
 
 def failed_checks(result: dict) -> list:
-    """The names of the checks that failed in a :func:`check_score_integrity` result."""
+    """The names of the checks that failed in a :func:`check_score_integrity` result.
+
+    Malformed ``checks`` containers and unusable rows (missing keys, wrong types) are skipped
+    after logging a warning; they never raise.
+    """
     return [
-        c["name"] for c in _checks_list(_dict(result).get("checks"))
-        if isinstance(c, dict) and not c.get("passed")
+        c["name"] for c in _check_rows_list(_dict(result).get("checks"))
+        if not c["passed"]
     ]
 
 
 def integrity_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_score_integrity` result."""
+    """A one-line human summary of a :func:`check_score_integrity` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"score integrity: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = _checks_list(result.get("checks"))
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "score integrity: no checks evaluated"
     if result.get("passed"):

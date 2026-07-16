@@ -22,14 +22,25 @@ from datetime import date
 TIERS = ("recent", "obscure")
 
 # Allowed freeze-window hint keys and their required types. `recent_bias` is a bool;
-# `rotation_seed`/`min_history` are ints (and must NOT be bools). `after`/`before` are
-# date-ish strings the curator uses to bound freeze-point selection.
+# `rotation_seed`/`min_history`/`horizon_days` are ints (and must NOT be bools). `after`/`before`
+# are date-ish strings the curator uses to bound freeze-point selection.
+#
+# `horizon_days` switches the revealed window from "the next N commits" to "everything landing in
+# the next N days", and is set PER REPO from one uniform rule: the repo's own median release-cycle
+# length, clamped to [14, 90] days. A fixed commit count is uniform in a dimension that carries no
+# meaning and wildly non-uniform in the one that does — `horizon=5` is ~24 minutes of work on a
+# repo doing ~290 commits/day and ~46 days on one doing ~40/year. Over so short a span the ground
+# truth is dominated by which maintainer happened to be at the keyboard, not by where the project
+# was going. A release-cycle window makes the task mean the same thing everywhere ("what lands
+# before the next release?") and takes the release signal from degenerate (~24% of windows contain
+# one, so a no-op predictor wins) to discriminating (~42-48%).
 _FREEZE_KEYS = {
     "after": "str",
     "before": "str",
     "recent_bias": "bool",
     "rotation_seed": "int",
     "min_history": "int",
+    "horizon_days": "int",
 }
 
 # A checked-in *starter* config with placeholder sources — replace with vetted repos before
@@ -118,6 +129,8 @@ def replay_kwargs(entry: RepoEntry) -> dict:
         kwargs["after"] = fw["after"]
     if "before" in fw:
         kwargs["before"] = fw["before"]
+    if "horizon_days" in fw:
+        kwargs["horizon_days"] = fw["horizon_days"]
     return kwargs
 
 
@@ -243,6 +256,26 @@ def load_repo_set(path) -> RepoSet:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except json.JSONDecodeError as exc:
+    except UnicodeDecodeError as exc:
+        # A file that exists and is readable but is not valid UTF-8 (e.g. saved as UTF-16/latin-1,
+        # or a binary file passed by mistake) makes json.load raise UnicodeDecodeError while
+        # decoding the stream. UnicodeDecodeError subclasses ValueError, so this arm must come
+        # before the general ValueError arm below to keep the "not valid UTF-8" wording distinct.
+        raise RepoSetError(f"repo-set config {path} is not valid UTF-8: {exc}") from exc
+    except ValueError as exc:
+        # json.JSONDecodeError subclasses ValueError, and json.load also raises a *plain*
+        # ValueError for an integer literal beyond the int-string-conversion digit limit
+        # (Python 3.11+), which would otherwise escape a JSONDecodeError-only arm as a raw
+        # traceback instead of a clean RepoSetError.
         raise RepoSetError(f"invalid JSON in {path}: {exc}") from exc
+    except FileNotFoundError as exc:
+        # FileNotFoundError is an OSError subclass, so it must be caught before the general
+        # OSError branch below to keep the "not found" wording (the file was removed between
+        # the exists() check and open() — a TOCTOU race) distinct from the unreadable case.
+        raise RepoSetError(f"repo-set config not found: {path}") from exc
+    except OSError as exc:
+        # os.path.exists is true for a directory, and a file can exist but be unreadable
+        # (permission denied), so open() can still raise IsADirectoryError/PermissionError.
+        # Wrap it as RepoSetError so every caller gets a clean error, not a raw traceback.
+        raise RepoSetError(f"cannot read repo-set config {path}: {exc}") from exc
     return validate_repo_set(data)

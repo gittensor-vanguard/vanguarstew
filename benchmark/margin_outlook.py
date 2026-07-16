@@ -1,0 +1,91 @@
+"""Report the challenger's decisive margin and outlook from a replay artifact.
+
+``promotion`` gates on ``decisive_margin``, but nothing exposes a compact read-only summary for
+CI dashboards. ``summarize_margin_outlook`` reports the margin (from ``decisive_margin``,
+``tally``, or ``judge_report``) and whether the challenger is ahead, tied, or behind the baseline.
+
+For a ``generalization`` artifact the win/loss counts live under the ``tuned``/``held_out``
+partitions rather than at the top level, so the margin is read from the headline (``tuned``)
+partition — mirroring ``composite_spread`` — instead of the (empty) artifact root.
+
+Pure analysis: no I/O, never mutates its input, and missing data yields ``None`` rather than raising.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from benchmark.comparability import artifact_kind
+
+logger = logging.getLogger(__name__)
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _margin_from_tally(tally: dict) -> int | None:
+    counts = [tally.get(k) for k in ("challenger", "baseline")]
+    if not all(_is_int(c) for c in counts):
+        return None
+    return counts[0] - counts[1]
+
+
+def _headline_partition(artifact: dict) -> dict:
+    """The partition whose margin heads the artifact: ``tuned`` for a generalization run
+    (win/loss counts are nested under ``tuned``/``held_out``, not the root), else the artifact
+    itself. Mirrors ``composite_spread._headline_partition`` so the two stay consistent."""
+    if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
+        return _dict(artifact.get("tuned"))
+    return artifact
+
+
+def _margin(artifact: dict) -> int | None:
+    margin = artifact.get("decisive_margin")
+    if _is_int(margin):
+        return margin
+    tally = artifact.get("tally")
+    if isinstance(tally, dict):
+        derived = _margin_from_tally(tally)
+        if derived is not None:
+            return derived
+    report = _dict(artifact.get("judge_report"))
+    wins, losses = report.get("wins"), report.get("losses")
+    if _is_int(wins) and _is_int(losses):
+        return wins - losses
+    return None
+
+
+def _outlook(margin: int | None) -> str | None:
+    if not _is_int(margin):
+        return None
+    if margin > 0:
+        return "ahead"
+    if margin < 0:
+        return "behind"
+    return "tied"
+
+
+def summarize_margin_outlook(artifact) -> dict:
+    """Return decisive margin and outlook for a replay ``artifact``."""
+    artifact = _dict(artifact)
+    margin = _margin(_headline_partition(artifact))
+    return {
+        "kind": artifact_kind(artifact),
+        "decisive_margin": margin,
+        "outlook": _outlook(margin),
+    }
+
+
+def margin_outlook_headline(summary: dict) -> str:
+    """A one-line human summary of a :func:`summarize_margin_outlook` result."""
+    summary = _dict(summary)
+    margin = summary.get("decisive_margin")
+    outlook = summary.get("outlook")
+    if not _is_int(margin) or outlook is None:
+        return "margin outlook: unavailable"
+    return f"margin outlook: {outlook} (decisive_margin {margin})"

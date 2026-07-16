@@ -64,6 +64,13 @@ def test_parse_winner_tolerant():
     assert _parse_winner("") == "tie"
 
 
+def test_parse_winner_tolerates_non_string_input():
+    # The tolerant parser already coerces falsy input via `text or ""`; a truthy non-string
+    # response (weird proxy/relay reply) must also degrade to "tie", not raise TypeError.
+    for bad in (42, 3.14, True, ["A"], {"winner": "A"}, None):
+        assert _parse_winner(bad) == "tie", bad
+
+
 def _sub(plan_items=0, philosophy=True, rationale=True):
     return {
         "philosophy": {"summary": "conservative, refactor-first"} if philosophy else {},
@@ -130,6 +137,36 @@ def test_plan_substance_normalizes_scalar_items_through_filler_check():
     assert pairwise_judge({}, fluff, substance, [], llm) == "B"
 
 
+def test_item_substance_filler_title_does_not_shadow_a_substantive_theme():
+    # A filler-word *title* must not zero out an item that carries a real theme + structured
+    # fields — the item is concrete (spec 004: credit for a real title OR theme + each field).
+    rich = {"title": "Improvements", "theme": "Migrate authentication to OAuth2",
+            "kind": "feature", "files": ["auth/oauth.py"], "rationale": "security hardening"}
+    assert _item_substance(rich) == 4  # theme (1) + kind + files + rationale
+    # Filler title + filler theme -> still 0 (no real content anywhere).
+    assert _item_substance({"title": "cleanup", "theme": "misc"}) == 0
+    # Filler title + no theme -> 0.
+    assert _item_substance({"title": "updates"}) == 0
+    # Real title + filler theme -> the real title is used (theme is irrelevant here).
+    assert _item_substance({"title": "add retry to the loader", "theme": "misc"}) == 1
+    # Non-string title still falls back to a real theme (regression: existing pinned case).
+    assert _item_substance({"title": 123, "theme": "concurrency"}) == 1
+
+
+def test_offline_judge_credits_a_filler_titled_but_substantive_plan():
+    # End-to-end: a plan whose one item has a filler title but a real theme+fields must beat a
+    # pure-filler plan from BOTH presentation orders (before the fix it tied / lost).
+    llm = LLM(api_key="offline")
+    substantive = {"philosophy": {"direction": "stabilize"},
+                   "plan": [{"title": "Improvements", "theme": "migrate auth to OAuth2",
+                             "kind": "feature", "files": ["auth/oauth.py"]}],
+                   "rationale": "security"}
+    filler = {"philosophy": {}, "plan": [{"title": "misc"}, {"title": "updates"}],
+              "rationale": "general improvements"}
+    assert pairwise_judge({}, substantive, filler, [], llm) == "A"
+    assert pairwise_judge({}, filler, substantive, [], llm) == "B"
+
+
 def test_plan_substance_counts_scalar_files_once():
     assert _plan_substance([{"title": "fix loader", "kind": "bugfix", "files": "core/loader.py"}]) == 3
 
@@ -174,6 +211,24 @@ def test_null_plan_items_score_zero_substance():
     nulls = {"plan": [None, None, None, None]}
     assert pairwise_judge({}, real, nulls, [], llm) == "A"
     assert pairwise_judge({}, nulls, real, [], llm) == "B"
+
+
+def test_falsy_scalar_plan_items_score_zero_substance():
+    # Content-free JSON scalars other than null — false / 0 / 0.0 / true — stringify to
+    # "false"/"0"/"0.0"/"true": not blank, not filler, so without the isinstance(str) guard
+    # they slip through and inflate the plan's substance rank. Only genuine string items count.
+    assert _plan_substance([False, False, False, False]) == 0
+    assert _plan_substance([0, 0, 0, 0]) == 0
+    assert _plan_substance([0.0, 0.0, 0.0]) == 0
+    assert _plan_substance([True, 1, 2, 3]) == 0
+    # Falsy scalars mixed with a real item contribute nothing beyond the real item.
+    assert _plan_substance([False, "add retry to loader", 0]) == 1
+
+    llm = LLM(api_key="offline")
+    real = {"plan": [{"title": "fix loader race", "kind": "bugfix"}]}
+    pad = {"plan": [False, False, False]}
+    assert pairwise_judge({}, real, pad, [], llm) == "A"
+    assert pairwise_judge({}, pad, real, [], llm) == "B"
 
 
 def test_verbose_fluff_plan_does_not_beat_concise_substance():

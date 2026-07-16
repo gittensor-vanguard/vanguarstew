@@ -1,0 +1,131 @@
+"""Tests for gap outlook summary and CLI (deterministic, offline)."""
+
+import json
+import os
+import sys
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from benchmark.gap_outlook import gap_outlook_headline, summarize_gap_outlook  # noqa: E402
+from scripts import gap_outlook as cli  # noqa: E402
+
+
+def _part(score, scored=2):
+    return {"composite_mean": score, "scored_repos": scored, "repos": scored}
+
+
+def _gen(tuned, held, gap):
+    return {
+        "tuned": _part(tuned),
+        "held_out": _part(held),
+        "generalization_gap": gap,
+    }
+
+
+def test_unfavorable_when_gap_positive():
+    # gap = tuned - held_out; positive means held-out dropped relative to tuned (worse
+    # generalization), so the verdict is unfavorable.
+    out = summarize_gap_outlook(_gen(0.7, 0.6, 0.1))
+    assert out["verdict"] == "unfavorable"
+    assert out["generalization_gap"] == 0.1
+
+
+def test_favorable_when_gap_zero_or_negative():
+    assert summarize_gap_outlook(_gen(0.6, 0.6, 0.0))["verdict"] == "favorable"   # held up exactly
+    assert summarize_gap_outlook(_gen(0.5, 0.6, -0.1))["verdict"] == "favorable"  # held-out better
+
+
+def test_verdict_agrees_with_acceptance_gate():
+    # gap_outlook must not label "favorable" a run the acceptance gate rejects for its gap.
+    from benchmark.acceptance import check_acceptance
+    artifact = _gen(0.8, 0.3, 0.5)                       # held-out collapsed; gap 0.5 > max_gap
+    assert summarize_gap_outlook(artifact)["verdict"] == "unfavorable"
+    gate = check_acceptance(artifact)
+    assert "gap_within_bound" in [c["name"] for c in gate["checks"] if not c["passed"]]
+
+
+def test_stale_generalization_gap_field_is_ignored():
+    # Recompute from partition composites; a stale top-level gap must not flip the verdict.
+    artifact = _gen(0.8, 0.3, -0.1)                      # stale field says favorable; true gap +0.5
+    out = summarize_gap_outlook(artifact)
+    assert out["generalization_gap"] == 0.5
+    assert out["verdict"] == "unfavorable"
+
+
+def test_float_zero_scored_repos_treated_as_unscored():
+    from benchmark.gap_outlook import _partition_score
+    assert _partition_score({"composite_mean": 0.0, "scored_repos": 0.0}) is None
+
+
+def test_non_generalization_returns_none_verdict():
+    out = summarize_gap_outlook({"composite_mean": 0.6, "tasks": 5})
+    assert out["verdict"] is None
+    assert out["kind"] == "single"
+
+
+def test_headline():
+    assert "unfavorable" in gap_outlook_headline(summarize_gap_outlook(_gen(0.65, 0.60, 0.05)))
+    assert "favorable" in gap_outlook_headline(summarize_gap_outlook(_gen(0.60, 0.65, -0.05)))
+
+
+@pytest.fixture
+def tmp_artifact(tmp_path):
+    def write(payload):
+        path = tmp_path / "run.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return str(path)
+    return write
+
+
+def test_cli(tmp_artifact, capsys):
+    path = tmp_artifact(_gen(0.7, 0.65, 0.05))          # gap +0.05: held-out dropped
+    assert cli.run([path]) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["verdict"] == "unfavorable"
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory artifact path is an OSError (IsADirectoryError on POSIX, PermissionError on
+    # Windows), not a FileNotFoundError -- it must exit 2 with an actionable message, not a raw
+    # traceback.
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "directory" in err or "not readable" in err
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_composite_mean_degrades_to_na(bad):
+    # json.dump/json.load round-trip NaN/Infinity verbatim, so a hand-edited or degenerate
+    # artifact can carry a non-finite composite_mean. It is not a real score: the partition
+    # scores None, the recomputed gap is None, the verdict is unknown, and the headline degrades
+    # to "n/a" rather than surfacing "nan"/"inf" (mirrors benchmark/trend.py and skip_share.py).
+    from benchmark.gap_outlook import _partition_score
+
+    assert _partition_score({"composite_mean": bad, "scored_repos": 2}) is None
+    out = summarize_gap_outlook(_gen(bad, 0.5, 0.1))
+    assert out["generalization_gap"] is None
+    assert out["tuned_score"] is None
+    assert out["verdict"] is None
+    headline = gap_outlook_headline(out)
+    assert "nan" not in headline
+
+
+def test_oversized_int_composite_mean_degrades_to_na_instead_of_crashing():
+    # math.isfinite() raises OverflowError for a Python int too large to convert to a float
+    # (a hand-edited or degenerate artifact's composite_mean) -- must degrade the same way a
+    # NaN/Infinity value does, not crash outright.
+    from benchmark.gap_outlook import _is_number, _partition_score
+
+    assert _is_number(10**400) is False
+    assert _partition_score({"composite_mean": 10**400, "scored_repos": 2}) is None
+    out = summarize_gap_outlook(_gen(10**400, 0.5, 0.1))
+    assert out["generalization_gap"] is None
+    assert out["tuned_score"] is None
+    assert out["verdict"] is None
+    headline = gap_outlook_headline(out)
+    assert "n/a" in headline
+    assert "n/a" in headline

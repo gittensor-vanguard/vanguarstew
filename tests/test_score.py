@@ -414,6 +414,116 @@ def test_objective_component_not_penalized_by_incidental_release_word():
     assert objective_component(obj) == 1.0
 
 
+def test_is_release_subject_accepts_chore_build_release_cuts():
+    # Release tooling authors the version-cut commit under a chore/build type: standard-version
+    # (`chore(release): X.Y.Z`), release-please (`chore(main): release X.Y.Z`), and the plain
+    # `chore: release vX.Y.Z`. Each is a genuine version cut and must be scored as a release.
+    for subj in (
+        "chore(release): 1.4.0",
+        "build(release): 2.0.0",
+        "chore(main): release 1.2.3",
+        "chore: release v3.1.0",
+        "chore(release)!: 4.0.0",
+    ):
+        assert is_release_subject(subj), subj
+        assert commit_kind(subj) == "release", subj
+
+
+def test_bare_version_body_under_chore_build_is_a_release_cut():
+    # A bare version body (no explicit `release` word) under a chore/build tooling type is a
+    # genuine cut — some tooling emits `chore: 2.0.0` / `build: 3.0.0` directly.
+    for subj in ("chore: 2.0.0", "build: 3.0.0", "chore!: 1.0.0", "build(deps)!: 4.5.6"):
+        assert is_release_subject(subj), subj
+        assert commit_kind(subj) == "release", subj
+
+
+def test_version_body_under_non_tooling_prefix_is_not_a_release():
+    # The chore/build carve-out (#431) must NOT extend to other Conventional-Commit types: a
+    # version body under fix/ci/docs/style/perf — and especially `revert:`, the opposite of a
+    # cut — is not a release. Only release tooling (chore/build) cuts a version this way.
+    for subj in (
+        "revert: release 1.2.0",
+        "fix: 2.0.0",
+        "ci: 3.0.0",
+        "docs: 1.4.0",
+        "style: 2.2.2",
+        "perf: 1.5.0",
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+    # A revert keeps its own CC kind rather than being mislabeled a release.
+    assert commit_kind("revert: release 1.2.0") == "revert"
+    assert commit_kind("fix: 2.0.0") == "fix"
+
+
+def test_revert_release_commit_does_not_credit_the_release_axis():
+    # Downstream: a window whose only release-ish commit REVERTS a release must not score the
+    # release axis. Before the fix, is_release_subject("revert: release X") was True, corrupting
+    # release_signaled / released_version / bump_actual and kind_recall's 'release'.
+    revealed = [{"subject": "revert: release 2.0.0", "files": ["CHANGELOG.md"]}]
+    assert release_signaled(revealed) is False
+    assert released_version(revealed) is None
+    plan = [{"title": "cut the 2.0.0 release", "kind": "release"}]
+    score = objective_score(plan, revealed, base_version="1.9.0")
+    assert score["release_signaled"] is False
+    assert score["bump_actual"] is None
+    assert "release" not in score["actual_kinds"]
+    # Contrast: a genuine chore(release) cut in the same slot DOES credit the release axis.
+    cut = [{"subject": "chore(release): 2.0.0", "files": ["CHANGELOG.md"]}]
+    assert release_signaled(cut) is True
+    assert released_version(cut) == (2, 0, 0)
+    assert "release" in objective_score(plan, cut, base_version="1.9.0")["actual_kinds"]
+
+
+def test_release_scoped_non_cuts_stay_non_release():
+    # The chore/build carve-out is body-gated: a release-scoped or release-mentioning commit
+    # whose body is prose (not a version-cut announcement) is release infrastructure, not a
+    # version cut, so the #431 posture holds and it must not score the release axis.
+    for subj in (
+        "ci(release): update the release pipeline",
+        "chore(release): tidy the release script",
+        "refactor: release the lock at 3.0",
+        "chore(deps): bump lodash to 4.17.21",
+        "test(release): cover the release-notes generator",
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+
+
+def test_released_version_from_chore_build_release_cut():
+    assert released_version(
+        [{"subject": "chore(release): 1.4.0", "files": ["CHANGELOG.md"]}]) == (1, 4, 0)
+    assert released_version([{"subject": "build(release): 2.0.0", "files": []}]) == (2, 0, 0)
+    assert released_version([{"subject": "chore(main): release 1.2.3", "files": []}]) == (1, 2, 3)
+
+
+def test_objective_anchor_credits_chore_release_cut():
+    # A plan that correctly anticipates a standard-version release cut (release kind + minor bump)
+    # must earn the release, bump, and kind axes. Before the fix `chore(release): 1.4.0` read as a
+    # plain chore, so all three axes silently dropped and a correct plan scored the same as one
+    # that ignored the release entirely.
+    from benchmark.score import objective_component
+    revealed = [
+        {"subject": "feat: add widget api", "files": ["widget/api.py"]},
+        {"subject": "chore(release): 1.4.0", "files": ["CHANGELOG.md"]},
+    ]
+    anticipated = [
+        {"title": "ship widget api", "kind": "feature"},
+        {"title": "cut the 1.4 release", "kind": "release"},
+    ]
+    obj = objective_score(anticipated, revealed, version_bump="minor", base_version="1.3.0")
+    assert obj["release_signaled"] is True
+    assert obj["bump_actual"] == "minor" and obj["bump_match"] is True
+    assert "release" in obj["actual_kinds"] and obj["kind_recall"] == 1.0
+
+    # A plan that ignored the release scores strictly lower on the same window, so the anchor
+    # actually discriminates on release anticipation instead of collapsing both to one value.
+    ignored = [{"title": "ship widget api", "kind": "feature"}]
+    ignored_obj = objective_score(ignored, revealed, version_bump=None, base_version="1.3.0")
+    assert ignored_obj["release_signaled"] is True and ignored_obj["release_predicted"] is False
+    assert objective_component(obj) > objective_component(ignored_obj)
+
+
 def test_release_predicted_ignores_inline_version_but_honors_kind():
     assert release_predicted([{"title": "bump pytest to 8.0.0", "kind": "dep"}]) is False
     assert release_predicted([{"title": "prepare v1.2.0", "kind": "release"}]) is True   # kind
@@ -512,6 +622,86 @@ def test_base_from_releases_falls_back_to_release_name():
     # Prefer a parseable tag; only consult name when tag is absent or not semver-shaped.
     assert base_from_releases([{"tag": "v1.5.0", "name": "v9.9.9"}]) == "v1.5.0"
     assert base_from_releases([{"tag": "latest", "name": "v1.5.0"}]) == "v1.5.0"
+
+
+def test_base_from_releases_name_never_outranks_another_rows_tag():
+    # A higher name on the *same* release is ignored: the tag is authoritative per release.
+    assert base_from_releases([{"tag": "v1.5.0", "name": "v9.9.9"}]) == "v1.5.0"
+    # tag-first must resolve per release *before* comparing across releases: a lower release's
+    # display name must not override the authoritative highest tag. The per-row shape above
+    # (tag beats name within one row) is not enough, because a lower-tag row can fall through
+    # to its name and beat a *different* row's tag.
+    assert base_from_releases([
+        {"tag": "v1.5.0", "name": "v1.5.0"},
+        {"tag": "v1.4.0", "name": "v9.9.9"},
+    ]) == "v1.5.0"
+    # A realistic corruption: an older release titled with a higher marketing/roadmap version.
+    # The winner must be the real highest *tag*, never the human title string.
+    marketing = [
+        {"tag": "v2.5.0", "name": "v2.5.0"},
+        {"tag": "v2.4.0", "name": "Preview of 9.0"},
+    ]
+    assert base_from_releases(marketing) == "v2.5.0"
+    # Order-independent: the corrupt-name row appearing first must not change the outcome.
+    assert base_from_releases(list(reversed(marketing))) == "v2.5.0"
+    # The result is always an actual tag, never a name string, when a real tag is present.
+    assert base_from_releases(marketing) not in {"Preview of 9.0", "v9.9.9"}
+
+
+def test_base_from_releases_name_fallback_survives_across_rows():
+    # The tag-first rule must not suppress a legitimate name fallback: when a release's own tag
+    # is unparseable, its name still supplies that release's version and can win globally.
+    assert base_from_releases([
+        {"tag": "latest", "name": "v3.0.0"},
+        {"tag": "v2.0.0"},
+    ]) == "v3.0.0"
+    # When every release's tag is unparseable, the names are compared across rows by semver
+    # (highest wins), not left to first-seen order.
+    assert base_from_releases([
+        {"tag": "latest", "name": "v2.0.0"},
+        {"tag": "nightly", "name": "v3.0.0"},
+    ]) == "v3.0.0"
+
+
+def test_base_from_releases_ignores_releases_without_a_parseable_version():
+    # A release whose tag and name are both non-semver carries no version: it is skipped, not
+    # allowed to null out or shadow a real versioned release.
+    assert base_from_releases([
+        {"tag": "nightly", "name": "latest"},
+        {"tag": "v1.2.0"},
+    ]) == "v1.2.0"
+    # When no release carries a parseable version, the base is unknown (None), never a guess.
+    assert base_from_releases([{"tag": "nightly", "name": "latest"}]) is None
+    assert base_from_releases([{"tag": None, "name": None}]) is None
+    # An empty release list is also "no known base".
+    assert base_from_releases([]) is None
+
+
+def test_base_from_releases_feeds_correct_bump_actual():
+    # The base_from_releases result is the base_version fed to objective_score's release/bump
+    # axis. Isolate the two steps so a failure pinpoints which one broke, and add a control so
+    # the assertion pins the causal chain rather than a coincidental blend.
+    releases = [
+        {"tag": "v1.5.0", "name": "v1.5.0"},
+        {"tag": "v1.4.0", "name": "Preview of 9.0"},
+    ]
+    # Step 1 (base resolution, in isolation): the resolved base is the real highest tag.
+    base = base_from_releases(releases)
+    assert base == "v1.5.0"
+
+    # Step 2 (objective_score bump axis, in isolation): a revealed v2.0.0 is a genuine major
+    # bump the agent predicted, so the correct base scores it as a match.
+    revealed = [{"subject": "release v2.0.0"}]
+    good = objective_score({}, revealed, version_bump="major", base_version=base)
+    assert good["bump_actual"] == "major"
+    assert good["bump_match"] is True
+
+    # Control: the pre-fix corrupted base ("Preview of 9.0") inflates the base above the
+    # revealed release, so bump_level reads a non-forward delta and the axis collapses to
+    # None / False. This is exactly the regression the fix removes.
+    bad = objective_score({}, revealed, version_bump="major", base_version="Preview of 9.0")
+    assert bad["bump_actual"] is None
+    assert bad["bump_match"] is False
 
 
 # --- #459: a non-list releases field must not abort replay scoring -------------------------
@@ -1062,6 +1252,27 @@ def test_objective_component_handles_non_numeric_recall():
     from benchmark.score import objective_component
     assert objective_component({"module_recall": "not-a-number"}) == 0.0
     assert objective_component({"weighted_module_recall": [1,2,3]}) == 0.0
+
+
+def test_objective_component_rejects_bool_weighted_recall():
+    from benchmark.score import objective_component
+    assert objective_component({"weighted_module_recall": True}) == 0.0
+    assert objective_component({"weighted_module_recall": False}) == 0.0
+    # bool weighted must fall back to plain recall, not coerce via float(True)
+    assert objective_component({"weighted_module_recall": True, "module_recall": 0.5}) == 0.5
+
+
+def test_objective_component_rejects_bool_plain_recall():
+    from benchmark.score import objective_component
+    assert objective_component({"module_recall": True}) == 0.0
+    assert objective_component({"module_recall": False}) == 0.0
+
+
+def test_objective_component_rejects_bool_kind_recall():
+    from benchmark.score import objective_component
+    obj = {"module_recall": 1.0, "actual_kinds": ["feat"], "kind_recall": True}
+    assert objective_component(obj) == 0.5
+
 
 def test_bump_level_handles_non_tuple():
     assert bump_level(None, (1,0,0)) is None

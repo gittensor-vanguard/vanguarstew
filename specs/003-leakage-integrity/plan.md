@@ -40,8 +40,8 @@ leakage.scrub_context(context)                      # neutralize forward referen
 | ------- | ------ | ---- |
 | `#N` | → `#ref` | issue/PR back-reference |
 | `github.com/.../{issues,pull,commit,compare,...}/…` | → masked | forward deep-link |
-| 7–40 char hex with an `a`–`f` letter | → `<sha>` | real SHA |
-| all-numeric 7–40 char token | preserved | count/year/version — not a SHA (`_looks_like_sha`) |
+| 7–40 or exactly-64 char hex with an `a`–`f` letter | → `<sha>` | real SHA-1 / SHA-256 |
+| all-numeric hex token | preserved | count/year/version — not a SHA (`_looks_like_sha`) |
 
 ## Contract surface (functions this spec pins)
 

@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from benchmark.freeze import _git as _freeze_git  # noqa: E402
 from benchmark.freeze import _safe_extractall, build_context, export_tree  # noqa: E402
 
 
@@ -312,3 +313,21 @@ def test_build_context_keeps_lightweight_tags_at_or_before_freeze():
         assert releases == ["v0.1.0", "v0.2.0"], releases
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+# --- a missing git binary must surface as a clean RuntimeError, not a raw FileNotFoundError -----
+# _git already turns a git run-failure (non-zero exit) into a RuntimeError; the spawn-time failure
+# (git not installed / not on PATH) raised a raw FileNotFoundError. #1187: it is now translated to
+# the same clean RuntimeError with an install hint.
+
+
+def test_git_translates_a_missing_binary_into_a_clean_runtimeerror(tmp_path, monkeypatch):
+    # Point PATH at an empty directory so the `git` binary genuinely cannot be found (a real spawn
+    # failure, no mock). _git must map the FileNotFoundError to a RuntimeError -- the clean-error
+    # type it already raises when git runs and fails -- not let a bare OSError escape.
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(RuntimeError) as exc:
+        _freeze_git(str(tmp_path), "status")
+    msg = str(exc.value)
+    assert "git" in msg
+    assert "not found on PATH" in msg

@@ -24,9 +24,9 @@ from agent.planner import (  # noqa: E402
     _normalize_files,
     _normalize_plan,
     _normalize_plan_item,
-    _open_prs_list,
     _plan_list,
     _pr_reference,
+    _safe_prs,
     plan_next_actions,
     reconcile_plan_with_queue,
 )
@@ -178,12 +178,12 @@ _MALFORMED_OPEN_PRS = [42, 3.14, True, {"number": 1, "title": "Fix bug"}, "not a
 
 @pytest.mark.parametrize("bad", _MALFORMED_OPEN_PRS)
 def test_open_prs_non_list_treated_as_empty(bad):
-    assert _open_prs_list({"open_prs": bad}) == []
+    assert _safe_prs({"open_prs": bad}) == []
 
 
 def test_open_prs_list_accepts_real_lists():
     prs = [{"number": 7, "title": "Add streaming export"}]
-    assert _open_prs_list({"open_prs": prs}) == prs
+    assert _safe_prs({"open_prs": prs}) == prs
 
 
 def test_reconcile_skips_prs_without_string_title():

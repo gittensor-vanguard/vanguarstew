@@ -11,10 +11,10 @@ evaluates named criteria across single-repo (``run_replay``) and multi-repo (``r
 / ``--generalization``) results, and every check **fails closed** - a check never passes without
 positively verifying its condition:
 
-1. ``run_scored`` - the run produced a trustworthy task total: no ``error``, a positive count, and
-   (for a multi-repo result) *every* per-repo entry is a well-formed dict with a numeric task
-   count. A single malformed per-repo entry makes the total untrustworthy and fails this check
-   rather than being silently skipped.
+1. ``run_scored`` - the run produced a trustworthy task total: no ``error`` (and for a
+   ``--generalization`` artifact, no partition-level or per-repo error under ``tuned``/``held_out``,
+   mirroring ``check_acceptance``), a positive count, and (for a multi-repo result) *every*
+   per-repo entry is a well-formed dict with a numeric task count.
 2. ``enough_tasks`` - the total number of tasks judged is at least ``min_tasks``.
 3. ``all_tasks_decided`` - a challenger/baseline/tie tally is present and sums to the task total,
    so no task was dropped between judging and tallying. A missing tally, a tally missing a key, or
@@ -30,6 +30,9 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
+
+from benchmark.acceptance import _partition_error
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,22 @@ DEFAULT_MIN_TASKS = 3
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim, so a hand-edited or degenerate artifact can
+    carry a non-finite task count or tally. Without the finite guard an ``Infinity`` task total
+    trivially clears ``run_scored`` (``inf > 0``) and ``enough_tasks`` (``inf >= min_tasks``), and a
+    matching non-finite tally clears ``all_tasks_decided`` (``inf == inf``), passing the gate on a
+    malformed run. Treating a non-finite value as non-numeric fails those checks closed instead,
+    matching ``acceptance`` (#1457), ``judge_gate`` (#1465), ``score_integrity`` (#1336), and
+    ``component_floor``. ``OverflowError`` guards an oversized int that cannot convert to float.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _dict(value) -> dict:
@@ -78,15 +96,20 @@ def _check_rows_list(checks) -> list[dict]:
 
 
 def _partition_entries(result: dict) -> list:
-    """The per-repo entries of a multi-repo result, across generalization partitions if present."""
-    entries = []
+    """The per-repo entries of a multi-repo result, across generalization partitions if present.
+
+    Mutually exclusive, mirroring the sibling gates (`coverage._collect_per_repo_entries`,
+    `tally_integrity`, `weight_integrity`, ...): a multi-repo run's top-level ``per_repo`` is the
+    complete list, so it must not be summed *together with* the ``tuned``/``held_out`` partition
+    lists. Counting both shapes on an artifact that carries them would double-count every task.
+    """
     if "per_repo" in result:
-        entries.append(result.get("per_repo"))
-    for partition in ("tuned", "held_out"):
-        part = _dict(result.get(partition))
-        if "per_repo" in part:
-            entries.append(part.get("per_repo"))
-    return entries
+        return [result.get("per_repo")]
+    return [
+        part.get("per_repo")
+        for part in (_dict(result.get("tuned")), _dict(result.get("held_out")))
+        if "per_repo" in part
+    ]
 
 
 def _total_tasks(result: dict):
@@ -114,17 +137,75 @@ def _total_tasks(result: dict):
     return total
 
 
+def _entry_decided(entry: dict):
+    """Tasks a per-repo entry's tally decides.
+
+    The challenger/baseline/tie sum when the entry carries a numeric tally; ``0`` for a skipped
+    (zero-task) repo that carries no tally and decides nothing; None when a *scored* entry's tally
+    is missing or malformed (so the caller fails closed instead of under-counting).
+    """
+    tally = entry.get("tally")
+    if not isinstance(tally, dict):
+        tasks = entry.get("tasks")
+        return 0 if (_is_number(tasks) and tasks == 0) else None
+    counts = [tally.get(k) for k in ("challenger", "baseline", "tie")]
+    return sum(counts) if all(_is_number(c) for c in counts) else None
+
+
 def _decided(result: dict):
     """The number of tasks the tally decides, or None when there is no complete tally.
 
-    Requires the challenger/baseline/tie tally to be present with all three numeric keys; a missing
-    tally or a missing key returns None (which fails ``all_tasks_decided``).
+    Single-repo runs report a top-level challenger/baseline/tie ``tally``. Multi-repo /
+    generalization runs report no top-level tally — the per-task tally lives under each
+    ``per_repo`` entry (``run_multi_replay``) — so sum those exactly as :func:`_total_tasks` sums
+    the per-repo task counts, over the same (mutually exclusive) :func:`_partition_entries`. A
+    skipped zero-task repo decides nothing; a *scored* entry whose tally is missing or malformed,
+    or a missing key anywhere, returns None (which fails ``all_tasks_decided``) rather than
+    silently under-counting the decided total.
     """
-    if not isinstance(result.get("tally"), dict):
+    top = result.get("tally")
+    if isinstance(top, dict):
+        counts = [top.get(k) for k in ("challenger", "baseline", "tie")]
+        return sum(counts) if all(_is_number(c) for c in counts) else None
+    per_repo_lists = _partition_entries(result)
+    if not per_repo_lists:
         return None
-    tally = result["tally"]
-    counts = [tally.get(k) for k in ("challenger", "baseline", "tie")]
-    return sum(counts) if all(_is_number(c) for c in counts) else None
+    total = 0
+    for per_repo in per_repo_lists:
+        if not isinstance(per_repo, list) or not per_repo:
+            return None
+        for entry in per_repo:
+            if not isinstance(entry, dict):
+                return None
+            decided = _entry_decided(entry)
+            if decided is None:
+                return None
+            total += decided
+    return total
+
+
+def _uses_generalization_partitions(result: dict) -> bool:
+    """True when task/tally totals are summed from ``tuned``/``held_out`` (not top-level ``per_repo``)."""
+    if "per_repo" in result:
+        return False
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    return isinstance(tuned, dict) and isinstance(held_out, dict)
+
+
+def _run_scored(result: dict, tasks) -> tuple[bool, str]:
+    """Whether the artifact produced a trustworthy scored sample, and a detail string."""
+    if _uses_generalization_partitions(result):
+        tuned_err = _partition_error(result.get("tuned"))
+        held_err = _partition_error(result.get("held_out"))
+        if tuned_err is not None or held_err is not None:
+            return False, f"partition error(s): tuned={tuned_err!r}, held_out={held_err!r}"
+    elif result.get("error"):
+        return False, (
+            f"no trustworthy task total (error={result.get('error')!r}, tasks={tasks!r})"
+        )
+    if _is_number(tasks) and tasks > 0:
+        return True, f"{tasks} task(s)"
+    return False, f"no trustworthy task total (error={result.get('error')!r}, tasks={tasks!r})"
 
 
 def check_sample_adequacy(result, min_tasks: int = DEFAULT_MIN_TASKS) -> dict:
@@ -142,10 +223,8 @@ def check_sample_adequacy(result, min_tasks: int = DEFAULT_MIN_TASKS) -> dict:
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    scored = not result.get("error") and _is_number(tasks) and tasks > 0
-    add("run_scored", scored,
-        f"{tasks} task(s)" if scored
-        else f"no trustworthy task total (error={result.get('error')!r}, tasks={tasks!r})")
+    scored, scored_detail = _run_scored(result, tasks)
+    add("run_scored", scored, scored_detail)
 
     add("enough_tasks", _is_number(tasks) and tasks >= min_tasks,
         f"{tasks} task(s) >= {min_tasks}" if _is_number(tasks) else "task total unavailable")

@@ -93,7 +93,6 @@ devs know exactly what earns credit and reviewers can check scoring changes agai
 
 ## Verification
 
-Already exercised deterministically offline by `tests/test_score.py` (module/release/bump/kind
-recall, release-subject discrimination) and `tests/test_compose.py`
-(`objective_component`/`composite_score` blending, and that backlog stays out of the scalar).
-This spec adds no code and does not require new tests.
+- `tests/test_spec_002_compose.py` (this PR) exercises the composition/blending EARS criteria
+  for `objective_component` and `composite_score` directly.
+- Broader anchor coverage remains in `tests/test_score.py` and `tests/test_compose.py`.

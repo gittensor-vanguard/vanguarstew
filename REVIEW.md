@@ -43,36 +43,99 @@ priority order:
 | ------ | --------- | ------------- |
 | High   | Correctness & tests | Does it do what it claims? Is it covered by a test that would fail without the change? |
 | High   | Scope fit | Does it address the referenced issue without unrelated churn? |
+| High   | Non-redundancy | Does it duplicate existing analysis over the **same data shape**? A new module/metric/report that slices a dict another module already slices, or re-derives a value an existing helper produces, is redundant even when its diff is original and its tests pass. Prefer parametrizing or extending the existing code. Conceptual duplication is rejected the same as literal duplication. |
 | Medium | Quality & clarity | Readable, consistent with surrounding code, no dead code. |
 | Medium | Real-behavior proof | The PR shows it actually works (a run, output, or command), not just a claim. |
 
 Decisions are communicated with **status labels** that state the reason (e.g. `needs-tests`,
 `out-of-scope`, `accepted`) in the PR thread, so the rationale is always on the record.
 
-## Contribution value labels (multipliers)
+## Contribution value labels
 
-Once this repo is registered on gittensor, each scored PR receives a **value multiplier** from
-a single maintainer-applied label. gittensor takes the **highest** matching label — multipliers
-do not stack — so the maintainer applies the one tier that best fits. This is a transparent,
-ordered value ladder, prepared now and active on registration:
+Once this repo is registered on gittensor, each merged PR's emission weight comes from a
+label. Two separate tracks, because "agent got measurably better" and "the harness/tooling
+improved" are different claims that need different evidence:
 
-| Label | Multiplier | Applies to |
-| ----- | ---------- | ---------- |
-| `mult:core-correctness` | ×2.0 | Fixes/hardens scoring correctness, judge integrity, or a bug that would skew results. |
-| `mult:leakage-integrity` | ×1.8 | Anti-leakage / task-integrity work — the benchmark's trust depends on it. |
-| `mult:capability` | ×1.5 | New agent capability or a new benchmark dimension / task-gen improvement. |
-| `mult:enhancement` | ×1.2 | Solid improvement to existing behavior. |
-| `mult:maintenance` | ×1.0 | Refactor, small fix, tests, tooling (neutral). |
-| `mult:docs` | ×0.8 | Docs-only / cosmetic — welcome, lower weight. |
+### `perf:*` — agent/ PRs, earned by a measured benchmark delta (SN66-style)
 
-- Only labels set by a **maintainer** count toward the multiplier.
-- Area labels (`agent`, `benchmark`, `leakage`) are organizational only and do **not** affect scoring.
-- No label ⇒ neutral (×1.0). Values may be tuned at registration.
+A PR touching `agent/` (the scored, miner-editable surface) earns its label **only** from a
+measured improvement — never from a maintainer's read of the diff. This is the same model
+[gittensor-ai-lab/sparkinfer](https://github.com/gittensor-ai-lab/sparkinfer) uses for its
+`eval:XS`–`eval:XL` real-hardware speedup bands: labels are bot-assigned from an actual
+before/after run, and most merged PRs carry no label at all — the bands are rare and mean
+something specific.
+
+The maintainer bot runs `scripts/score_pr_delta.py` **twice** — once against the public
+`benchmark/repo_sets/curated.json`, once against a private, undisclosed repo set the PR
+author has never seen — and combines the two via `combine_dual_target()`, which takes the
+**worse** of the two results. A PR can't earn a band by tuning against the repos it can see
+while flat-lining or regressing on repos it can't; that's the whole point of the private
+target.
+
+| Label | Multiplier | Composite Δ (on the worse target) |
+| ----- | ---------- | ---------------------------------- |
+| `perf:xl` | ×4.0 | ≥ 0.15 |
+| `perf:l`  | ×2.5 | ≥ 0.08 |
+| `perf:m`  | ×1.5 | ≥ 0.04 |
+| `perf:s`  | ×1.0 | ≥ 0.02 |
+| `perf:xs` | ×0.5 | ≥ 0.01 |
+| *(none)*  | — | ≤ 0.01 (noise floor) — still mergeable, just no multiplier |
+
+**These thresholds are deliberately rough.** The project has very few real
+`score_pr_delta` data points so far — the bands exist to be recalibrated as real
+before/after deltas accumulate, not guessed once and frozen. `scripts/score_pr_delta.py`'s
+`BAND_THRESHOLDS`/`BAND_MULTIPLIERS` are the single source of truth; this table mirrors
+them and must be updated in lockstep if they change.
+
+A regression on either the judge or the objective component (past the noise floor), on
+*either* target, is a **hard merge block** — not a label cap. Trading one axis for the
+other (sounding better to the judge while the objective anchor quietly drops) counts as a
+regression. The author must revise until it clears, or the PR is closed.
+
+Before a band is finalized, the maintainer bot runs an **anti-cheating pass** over the
+diff — looking for benchmark-detection branching, hardcoded outputs that match a known
+repo/task, disabled assertions, or anything that would make the measured delta not
+reflect genuine agent improvement. A PR that trips this check is closed regardless of its
+measured number, same as sparkinfer's `flagged:gaming` convention.
+
+CI runs a lightweight offline smoke check on every `agent/`-touching PR
+(`agent-benchmark-smoke.yml`) — this catches crashes and output-shape regressions only. It
+is **not** the scoring evidence and cannot influence a `perf:*` label or the merge block:
+offline mode returns each file's own fixed stub regardless of the prompt, so it cannot
+measure whether a PR changed the agent's actual reasoning. The real score-delta is a
+maintainer-bot-run live comparison against both repo targets.
+
+### `mult:contribution` — everything else (×0.05)
+
+PRs to `benchmark/`, `tests/`, `docs/`, `.github/`, or any other non-`agent/` surface get a
+single flat label, `mult:contribution` (×0.05), on merge — there's no "agent performance"
+to measure for harness/tooling work, so it isn't put through the banding pipeline.
+
+The deliberate gap between `mult:contribution` (×0.05) and even `perf:xs` (×0.5) is the point:
+harness and docs work is welcome and merges on its own merits, but the emission weight is
+reserved for measured improvements to the agent.
+
+- Only labels applied by the maintainer bot (or matedev01) count toward the multiplier.
+- Area labels (`agent`, `benchmark`, `leakage`) are organizational only and do **not**
+  affect scoring.
+- No label ⇒ zero (this repo's `default_label_multiplier` is `0.0`) — matches the *(none)*
+  row above for `agent/` PRs with no measurable improvement.
+
+> **Authority for these numbers.** Every multiplier on this page is paid out from vanguarstew's
+> entry in the gittensor subnet's `master_repositories.json`
+> ([`entrius/gittensor`](https://github.com/entrius/gittensor), `gittensor/validator/weights/`).
+> That registry is the source of truth — if this page and the registry disagree, **the registry
+> wins and this page is the bug**. `scripts/score_pr_delta.py`'s `BAND_MULTIPLIERS` mirrors the
+> `perf:*` half and must be updated in lockstep with both.
 
 ## Rejections
 
 Common reasons a PR is closed rather than merged: no linked issue, out of scope, missing
-tests, trivial/no-op diff, duplicated or plagiarized work, or AI-attributed content.
+tests, trivial/no-op diff, duplicated or plagiarized work, **conceptual redundancy** (a new
+module/metric that re-derives what existing code already produces over the same data shape —
+parametrize or extend instead), AI-attributed content, or (for `agent/` PRs) a
+maintainer-bot-run `scripts/score_pr_delta.py` regression (`band: "blocked"` — see § `perf:*`
+above) or a flagged anti-cheating finding.
 
 ## Disagree with a decision?
 

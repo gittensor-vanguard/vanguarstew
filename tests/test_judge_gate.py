@@ -1,9 +1,13 @@
 """Tests for the pairwise-judge robustness gate (deterministic, offline)."""
 
 import copy
+import json
 import logging
 import os
+import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -11,7 +15,7 @@ if ROOT not in sys.path:
 
 from benchmark.judge_gate import (  # noqa: E402
     DEFAULT_MAX_DISAGREEMENT,
-    _checks_list,
+    _check_rows_list,
     check_judge,
     failed_checks,
     judge_headline,
@@ -58,12 +62,168 @@ def test_too_few_dual_order_tasks_fails():
     assert "enough_dual_order_tasks" in failed_checks(result)
 
 
+def test_non_finite_dual_order_tasks_fails_the_gate():
+    # json round-trips Infinity verbatim; an inf dual_order_tasks would trivially clear
+    # enough_dual_order_tasks (inf >= min) and pass the judge-robustness gate on a malformed run.
+    # It must be treated as non-numeric and fail closed (score_integrity #1336 / artifact_snapshot
+    # #1316 / component_floor).
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        result = check_judge(_result(dual_tasks=bad))
+        assert result["passed"] is False, bad
+        assert "enough_dual_order_tasks" in failed_checks(result), bad
+
+
 def test_dual_order_tasks_falls_back_to_judge_order_stats():
     # judge_report lacks the count; it is read from judge_order_stats instead.
     r = {"judge_dual_order": True, "judge_report": {"disagreement_rate": 0.1},
          "judge_order_stats": {"dual_order_tasks": 4}}
     result = check_judge(r)
     assert result["dual_order_tasks"] == 4 and result["passed"] is True
+
+
+def test_stale_judge_report_disagreement_rate_is_recomputed_from_stats():
+    r = {
+        "judge_dual_order": True,
+        "judge_report": {"disagreement_rate": 0.05, "dual_order_tasks": 10, "disagreements": 1},
+        "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+    }
+    result = check_judge(r, max_disagreement=0.3)
+    assert result["passed"] is False
+    assert result["disagreement_rate"] == 0.8
+    assert "low_disagreement" in failed_checks(result)
+
+
+def test_disagreement_rate_from_telemetry_rejects_impossible_counts():
+    # `disagree` is a subset of `dual_order_tasks`, so `disagree > dual` is impossible telemetry
+    # and must not yield a count-based rate above 1.0 (#1283). It falls through to a literal
+    # `disagreement_rate` when present, else None.
+    from benchmark.judge_gate import _disagreement_rate_from_telemetry as rate
+    assert rate({"dual_order_tasks": 5, "disagree": 8}) is None            # impossible -> no rate
+    assert rate({"dual_order_tasks": 5, "disagree": 8, "disagreement_rate": 0.2}) == 0.2  # stored fallback
+    assert rate({"dual_order_tasks": 10, "disagree": 2}) == 0.2            # coherent
+    assert rate({"dual_order_tasks": 5, "disagree": 5}) == 1.0            # boundary: == is coherent
+    assert rate({"dual_order_tasks": 5, "disagree": 0}) == 0.0
+
+
+# --- multi-repo aggregates omit the top-level judge_dual_order flag -----------------------
+# A single-repo run states judge_dual_order directly; a run_multi_replay aggregate does not, so
+# the status is derived from the pooled dual-order task count (judge_report, else
+# judge_order_stats), failing closed when neither the flag nor that count is present.
+
+
+def _multi(dual_tasks=5, disagreement=0.1, stats_tasks=None):
+    r = {"judge_report": {"disagreement_rate": disagreement}}
+    if dual_tasks is not None:
+        r["judge_report"]["dual_order_tasks"] = dual_tasks
+    if stats_tasks is not None:
+        r["judge_order_stats"] = {"dual_order_tasks": stats_tasks}
+    return r
+
+
+def test_multi_repo_dual_order_run_is_robust():
+    result = check_judge(_multi(dual_tasks=6, disagreement=0.1))
+    assert result["dual_order"] is True and result["passed"] is True
+    assert "dual_order_judging" not in failed_checks(result)
+
+
+def test_multi_repo_single_order_run_fails_closed():
+    result = check_judge(_multi(dual_tasks=0))
+    assert result["dual_order"] is False
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_explicit_single_order_flag_is_authoritative():
+    # judge_dual_order=False wins even when a stale pooled count looks dual-order.
+    result = check_judge({"judge_dual_order": False,
+                          "judge_report": {"disagreement_rate": 0.1, "dual_order_tasks": 9}})
+    assert result["dual_order"] is False
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_multi_repo_derives_dual_order_from_judge_order_stats_fallback():
+    # judge_report omits the count; it is resolved from judge_order_stats and drives the status.
+    result = check_judge(_multi(dual_tasks=None, stats_tasks=4))
+    assert result["dual_order_tasks"] == 4
+    assert result["dual_order"] is True and result["passed"] is True
+
+
+def test_multi_repo_without_dual_order_telemetry_fails_closed():
+    # No flag, judge_report present but no count, no judge_order_stats -> unavailable; fail closed.
+    result = check_judge(_multi(dual_tasks=None))
+    assert result["dual_order"] is False and result["dual_order_tasks"] is None
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_multi_repo_with_no_report_or_stats_blocks_fails_closed():
+    # Both aggregate telemetry blocks absent (or empty) -> derived status False, no crash.
+    for run in ({}, {"judge_order_stats": {}}, {"judge_report": {"disagreement_rate": 0.1}}):
+        result = check_judge(run)
+        assert result["dual_order"] is False and result["dual_order_tasks"] is None
+        assert "dual_order_judging" in failed_checks(result)
+
+
+# --- generalization reports nest judge telemetry under tuned/held_out ---------------------
+# A run_generalization_report carries no top-level judge_report/judge_order_stats/judge_dual_order;
+# both live per-partition. The gate reads its tuned partition (the headline, mirroring
+# check_promotion's _promotion_source), so a dual-order-judged generalization run is not vacuously
+# marked SHAKY.
+
+
+def _partition(disagreement=0.1, dual_tasks=6):
+    # A partition is a run_multi_replay result: judge telemetry at its own top level, no flag.
+    return {"scored_repos": 2, "composite_mean": 0.7,
+            "judge_report": {"disagreement_rate": disagreement, "dual_order_tasks": dual_tasks},
+            "judge_order_stats": {"dual_order_tasks": dual_tasks}}
+
+
+def _generalization(tuned=None, held_out=None):
+    return {"repo_set": "curated", "tuned": tuned if tuned is not None else _partition(),
+            "held_out": held_out if held_out is not None else _partition(),
+            "generalization_gap": 0.04}
+
+
+def test_generalization_run_is_evaluated_on_its_tuned_partition():
+    # Dual-order judged with low disagreement in the tuned partition -> ROBUST, not vacuous SHAKY.
+    result = check_judge(_generalization())
+    assert result["passed"] is True
+    assert result["dual_order"] is True and result["dual_order_tasks"] == 6
+    assert result["disagreement_rate"] == 0.1
+
+
+def test_generalization_run_with_shaky_tuned_partition_fails():
+    # The tuned partition's disagreement is over tolerance -> the run is SHAKY on its merits.
+    result = check_judge(_generalization(tuned=_partition(disagreement=0.6)), max_disagreement=0.3)
+    assert result["passed"] is False
+    assert failed_checks(result) == ["low_disagreement"]
+    assert result["disagreement_rate"] == 0.6
+
+
+def test_generalization_tuned_partition_drives_the_verdict_not_held_out():
+    # A robust tuned partition passes even if held_out looks worse: tuned is the headline.
+    result = check_judge(_generalization(tuned=_partition(disagreement=0.05, dual_tasks=8),
+                                         held_out=_partition(disagreement=0.9, dual_tasks=8)))
+    assert result["passed"] is True and result["dual_order_tasks"] == 8
+
+
+def test_generalization_single_order_tuned_partition_fails_closed():
+    # Tuned partition has zero pooled dual-order tasks -> not dual-order judged; fail closed.
+    result = check_judge(_generalization(tuned=_partition(dual_tasks=0)))
+    assert result["dual_order"] is False
+    assert "dual_order_judging" in failed_checks(result)
+
+
+def test_only_one_partition_is_not_treated_as_a_generalization_report():
+    # tuned without held_out (or vice versa) is not the generalization shape; read top level.
+    result = check_judge({"tuned": _partition(), "judge_dual_order": True,
+                          "judge_report": {"disagreement_rate": 0.1, "dual_order_tasks": 5}})
+    assert result["dual_order_tasks"] == 5 and result["passed"] is True
+
+
+def test_generalization_with_non_dict_partition_is_ignored():
+    # A malformed tuned/held_out (not both dicts) falls back to top-level evaluation, no crash.
+    result = check_judge({"tuned": "oops", "held_out": _partition()})
+    assert result["passed"] is False
+    assert result["dual_order"] is False and result["dual_order_tasks"] is None
 
 
 def test_disagreement_bound_is_inclusive():
@@ -111,36 +271,192 @@ def test_headline_reports_robust_and_shaky():
     assert DEFAULT_MAX_DISAGREEMENT == 0.3
 
 
-# --- #656: non-list checks must not abort judge gate headlines (re-land after #664 revert) -
+# --- #793: checks row sanitization for judge gate headlines ----------------------------
 
-_MALFORMED_CHECKS = [42, 3.14, True, {"name": "dual_order_judging"}, "not a list"]
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "dual_order_judging"}, "not a list",
+    ({"name": "dual_order_judging", "passed": False},),  # tuple, not list
+    range(2),  # iterable but not a list
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
 
 
-def test_judge_gate_checks_list_accepts_only_real_lists():
+def test_check_rows_list_accepts_only_real_lists():
     rows = [{"name": "dual_order_judging", "passed": True}]
     for bad in _MALFORMED_CHECKS:
-        assert _checks_list(bad) == [], bad
-    assert _checks_list(rows) == rows
-    assert _checks_list(None) == []
-    assert _checks_list([]) == []
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
 
 
-def test_judge_gate_checks_list_missing_key_emits_no_warning(caplog):
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
-        assert _checks_list(None) == []
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list(None) == []
     assert not caplog.records
 
 
-def test_judge_gate_checks_list_empty_list_emits_no_warning(caplog):
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
-        assert _checks_list([]) == []
+        assert _check_rows_list([]) == []
     assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "dual_order_judging", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "dual_order_judging", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{"name": "dual_order_judging"}]) == []
+    assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_empty_dict(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{}]) == []
+    assert any("missing required key(s)" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "dual_order_judging", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "dual_order_judging", "passed": False},
+        {"name": "low_disagreement", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": "", "passed": False},
+        {"name": 99, "passed": False},
+        {"name": "dual_order_judging", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_accepts_native_bool_values():
+    rows = [
+        {"name": "dual_order_judging", "passed": True},
+        {"name": "low_disagreement", "passed": False},
+    ]
+    assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_empty_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+    assert any("name is empty str" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_accepts_numpy_bool_when_available():
+    np = pytest.importorskip("numpy")
+    # np.bool8 was removed in numpy 2.0; use it only when present so the test
+    # passes on both numpy 1.x and 2.x.
+    factories = [np.bool_]
+    if hasattr(np, "bool8"):
+        factories.append(np.bool8)
+    for factory in factories:
+        rows = [{"name": "dual_order_judging", "passed": factory(True)}]
+        assert _check_rows_list(rows) == rows
+
+
+def test_check_rows_list_rejects_int_as_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{"name": "dual_order_judging", "passed": 1}]) == []
+    assert any("passed is int" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_rejects_non_bool_passed_values(caplog):
+    class AlmostBool:
+        def __bool__(self):
+            return True
+
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert _check_rows_list([{"name": "dual_order_judging", "passed": AlmostBool()}]) == []
+        assert _check_rows_list([{"name": "dual_order_judging", "passed": "true"}]) == []
+    messages = [r.message for r in caplog.records]
+    assert any("passed is AlmostBool" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+
+
+def test_failed_checks_helper_is_robust():
+    assert failed_checks({}) == []
+    assert failed_checks("not a dict") == []
+    shaky = check_judge(_result(dual_order=False))
+    assert failed_checks(shaky) == ["dual_order_judging"]
+    assert failed_checks(check_judge(_result())) == []
 
 
 def test_judge_headline_survives_non_list_checks():
     base = {"passed": False, "dual_order_tasks": 0, "disagreement_rate": 0.5}
     for bad in _MALFORMED_CHECKS:
         assert judge_headline({**base, "checks": bad}) == "judge: no checks evaluated", bad
+
+
+def test_judge_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "dual_order_judging"}],
+        [{}],
+        [{"name": 42, "passed": True}],
+        [{"name": "", "passed": False}],
+        [{"name": "dual_order_judging", "passed": 1}],
+    ):
+        assert judge_headline({"checks": checks, "passed": False}) == "judge: no checks evaluated"
+
+
+def test_judge_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "dual_order_judging", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        line = judge_headline({"checks": checks, "passed": False})
+    assert line == "judge: SHAKY (1/1 checks failed: dual_order_judging)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_judge_headline_logs_warning_for_non_list_checks(caplog):
@@ -150,18 +466,48 @@ def test_judge_headline_logs_warning_for_non_list_checks(caplog):
     assert any("checks is int" in r.message for r in caplog.records)
 
 
+def test_judge_headline_ignores_unsanitized_rows_in_denominator(caplog):
+    checks = [
+        {"name": "dual_order_judging", "passed": False},
+        {"name": "", "passed": False},
+        {"name": "low_disagreement", "passed": 1},
+        42,
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        line = judge_headline({"checks": checks, "passed": False})
+    assert line == "judge: SHAKY (1/1 checks failed: dual_order_judging)"
+    assert any("name is empty str" in r.message for r in caplog.records)
+    assert any("passed is int" in r.message for r in caplog.records)
+    assert any("checks[3] is int" in r.message for r in caplog.records)
+
+
 def test_failed_checks_survives_non_list_checks():
     for bad in _MALFORMED_CHECKS:
         assert failed_checks({"checks": bad}) == [], bad
 
 
-def test_failed_checks_skips_non_dict_rows():
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "dual_order_judging"}],
+        [{}],
+        [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "", "passed": False}],
+        [{"name": "dual_order_judging", "passed": "no"}],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_integration_with_check_rows_list(caplog):
     checks = [
         {"name": "dual_order_judging", "passed": False},
         42,
         {"name": "low_disagreement", "passed": True},
     ]
-    assert failed_checks({"checks": checks}) == ["dual_order_judging"]
+    with caplog.at_level(logging.WARNING, logger="benchmark.judge_gate"):
+        assert failed_checks({"checks": checks}) == ["dual_order_judging"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_every_check_reported_even_when_all_fail():
@@ -197,3 +543,146 @@ def test_check_judge_does_not_mutate_the_result():
     snapshot = copy.deepcopy(run)
     check_judge(run)
     assert run == snapshot
+
+
+# --- CLI entry point: clean errors instead of tracebacks (#922) ---------------------------
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.judge_gate", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def _write(path, payload):
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return str(path)
+
+
+def _run_main_in_process(monkeypatch, argv):
+    import scripts.judge_gate as judge_gate_cli
+
+    monkeypatch.setattr(sys, "argv", ["scripts.judge_gate", *argv])
+    with pytest.raises(SystemExit) as excinfo:
+        judge_gate_cli.main()
+    return excinfo.value.code
+
+
+def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    result = _run_cli(str(missing))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the FileNotFoundError message itself, naming the offending path
+    assert "No such file or directory" in result.stderr
+    assert str(missing) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
+    bad = _write(tmp_path / "bad.json", [1, 2, 3])
+    result = _run_cli(bad)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # load_artifact's ValueError message, naming the offending path
+    assert "must be a JSON object" in result.stderr
+    assert bad in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{not valid json", encoding="utf-8")
+    result = _run_cli(str(invalid))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    # the JSONDecodeError message with its parse position
+    assert "Expecting property name enclosed in double quotes" in result.stderr
+    assert "line 1" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
+    # IsADirectoryError is an OSError; end-to-end proof the guard covers the family even
+    # when the suite runs as root (a chmod-000 fixture would be readable to root).
+    unreadable = tmp_path / "a-directory"
+    unreadable.mkdir()
+    result = _run_cli(str(unreadable))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "Is a directory" in result.stderr
+    assert str(unreadable) in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_permission_denied_file(tmp_path, monkeypatch, capsys):
+    # In-process, so it holds under any uid (root reads chmod-000 files, so a filesystem
+    # fixture cannot force EACCES deterministically): PermissionError must surface as the
+    # one-line OSError message and a clean exit 1, never a traceback.
+    import scripts.judge_gate as judge_gate_cli
+
+    denied = str(tmp_path / "denied.json")
+
+    def _deny(path):
+        raise PermissionError(13, "Permission denied", denied)
+
+    monkeypatch.setattr(judge_gate_cli, "load_artifact", _deny)
+    code = _run_main_in_process(monkeypatch, [denied])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "Permission denied" in err
+    assert denied in err
+
+
+def test_cli_reports_a_clean_error_when_the_gate_check_itself_fails(tmp_path, monkeypatch, capsys):
+    # The guard is not just around loading: if the gate evaluation blows up on artifact
+    # content, the CLI must still exit 1 with a one-line error instead of a traceback.
+    import scripts.judge_gate as judge_gate_cli
+
+    good = _write(tmp_path / "good.json", _result())
+
+    def _boom(artifact, max_disagreement, min_dual_order_tasks):
+        raise TypeError("unhashable artifact content")
+
+    monkeypatch.setattr(judge_gate_cli, "check_judge", _boom)
+    code = _run_main_in_process(monkeypatch, [good])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "cannot evaluate artifact" in err
+    assert "unhashable artifact content" in err
+
+
+def test_cli_still_gates_a_well_formed_artifact(tmp_path):
+    robust = _write(tmp_path / "robust.json", _result(dual_order=True, dual_tasks=5, disagreement=0.1))
+    result = _run_cli(robust)
+    assert result.returncode == 0
+    assert "Traceback" not in result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["passed"] is True
+    assert "[PASS]" in result.stderr
+
+
+def test_cli_strict_exit_comes_from_the_gating_branch(tmp_path):
+    # The error guards must not swallow or fake the --strict gating path. Prove the exit 1
+    # originates from the gating branch: the full evaluation completed (headline + FAIL rows
+    # on stderr, parseable summary on stdout with passed=false), and no loader/evaluation
+    # error message appears.
+    shaky = _write(tmp_path / "shaky.json",
+                   {"judge_dual_order": False,
+                    "judge_report": {"disagreement_rate": 0.6, "dual_order_tasks": 1}})
+    result = _run_cli(shaky, "--strict")
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "[FAIL]" in result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["passed"] is False
+    assert "cannot evaluate artifact" not in result.stderr
+    assert "No such file or directory" not in result.stderr
+
+
+def test_cli_without_strict_exits_zero_on_a_shaky_run(tmp_path):
+    # Same shaky artifact, no --strict: the run reports and exits 0, confirming exit 1
+    # above is the flag's doing rather than any error path.
+    shaky = _write(tmp_path / "shaky.json",
+                   {"judge_dual_order": False,
+                    "judge_report": {"disagreement_rate": 0.6, "dual_order_tasks": 1}})
+    result = _run_cli(shaky)
+    assert result.returncode == 0
+    assert "[FAIL]" in result.stderr

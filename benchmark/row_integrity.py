@@ -28,6 +28,7 @@ checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.score import composite_score, objective_component
 
@@ -42,22 +43,67 @@ _JUDGE_COMPONENT = {"challenger": 1.0, "tie": 0.5, "baseline": 0.0}
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats survive a save/load round trip (json.dump writes NaN/Infinity and
+    # json.load parses them back), but int() raises on them and a NaN/Infinity count is not
+    # a usable value anyway -- treat them as malformed, like a missing or wrong-typed field,
+    # matching benchmark/report.py (#616/#927). math.isfinite also raises OverflowError for
+    # ints too large for a float, which would crash float formatting the same way.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _checks_list(checks) -> list:
-    if isinstance(checks, list):
-        return checks
-    if checks is not None:
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return row-integrity check rows for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers (scalars, dicts, tuples, ranges, strings, etc.) are warned and
+    treated as empty (never coerced). Dict rows missing ``name`` or ``passed`` are skipped
+    with a warning.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
         logger.warning(
             "row_integrity: checks is %s, not a list; treating as empty",
             type(checks).__name__,
         )
-    return []
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "row_integrity: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "row_integrity: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "row_integrity: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _round3(value):
@@ -135,12 +181,21 @@ def _expand_slice(label: str, part: dict) -> list[tuple[str, dict]]:
     return slices
 
 
+def _partition_scored(part: dict) -> bool:
+    """True when a partition carries at least one slice to verify.
+
+    A missing ``scored_repos`` key must not skip a partition that still records scored work
+    under ``per_repo`` or top-level ``rows`` (mirrors ``weight_integrity._partition_scored``).
+    """
+    return bool(_expand_slice("_probe", part))
+
+
 def _row_slices(result: dict) -> list[tuple[str, dict]]:
     tuned, held_out = result.get("tuned"), result.get("held_out")
     if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
         slices: list[tuple[str, dict]] = []
         for label, part in (("tuned", tuned), ("held_out", held_out)):
-            if isinstance(part, dict) and part.get("scored_repos"):
+            if isinstance(part, dict) and _partition_scored(part):
                 slices.extend(_expand_slice(label, part))
         return slices
     if "per_repo" in result:
@@ -153,6 +208,41 @@ def _row_slices(result: dict) -> list[tuple[str, dict]]:
     if result.get("rows") is not None:
         return [("run", result)]
     return []
+
+
+def _malformed_per_repo_rows(result: dict) -> list[str] | None:
+    """Labels of ``per_repo`` rows that are a non-empty string instead of a result dict.
+
+    ``_per_repo_list`` keeps only dict rows so the row checks can run, which silently drops a
+    row serialized as a raw error string (e.g. ``"CLONE FAILED: ..."`` where ``run_multi_replay``
+    expected a result dict). Such a corrupt row is surfaced here so a partial artifact fails
+    closed instead of passing as CONSISTENT, matching ``benchmark.acceptance._partition_error``
+    and the sibling gates ``run_clean`` (#1357), ``error_repo_share`` (#1362), and
+    ``tally_integrity`` (#1453). Only non-empty strings are flagged: a per_repo row that is a dict
+    carrying its own ``error`` is an unscored repo, not a row inconsistency, and
+    ints/``None``/lists stay ignored exactly as ``_per_repo_list`` treats them.
+
+    Returns ``None`` for a single-repo/rows-only artifact that carries no ``per_repo`` container,
+    so the well-formedness check is reported only where per_repo rows exist. The shape branch
+    mirrors :func:`_row_slices` to keep per_repo handling consistent across the module.
+    """
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
+        containers = (("tuned", tuned.get("per_repo")), ("held_out", held_out.get("per_repo")))
+    elif "per_repo" in result:
+        containers = (("", result.get("per_repo")),)
+    else:
+        return None
+    saw_list = False
+    malformed: list[str] = []
+    for prefix, per_repo in containers:
+        if not isinstance(per_repo, list):
+            continue
+        saw_list = True
+        for index, entry in enumerate(per_repo):
+            if isinstance(entry, str) and entry.strip():
+                malformed.append(f"{prefix}:repo-{index}" if prefix else f"repo-{index}")
+    return malformed if saw_list else None
 
 
 def _expected_row_composite(row: dict, w_judge: float, w_objective: float) -> float | None:
@@ -256,21 +346,38 @@ def check_row_integrity(result, tolerance: float = DEFAULT_TOLERANCE) -> dict:
         for label, slice_ in slices:
             _check_slice(label, slice_, tolerance, checks)
 
+    malformed = _malformed_per_repo_rows(result)
+    if malformed is not None:
+        checks.append({
+            "name": "per_repo_rows_wellformed",
+            "passed": not malformed,
+            "detail": "all per_repo rows are well-formed result objects" if not malformed
+            else f"corrupt per_repo string row(s): {', '.join(malformed)}",
+        })
+
     return {"passed": all(c["passed"] for c in checks), "checks": checks, "tolerance": tolerance}
 
 
 def failed_checks(result: dict) -> list[str]:
-    """The names of the checks that failed in a :func:`check_row_integrity` result."""
+    """The names of the checks that failed in a :func:`check_row_integrity` result.
+
+    Malformed ``checks`` containers, rows missing ``name``/``passed``, and other unusable
+    entries are skipped after logging a warning; they never raise.
+    """
     return [
-        c["name"] for c in _checks_list(_dict(result).get("checks"))
-        if isinstance(c, dict) and not c.get("passed")
+        c["name"] for c in _check_rows_list(_dict(result).get("checks"))
+        if not c.get("passed")
     ]
 
 
 def integrity_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_row_integrity` result."""
+    """A one-line human summary of a :func:`check_row_integrity` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"row integrity: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = _checks_list(result.get("checks"))
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "row integrity: no checks evaluated"
     if result.get("passed"):

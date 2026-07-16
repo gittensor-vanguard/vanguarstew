@@ -2,8 +2,10 @@
 
 import copy
 import json
+import logging
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -14,6 +16,7 @@ if ROOT not in sys.path:
 from benchmark.skip_budget import (  # noqa: E402
     DEFAULT_MAX_SKIP_RATE,
     DEFAULT_MIN_SCORED,
+    _check_rows_list,
     check_skip_budget,
     failed_checks,
     skip_budget_headline,
@@ -142,13 +145,99 @@ def test_a_float_skip_rate_is_rounded():
     assert check_skip_budget(_multi(3, 2), min_scored=1, max_skip_rate=0.4)["skip_rate"] == 0.333
 
 
+# --- #839: checks row sanitization for skip budget headlines ------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "enough_scored"}, "not a list",
+    ({"name": "enough_scored", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "enough_scored", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "enough_scored", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "enough_scored", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list(junk) == []
+    assert any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "enough_scored", "passed": False},
+        {"name": "skip_within_budget", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [valid[0], 42, {}, {"name": "enough_scored", "passed": 1}, valid[1]]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_rejects_int_as_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert _check_rows_list([{"name": "enough_scored", "passed": 1}]) == []
+    assert any("passed is int" in r.message for r in caplog.records)
+
+
 def test_helpers_survive_a_non_list_checks_value():
-    # failed_checks and the headline must not crash on a hand-built result with a bad checks field.
     for bad_checks in ("garbage", 42, {"name": "x"}, None):
         assert failed_checks({"checks": bad_checks}) == []
         assert skip_budget_headline({"checks": bad_checks}) == "skip budget: no checks evaluated"
-    # A checks list containing a non-dict entry is skipped, not crashed on.
-    assert failed_checks({"checks": [{"name": "a", "passed": False}, "oops"]}) == ["a"]
+
+
+def test_skip_budget_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "enough_scored", "passed": False}, "oops"]
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        line = skip_budget_headline({"checks": checks, "passed": False})
+    assert line == "skip budget: UNDER-COVERED (1/1 checks failed: enough_scored)"
+    assert any("checks[1] is str" in r.message for r in caplog.records)
+
+
+def test_failed_checks_integration_with_check_rows_list(caplog):
+    checks = [
+        {"name": "enough_scored", "passed": False},
+        "oops",
+        {"name": "skip_within_budget", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.skip_budget"):
+        assert failed_checks({"checks": checks}) == ["enough_scored"]
+    assert any("checks[1] is str" in r.message for r in caplog.records)
 
 
 def test_headline_reports_covered_and_under_covered():
@@ -180,6 +269,61 @@ def test_check_skip_budget_does_not_mutate_the_result():
     assert run == snapshot
 
 
+# --- generalization: sum tuned/held_out tallies (mirrors skip_share) --------------------
+
+
+def _gen(tuned, held_out, gap=0.1):
+    return {"tuned": tuned, "held_out": held_out, "generalization_gap": gap}
+
+
+def test_generalization_well_covered_run_passes():
+    gen = _gen(
+        {"repos": 8, "scored_repos": 7, "skipped": 1},
+        {"repos": 6, "scored_repos": 5, "skipped": 1},
+    )
+    result = check_skip_budget(gen, min_scored=3, max_skip_rate=0.25)
+    assert result["passed"] is True
+    assert result["repos"] == 14 and result["scored_repos"] == 12
+    assert result["skipped"] == 2 and result["skip_rate"] == round(2 / 14, 3)
+
+
+def test_generalization_held_out_skip_blowout_fails():
+    gen = _gen(
+        {"repos": 8, "scored_repos": 7, "skipped": 1},
+        {"repos": 6, "scored_repos": 2, "skipped": 4},
+    )
+    result = check_skip_budget(gen, min_scored=3, max_skip_rate=0.25)
+    assert result["passed"] is False
+    assert "skip_within_budget" in failed_checks(result)
+    assert result["skip_rate"] == round(5 / 14, 3)
+
+
+def test_generalization_agrees_with_skip_share_overall():
+    from benchmark.skip_share import summarize_skip_share
+    gen = _gen(
+        {"repos": 8, "scored_repos": 7, "skipped": 1},
+        {"repos": 6, "scored_repos": 2, "skipped": 4},
+    )
+    result = check_skip_budget(gen, min_scored=1, max_skip_rate=0.5)
+    share = summarize_skip_share(gen)
+    assert result["repos"] == share["repos"]
+    assert result["scored_repos"] == share["scored_repos"]
+    assert result["skip_rate"] == share["skip_share"]
+
+
+def test_generalization_without_partition_counts_fails_accounting():
+    gen = {"tuned": {"composite_mean": 0.6}, "held_out": {}, "generalization_gap": 0.1}
+    result = check_skip_budget(gen)
+    assert result["passed"] is False
+    assert "multi_repo_accounting" in failed_checks(result)
+
+
+def test_non_generalization_unchanged():
+    result = check_skip_budget(_multi(8, 7), min_scored=3)
+    assert result["passed"] is True
+    assert result["repos"] == 8
+
+
 # --- CLI ---
 
 def _write(tmp_path, name, data):
@@ -205,6 +349,34 @@ def test_cli_without_strict_returns_zero_even_when_failing(tmp_path, capsys):
     path = _write(tmp_path, "run.json", _multi(6, 1))
     assert cli.run([path]) == 0
     assert json.loads(capsys.readouterr().out)["passed"] is False
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory path raises IsADirectoryError inside open(); the CLI must report it cleanly and
+    # exit 2 (SystemExit(2)), not dump a raw traceback (mirrors generalization_gate #1446).
+    with pytest.raises(SystemExit) as exc:
+        cli.run([str(tmp_path)])
+    assert exc.value.code == 2
+    assert "directory" in capsys.readouterr().err
+
+
+def test_cli_unreadable_file_exits_two(capsys):
+    # An unreadable file raises PermissionError; the CLI reports it cleanly and exits 2.
+    with patch("builtins.open", side_effect=PermissionError("denied")):
+        with pytest.raises(SystemExit) as exc:
+            cli.run(["locked.json"])
+    assert exc.value.code == 2
+    assert "not readable" in capsys.readouterr().err
+
+
+def test_cli_generic_os_error_exits_two(capsys):
+    # Any other OSError (e.g. an I/O error) is reported cleanly with its message, not a traceback.
+    with patch("builtins.open", side_effect=OSError("I/O error")):
+        with pytest.raises(SystemExit) as exc:
+            cli.run(["flaky.json"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "I/O error" in err
 
 
 def test_cli_honours_threshold_flags(tmp_path):

@@ -2,9 +2,12 @@
 
 import copy
 import json
+import logging
 import os
 import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -16,6 +19,7 @@ from benchmark.repeatability import (  # noqa: E402
     assess_repeatability,
     repeatability_headline,
 )
+from scripts import repeatability as repeatability_cli  # noqa: E402
 
 
 def _run(score):
@@ -71,7 +75,7 @@ def test_all_zero_runs_are_perfectly_stable():
 
 
 def test_max_cv_is_configurable():
-    runs = [_run(0.50), _run(0.55)]                 # cv ~= 0.048
+    runs = [_run(0.50), _run(0.55)]                 # cv ~= 0.067
     assert assess_repeatability(runs, max_cv=0.02)["stable"] is False
     assert assess_repeatability(runs, max_cv=0.10)["stable"] is True
 
@@ -85,27 +89,130 @@ def test_insufficient_runs_is_inconclusive():
     assert assess_repeatability([], min_runs=2)["runs"] == 0
 
 
+def test_empty_scored_set_with_min_runs_zero_does_not_raise():
+    result = assess_repeatability([], min_runs=0)
+    assert result["runs"] == 0
+    assert result["reason"] == "no scored runs"
+    assert result["mean"] is None
+
+
+def test_headline_tolerates_truthy_non_integer_runs(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.repeatability"):
+        headline = repeatability_headline({
+            "runs": "2", "min_runs": 2, "stable": True, "mean": 0.6, "cv": 0.01,
+        })
+    assert headline == "repeatability: no scored runs"
+    assert any("runs is str" in r.message for r in caplog.records)
+
+
 def test_unscored_runs_are_skipped_not_counted():
-    result = assess_repeatability([_run(0.6), {"error": "no tasks"}, _run(0.62), "not-a-dict"])
+    result = assess_repeatability([_run(0.6), _run(0.62), "not-a-dict"])
     assert result["runs"] == 2                       # only the two scored runs count
     assert result["scores"] == [0.6, 0.62]
 
 
-def test_unscored_multi_repo_run_is_skipped_not_folded_into_spread():
-    # A repeat where every repo was too small reports scored_repos: 0 with a placeholder 0.0;
-    # folding it into the spread would fabricate a false UNSTABLE verdict, so it must be skipped.
+def test_error_repeat_fails_not_clean_instead_of_skipping():
+    result = assess_repeatability([_run(0.6), {"error": "no tasks"}, _run(0.62)])
+    assert result["stable"] is False
+    assert result["runs"] == 0
+    assert "repeat 2 not clean" in result["reason"]
+    assert "no tasks" in result["reason"]
+
+
+def test_unscored_multi_repo_run_with_errors_fails_not_clean():
+    # A repeat where every repo was too small still records per-repo errors; it must fail closed
+    # rather than being silently skipped from the spread.
     empty_run = {"repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
                  "per_repo": [{"repo": "a", "error": "bad path", "tasks": 0}]}
     result = assess_repeatability([_run(0.60), empty_run, _run(0.61)])
-    assert result["runs"] == 2                       # only the two scored repeats count
-    assert result["scores"] == [0.6, 0.61]
-    assert result["stable"] is True
+    assert result["stable"] is False
+    assert result["runs"] == 0
+    assert "repeat 2 not clean" in result["reason"]
 
 
 def test_repeatability_reads_generalization_tuned_score():
     result = assess_repeatability([_gen(0.70), _gen(0.71), _gen(0.69)])
     assert result["scores"] == [0.7, 0.71, 0.69]
     assert result["stable"] is True
+
+
+def _partial_multi(score):
+    return {
+        "composite_mean": score,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo": "a", "tasks": 4},
+            {"repo": "b", "tasks": 3},
+            {"repo": "c", "tasks": 0, "error": "clone failed"},
+        ],
+    }
+
+
+def test_partial_multi_repo_repeat_with_per_repo_error_is_unstable():
+    result = assess_repeatability([_partial_multi(0.66), _run(0.64)])
+    assert result["stable"] is False
+    assert result["runs"] == 0
+    assert "repeat 1 not clean" in result["reason"]
+    assert "clone failed" in result["reason"]
+
+
+def test_generalization_tuned_per_repo_error_fails_repeatability():
+    art = _gen(0.70)
+    art["tuned"]["per_repo"] = [
+        {"repo": "a", "tasks": 4},
+        {"repo": "b", "tasks": 0, "error": "freeze failed"},
+        {"repo": "c", "tasks": 3},
+    ]
+    result = assess_repeatability([art, _gen(0.71)])
+    assert result["stable"] is False
+    assert "repeat 1 not clean" in result["reason"]
+    assert "freeze failed" in result["reason"]
+
+
+def test_generalization_held_out_per_repo_error_fails_repeatability():
+    art = _gen(0.70)
+    art["held_out"]["per_repo"] = [
+        {"repo": "a", "tasks": 3},
+        {"repo": "b", "tasks": 0, "error": "clone failed"},
+        {"repo": "c", "tasks": 3},
+    ]
+    result = assess_repeatability([_gen(0.71), art])
+    assert result["stable"] is False
+    assert "repeat 2 not clean" in result["reason"]
+    assert "held_out" in result["reason"]
+
+
+def test_repeatability_tolerates_missing_per_repo_and_non_list_per_repo():
+    weird = {"composite_mean": 0.60, "scored_repos": 2, "per_repo": "oops"}
+    result = assess_repeatability([_run(0.60), weird, _run(0.60)])
+    assert result["stable"] is True
+
+
+def test_repeatability_per_repo_none_does_not_crash():
+    art = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": None}
+    result = assess_repeatability([art, _run(0.64)])
+    assert result["stable"] is True
+
+
+def test_repeatability_per_repo_with_none_and_non_dict_entries_does_not_crash():
+    art = {
+        "composite_mean": 0.66,
+        "scored_repos": 2,
+        "per_repo": [{"repo": "a", "tasks": 4}, None, 42],
+    }
+    result = assess_repeatability([art, _run(0.64)])
+    assert result["stable"] is True
+
+
+def test_falsy_per_repo_error_values_do_not_fail_repeatability():
+    for falsy in (0, False, None, ""):
+        art = {
+            "composite_mean": 0.66,
+            "scored_repos": 2,
+            "per_repo": [{"repo": "a", "tasks": 4, "error": falsy}],
+        }
+        result = assess_repeatability([art, _run(0.64)])
+        assert result["stable"] is True, falsy
 
 
 def test_headline_reports_stable_unstable_and_inconclusive():
@@ -118,9 +225,20 @@ def test_headline_reports_stable_unstable_and_inconclusive():
     assert DEFAULT_MAX_CV == 0.05
 
 
+def test_cv_uses_sample_standard_deviation():
+    # The CV of a sample of repeated runs uses the sample (Bessel-corrected) standard deviation,
+    # so run-to-run spread is not underestimated. Population stddev (pstdev) would give sd=0.04,
+    # cv=0.04 <= 0.05 and call this STABLE; the sample stddev is 0.057, cv=0.057 > 0.05 -> UNSTABLE.
+    result = assess_repeatability([_run(0.96), _run(1.04)], max_cv=0.05)
+    assert result["stddev"] == 0.057
+    assert result["cv"] == 0.057
+    assert result["stable"] is False
+    assert "exceeds max_cv" in result["reason"]
+
+
 def test_cv_boundary_is_inclusive():
     # stable requires cv <= max_cv; a cv exactly at the bound passes.
-    runs = [_run(0.50), _run(0.55)]                 # sd 0.025, mean 0.525, cv ~= 0.048
+    runs = [_run(0.50), _run(0.55)]                 # sd 0.035, mean 0.525, cv ~= 0.067
     result = assess_repeatability(runs)
     assert assess_repeatability(runs, max_cv=result["cv"])["stable"] is True
     assert assess_repeatability(runs, max_cv=result["cv"] - 0.001)["stable"] is False
@@ -166,7 +284,7 @@ def test_assess_repeatability_survives_non_list_artifacts():
     for bad in _MALFORMED_ARTIFACTS:
         result = assess_repeatability(bad, min_runs=2)
         assert result["runs"] == 0 and result["stable"] is False, bad
-        assert "insufficient runs" in result["reason"], bad
+        assert result["reason"] in ("no scored runs",) or "insufficient runs" in result["reason"], bad
 
 
 def test_assess_repeatability_logs_warning_for_non_list_artifacts(caplog):
@@ -190,6 +308,7 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     result = _run_cli(str(missing))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+    assert "artifact not found" in result.stderr
     assert str(missing) in result.stderr
 
 
@@ -210,6 +329,54 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     result = _run_cli(str(path))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    result = _run_cli(str(tmp_path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        repeatability_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        repeatability_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_generic_oserror_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise OSError("disk offline")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        repeatability_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err
+    assert "disk offline" in err
+    assert "Traceback" not in err
 
 
 def test_cli_still_reports_stable_for_well_formed_artifacts(tmp_path):

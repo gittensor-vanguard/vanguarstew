@@ -31,6 +31,21 @@ _REVIEW_MARKER_RE = re.compile(
     r"\b(?:review|merge|approve|request\s+changes|pull\s+request)",
     re.I,
 )
+# A bare "#N" denotes a pull request only when a review verb *governs* it — the verb is
+# directly followed by the number, allowing only connective words and follow-through action verbs
+# in between ("Review #7", "Merge and land #7", "Review then ship #7", "Review the PR #7"). A review
+# word that merely appears elsewhere in a feature description ("improve the code review workflow, #2
+# on the roadmap") does not qualify: there "workflow" is a noun (not a connective or action verb) so
+# the run stops before "#2", leaving it a roadmap ordinal, not a reference to PR #2.
+_REVIEW_REF_RE = re.compile(
+    r"\b(?:review|reviewing|reviewed|merge|merging|merged|approve|approving|approved)\b"
+    r"(?:\s+(?:and|or|then|the|a|an|this|that|it|pr|pull|request|changes"
+    r"|land|landed|ship|shipped|finish|finished|complete|completed|finalize|finalized"
+    r"|close|closed|deliver|delivered|do|done|handle|handled|address|addressed"
+    r"|resolve|resolved|get|wrap|submit|submitted|apply|applied|integrate|integrated))*"
+    r"\s+#?\s*(\d+)\b",
+    re.I,
+)
 # Explicit PR references: "#7", "PR #7", "pull request 7"
 _PR_NUMBER = re.compile(
     r"(?:#\s*(\d+)\b|(?:pull\s+request|pr)\s+#?\s*(\d+)\b)",
@@ -39,9 +54,49 @@ _PR_NUMBER = re.compile(
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
 _MIN_SUBJECT_PHRASE = 8
 
+# Plan-item `kind` vocabulary. Every entry except "triage" maps to a normalized commit kind in
+# the objective anchor's `benchmark/score.py::_PLAN_KIND`, so a plan can name any kind the
+# anchor actually scores. "triage" is a maintainer action, not a commit kind, and deliberately
+# maps to nothing there — it is the fallback for an item that names no recognizable kind.
 _PLAN_KINDS = frozenset({
     "feature", "bugfix", "refactor", "docs", "release", "dep", "triage",
+    "build", "ci", "test", "perf", "style", "revert",
 })
+
+# Conventional-Commit prefix on a commit subject: "feat:", "fix(scope):", "docs!:". This block
+# mirrors the objective anchor's classifier (benchmark/score.py `commit_kind`) in simplified
+# form, mapped into the planner's own `kind` vocabulary. We deliberately do NOT import from
+# ``benchmark/`` (``agent/`` must not depend on it — a miner-only split is planned); keep the
+# two aligned, as agent/context.py already does for forward-reference scrubbing.
+_CC_PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
+
+# Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Every type the anchor's own
+# classifier (`benchmark/score.py::_COMMIT_KIND`) recognizes has an entry here, so a kind the
+# anchor reads out of a subject is one the plan can name back. No type is dropped for lack of
+# an equivalent: a dropped type is invisible to `_recent_kinds_note`, which then describes a
+# history the repo does not have, and unnameable by the plan, which pins `kind_recall` at 0.000
+# for any repo whose work lands under it.
+_CC_TYPE_TO_PLAN_KIND = {
+    "feat": "feature", "feature": "feature",
+    "fix": "bugfix", "bugfix": "bugfix", "bug": "bugfix",
+    "docs": "docs", "doc": "docs",
+    "refactor": "refactor",
+    "release": "release",
+    "chore": "dep", "deps": "dep", "dep": "dep",
+    "build": "build",
+    "ci": "ci",
+    "test": "test", "tests": "test",
+    "perf": "perf",
+    "style": "style",
+    "revert": "revert",
+}
+
+# Release tooling (standard-version / release-please) cuts versions under a chore/build type:
+# "chore(release): 1.4.0", "chore(main): release 1.2.3", "build(release): 2.0.0". Those are
+# release actions, not dependency chores, so they must count toward "release" — exactly how
+# the anchor classifies them. The body regex matches benchmark/score.py `_RELEASE_TAG_SUBJECT`.
+_RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
+_RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
 
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
@@ -49,6 +104,63 @@ SYSTEM = (
     "happen, in priority order. When open pull requests are waiting for review, a strong "
     "maintainer clears or explicitly schedules that queue before unrelated greenfield work. "
     "Stay consistent with the philosophy. Respond ONLY with JSON."
+)
+
+# Prompt fragments for the plan-item schema and objective-anchor guidance. Kept as named
+# constants so tests can lock the contract without parsing full LLM prompts.
+PLAN_ITEM_SCHEMA = (
+    '  "title": short imperative title,\n'
+    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","build","ci",\n'
+    '          "test","perf","style","revert","triage",\n'
+    '  "rationale": why this, now, given the philosophy,\n'
+    '  "theme": the higher-level direction this advances,\n'
+    '  "files": optional list of repo-relative paths or top-level modules likely touched.'
+)
+
+OBJECTIVE_ANCHOR_GUIDANCE = (
+    "Concrete specificity matters: for each non-triage item, include `files` naming the "
+    "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
+    "Pick `kind` to match the maintainer commit type the action would produce "
+    "(bugfix/fix, feature/feat, docs, release, refactor, dep, build, ci, test, perf, style, "
+    "revert). When several kinds recur in recent history, plan separate items so each kind is "
+    "covered."
+)
+
+RELEASE_CADENCE_GUIDANCE = (
+    "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
+)
+
+# Prompt fragment for config-surface planning (#1640). Kept as a named constant so tests can
+# assert prompt inclusion without parsing the full LLM user message.
+CONFIG_SURFACE_GUIDANCE = (
+    "Recent history shows a steady stream of automation churn — dependency/GitHub-Actions bumps "
+    "and pre-commit autoupdates. That work lands under config-surface modules (e.g. `.github`, "
+    "`.pre-commit-config`, dependency manifests), which the objective anchor scores by changed "
+    "path just like source. Include one plan item covering that surface, with `files` naming the "
+    "relevant config paths (e.g. `.github/workflows/`, `.pre-commit-config.yaml`)."
+)
+
+# Markers that only automation tooling emits — used to gate the config-surface directive on real
+# evidence, not human vocabulary. Matched against a *case-folded* subject so BUILD(DEPS): and
+# build(deps): are treated identically (same for [pre-commit.ci] / Dependabot / Renovate).
+# A ``(deps)``/``(deps-dev)`` Conventional-Commit scope, the fixed pre-commit.ci subject, and
+# dependabot/renovate self-references all qualify; a human "docs: document our pre-commit setup"
+# or "chore: bump version 1.2.0" deliberately does NOT.
+_AUTOMATION_SCOPE_RE = re.compile(r"^[a-z]+\((?:deps|deps-dev)\)!?:")
+
+# Minimum distinct automation subjects in recent history before the config-surface note fires.
+# A lone bump is common noise even on source-driven repos; requiring two matches the
+# "steady stream" claim in CONFIG_SURFACE_GUIDANCE and mirrors how release cadence waits for
+# an evidenced pattern rather than a single noisy subject. On public freeze windows where
+# weighted module weight is mostly config (e.g. pluggy-style), recent history routinely carries
+# ≥2 of these markers; firing on 1 would steer source-led plans toward config work that is
+# not coming (a wrong module costs as much as a missed one).
+_AUTOMATION_STREAM_MIN = 2
+
+REPO_LAYOUT_GUIDANCE = (
+    "Ground each non-triage item's `files` in that listing — name the entries the item actually "
+    "touches (a path under a listed directory is fine), rather than a conventional source "
+    "layout this repository may not have."
 )
 
 
@@ -60,21 +172,256 @@ def _pr_title(pr: dict) -> str:
     return title.strip() if isinstance(title, str) else ""
 
 
-def _open_prs_list(context: dict) -> list:
-    """Return ``open_prs`` when it is a list; otherwise treat as no PR queue.
+def _pr_number(pr: dict):
+    """Return an open PR's ``number`` when it is a usable scalar int, else None.
 
-    A truthy non-list (``42``, ``True``, a bare dict) must not reach ``for p in open_prs``
-    or malformed frozen context aborts queue reconciliation.
+    The frozen queue is LLM/GitHub-derived JSON, so ``number`` can arrive as a non-scalar
+    (a list or dict). Such a value is *unhashable*, and both queue-reconciliation keyings —
+    the ``by_number`` lookup in ``_matched_pr`` and the ``seen_prs`` set via
+    ``_pr_dedup_key`` — would raise ``TypeError: unhashable type`` and abort the whole plan
+    step. Treat a non-int ``number`` as numberless (dedup falls back to title), mirroring the
+    existing numberless handling rather than crashing. ``bool`` is rejected too: it is never a
+    real PR number and would alias 0/1.
     """
-    raw = (context or {}).get("open_prs")
+    if not isinstance(pr, dict):
+        return None
+    number = pr.get("number")
+    if isinstance(number, bool) or not isinstance(number, int):
+        return None
+    return number
+
+
+def _pr_dedup_key(pr: dict):
+    """Return a stable dedup key for an open PR in queue reconciliation.
+
+    Numbered PRs key on ``number``; numberless PRs key on title so two distinct
+    queue entries without a ``number`` do not collapse onto a shared ``None``.
+    """
+    if not isinstance(pr, dict):
+        return None
+    number = _pr_number(pr)
+    if number is not None:
+        return ("number", number)
+    title = _pr_title(pr)
+    return ("title", title) if title else None
+
+
+def _safe_prs(context: dict) -> list:
+    """Return the planner-visible open-PR queue, or ``[]`` when unavailable or untrusted.
+
+    Fail-closed on ``_issues_truncated is True`` (#722): a partial backlog must not drive
+    queue notes, offline stubs, or reconciliation. A non-list ``open_prs`` value is treated
+    as no queue rather than aborting the planner path.
+    """
+    if not isinstance(context, dict):
+        return []
+    if context.get("_issues_truncated") is True:
+        return []
+    raw = context.get("open_prs")
     return raw if isinstance(raw, list) else []
 
 
+def _commit_plan_kind(subject):
+    """The plan-vocabulary kind a recent-commit subject evidences, or None.
+
+    Reads the Conventional-Commit prefix; a version-cut subject under a release-tooling type
+    ("chore(release): 1.4.0") reads as ``release`` rather than ``dep``. Merge commits and
+    prefix-less subjects carry no reliable kind, and a non-string subject (malformed frozen
+    context) is ignored rather than raising inside ``re``.
+    """
+    if not isinstance(subject, str):
+        return None
+    m = _CC_PREFIX_RE.match(subject)
+    if not m:
+        return None
+    cc_type = m.group(1).lower()
+    if cc_type in _RELEASE_TOOLING_TYPES:
+        body = subject[m.end():].lstrip(" :\t")
+        if _RELEASE_CUT_BODY_RE.match(body):
+            return "release"
+    return _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+
+
+def _recent_commits(context: dict) -> list:
+    """The frozen recent-commit list, or ``[]`` when absent or malformed."""
+    if not isinstance(context, dict):
+        return []
+    raw = context.get("recent_commits")
+    return raw if isinstance(raw, list) else []
+
+
+def _recent_kind_counts(context: dict) -> list:
+    """``(kind, count)`` pairs over recent commits, most frequent first, ties alphabetical."""
+    counts: dict = {}
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        kind = _commit_plan_kind(commit.get("subject"))
+        if kind:
+            counts[kind] = counts.get(kind, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _recent_kinds_note(context: dict) -> str:
+    """Prompt note surfacing the repo's recent kind mix so planned kinds track history (#1387).
+
+    Derived from the full frozen ``recent_commits`` list — unlike the JSON dump in ``_render``,
+    which is truncated to 12000 chars, so the tail of a long history still counts here. All
+    recent commits are considered, not one author's: the revealed window the plan is scored
+    against is repo-wide.
+    """
+    counts = _recent_kind_counts(context)
+    if not counts:
+        return ""
+    mix = ", ".join(f"{kind} ({n})" for kind, n in counts)
+    return (
+        f"\nRecent maintainer activity by kind, from Conventional-Commit subjects: {mix}.\n"
+        "Near-future maintainer work usually continues this mix. Unless the philosophy or "
+        'the PR queue argues otherwise, make the plan items\' "kind" values collectively '
+        "cover the recurring kinds above, and keep `files` on every non-triage item.\n"
+    )
+
+
+def _release_cadence_signal(context: dict) -> bool:
+    """True when recent commits show a release cut (mirrors heuristic_plan cadence)."""
+    return any(
+        _commit_plan_kind(commit.get("subject")) == "release"
+        for commit in _recent_commits(context)
+        if isinstance(commit, dict)
+    )
+
+
+def _release_cadence_note(context: dict) -> str:
+    """Inject release-item guidance only when history evidences release cadence."""
+    if not _release_cadence_signal(context):
+        return ""
+    return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+
+
+def _is_automation_subject(subject) -> bool:
+    """True when a commit subject is one automation tooling emits (dep/action bump, pre-commit.ci).
+
+    Keys on markers only the tools produce so a human subject that merely *mentions* pre-commit or
+    a version bump ("docs: document our pre-commit setup", "chore: bump version from 1.2.0") is not
+    misread as automation — a false positive would spend a plan slot on config work that isn't
+    coming (worse than a miss), so this stays deliberately narrow.
+
+    Every check runs on a case-folded subject so ``BUILD(DEPS):``, ``Build(Deps):``, and
+    ``[Pre-Commit.CI]`` match the same way as their lower-case forms — no mixed ``re.I`` /
+    substring-lower rules.
+    """
+    if not isinstance(subject, str):
+        return False
+    s = subject.strip().lower()
+    if not s:
+        return False
+    if _AUTOMATION_SCOPE_RE.match(s):
+        return True
+    return "[pre-commit.ci]" in s or "dependabot" in s or "renovate" in s
+
+
+def _automation_surface_signal(context: dict) -> bool:
+    """True when recent history shows a *steady stream* of automation/config churn.
+
+    Requires ``_AUTOMATION_STREAM_MIN`` matching subjects (default 2), not one: a lone
+    incidental bump must not steer the plan toward a config surface the repo does not
+    actually churn. The objective anchor penalizes a wrong module as much as a missed
+    one, so the bar to fire is evidence of an ongoing pattern (see the constant's
+    docstring and issue #1640's pluggy freeze windows, which carry ≫2 markers).
+
+    Malformed history is ignored rather than raising: non-dict commits, missing
+    ``subject`` keys, and non-string subjects contribute zero to the count.
+    """
+    n = 0
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        if _is_automation_subject(commit.get("subject")):
+            n += 1
+            if n >= _AUTOMATION_STREAM_MIN:
+                return True
+    return False
+
+
+def _config_surface_note(context: dict) -> str:
+    """Inject config-surface guidance only when automation churn is evidenced (#1640).
+
+    A source-driven repo (no automation markers) must see a byte-identical prompt, so this
+    returns the empty string there and never shifts that plan.
+    """
+    if not _automation_surface_signal(context):
+        return ""
+    return f"\n{CONFIG_SURFACE_GUIDANCE}\n"
+
+
+def _repo_layout(context: dict) -> list:
+    """The frozen checkout's top-level entries, or ``[]`` when absent or malformed.
+
+    ``repo_layout`` is derived by ``agent.context.load_context``, but the planner is also
+    called directly with hand-built context (tests, callers, older frozen artifacts), so the
+    shape is guarded here rather than assumed: a non-list value, and any non-string or blank
+    entry within it, is dropped instead of reaching the prompt.
+
+    An entry carrying a rendering separator — a comma (the delimiter the note joins on) or a
+    newline — is dropped too. Repository filenames are not authored by this project, and the
+    note is the one place in ``agent/`` that renders them into a prompt: a name containing a
+    newline would otherwise occupy its own prompt line as free-standing text, and one
+    containing a comma would read as two entries while the stated count said otherwise.
+    """
+    if not isinstance(context, dict):
+        return []
+    raw = context.get("repo_layout")
+    if not isinstance(raw, list):
+        if raw is not None:
+            logger.warning(
+                "planner: repo_layout is %s, not a list; treating as empty",
+                type(raw).__name__,
+            )
+        return []
+    entries = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        name = entry.strip()
+        if not name or any(sep in name for sep in (",", "\n", "\r")):
+            continue
+        entries.append(name)
+    return entries
+
+
+def _repo_layout_note(context: dict) -> str:
+    """Prompt note grounding the plan's `files` in the repo's real top-level entries at T.
+
+    Without it the only concrete guidance is ``OBJECTIVE_ANCHOR_GUIDANCE``'s illustrative
+    examples (`src/loader.py`, `docs/`, `tests/`), which name a conventional source layout many
+    repositories do not have — so `files` gets filled with plausible-looking paths that are not
+    in the tree. Empty when the layout could not be read, so the prompt is unchanged rather
+    than carrying an empty list.
+
+    The note describes the listing as the repository's top-level entries and claims nothing
+    more. It deliberately does not assert that these are the only paths that exist: the listing
+    is top-level only (nested paths are legitimate and `OBJECTIVE_ANCHOR_GUIDANCE` asks for
+    them) and it is capped, so an exhaustiveness claim would be false — and would tell the plan
+    that a real module it had correctly identified does not exist.
+    """
+    entries = _repo_layout(context)
+    if not entries:
+        return ""
+    return (
+        f"\nRepository layout at the freeze commit — its top-level entries "
+        f"({len(entries)}): {', '.join(entries)}.\n"
+        f"{REPO_LAYOUT_GUIDANCE}\n"
+    )
+
+
 def _pr_queue_note(context: dict) -> str:
-    prs = [p for p in _open_prs_list(context) if _pr_title(p)]
+    prs = [p for p in _safe_prs(context) if _pr_title(p)]
     if not prs:
         return ""
-    lines = [f"- #{p.get('number', '?')}: {_pr_title(p)}" for p in prs]
+    lines = []
+    for p in prs:
+        num = _pr_number(p)
+        lines.append(f"- #{num if num is not None else '?'}: {_pr_title(p)}")
     return (
         f"\nOpen pull requests awaiting review ({len(lines)}):\n"
         + "\n".join(lines)
@@ -86,12 +433,19 @@ def _pr_queue_note(context: dict) -> str:
 def _offline_plan_stub(context: dict, n: int) -> list:
     """Deterministic offline plan: prioritize the visible PR queue when present."""
     items = []
-    for pr in _open_prs_list(context):
+    for pr in _safe_prs(context):
         title = _pr_title(pr)
         if not title:
             continue
+        # Include the PR number so ``reconcile_plan_with_queue`` -> ``_matched_pr`` re-associates
+        # this stub item with its PR via the ``#N`` reference. Without it, a short (< 8 char) or
+        # single-significant-token title (e.g. "Fix bug") matches on neither the subject-phrase
+        # nor token-overlap path, so reconcile treats the queue as unaddressed and prepends a
+        # *second* review item for the same PR. Mirrors the numbered title reconcile itself uses.
+        number = _pr_number(pr)
+        heading = f"Review pull request #{number}" if number is not None else "Review pull request"
         items.append({
-            "title": f"Review pull request: {title}",
+            "title": f"{heading}: {title}",
             "kind": "triage",
             "rationale": "open PR awaiting maintainer review",
             "theme": "PR queue",
@@ -108,7 +462,7 @@ def _offline_plan_stub(context: dict, n: int) -> list:
 
 def _pr_queue(context: dict) -> list:
     return [
-        p for p in _open_prs_list(context)
+        p for p in _safe_prs(context)
         if isinstance(p, dict) and _pr_title(p)
     ]
 
@@ -152,10 +506,27 @@ def _explicit_pr_number(*texts: str) -> int | None:
 
 
 def _reads_as_pr_reference(item: dict) -> bool:
-    """True when the item's own text uses PR/review vocabulary, so a bare ``#N`` in it denotes a
-    pull request rather than an ordinal ranking numeral ("our #1 priority")."""
+    """True when a review verb in the item's text *governs* a bare ``#N``, so the ``#N`` denotes a
+    pull request rather than an ordinal ranking numeral ("our #1 priority").
+
+    The verb must be followed by the number (allowing only connective words in between), so a
+    review word that merely appears elsewhere in a feature description — e.g. "improve the code
+    review workflow, #2 on the roadmap" — does not turn an unrelated ordinal into a PR reference.
+    """
     blob = f"{item.get('title', '')} {item.get('rationale', '')}"
-    return bool(_REVIEW_MARKER_RE.search(blob))
+    return bool(_REVIEW_REF_RE.search(blob))
+
+
+def _review_governed_pr_number(item: dict) -> int | None:
+    """The bare ``#N`` a review verb governs in the item text, or ``None`` when none."""
+    blob = f"{item.get('title', '')} {item.get('rationale', '')}"
+    match = _REVIEW_REF_RE.search(blob)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
 
 
 def _title_contains_pr_subject(item: dict, pr: dict) -> bool:
@@ -196,11 +567,19 @@ def _matched_pr(item: dict, prs: list):
     queue is treated as stale: the item is **not** matched against a different open PR
     via fallback, since the author already committed to a specific number.
     """
-    by_number = {p.get("number"): p for p in prs if p.get("number") is not None}
+    by_number = {_pr_number(p): p for p in prs if _pr_number(p) is not None}
 
     ref, qualified = _pr_reference(item.get("title", ""), item.get("rationale", ""))
     if ref is not None:
-        pr = by_number.get(ref)
+        lookup = ref
+        # A review verb may govern a *later* bare "#N" while an earlier "#N" is an ordinal
+        # ("Deliver our #1 priority, then review #7") — resolve the governed number, not the
+        # first bare match from ``_pr_reference``.
+        if not qualified and _reads_as_pr_reference(item):
+            governed = _review_governed_pr_number(item)
+            if governed is not None:
+                lookup = governed
+        pr = by_number.get(lookup)
         # A qualified "PR #N" is authoritative (even when stale -> None, which suppresses
         # fallback matching). A bare "#N" is trusted only when the item actually reads as a PR
         # reference or its content matches the PR; otherwise "#N" is an ordinal ("the #1
@@ -354,29 +733,36 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     for item in plan:
         pr = _matched_pr(item, prs)
         if pr is not None:
-            number = pr.get("number")
-            if number in seen_prs:
+            number = _pr_number(pr)
+            dedup_key = _pr_dedup_key(pr)
+            if dedup_key is not None and dedup_key in seen_prs:
                 continue
-            seen_prs.add(number)
+            if dedup_key is not None:
+                seen_prs.add(dedup_key)
             addressed = True
             if not _is_review_item(item):
+                if number is not None:
+                    rationale = (f"restates open PR #{number} already in flight; review it "
+                                 "instead of duplicating the work")
+                else:
+                    rationale = ("restates an open PR already in flight; review it instead "
+                                 "of duplicating the work")
                 item = {
                     **item,
                     "kind": "triage",
                     "restates_pr": number,
-                    "rationale": (
-                        f"restates open PR #{number} already in flight; review it instead of "
-                        "duplicating the work"
-                    ),
+                    "rationale": rationale,
                 }
         out.append(item)
 
     if not addressed:
         top = prs[0]
+        top_number = _pr_number(top)
         out.insert(0, {
-            "title": f"Review pull request #{top.get('number', '?')}: {_pr_title(top)}",
+            "title": f"Review pull request #{top_number if top_number is not None else '?'}: "
+                     f"{_pr_title(top)}",
             "kind": "triage",
-            "restates_pr": top.get("number"),
+            "restates_pr": top_number,
             "rationale": (
                 "the open PR queue was omitted from the plan; a strong maintainer clears or "
                 "schedules review before unrelated work"
@@ -392,18 +778,28 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
+        f"{_repo_layout_note(context)}"
+        f"{_recent_kinds_note(context)}"
+        f"{_release_cadence_note(context)}"
+        f"{_config_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
-        '  "title": short imperative title,\n'
-        '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
-        '  "rationale": why this, now, given the philosophy,\n'
-        '  "theme": the higher-level direction this advances.'
+        f"{PLAN_ITEM_SCHEMA}\n\n"
+        f"{OBJECTIVE_ANCHOR_GUIDANCE}"
     )
     stub = _offline_plan_stub(context, n)
     plan = llm.chat_json(SYSTEM, user, stub=stub)
     if isinstance(plan, dict):  # tolerate {"plan": [...]}
-        wrapped = _plan_list(plan.get("plan"), "plan")
-        plan = wrapped or _plan_list(plan.get("actions"), "actions")
+        raw_plan = plan.get("plan")
+        # An explicit "plan" key — even an empty list — must be honored and
+        # not silently replaced by a stale "actions" fallback (#1011).  A
+        # non-list "plan" still gets the existing warning + fallback path.
+        if isinstance(raw_plan, list):
+            plan = raw_plan
+        elif "plan" in plan:
+            plan = _plan_list(raw_plan, "plan") or _plan_list(plan.get("actions"), "actions")
+        else:
+            plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
     return reconcile_plan_with_queue(plan, context, n)
 

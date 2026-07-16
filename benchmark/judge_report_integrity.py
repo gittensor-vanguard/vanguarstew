@@ -29,6 +29,7 @@ checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -37,22 +38,115 @@ _REPORT_TALLY = ("wins", "losses", "ties")
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Non-finite floats survive a save/load round trip (json.dump writes NaN/Infinity and
+    # json.load parses them back), but int() raises on them and a NaN/Infinity count is not
+    # a usable value anyway -- treat them as malformed, like a missing or wrong-typed field,
+    # matching benchmark/report.py (#616/#927). math.isfinite also raises OverflowError for
+    # ints too large for a float, which would crash float formatting the same way.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _checks_list(checks) -> list:
-    if isinstance(checks, list):
-        return checks
-    if checks is not None:
+_CHECK_ROW_KEYS = ("name", "passed")
+
+_NUMPY_BOOL_TYPENAMES = frozenset({"bool_", "bool8", "bool"})  # "bool" = numpy 2.x
+
+
+def _is_passed(value) -> bool:
+    """Accept native ``bool`` and numpy scalar booleans; reject int 0/1 and other scalars.
+
+    Uses ``type(value) is bool`` rather than ``isinstance`` so arbitrary bool subclasses
+    (which can override ``__bool__``) are not treated as check-row pass/fail flags.
+    """
+    if type(value) is bool:
+        return True
+    return type(value).__name__ in _NUMPY_BOOL_TYPENAMES
+
+
+def _check_row_field(key: str, value) -> bool:
+    """Return whether ``value`` is usable for a check-row ``key`` in ``_CHECK_ROW_KEYS``."""
+    if key == "name":
+        return isinstance(value, str) and bool(value.strip())
+    if key == "passed":
+        return _is_passed(value)
+    return False
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return judge-report-integrity check rows for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers are warned and treated as empty (never coerced). A usable row is a
+    dict with every key in ``_CHECK_ROW_KEYS``: ``name`` must be a non-empty ``str`` and
+    ``passed`` must be a native ``bool`` or numpy scalar boolean; anything else is skipped
+    with a warning.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
         logger.warning(
             "judge_report_integrity: checks is %s, not a list; treating as empty",
             type(checks).__name__,
         )
-    return []
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "judge_report_integrity: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "judge_report_integrity: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        bad_key = None
+        for key in _CHECK_ROW_KEYS:
+            if not _check_row_field(key, row[key]):
+                bad_key = key
+                break
+        if bad_key is not None:
+            value = row[bad_key]
+            if bad_key == "name":
+                detail = (
+                    type(value).__name__
+                    if not isinstance(value, str)
+                    else "empty str"
+                )
+                expected = "non-empty str"
+            else:
+                detail = type(value).__name__
+                expected = "bool"
+            logger.warning(
+                "judge_report_integrity: checks[%s] %s is %s, not a usable %s; skipping",
+                idx,
+                bad_key,
+                detail,
+                expected,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "judge_report_integrity: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
 
 
 def _per_repo_list(items, field: str = "per_repo") -> list:
@@ -117,12 +211,17 @@ def _expand_slice(label: str, part: dict) -> list[tuple[str, dict]]:
     return slices
 
 
+def _partition_scored(part: dict) -> bool:
+    """True when a partition carries at least one judge-report slice to verify."""
+    return bool(_expand_slice("_probe", part))
+
+
 def _report_slices(result: dict) -> list[tuple[str, dict]]:
     tuned, held_out = result.get("tuned"), result.get("held_out")
     if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
         slices: list[tuple[str, dict]] = []
         for label, part in (("tuned", tuned), ("held_out", held_out)):
-            if isinstance(part, dict) and part.get("scored_repos"):
+            if isinstance(part, dict) and _partition_scored(part):
                 slices.extend(_expand_slice(label, part))
         return slices
     if "per_repo" in result:
@@ -134,6 +233,41 @@ def _report_slices(result: dict) -> list[tuple[str, dict]]:
     if _slice_has_judge_telemetry(result):
         return [("run", result)]
     return []
+
+
+def _malformed_per_repo_rows(result: dict) -> list[str] | None:
+    """Labels of ``per_repo`` rows that are a non-empty string instead of a result dict.
+
+    ``_per_repo_list`` keeps only dict rows so the report checks can run, which silently drops a
+    row serialized as a raw error string (e.g. ``"CLONE FAILED: ..."`` where ``run_multi_replay``
+    expected a result dict). Such a corrupt row is surfaced here so a partial artifact fails
+    closed instead of passing as CONSISTENT, matching ``benchmark.acceptance._partition_error``
+    and the sibling gates ``run_clean`` (#1357), ``error_repo_share`` (#1362), and
+    ``tally_integrity`` (#1453). Only non-empty strings are flagged: a per_repo row that is a dict
+    carrying its own ``error`` is an unscored repo, not a report inconsistency, and
+    ints/``None``/lists stay ignored exactly as ``_per_repo_list`` treats them.
+
+    Returns ``None`` for a single-repo/rows-only artifact that carries no ``per_repo`` container,
+    so the well-formedness check is reported only where per_repo rows exist. The shape branch
+    mirrors :func:`_report_slices` to keep per_repo handling consistent across the module.
+    """
+    tuned, held_out = result.get("tuned"), result.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict) and "generalization_gap" in result:
+        containers = (("tuned", tuned.get("per_repo")), ("held_out", held_out.get("per_repo")))
+    elif "per_repo" in result:
+        containers = (("", result.get("per_repo")),)
+    else:
+        return None
+    saw_list = False
+    malformed: list[str] = []
+    for prefix, per_repo in containers:
+        if not isinstance(per_repo, list):
+            continue
+        saw_list = True
+        for index, entry in enumerate(per_repo):
+            if isinstance(entry, str) and entry.strip():
+                malformed.append(f"{prefix}:repo-{index}" if prefix else f"repo-{index}")
+    return malformed if saw_list else None
 
 
 def _check_slice(label: str, slice_: dict, checks: list) -> None:
@@ -223,21 +357,39 @@ def check_judge_report_integrity(result) -> dict:
         for label, slice_ in slices:
             _check_slice(label, slice_, checks)
 
+    malformed = _malformed_per_repo_rows(result)
+    if malformed is not None:
+        checks.append({
+            "name": "per_repo_rows_wellformed",
+            "passed": not malformed,
+            "detail": "all per_repo rows are well-formed result objects" if not malformed
+            else f"corrupt per_repo string row(s): {', '.join(malformed)}",
+        })
+
     return {"passed": all(c["passed"] for c in checks), "checks": checks}
 
 
 def failed_checks(result: dict) -> list[str]:
-    """The names of the checks that failed in a :func:`check_judge_report_integrity` result."""
+    """The names of the checks that failed in a :func:`check_judge_report_integrity` result.
+
+    Malformed ``checks`` containers, rows missing ``name``/``passed``, and other unusable
+    entries are skipped after logging a warning; they never raise.
+    """
     return [
-        c["name"] for c in _checks_list(_dict(result).get("checks"))
-        if isinstance(c, dict) and not c.get("passed")
+        c["name"]
+        for c in _check_rows_list(_dict(result).get("checks"))
+        if not c["passed"]
     ]
 
 
 def integrity_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_judge_report_integrity` result."""
+    """A one-line human summary of a :func:`check_judge_report_integrity` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"judge report integrity: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = _checks_list(result.get("checks"))
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "judge report integrity: no checks evaluated"
     if result.get("passed"):

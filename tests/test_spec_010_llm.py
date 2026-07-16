@@ -75,6 +75,109 @@ def test_offline_chat_json_returns_empty_dict_when_stub_is_none(monkeypatch):
     assert LLM(api_key="offline").chat_json("system", "user", stub=None) == {}
 
 
+# --- Live chat_json() resilience to malformed output ----------------------------------------
+
+def _live_llm(monkeypatch, reply):
+    """A non-offline LLM whose transport returns ``reply`` verbatim (no network)."""
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+    assert llm.offline is False
+    llm.chat = lambda system, user: reply
+    return llm
+
+
+def test_chat_json_falls_back_to_stub_on_unparseable_output(monkeypatch):
+    # Malformed model output (no JSON anywhere) must not crash the agent: fall back to the stub
+    # (M4 acceptance: no agent crashes from malformed LLM output).
+    llm = _live_llm(monkeypatch, "Sure, I'd merge it. (no JSON here)")
+    stub = {"action": "plan", "labels": []}
+    assert llm.chat_json("system", "user", stub=stub) == stub
+
+
+def test_chat_json_falls_back_to_empty_dict_when_stub_is_none(monkeypatch):
+    llm = _live_llm(monkeypatch, "no json at all")
+    assert llm.chat_json("system", "user", stub=None) == {}
+
+
+def test_chat_json_returns_parsed_json_when_output_is_valid(monkeypatch):
+    llm = _live_llm(monkeypatch, 'Here you go:\n```json\n{"action": "merge"}\n```')
+    assert llm.chat_json("system", "user", stub={"action": "plan"}) == {"action": "merge"}
+
+
+def test_chat_json_still_propagates_a_transport_error(monkeypatch):
+    # Only a parse failure falls back to the stub; a transport/connection error must still raise.
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+
+    def boom(system, user):
+        raise ConnectionError("network down")
+
+    llm.chat = boom
+    with pytest.raises(ConnectionError):
+        llm.chat_json("system", "user", stub={"action": "plan"})
+
+
+# --- Live chat() envelope handling (real chat(), HTTP transport mocked) ---------------------
+
+class _FakeResp:
+    """Minimal context-manager stand-in for an ``http.client.HTTPResponse``."""
+
+    def __init__(self, body):
+        self._b = body.encode("utf-8")
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _online_llm(monkeypatch, body):
+    """A non-offline LLM whose HTTP transport returns ``body`` verbatim (no network)."""
+    import urllib.request
+
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+    assert llm.offline is False
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _FakeResp(body))
+    return llm
+
+
+def test_chat_returns_content_from_a_valid_envelope(monkeypatch):
+    body = '{"choices": [{"message": {"content": "hello"}}]}'
+    assert _online_llm(monkeypatch, body).chat("system", "user") == "hello"
+
+
+@pytest.mark.parametrize("body", [
+    '{"error": {"message": "overloaded"}}',   # HTTP-200 error envelope (common on overload)
+    "{}",                                      # empty object — no choices
+    "[]",                                      # bare list — wrong shape entirely
+    "not json at all",                         # not even JSON
+])
+def test_chat_raises_valueerror_on_malformed_envelope(body, monkeypatch):
+    # A malformed (non-chat-completion) 200 body is malformed model output, not a transport
+    # error: chat() raises ValueError (never KeyError/IndexError/TypeError) so chat_json can
+    # fall back to the stub.
+    with pytest.raises(ValueError):
+        _online_llm(monkeypatch, body).chat("system", "user")
+
+
+@pytest.mark.parametrize("body", [
+    '{"error": {"message": "overloaded"}}',
+    "{}",
+    "[]",
+    "not json at all",
+])
+def test_chat_json_falls_back_to_stub_on_malformed_envelope(body, monkeypatch):
+    # M4 acceptance: a malformed inference-response envelope must not crash the agent — it
+    # falls back to the stub, exactly like unparseable content does (regression for #954).
+    stub = {"action": "plan", "labels": []}
+    assert _online_llm(monkeypatch, body).chat_json("system", "user", stub=stub) == stub
+
+
 # --- JSON extraction order ------------------------------------------------------------------
 
 def test_extract_json_parses_fenced_code_block():

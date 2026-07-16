@@ -49,9 +49,13 @@ def test_shipped_example_config_loads_and_is_wellformed():
     assert len(rs) >= 2
     assert len(rs.names()) == len(set(rs.names()))            # unique names
     assert all(e.tier in ("recent", "obscure") for e in rs)
-    # a leakage-safe set is a mix and reserves held-out repos for generalization
+    # a leakage-safe set reserves held-out repos for generalization, and (since 2026-07-16)
+    # is all-obscure with pre-2021 windows: obscurity defends memorization, and a pre-LLM
+    # bound keeps the predicted maintainer decisions human. `recent` remains a legal tier
+    # value, but the set no longer requires one (see repo_set_readiness.pre_llm_windows).
     assert rs.held_out() and rs.tuned()
-    assert rs.by_tier("recent") and rs.by_tier("obscure")
+    assert rs.by_tier("obscure")
+    assert all(e.freeze_window.get("before", "") <= "2021-01-01" for e in rs)
 
 
 def test_strict_top_level_validation():
@@ -166,6 +170,72 @@ def test_load_reports_missing_file_and_bad_json(tmp_path):
         load_repo_set(str(bad))
 
 
+def test_load_reports_a_directory_path_as_a_clean_error(tmp_path):
+    # os.path.exists is true for a directory, so a directory path reaches open() and raises
+    # IsADirectoryError — an OSError, but NOT a FileNotFoundError. It must surface as a clean
+    # RepoSetError carrying the real OS text, distinct from "not found" (the path DOES exist)
+    # and "invalid JSON" (it was never read as text) (#1072).
+    sub = tmp_path / "a_dir"
+    sub.mkdir()
+    with pytest.raises(RepoSetError, match="cannot read repo-set config") as exc:
+        load_repo_set(str(sub))
+    assert "not found" not in str(exc.value) and "invalid JSON" not in str(exc.value)
+
+
+def test_load_distinguishes_not_found_directory_and_bad_json(tmp_path):
+    # The three failure modes stay three distinct messages — proving the OSError branch does not
+    # swallow the not-found case (FileNotFoundError is an OSError subclass, caught first).
+    missing = tmp_path / "gone.json"
+    a_dir = tmp_path / "dir"
+    a_dir.mkdir()
+    bad = tmp_path / "bad.json"
+    bad.write_text("{nope", encoding="utf-8")
+    messages = {}
+    for label, path in (("missing", missing), ("dir", a_dir), ("bad", bad)):
+        with pytest.raises(RepoSetError) as exc:
+            load_repo_set(str(path))
+        messages[label] = str(exc.value)
+    assert "not found" in messages["missing"]
+    assert "cannot read repo-set config" in messages["dir"]
+    assert "invalid JSON" in messages["bad"]
+    assert len(set(messages.values())) == 3
+
+
+def test_load_reports_an_unreadable_file_as_a_clean_error(tmp_path):
+    # A file that exists but is unreadable (permission denied) also reaches open(); its OSError
+    # is wrapped in RepoSetError like every other load failure.
+    import os
+    import stat
+
+    locked = tmp_path / "locked.json"
+    locked.write_text('{"repos": []}', encoding="utf-8")
+    locked.chmod(0)
+    if os.access(str(locked), os.R_OK):
+        # Running as root (or a filesystem that ignores mode bits): the read isn't actually
+        # blocked, so there is nothing to assert. Restore and skip.
+        locked.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        pytest.skip("cannot make a file unreadable in this environment (running as root?)")
+    try:
+        with pytest.raises(RepoSetError, match="cannot read repo-set config"):
+            load_repo_set(str(locked))
+    finally:
+        locked.chmod(stat.S_IRUSR | stat.S_IWUSR)  # let tmp_path cleanup remove it
+
+
+def test_load_reports_a_non_utf8_file_as_a_clean_error(tmp_path):
+    # A file that exists and is readable but is not valid UTF-8 (saved as UTF-16/latin-1, or a
+    # binary file passed by mistake) makes json.load raise UnicodeDecodeError while decoding the
+    # stream. It is a ValueError, not a JSONDecodeError or an OSError, so without a dedicated
+    # branch it escapes as a raw traceback. It must surface as a clean RepoSetError, distinct from
+    # "not found", "cannot read", and "invalid JSON" (#1090).
+    cfg = tmp_path / "utf16.json"
+    cfg.write_bytes('{"repos": []}'.encode("utf-16"))
+    with pytest.raises(RepoSetError, match="is not valid UTF-8") as exc:
+        load_repo_set(str(cfg))
+    msg = str(exc.value)
+    assert "invalid JSON" not in msg and "not found" not in msg and "cannot read" not in msg
+
+
 def test_example_json_is_parseable_directly():
     # sanity: the shipped file is literally valid JSON
     with open(EXAMPLE_REPO_SET, "r", encoding="utf-8") as f:
@@ -179,7 +249,11 @@ def test_curated_config_loads_and_has_real_sources():
     assert all(not is_placeholder_source(e.source) for e in rs)
     assert all(e.source.startswith("https://github.com/") for e in rs)
     assert rs.tuned() and rs.held_out()
-    assert rs.by_tier("recent") and rs.by_tier("obscure")
+    # The set is deliberately all-obscure since 2026-07-16: memorization is defended by
+    # obscurity, and every freeze window is bounded pre-2021 so the ground truth is human
+    # (see benchmark/repo_set_readiness.py's pre_llm_windows check, which replaced both_tiers).
+    assert rs.by_tier("obscure")
+    assert all(e.freeze_window.get("before", "") <= "2021-01-01" for e in rs)
 
 
 def test_partition_and_replay_kwargs():

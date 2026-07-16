@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 
 from agent.llm import LLM
@@ -176,8 +177,14 @@ def check_calibration(corpus: list[dict] | None = None, llm: LLM | None = None) 
         "scenario_count": len(results),
         "results": results,
         "symmetry_checks": symmetry,
-        "failed": [r["id"] for r in results if not r["passed"]]
-               + [s["id"] for s in symmetry if not s["passed"]],
+        # ``failed`` is the set of scenario ids that failed ANY check. A scenario runs through both
+        # the winner check (``results``) and the symmetry check (``symmetry``) under the same id, so
+        # one that fails both must be listed once, not twice -- dedup preserving first-seen order
+        # (mirrors score_calibration, whose single-source ``failed`` never duplicates).
+        "failed": list(dict.fromkeys(
+            [r["id"] for r in results if not r["passed"]]
+            + [s["id"] for s in symmetry if not s["passed"]]
+        )),
     }
 
 
@@ -208,14 +215,46 @@ def _failed_ids_list(failed) -> list[str]:
     return ids
 
 
+_SYMMETRY_ROW_KEYS = ("id", "passed")
+
+_NUMPY_BOOL_TYPENAMES = frozenset({"bool_", "bool8", "bool"})  # "bool" = numpy 2.x
+
+
+def _is_passed(value) -> bool:
+    """Accept native ``bool`` and numpy scalar booleans; reject int 0/1 and other scalars.
+
+    Uses ``type(value) is bool`` rather than ``isinstance`` so arbitrary bool subclasses
+    (which can override ``__bool__``) are not treated as symmetry pass/fail flags.
+    """
+    if type(value) is bool:
+        return True
+    return type(value).__name__ in _NUMPY_BOOL_TYPENAMES
+
+
+def _check_symmetry_row_field(key: str, value) -> bool:
+    """Return whether ``value`` is usable for a symmetry row ``key`` in ``_SYMMETRY_ROW_KEYS``."""
+    if key == "id":
+        return isinstance(value, str) and bool(value.strip())
+    if key == "passed":
+        return _is_passed(value)
+    return False
+
+
 def _symmetry_checks_list(checks) -> list[dict]:
-    """Return symmetry-check rows when ``checks`` is a list; skip junk rows."""
+    """Return symmetry-check rows for :func:`calibration_headline`.
+
+    ``None`` means the key is absent. An empty list means zero symmetry checks. Both are silent.
+    Non-list containers are warned and treated as empty (never coerced). A usable row is a dict
+    with every key in ``_SYMMETRY_ROW_KEYS``: ``id`` must be a non-empty ``str`` and ``passed``
+    must be a native ``bool`` or numpy scalar boolean; anything else is skipped with a warning.
+    """
+    if checks is None:
+        return []
     if not isinstance(checks, list):
-        if checks is not None:
-            logger.warning(
-                "judge_calibration: symmetry_checks is %s, not a list; treating as empty",
-                type(checks).__name__,
-            )
+        logger.warning(
+            "judge_calibration: symmetry_checks is %s, not a list; treating as empty",
+            type(checks).__name__,
+        )
         return []
     rows = []
     for idx, row in enumerate(checks):
@@ -224,6 +263,39 @@ def _symmetry_checks_list(checks) -> list[dict]:
                 "judge_calibration: symmetry_checks[%s] is %s, not an object; skipping",
                 idx,
                 type(row).__name__,
+            )
+            continue
+        missing = [key for key in _SYMMETRY_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "judge_calibration: symmetry_checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        bad_key = None
+        for key in _SYMMETRY_ROW_KEYS:
+            if not _check_symmetry_row_field(key, row[key]):
+                bad_key = key
+                break
+        if bad_key is not None:
+            value = row[bad_key]
+            if bad_key == "id":
+                detail = (
+                    type(value).__name__
+                    if not isinstance(value, str)
+                    else "empty str"
+                )
+                expected = "non-empty str"
+            else:
+                detail = type(value).__name__
+                expected = "bool"
+            logger.warning(
+                "judge_calibration: symmetry_checks[%s] %s is %s, not a usable %s; skipping",
+                idx,
+                bad_key,
+                detail,
+                expected,
             )
             continue
         rows.append(row)
@@ -243,11 +315,32 @@ def failed_scenarios(result: dict) -> list[str]:
     return _failed_ids_list(result.get("failed"))
 
 
+def _is_number(value) -> bool:
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    ``json`` round-trips ``NaN``/``Infinity`` verbatim and a large JSON integer loads as an
+    arbitrary-precision ``int``, so a hand-built or degenerate calibration artifact can carry
+    a non-finite, oversized, or non-numeric ``scenario_count``. A bare ``int()`` on it raised
+    (``OverflowError`` for infinity/an oversized int, ``ValueError`` for ``NaN``,
+    ``TypeError`` for a truthy non-number) instead of the headline degrading the way it
+    already does for every other malformed field (#1497). Mirrors the identical guard in
+    this module's documented twin, ``score_calibration`` (#1490). ``OverflowError`` in the
+    probe guards an int too large to convert to a float.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
+
+
 def calibration_headline(result: dict) -> str:
     """One-line human summary of a :func:`check_calibration` result."""
     if not isinstance(result, dict):
         return "calibration: no scenarios evaluated"
-    count = int(result.get("scenario_count") or 0)
+    raw_count = result.get("scenario_count")
+    count = int(raw_count) if _is_number(raw_count) else 0
     if count == 0:
         return "calibration: no scenarios evaluated"
     if result.get("passed"):

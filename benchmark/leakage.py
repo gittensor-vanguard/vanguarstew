@@ -34,7 +34,11 @@ _URL_STOP = "<>()[]{}\"'`"
 # repo/owner URL (no item path, e.g. github.com/owner/repo) is deliberately left intact so
 # legitimate references survive.
 _GH_LINK = re.compile(
-    r"https?://(?:www\.)?github\.com"                        # github.com or www.github.com
+    # The scheme is optional: GitHub and markdown auto-link a scheme-less `github.com/...`, so
+    # a deep-link written without `https://` (common in commit subjects, issue titles, READMEs)
+    # is just as much a forward-reference and must be masked. The `(?<![\w.])` boundary keeps a
+    # look-alike host (`notgithub.com`, `foo.github.com`) from matching.
+    r"(?<![\w.])(?:https?://)?(?:www\.)?github\.com"         # github.com, optional scheme/www
     r"/[^\s" + re.escape(_URL_STOP) + r"]+/"                  # owner/repo/
     r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|"
     r"milestone|milestones|discussions)/"           # a forward-referencing link type
@@ -49,7 +53,21 @@ _GH_LINK = re.compile(
 _TRAILING_PUNCT = ".,;!"
 
 _ISSUE_REF = re.compile(r"#\d+")
-_SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
+# Raw commit hashes: a word-bounded hex run of 7-40 chars (abbreviated or full SHA-1) or
+# exactly 64 chars (a full SHA-256 object hash; git has supported the SHA-256 format since
+# 2.29). The exact-64 arm is separate so lengths 41-63 stay unmasked, keeping the guard off
+# arbitrary long hex-like tokens that are not real hashes. Its `(?=[0-9a-f]*[a-f])` lookahead
+# also requires at least one hex letter, so an all-numeric 64-char run (a count/ID) never even
+# enters the SHA candidate set; shorter runs still lean on `_looks_like_sha` for the same
+# numeric-preservation policy. Kept structurally identical to ``agent/context.py``'s scrubber
+# (the git-only fallback), whose alignment `tests/test_scrubber_alignment.py` guards.
+_SHA = re.compile(
+    r"\b(?:"
+    r"[0-9a-f]{7,40}|"
+    r"(?=[0-9a-f]{64}\b)(?=[0-9a-f]*[a-f])[0-9a-f]{64}"
+    r")\b",
+    re.I,
+)
 
 
 def _mask_link(match) -> str:

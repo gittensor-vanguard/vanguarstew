@@ -21,6 +21,17 @@ SYSTEM = (
 # A couple of concise few-shot examples (input snippet -> good philosophy JSON). They
 # demonstrate the expected shape and the "evidence-based, specific" bar without anchoring
 # the model to any particular verdict — one conservative library, one fast-moving app.
+# Canonical offline stub — all five documented philosophy keys with safe default values.
+# Returned verbatim (as a fresh copy) whenever context is not a dict or the LLM returns
+# unusable output, so every caller gets the documented shape regardless of code path.
+_OFFLINE_STUB: dict = {
+    "summary": "offline stub philosophy",
+    "values": [],
+    "merge_bar": "unknown (offline)",
+    "direction": "unknown (offline)",
+    "evidence": [],
+}
+
 FEWSHOT = (
     "Example 1\n"
     "INPUT:\n"
@@ -96,7 +107,7 @@ def _normalize_philosophy(out: dict, stub: dict) -> dict:
 
 def infer_philosophy(context: dict, llm) -> dict:
     if not isinstance(context, dict):
-        return {"summary": "offline stub philosophy", "values": ["triage"]}
+        return dict(_OFFLINE_STUB)
     user = (
         "Infer the maintainer philosophy from this repository state.\n\n"
         f"{FEWSHOT}\n\n"
@@ -111,15 +122,8 @@ def infer_philosophy(context: dict, llm) -> dict:
         '  "direction": where the codebase appears to be heading (the "idea trajectory"),\n'
         '  "evidence": list of concrete signals you used.'
     )
-    stub = {
-        "summary": "offline stub philosophy",
-        "values": [],
-        "merge_bar": "unknown (offline)",
-        "direction": "unknown (offline)",
-        "evidence": [],
-    }
-    out = llm.chat_json(SYSTEM, user, stub=stub)
-    return _normalize_philosophy(out, stub)
+    out = llm.chat_json(SYSTEM, user, stub=_OFFLINE_STUB)
+    return _normalize_philosophy(out, _OFFLINE_STUB)
 
 
 def _render(context: dict) -> str:

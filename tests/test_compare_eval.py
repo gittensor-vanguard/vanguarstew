@@ -47,11 +47,99 @@ def test_compare_eval_artifacts_reports_composite_and_part_deltas():
     assert diff["judge_report"]["disagreement_rate"]["delta"] == 0.25
 
 
+def test_oversized_int_composite_mean_is_unavailable_not_a_crash():
+    # json parses an arbitrarily long integer literal into a Python int; float() raises
+    # OverflowError for one too large to convert, so an oversized composite_mean must degrade to
+    # unavailable rather than crashing the comparison (mirrors repo_task_mean #1571).
+    big = 10 ** 400
+    diff = compare_eval_artifacts({"composite_mean": 0.5}, {"composite_mean": big})
+    assert diff["composite_mean"]["baseline"] == 0.5
+    assert diff["composite_mean"]["candidate"] is None
+    assert diff["composite_mean"]["delta"] is None
+
+
+def test_unscored_candidate_masks_composite_parts_like_composite_mean():
+    # An all-skipped run (scored_repos: 0) reports composite_mean AND composite_parts as
+    # placeholder 0.0 means. composite_mean is masked to None; the parts must be too, or the diff
+    # self-contradicts (a None composite delta beside a fabricated component drop).
+    baseline = {"composite_mean": 0.8, "scored_repos": 3,
+                "composite_parts": {"judge_mean": 0.8, "objective_mean": 0.35}}
+    candidate = {"composite_mean": 0.0, "scored_repos": 0,
+                 "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_mean"] == {"baseline": 0.8, "candidate": None, "delta": None}
+    assert diff["composite_parts"]["judge_mean"] == {"baseline": 0.8, "candidate": None, "delta": None}
+    assert diff["composite_parts"]["objective_mean"] == {"baseline": 0.35, "candidate": None, "delta": None}
+
+
+def test_unscored_baseline_masks_its_own_composite_parts():
+    baseline = {"composite_mean": 0.0, "scored_repos": 0,
+                "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}}
+    candidate = {"composite_mean": 0.7, "scored_repos": 3,
+                 "composite_parts": {"judge_mean": 0.8, "objective_mean": 0.5}}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_parts"]["judge_mean"] == {"baseline": None, "candidate": 0.8, "delta": None}
+
+
+def test_both_unscored_reports_no_component_section():
+    art = {"composite_mean": 0.0, "scored_repos": 0,
+           "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}}
+    diff = compare_eval_artifacts(dict(art), dict(art))
+    assert "composite_parts" not in diff   # nothing scored on either side -> no component deltas
+    assert diff["composite_mean"] == {"baseline": None, "candidate": None, "delta": None}
+
+
+def test_masking_is_scoped_to_placeholder_means_not_real_judge_counts():
+    # Masking applies only to the unscored placeholder MEANS (composite_mean/composite_parts). The
+    # judge_report COUNTS are real integers (zero judged tasks -> zero wins is a true zero, not a
+    # placeholder mean), so they are reported as-is, not masked.
+    baseline = {"composite_mean": 0.5, "scored_repos": 2,
+                "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4},
+                "judge_report": {"wins": 3, "losses": 0}}
+    candidate = {"composite_mean": 0.0, "scored_repos": 0,
+                 "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+                 "judge_report": {"wins": 0, "losses": 0}}
+    diff = compare_eval_artifacts(baseline, candidate)
+    assert diff["composite_parts"]["judge_mean"]["candidate"] is None      # placeholder mean -> masked
+    assert diff["judge_report"]["wins"] == {"baseline": 3, "candidate": 0, "delta": -3}  # real count
+
+
 def test_compare_eval_artifacts_handles_missing_optional_fields():
     diff = compare_eval_artifacts({"composite_mean": 0.4}, {"composite_mean": 0.3})
     assert diff == {"composite_mean": {"baseline": 0.4, "candidate": 0.3, "delta": -0.1}}
     assert "judge_report" not in diff
     assert "per_repo" not in diff
+
+
+def test_compare_eval_artifacts_treats_non_finite_scores_as_unavailable():
+    nan = float("nan")
+    inf = float("inf")
+    diff = compare_eval_artifacts({"composite_mean": 0.5}, {"composite_mean": nan})
+    assert diff["composite_mean"] == {"baseline": 0.5, "candidate": None, "delta": None}
+    assert comparison_headline(diff) == "compare_eval: composite_mean delta unavailable"
+
+    diff = compare_eval_artifacts({"composite_mean": nan}, {"composite_mean": 0.5})
+    assert diff["composite_mean"]["baseline"] is None
+    assert diff["composite_mean"]["candidate"] == 0.5
+    assert diff["composite_mean"]["delta"] is None
+
+    diff = compare_eval_artifacts({"composite_mean": inf}, {"composite_mean": -inf})
+    assert diff["composite_mean"] == {"baseline": None, "candidate": None, "delta": None}
+
+    diff = compare_eval_artifacts(
+        {"composite_mean": 0.5, "judge_report": {"disagreement_rate": nan}},
+        {"composite_mean": 0.6, "judge_report": {"disagreement_rate": 0.25}},
+    )
+    assert diff["judge_report"]["disagreement_rate"]["candidate"] == 0.25
+    assert diff["judge_report"]["disagreement_rate"]["baseline"] is None
+    assert diff["judge_report"]["disagreement_rate"]["delta"] is None
+
+
+def test_compare_eval_json_output_stays_finite():
+    diff = compare_eval_artifacts({"composite_mean": 0.5}, {"composite_mean": float("nan")})
+    encoded = json.dumps(diff)
+    assert "NaN" not in encoded
+    assert json.loads(encoded) == diff
 
 
 def test_compare_eval_artifacts_reports_per_repo_deltas():

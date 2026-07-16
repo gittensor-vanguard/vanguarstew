@@ -14,6 +14,8 @@ Derived as-of-T (safe):
   - Issue/PR membership: ``created_at`` / ``closed_at`` gate open-at-T selection.
   - Issue/PR labels: reconstructed from timeline ``labeled``/``unlabeled`` events when
     available; omitted (not copied live) when the timeline is unavailable.
+  - Issue/PR ``title``: reconstructed from timeline ``renamed`` events when the timeline is
+    complete; omitted (not copied live) when the timeline is unavailable or truncated.
   - Milestone ``state``: derived from ``closed_at`` relative to T, not the live API field.
   - Releases: filtered by ``published_at <= T`` (drafts, which carry no ``published_at``,
     are excluded).
@@ -21,9 +23,6 @@ Derived as-of-T (safe):
 Live, copied as-is (no cheap as-of-T source):
   - Issue/PR ``number`` and ``created_at``: immutable, so the live value already equals the
     as-of-T value.
-  - Issue/PR ``title``: the present-day title, which can be edited after T. Consumers must not
-    treat it as historically exact; accepted as a residual limitation (title edits are rare and
-    there is no cheap as-of-T source).
 
 Omitted (no created-at or editable after T, so not reconstructable as-of-T — dropped rather
 than leaked as a present-day value):
@@ -48,11 +47,21 @@ DEFAULT_MAX_ISSUE_PAGES = 10  # bound on pages walked back toward T (100 items/p
 DEFAULT_MAX_LIST_PAGES = 10   # bound on pages walked for milestones / releases
 
 # Metadata keys copied from ``fetch_context_at`` into an enriched git-only context.
-_ENRICH_META_KEYS = ("_issues_truncated", "_knowable_until", "_source")
+_ENRICH_META_KEYS = (
+    "_issues_truncated",
+    "_milestones_truncated",
+    "_releases_truncated",
+    "_knowable_until",
+    "_source",
+)
 
 
 def parse_owner_repo(remote_url: str):
-    """Extract (owner, repo) from an ssh or https GitHub remote URL."""
+    """Extract (owner, repo) from an ssh or https GitHub remote URL.
+
+    Uses the first two non-empty path segments after ``github.com/`` so URLs with trailing
+    ``/tree/``, ``/blob/``, or other subpaths still resolve to the repository root.
+    """
     if not isinstance(remote_url, str):
         return None, None
     s = remote_url.strip()
@@ -66,7 +75,7 @@ def parse_owner_repo(remote_url: str):
         path = s
     parts = [p for p in path.split("/") if p]
     if len(parts) >= 2:
-        return parts[-2], parts[-1]
+        return parts[0], parts[1]
     return None, None
 
 
@@ -92,18 +101,21 @@ def _item_open_at(item: dict, until: datetime) -> bool:
 def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int) -> dict:
     """Minimal issue/PR fields for the frozen context.
 
-    ``number``/``created_at`` are immutable and ``labels`` are reconstructed as-of ``until``.
-    ``title`` is copied live (present-day value): it may have been edited after T — an accepted
-    residual limitation noted in the module's field-stability contract.
+    ``number``/``created_at`` are immutable. ``labels`` and ``title`` are reconstructed
+    as-of ``until`` from the item timeline when it is complete; when the timeline is
+    unavailable or truncated they are omitted with ``labels_as_of_t`` / ``title_as_of_t``
+    set to ``False`` rather than copying live values.
     """
     events, truncated = _issue_timeline(base, item.get("number"), token, timeout)
     # A truncated timeline can produce a label set that actively contradicts the true as-of-T
     # membership, so fail closed exactly like the timeline-unavailable case: omit labels and
     # report labels_as_of_t=False rather than trusting a partial (possibly wrong) reconstruction.
     as_of_t = None if truncated else _labels_at(events, until)
+    title = None if truncated else _title_at(events, until, item.get("title"))
     return {
         "number": item.get("number"),
-        "title": item.get("title"),
+        "title": title if title is not None else "",
+        "title_as_of_t": title is not None,
         "labels": as_of_t if as_of_t is not None else [],
         "labels_as_of_t": as_of_t is not None,
         "created_at": item.get("created_at"),
@@ -144,12 +156,13 @@ def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100)
 
     `url` already carries its query string (including `per_page`); a `page=` parameter is
     appended per request. Pagination stops on the first empty or short (< `per_page`) page or
-    when `max_pages` is reached. Request errors propagate, so a hard failure still fails the
-    whole enrichment closed to git-only context — the same posture as before, only now the
-    result is complete instead of silently capped at the first 100 items.
+    when `max_pages` is reached. Returns ``(items, truncated)``; ``truncated`` is True when the
+    page cap is hit with a full final page — more items may remain. Request errors propagate,
+    so a hard failure still fails the whole enrichment closed to git-only context.
     """
     sep = "&" if "?" in url else "?"
     items = []
+    truncated = False
     for page in range(1, max_pages + 1):
         batch = _get(f"{url}{sep}page={page}", token, timeout)
         if not batch:
@@ -157,7 +170,9 @@ def _get_all(url: str, token, timeout: int, max_pages: int, per_page: int = 100)
         items.extend(batch)
         if len(batch) < per_page:
             break
-    return items
+        if page == max_pages:
+            truncated = True
+    return items, truncated
 
 
 def _timeline_events(events) -> list:
@@ -223,17 +238,74 @@ def _labels_at(events, until: datetime):
     return sorted(labels)
 
 
+def _title_at(events, until: datetime, live_title):
+    """Reconstruct an issue/PR title *as of `until`* from timeline ``renamed`` events.
+
+    Replays rename events in chronological order up to T. When a rename happened after T,
+    returns the ``from`` title of the earliest post-T rename (the title immediately before
+    that edit). When the (complete) timeline carries no rename events, the title has never
+    changed, so the live REST value equals the as-of-T value and is returned unchanged —
+    GitHub records every title change as a ``renamed`` event.
+
+    A missing or non-list ``events`` is treated as no timeline (via :func:`_timeline_events`),
+    and malformed rename payloads are skipped, so reconstruction never raises. A *truncated*
+    timeline is failed closed by the caller (:func:`_issue_record_at` omits the title rather
+    than calling this on partial events), mirroring the labels path. Returns ``None`` only
+    when no usable title survives (e.g. a non-string live title with no valid rename).
+    """
+    renames = []
+    for idx, ev in enumerate(_timeline_events(events)):
+        if not isinstance(ev, dict) or ev.get("event") != "renamed":
+            continue
+        ts = _parse_dt(ev.get("created_at"))
+        if ts is None:
+            continue
+        rename = ev.get("rename")
+        if not isinstance(rename, dict):
+            logger.warning(
+                "github_context: skipping non-dict rename payload at timeline index %d (%s: %r)",
+                idx,
+                type(rename).__name__ if rename is not None else "None",
+                rename,
+            )
+            continue
+        from_t = rename.get("from")
+        to_t = rename.get("to")
+        if not isinstance(from_t, str) or not isinstance(to_t, str):
+            continue
+        renames.append((ts, from_t, to_t))
+    if not renames:
+        return live_title if isinstance(live_title, str) else None
+    renames.sort(key=lambda x: x[0])
+    for ts, from_t, _to_t in renames:
+        if ts > until:
+            return from_t
+    title = renames[0][1]
+    for ts, _from_t, to_t in renames:
+        if ts > until:
+            break
+        title = to_t
+    return title
+
+
 def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
     """Fetch an issue/PR's timeline events (paginated).
 
-    Returns ``(events, truncated)``. ``truncated`` is True when the page cap is hit with a
-    full final page — more events may exist before T than were fetched, so a label
-    reconstruction from ``events`` could be *confidently wrong* (a later ``unlabeled`` beyond
-    the cap never gets applied) and the caller must not trust it. Returns ``([], False)`` on
-    any error or missing number, so reconstruction degrades to the safe omit-labels fallback.
+    Returns ``(events, truncated)``. ``truncated`` is True whenever the timeline is *not known to
+    be complete* — the page cap was hit with a full final page, a page errored out mid-pagination,
+    or nothing could be fetched at all (a missing number or a first-page error). In every such
+    case a reconstruction from ``events`` could be wrong or absent, so the caller must fail closed
+    on *both* labels and title.
+
+    An *unavailable* timeline (nothing collected) is deliberately reported as ``truncated=True``,
+    not ``([], False)``: an empty ``events`` already omits labels safely, but the title path reads
+    a no-rename timeline as "title never changed" and falls back to the live REST title — so
+    reporting ``truncated=False`` there would leak a post-T-renamed title as if it were as-of-T.
+    Only a timeline that was actually fetched and came back empty (a complete, event-less issue)
+    returns ``([], False)``, where using the live title is correct.
     """
     if number is None:
-        return [], False
+        return [], True
     events = []
     truncated = False
     for page in range(1, max_pages + 1):
@@ -241,6 +313,12 @@ def _issue_timeline(base: str, number, token, timeout: int, max_pages: int = 5):
             batch = _get(f"{base}/issues/{number}/timeline?per_page=100&page={page}",
                          token, timeout)
         except Exception:
+            # Any fetch error leaves an incomplete/unavailable timeline; flag it truncated so the
+            # caller fails closed rather than trusting a partial (possibly wrong) reconstruction or
+            # letting the title fall back to the live value. This includes a *first-page* error
+            # (``events`` still empty): an empty timeline omits labels safely but would otherwise
+            # leak the live title, so it must be truncated, not ``([], False)``.
+            truncated = True
             break
         if not batch:
             break
@@ -305,20 +383,27 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         # violate the knowable-at-T contract (specs/003-leakage-integrity, #670).
         open_issues, open_prs = [], []
 
+    raw_milestones, milestones_truncated = _get_all(
+        f"{base}/milestones?state=all&per_page={per_page}", token, timeout,
+        max_list_pages, per_page,
+    )
     milestones = []
-    for m in _get_all(f"{base}/milestones?state=all&per_page={per_page}", token, timeout,
-                      max_list_pages, per_page):
-        rec = _milestone_at(m, until)
-        if rec is not None:
-            milestones.append(rec)
+    if not milestones_truncated:
+        for m in raw_milestones:
+            rec = _milestone_at(m, until)
+            if rec is not None:
+                milestones.append(rec)
 
+    raw_releases, releases_truncated = _get_all(
+        f"{base}/releases?per_page={per_page}", token, timeout, max_list_pages, per_page,
+    )
     releases = []
-    for r in _get_all(f"{base}/releases?per_page={per_page}", token, timeout, max_list_pages,
-                      per_page):
-        published = _parse_dt(r.get("published_at"))
-        if published is not None and published <= until:
-            releases.append({"tag": r.get("tag_name"), "name": r.get("name"),
-                             "published_at": r.get("published_at")})
+    if not releases_truncated:
+        for r in raw_releases:
+            published = _parse_dt(r.get("published_at"))
+            if published is not None and published <= until:
+                releases.append({"tag": r.get("tag_name"), "name": r.get("name"),
+                                 "published_at": r.get("published_at")})
 
     return {
         "repo": f"{owner}/{repo}",
@@ -329,6 +414,8 @@ def fetch_context_at(owner: str, repo: str, until: datetime, token=None,
         "_source": "github-api",
         "_knowable_until": until.isoformat(),
         "_issues_truncated": truncated,
+        "_milestones_truncated": milestones_truncated,
+        "_releases_truncated": releases_truncated,
     }
 
 
@@ -368,7 +455,7 @@ def enrich_context(context: dict, source_repo_path: str, token=None) -> dict:
         # No ``labels`` here: the repo label catalog is intentionally omitted from the frozen
         # context (see module docstring), so ``fetch_context_at`` never produces that key.
         for key in ("repo", "open_issues", "open_prs", "milestones", "releases"):
-            if gh.get(key):
+            if key in gh:
                 merged[key] = gh[key]
         for key in _ENRICH_META_KEYS:
             if key in gh:
@@ -389,6 +476,6 @@ def open_issues_from_context(context: dict):
     """
     if not isinstance(context, dict):
         return None
-    if context.get("_issues_truncated"):
+    if context.get("_issues_truncated") is True:
         return None
     return context.get("open_issues")

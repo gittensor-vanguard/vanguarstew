@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -14,10 +15,14 @@ if ROOT not in sys.path:
 
 from benchmark.regression import (  # noqa: E402
     DEFAULT_MAX_COMPOSITE_DROP,
+    _artifact_error,
+    _check_rows_list,
+    _headline_source,
     check_regression,
     failed_checks,
     regression_headline,
 )
+from scripts import regression as regression_cli  # noqa: E402
 
 
 def _run(composite, disagreement=None):
@@ -75,6 +80,167 @@ def test_missing_composite_fails_both_scored():
     assert result["candidate_composite"] is None
 
 
+def _partial_multi(composite=0.66):
+    return {
+        "composite_mean": composite,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo": "good-a", "tasks": 4},
+            {"repo": "good-b", "tasks": 3},
+            {"repo": "bad-clone", "error": "failed to clone", "tasks": 0},
+        ],
+    }
+
+
+def test_candidate_per_repo_error_fails_both_scored():
+    result = check_regression(_partial_multi(), _run(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    assert result["composite_delta"] is None
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "both_scored")
+    assert "candidate error" in detail
+
+
+def test_baseline_per_repo_error_fails_both_scored():
+    baseline = {
+        "composite_mean": 0.60,
+        "scored_repos": 2,
+        "per_repo": [
+            {"repo": "good", "tasks": 4},
+            {"repo": "bad", "tasks": 0, "error": "freeze failed"},
+        ],
+    }
+    result = check_regression(_run(0.66), baseline)
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+    detail = next(c["detail"] for c in result["checks"] if c["name"] == "both_scored")
+    assert "baseline error" in detail
+
+
+def test_tuned_per_repo_error_fails_both_scored():
+    candidate = {
+        "tuned": {
+            "composite_mean": 0.66,
+            "scored_repos": 2,
+            "per_repo": [{"repo": "a", "tasks": 4}, {"repo": "b", "tasks": 0, "error": "clone failed"}],
+        },
+        "held_out": {"composite_mean": 0.55, "scored_repos": 2},
+        "generalization_gap": 0.11,
+    }
+    result = check_regression(candidate, _gen(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_held_out_per_repo_error_is_ignored_when_tuned_is_clean():
+    candidate = _gen(0.66)
+    candidate["held_out"] = {
+        "composite_mean": 0.55,
+        "scored_repos": 1,
+        "per_repo": [{"repo": "x", "tasks": 0, "error": "clone failed"}],
+    }
+    result = check_regression(candidate, _gen(0.60))
+    assert result["passed"] is True
+
+
+def test_both_scored_tolerates_missing_per_repo_and_non_list_per_repo():
+    clean = {"composite_mean": 0.66, "scored_repos": 2}
+    assert check_regression(clean, _run(0.60))["passed"] is True
+    weird = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": "oops"}
+    assert check_regression(weird, _run(0.60))["passed"] is True
+
+
+def test_both_scored_per_repo_none_does_not_crash():
+    art = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": None}
+    assert check_regression(art, _run(0.60))["passed"] is True
+
+
+def test_both_scored_per_repo_with_none_and_non_dict_entries_does_not_crash():
+    art = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": [{"repo": "a", "tasks": 4}, None, 42]}
+    assert check_regression(art, _run(0.60))["passed"] is True
+
+
+def test_falsy_per_repo_error_values_do_not_fail_both_scored():
+    for falsy in (0, False, None, ""):
+        art = _partial_multi()
+        art["per_repo"][-1]["error"] = falsy
+        assert check_regression(art, _run(0.60))["passed"] is True, falsy
+
+
+def test_bare_string_per_repo_row_fails_both_scored():
+    art = {"composite_mean": 0.66, "scored_repos": 2, "per_repo": [{"repo": "a", "tasks": 4}, "corrupt row"]}
+    result = check_regression(art, _run(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_lone_tuned_without_held_out_is_not_treated_as_generalization():
+    candidate = {
+        "composite_mean": 0.66,
+        "scored_repos": 2,
+        "tuned": {"per_repo": [{"repo": "b", "tasks": 0, "error": "clone failed"}]},
+    }
+    result = check_regression(candidate, _run(0.60))
+    assert result["passed"] is True
+
+
+def test_falsy_top_level_error_values_do_not_fail_both_scored():
+    for falsy in (0, False, None, ""):
+        art = _run(0.66)
+        art["error"] = falsy
+        result = check_regression(art, _run(0.60))
+        assert result["passed"] is True, falsy
+        assert next(c for c in result["checks"] if c["name"] == "both_scored")["passed"] is True
+
+
+def test_zero_composite_still_counts_as_scored_for_both_scored():
+    result = check_regression(_run(0.0), _run(0.0))
+    assert result["passed"] is True
+    assert next(c for c in result["checks"] if c["name"] == "both_scored")["passed"] is True
+
+
+def test_artifact_error_helper_reports_top_level_and_per_repo_errors():
+    assert _artifact_error({"error": "boom"}) == "boom"
+    assert _artifact_error(_partial_multi()) == "failed to clone"
+    assert _artifact_error(_run(0.66)) is None
+    assert _artifact_error("not a dict") is None
+
+
+def test_headline_source_helper_requires_both_generalization_partitions():
+    art = {"composite_mean": 0.66, "tuned": {"composite_mean": 0.1}}
+    assert _headline_source(art) is art
+    gen = {
+        "tuned": {"composite_mean": 0.66},
+        "held_out": {"composite_mean": 0.55},
+        "generalization_gap": 0.11,
+    }
+    assert _headline_source(gen) is gen["tuned"]
+
+
+def test_headline_source_ignores_orphan_tuned_when_held_out_is_not_a_dict():
+    art = {
+        "composite_mean": 0.66,
+        "scored_repos": 2,
+        "tuned": {"per_repo": [{"repo": "b", "tasks": 0, "error": "clone failed"}]},
+        "held_out": None,
+    }
+    assert _headline_source(art) is art
+    assert _artifact_error(art) is None
+
+
+def test_whitespace_top_level_error_fails_both_scored():
+    art = _run(0.66)
+    art["error"] = "   "
+    result = check_regression(art, _run(0.60))
+    assert result["passed"] is False
+    assert "both_scored" in failed_checks(result)
+
+
+def test_headline_source_non_dict_artifact_returns_empty_dict():
+    assert _headline_source("not a dict") == {}
+    assert _artifact_error("not a dict") is None
+
+
 def test_regression_compares_generalization_tuned_scores():
     result = check_regression(_gen(0.66), _gen(0.60))
     assert result["baseline_composite"] == 0.60 and result["candidate_composite"] == 0.66
@@ -88,6 +254,65 @@ def test_rising_judge_instability_is_blocked():
     assert result["passed"] is False
     assert "no_judge_instability_increase" in failed_checks(result)
     assert result["disagreement_delta"] == 0.4
+
+
+def test_stale_judge_report_disagreement_rate_is_recomputed_from_stats():
+    def art(rate, stats_dis):
+        return {
+            "composite_mean": 0.6,
+            "judge_report": {"disagreement_rate": rate, "dual_order_tasks": 10},
+            "judge_order_stats": {
+                "dual_order_tasks": 10, "disagree": stats_dis, "agree": 2, "tie": 0,
+            },
+        }
+
+    baseline = art(0.1, 1)
+    candidate = art(0.05, 8)
+    result = check_regression(candidate, baseline, max_disagreement_increase=0.1)
+    assert result["passed"] is False
+    assert result["disagreement_delta"] == 0.7
+    assert "no_judge_instability_increase" in failed_checks(result)
+
+
+def test_disagreement_falls_back_to_report_when_stats_absent():
+    from benchmark.regression import _disagreement
+
+    art = {"judge_report": {"disagreement_rate": 0.25, "dual_order_tasks": 4}}
+    assert _disagreement(art) == 0.25
+
+
+def test_incoherent_partition_makes_pooled_disagreement_none():
+    # #1283: `disagree` is a subset of `dual_order_tasks`, so `disagree > dual` is impossible
+    # telemetry. Pooling it (8/5) would fabricate a rate; the whole pooled rate must be None so
+    # the gate fails closed rather than block a candidate on invented instability.
+    from benchmark.regression import _INCOHERENT, _disagreement, _partition_disagreement_counts
+    gen = {"tuned":    {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},   # impossible
+           "held_out": {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 1}}}
+    assert _disagreement(gen) is None
+    # A coherent generalization artifact still pools correctly (6 / 20 = 0.3).
+    ok = {"tuned":    {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 2}},
+          "held_out": {"judge_order_stats": {"dual_order_tasks": 10, "disagree": 4}}}
+    assert _disagreement(ok) == 0.3
+    # The three return states of the partition helper.
+    assert _partition_disagreement_counts({"judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}}) is _INCOHERENT
+    assert _partition_disagreement_counts({"judge_order_stats": {"dual_order_tasks": 10, "disagree": 2}}) == (2, 10)
+    assert _partition_disagreement_counts({}) is None
+    # Boundary: disagree == dual is coherent (rate exactly 1.0), not incoherent.
+    assert _partition_disagreement_counts({"judge_order_stats": {"dual_order_tasks": 5, "disagree": 5}}) == (5, 5)
+
+
+def test_incoherent_partition_does_not_block_a_candidate():
+    # End-to-end: a candidate whose only defect is an impossible partition is NOT failed on a
+    # fabricated instability rise — no_judge_instability_increase passes vacuously (rate is None).
+    baseline = {"tuned": {"composite_mean": 0.60, "scored_repos": 2,
+                          "judge_order_stats": {"dual_order_tasks": 50, "disagree": 2}},
+                "held_out": {"composite_mean": 0.55, "scored_repos": 2}}
+    candidate = {"tuned": {"composite_mean": 0.70, "scored_repos": 2,
+                           "judge_order_stats": {"dual_order_tasks": 5, "disagree": 8}},  # impossible
+                 "held_out": {"composite_mean": 0.65, "scored_repos": 2}}
+    result = check_regression(candidate, baseline, max_disagreement_increase=0.1)
+    trust = next(c for c in result["checks"] if c["name"] == "no_judge_instability_increase")
+    assert trust["passed"] is True
 
 
 def test_judge_instability_only_compared_when_both_report_it():
@@ -136,18 +361,176 @@ def test_check_regression_does_not_mutate_inputs():
     assert baseline == snap_b and candidate == snap_c
 
 
+# --- #755: checks row sanitization for regression headlines --------------------------
+
+_MALFORMED_CHECKS = [
+    42, 3.14, True, {"name": "both_scored"}, "not a list",
+    ({"name": "both_scored", "passed": False},),
+    range(2),
+]
+_FALSY_SCALAR_CHECKS = [0, 0.0, False, ""]
+
+
+def test_check_rows_list_accepts_only_real_lists():
+    rows = [{"name": "both_scored", "passed": True}]
+    for bad in _MALFORMED_CHECKS:
+        assert _check_rows_list(bad) == [], bad
+    assert _check_rows_list(rows) == rows
+    assert _check_rows_list(None) == []
+    assert _check_rows_list([]) == []
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_check_rows_list_treats_falsy_scalars_as_non_list(bad, caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(bad) == []
+    assert any("not a list" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_missing_key_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(None) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_empty_list_emits_no_warning(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list([]) == []
+    assert not caplog.records
+
+
+def test_check_rows_list_warns_for_tuple_container(caplog):
+    row = ({"name": "both_scored", "passed": False},)
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(row) == []
+    assert any("checks is tuple" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_for_skipped_rows(caplog):
+    mixed = [42, {"name": "both_scored", "passed": True}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert len(_check_rows_list(mixed)) == 1
+    assert any("checks[0] is int" in r.message for r in caplog.records)
+    assert not any("no usable rows" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
+    junk = [42, "bad", None]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("checks[0] is int" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_warns_when_only_malformed_dict_rows(caplog):
+    junk = [{}, {"name": 42, "passed": True}, {"name": "both_scored", "passed": "no"}]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list(junk) == []
+    messages = [r.message for r in caplog.records]
+    assert any("missing required key(s)" in m for m in messages)
+    assert any("name is int" in m for m in messages)
+    assert any("passed is str" in m for m in messages)
+    assert any("no usable rows" in m for m in messages)
+
+
+def test_check_rows_list_returns_only_valid_rows():
+    valid = [
+        {"name": "both_scored", "passed": False},
+        {"name": "no_composite_regression", "passed": True},
+    ]
+    assert _check_rows_list(valid) == valid
+    mixed = [
+        valid[0],
+        42,
+        {},
+        {"name": 99, "passed": False},
+        {"name": "both_scored", "passed": 1},
+        valid[1],
+    ]
+    assert _check_rows_list(mixed) == valid
+
+
+def test_check_rows_list_skips_row_missing_name(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list([{"passed": False}]) == []
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_row_missing_passed(caplog):
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert _check_rows_list([{"name": "both_scored"}]) == []
+    assert any("missing required key(s) ['passed']" in r.message for r in caplog.records)
+
+
 def test_regression_headline_survives_non_list_checks():
-    for bad in (42, True, {"name": "no_composite_regression"}):
-        assert regression_headline({"checks": bad, "passed": False}) == "regression: no checks evaluated", bad
+    for bad in _MALFORMED_CHECKS:
+        assert regression_headline({"checks": bad, "passed": False}) == (
+            "regression: no checks evaluated"
+        ), bad
+
+
+@pytest.mark.parametrize("bad", _FALSY_SCALAR_CHECKS)
+def test_regression_headline_survives_falsy_scalar_checks(bad):
+    assert regression_headline({"checks": bad, "passed": False}) == (
+        "regression: no checks evaluated"
+    )
+
+
+def test_regression_headline_survives_rows_missing_required_keys():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "both_scored"}],
+        [{}],
+        [{"name": 42, "passed": True}],
+        [{"name": "both_scored", "passed": 1}],
+    ):
+        assert regression_headline({"checks": checks, "passed": False}) == (
+            "regression: no checks evaluated"
+        )
+
+
+def test_regression_headline_uses_sanitized_row_count(caplog):
+    checks = [{"name": "both_scored", "passed": False}, 42]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        line = regression_headline({"checks": checks, "passed": False})
+    assert line == "regression: BLOCKED (1/1 checks failed: both_scored)"
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def test_regression_headline_logs_warning_for_non_list_checks(caplog):
-    import logging
-
     with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
         line = regression_headline({"checks": 42, "passed": False})
     assert line == "regression: no checks evaluated"
     assert any("checks is int" in r.message for r in caplog.records)
+
+
+def test_failed_checks_survives_non_list_checks():
+    for bad in _MALFORMED_CHECKS:
+        assert failed_checks({"checks": bad}) == [], bad
+
+
+def test_failed_checks_never_raises_on_malformed_rows():
+    for checks in (
+        [{"passed": False}],
+        [{"name": "both_scored"}],
+        [{}],
+        [42],
+        [{"name": 42, "passed": True}],
+        [{"name": "both_scored", "passed": "no"}],
+    ):
+        assert failed_checks({"checks": checks}) == []
+
+
+def test_failed_checks_logs_warning_for_skipped_rows(caplog):
+    checks = [
+        {"name": "both_scored", "passed": False},
+        42,
+        {"name": "no_composite_regression", "passed": True},
+    ]
+    with caplog.at_level(logging.WARNING, logger="benchmark.regression"):
+        assert failed_checks({"checks": checks}) == ["both_scored"]
+    assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
 def _run_cli(*args):
@@ -164,9 +547,7 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     result = _run_cli(str(good), str(missing))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    # the real OSError message, not a paraphrase: errno, the exact reason, and the path
-    assert "No such file or directory" in result.stderr
-    assert str(missing) in result.stderr
+    assert f"artifact not found: {missing}" in result.stderr
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
@@ -184,7 +565,7 @@ def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
         unreadable.chmod(0o644)
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    assert "Permission denied" in result.stderr
+    assert "not readable" in result.stderr
     assert str(unreadable) in result.stderr
 
 
@@ -206,8 +587,29 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     result = _run_cli(str(path), str(path))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
-    # the real json.JSONDecodeError text, not a generic placeholder
-    assert "Expecting property name enclosed in double quotes" in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
+    assert str(path) in result.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
+    result = _run_cli(str(good), str(tmp_path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        regression_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
 
 def test_cli_still_runs_the_real_regression_logic_for_well_formed_artifacts(tmp_path):
@@ -244,3 +646,52 @@ def test_cli_reports_blocked_for_a_genuine_regression(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["passed"] is False
     assert "no_composite_regression" in failed_checks(payload)
+
+
+def test_disagreement_reads_partition_telemetry_from_generalization():
+    from benchmark.regression import _disagreement
+
+    gen = {
+        "tuned": {
+            "judge_report": {"disagreements": 2, "dual_order_tasks": 10},
+            "composite_mean": 0.7,
+            "scored_repos": 2,
+        },
+        "held_out": {
+            "judge_report": {"disagreements": 1, "dual_order_tasks": 5},
+            "composite_mean": 0.5,
+            "scored_repos": 1,
+        },
+    }
+    rate = _disagreement(gen)
+    assert rate is not None
+    assert rate == pytest.approx(3 / 15)
+
+
+def test_disagreement_returns_none_when_partitions_lack_dual_order():
+    from benchmark.regression import _disagreement
+
+    gen = {
+        "tuned": {"judge_report": {}, "composite_mean": 0.7, "scored_repos": 2},
+        "held_out": {"judge_report": {}, "composite_mean": 0.5, "scored_repos": 1},
+    }
+    assert _disagreement(gen) is None
+
+
+def test_generalization_partition_stats_override_stale_report_counts():
+    from benchmark.regression import _disagreement
+
+    gen = {
+        "tuned": {
+            "judge_report": {"disagreements": 0, "dual_order_tasks": 10},
+            "judge_order_stats": {"dual_order_tasks": 10, "disagree": 8, "agree": 2, "tie": 0},
+            "composite_mean": 0.7,
+            "scored_repos": 2,
+        },
+        "held_out": {
+            "judge_report": {"disagreements": 1, "dual_order_tasks": 5},
+            "composite_mean": 0.5,
+            "scored_repos": 1,
+        },
+    }
+    assert _disagreement(gen) == pytest.approx(9 / 15)

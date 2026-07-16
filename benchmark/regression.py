@@ -6,7 +6,8 @@ This does: given a ``baseline`` artifact (the last accepted run) and a ``candida
 (this run), ``check_regression`` decides whether the candidate is safe to accept — it must not
 drop the headline composite by more than ``max_composite_drop``, and must not make the pairwise
 judge materially less stable (order-``disagreement_rate`` rising by more than
-``max_disagreement_increase``).
+``max_disagreement_increase``). Disagreement rates are recomputed from ``judge_order_stats`` when
+available, falling back to ``judge_report`` only when stats are absent — mirroring ``check_judge``.
 
 The companion ``scripts/regression.py`` exits non-zero when a regression is found, so a run can
 be gated against the previous baseline the way ``--fail-under`` gates against a fixed floor —
@@ -20,6 +21,8 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.acceptance import _partition_error
+from benchmark.judge_gate import _disagreement_rate_from_telemetry, _is_int
 from benchmark.trend import headline_score
 
 logger = logging.getLogger(__name__)
@@ -36,25 +39,173 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _checks_list(checks) -> list:
-    """Return ``checks`` when it is a list; otherwise treat as no gate checks."""
-    if isinstance(checks, list):
-        return checks
-    if checks is not None:
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
+def _check_rows_list(checks) -> list[dict]:
+    """Return regression gate-check rows for headline / failed_checks helpers.
+
+    ``None`` means the key is absent. An empty list means zero checks. Both are silent.
+    Non-list containers (scalars, dicts, tuples, ranges, strings, etc.) are warned and
+    treated as empty (never coerced). A usable row is a dict whose ``name`` is a ``str`` and
+    whose ``passed`` is a ``bool``; anything else is skipped with a warning.
+    """
+    if checks is None:
+        return []
+    if not isinstance(checks, list):
         logger.warning(
             "regression: checks is %s, not a list; treating as empty",
             type(checks).__name__,
         )
-    return []
+        return []
+    rows = []
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            logger.warning(
+                "regression: checks[%s] is %s, not an object; skipping",
+                idx,
+                type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "regression: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        if not isinstance(row["name"], str):
+            logger.warning(
+                "regression: checks[%s] name is %s, not str; skipping",
+                idx,
+                type(row["name"]).__name__,
+            )
+            continue
+        if type(row["passed"]) is not bool:
+            logger.warning(
+                "regression: checks[%s] passed is %s, not bool; skipping",
+                idx,
+                type(row["passed"]).__name__,
+            )
+            continue
+        rows.append(row)
+    if checks and not rows:
+        logger.warning(
+            "regression: checks had %d entr%s but no usable rows",
+            len(checks),
+            "y" if len(checks) == 1 else "ies",
+        )
+    return rows
+
+
+def _headline_source(artifact) -> dict:
+    """The partition whose cleanliness ``check_regression`` evaluates.
+
+    A ``run_generalization_report`` artifact nests scores under ``tuned``/``held_out``; its
+    headline is the **tuned** partition (mirroring ``benchmark.trend.headline_score`` and
+    ``check_improvement``). Every other artifact is evaluated at the top level. Both ``tuned``
+    and ``held_out`` must be dicts to treat the artifact as generalization; a lone ``tuned`` dict
+    without ``held_out`` is not silently treated as the headline partition.
+    """
+    artifact = _dict(artifact)
+    tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
+    if isinstance(tuned, dict) and isinstance(held_out, dict):
+        return tuned
+    return artifact
+
+
+def _artifact_error(artifact) -> str | None:
+    """The first error on the artifact's evaluated partition, or ``None`` when clean.
+
+    Scans the top-level ``error`` (truthy values only — falsy ``0``/``False``/``""``/``None`` are
+    not failure records) and every ``per_repo[i].error`` in the headline partition via
+    :func:`benchmark.acceptance._partition_error`. A failed ``held_out`` partition is
+    intentionally not scanned.
+    """
+    artifact = _dict(artifact)
+    top_err = artifact.get("error")
+    if top_err:
+        return top_err
+    return _partition_error(_headline_source(artifact))
 
 
 def _round(value):
     return round(float(value), 3) if _is_number(value) else None
 
 
+# Sentinel: a partition carried a usable telemetry block whose counts are impossible
+# (``disagree > dual_order_tasks``). Distinct from ``None`` (no usable telemetry at all): a
+# caller pooling partitions must fail the whole rate *closed* on corrupt data rather than
+# silently drop the bad partition and pool the rest.
+_INCOHERENT = object()
+
+
+def _partition_disagreement_counts(part: dict):
+    """Disagree/dual-order counts from one partition, preferring ``judge_order_stats``.
+
+    Returns ``(disagree, dual)`` for a coherent partition, ``None`` when no usable telemetry is
+    present, or :data:`_INCOHERENT` when a telemetry block has impossible counts
+    (``disagree > dual``) — which must not be pooled as a fabricated rate.
+    """
+    part = _dict(part)
+    for telemetry in (_dict(part.get("judge_order_stats")), _dict(part.get("judge_report"))):
+        if not telemetry:
+            continue
+        dual = telemetry.get("dual_order_tasks")
+        if not _is_number(dual):
+            agree, disagree, tie = telemetry.get("agree"), telemetry.get("disagree"), telemetry.get("tie")
+            if all(_is_int(v) for v in (agree, disagree, tie)):
+                dual = agree + disagree + tie
+            else:
+                dual = None
+        disagreements = telemetry.get("disagree")
+        if disagreements is None:
+            disagreements = telemetry.get("disagreements")
+        if _is_int(dual) and dual > 0 and _is_int(disagreements) and disagreements >= 0:
+            # ``disagree`` is a subset of ``dual_order_tasks``, so ``disagree > dual`` is
+            # impossible (stale/hand-edited telemetry); signal it rather than return a count
+            # pair that would inflate the pooled rate above 1.0.
+            return _INCOHERENT if disagreements > dual else (int(disagreements), int(dual))
+    return None
+
+
+def _flat_disagreement(artifact: dict) -> float | None:
+    """Order-disagreement rate for a flat artifact, preferring ``judge_order_stats``."""
+    artifact = _dict(artifact)
+    for telemetry in (_dict(artifact.get("judge_order_stats")), _dict(artifact.get("judge_report"))):
+        if not telemetry:
+            continue
+        rate = _disagreement_rate_from_telemetry(telemetry)
+        if rate is not None:
+            return rate
+    return None
+
+
 def _disagreement(artifact) -> float | None:
-    rate = _dict(_dict(artifact).get("judge_report")).get("disagreement_rate")
-    return float(rate) if _is_number(rate) else None
+    artifact = _dict(artifact)
+    # Generalization artifacts nest telemetry under tuned/held_out — sum the
+    # disagreement counts from both partitions, mirroring the fix for
+    # disagreement_outlook (#1037 / #1041).
+    if "tuned" in artifact and "held_out" in artifact:
+        total_dis = 0
+        total_dual = 0
+        for label in ("tuned", "held_out"):
+            counts = _partition_disagreement_counts(_dict(artifact.get(label)))
+            if counts is _INCOHERENT:
+                # A partition with impossible counts makes the pooled rate uninterpretable;
+                # fail closed to None so `no_judge_instability_increase` passes vacuously
+                # (spec 016) instead of blocking on a fabricated instability rise.
+                return None
+            if counts is None:
+                continue
+            dis, dual = counts
+            total_dis += dis
+            total_dual += dual
+        if total_dual > 0:
+            return total_dis / total_dual
+        return None
+    return _flat_disagreement(artifact)
 
 
 def check_regression(candidate, baseline,
@@ -68,17 +219,30 @@ def check_regression(candidate, baseline,
     """
     base_score = headline_score(baseline)
     cand_score = headline_score(candidate)
+    base_err = _artifact_error(baseline)
+    cand_err = _artifact_error(candidate)
     base_dis = _disagreement(baseline)
     cand_dis = _disagreement(candidate)
+    both_scored = (
+        base_score is not None and cand_score is not None
+        and base_err is None and cand_err is None
+    )
     checks = []
 
     def add(name, passed, detail):
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
-    both_scored = base_score is not None and cand_score is not None
-    add("both_scored", both_scored,
-        f"baseline composite {base_score}, candidate composite {cand_score}"
-        if both_scored else "a composite score is missing from one artifact")
+    if both_scored:
+        both_detail = (
+            f"baseline composite {base_score}, candidate composite {cand_score}"
+        )
+    elif base_err is not None:
+        both_detail = f"baseline error: {base_err!r}"
+    elif cand_err is not None:
+        both_detail = f"candidate error: {cand_err!r}"
+    else:
+        both_detail = "a composite score is missing from one artifact"
+    add("both_scored", both_scored, both_detail)
 
     # Round the delta to the scores' 3-decimal precision before comparing, so a drop equal to
     # the tolerance isn't tipped over it by floating-point noise (0.58 - 0.60 == -0.02000...018).
@@ -112,17 +276,25 @@ def check_regression(candidate, baseline,
 
 
 def failed_checks(result: dict) -> list:
-    """The names of the checks that failed in a :func:`check_regression` result."""
+    """The names of the checks that failed in a :func:`check_regression` result.
+
+    Malformed ``checks`` containers and unusable rows (missing keys, wrong types) are skipped
+    after logging a warning; they never raise.
+    """
     return [
-        c["name"] for c in _checks_list(_dict(result).get("checks"))
-        if isinstance(c, dict) and not c.get("passed")
+        c["name"] for c in _check_rows_list(_dict(result).get("checks"))
+        if not c["passed"]
     ]
 
 
 def regression_headline(result: dict) -> str:
-    """A one-line human summary of a :func:`check_regression` result."""
+    """A one-line human summary of a :func:`check_regression` result.
+
+    When ``checks`` is missing, empty, a non-list container, or contains only unusable rows,
+    returns ``"regression: no checks evaluated"`` after logging any warnings.
+    """
     result = _dict(result)
-    checks = _checks_list(result.get("checks"))
+    checks = _check_rows_list(result.get("checks"))
     if not checks:
         return "regression: no checks evaluated"
     if result.get("passed"):

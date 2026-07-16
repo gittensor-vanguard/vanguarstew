@@ -14,12 +14,53 @@ from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
     VALUE_LABELS,
+    _clip_text,
     _normalize_bool,
     _normalize_concerns,
     _normalize_review_action,
     _normalize_value_label,
+    _pr_number,
     review_pr,
 )
+
+
+class _StubReviewLLM:
+    """A mocked LLM so review_pr tests don't depend on the offline stub machinery."""
+
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return stub
+
+
+# Every non-string type must clip to "" — a slice would raise (int/dict/set) or embed
+# garbage (bytes/bytearray/memoryview) in the assembled prompt.
+_NON_STRING_VALUES = [
+    123, 3.14, True, {"text": "hi"}, ["a line"], ("a", "b"), {1, 2}, frozenset({3}),
+    b"raw bytes", bytearray(b"buf"), memoryview(b"mv"), None,
+]
+
+
+def test_clip_text_clips_strings_to_the_limit():
+    assert _clip_text("hello world", 5) == "hello"
+    assert _clip_text("short", 100) == "short"
+    assert _clip_text("", 10) == ""
+
+
+def test_clip_text_resolves_every_non_string_type_to_empty():
+    for value in _NON_STRING_VALUES:
+        assert _clip_text(value, 10) == ""
+
+
+def test_review_pr_survives_a_non_string_body_or_diff():
+    # Regression: body/diff come from the unvalidated frozen context. A non-string value used to
+    # crash prompt assembly (int/dict/set raise on the slice; bytes/memoryview embed garbage).
+    llm = _StubReviewLLM()
+    for bad in _NON_STRING_VALUES:
+        pr = {"number": 1, "title": "t", "author": "a", "files": ["tests/test_x.py"],
+              "body": bad, "diff": bad}
+        rev = review_pr(pr, None, llm)          # must not raise
+        assert rev["action"] in ACTIONS
 
 
 def test_review_offline_shape():
@@ -40,6 +81,20 @@ def test_review_detects_no_tests():
     pr = {"number": 1, "title": "tweak", "author": "y", "additions": 5, "deletions": 0,
           "files": ["benchmark/score.py"], "body": "", "diff": ""}
     assert review_pr(pr, None, llm)["tests_present"] is False
+
+
+def test_review_offline_stub_value_label_reflects_agent_touch():
+    """The offline stub can't run a benchmark, but it CAN tell from the files list whether a
+    PR is even on the measured surface — perf:pending for agent/, mult:contribution otherwise."""
+    llm = LLM(api_key="offline")
+    agent_pr = {"number": 1, "title": "t", "files": ["agent/decider.py", "tests/test_decider.py"]}
+    assert review_pr(agent_pr, None, llm)["value_label"] == "perf:pending"
+
+    agent_entry_pr = {"number": 2, "title": "t", "files": ["agent.py"]}
+    assert review_pr(agent_entry_pr, None, llm)["value_label"] == "perf:pending"
+
+    non_agent_pr = {"number": 3, "title": "t", "files": ["benchmark/score.py", "docs/x.md"]}
+    assert review_pr(non_agent_pr, None, llm)["value_label"] == "mult:contribution"
 
 
 def test_review_tolerates_missing_fields():
@@ -87,15 +142,15 @@ def test_normalize_review_action_logs_a_warning_for_non_string_input(caplog):
 
 
 def test_normalize_value_label_repairs_prefix_and_case():
-    assert _normalize_value_label("mult:core-correctness") == "mult:core-correctness"
-    assert _normalize_value_label("core-correctness") == "mult:core-correctness"
-    assert _normalize_value_label("core correctness") == "mult:core-correctness"
-    assert _normalize_value_label("core_correctness") == "mult:core-correctness"
-    assert _normalize_value_label("leakage integrity") == "mult:leakage-integrity"
-    assert _normalize_value_label("MULT:LEAKAGE-INTEGRITY") == "mult:leakage-integrity"
-    assert _normalize_value_label("maintenance") == "mult:maintenance"
-    assert _normalize_value_label("bogus") == "mult:maintenance"
-    assert _normalize_value_label(None) == "mult:maintenance"
+    assert _normalize_value_label("perf:pending") == "perf:pending"
+    assert _normalize_value_label("pending") == "perf:pending"
+    assert _normalize_value_label("PENDING") == "perf:pending"
+    assert _normalize_value_label("mult:contribution") == "mult:contribution"
+    assert _normalize_value_label("contribution") == "mult:contribution"
+    assert _normalize_value_label("MULT:CONTRIBUTION") == "mult:contribution"
+    assert _normalize_value_label("bogus") == "mult:contribution"
+    assert _normalize_value_label("mult:core-correctness") == "mult:contribution"  # retired tier
+    assert _normalize_value_label(None) == "mult:contribution"
 
 
 def test_normalize_bool_and_concerns():
@@ -112,7 +167,7 @@ class _MalformedReviewLLM:
     def chat_json(self, system, user, stub=None):
         return {
             "action": "approve",
-            "value_label": "core-correctness",
+            "value_label": "core-correctness",  # retired tier -> falls to default
             "scope_ok": "yes",
             "tests_present": 0,
             "summary": None,
@@ -125,7 +180,7 @@ def test_review_pr_normalizes_malformed_field_types():
     rev = review_pr({"files": []}, None, _MalformedReviewLLM())
     assert rev["action"] == "merge"
     assert rev["value_label"] in VALUE_LABELS
-    assert rev["value_label"] == "mult:core-correctness"
+    assert rev["value_label"] == "mult:contribution"
     assert rev["scope_ok"] is True
     assert rev["tests_present"] is False
     assert rev["summary"] == ""
@@ -139,7 +194,7 @@ class _NonStringActionReviewLLM:
     def chat_json(self, system, user, stub=None):
         return {
             "action": ["merge", "reject"],
-            "value_label": "mult:core-correctness",
+            "value_label": "perf:pending",
             "scope_ok": True,
             "tests_present": True,
             "summary": "adds a missing guard",
@@ -154,7 +209,7 @@ def test_review_pr_survives_non_string_action_field():
     # the malformed field degrades safely...
     assert rev["action"] == "comment"
     # ...and every other field is still normalized correctly, unaffected by the bad action.
-    assert rev["value_label"] == "mult:core-correctness"
+    assert rev["value_label"] == "perf:pending"
     assert rev["scope_ok"] is True
     assert rev["tests_present"] is True
     assert rev["summary"] == "adds a missing guard"
@@ -166,7 +221,7 @@ class _NearMissReviewLLM:
     offline = False
 
     def chat_json(self, system, user, stub=None):
-        return {"action": "approve", "value_label": "maintenance"}
+        return {"action": "approve", "value_label": "contribution"}
 
 
 def test_review_pr_maps_near_miss_action_and_value_label_to_canonical_vocab():
@@ -174,7 +229,7 @@ def test_review_pr_maps_near_miss_action_and_value_label_to_canonical_vocab():
     assert rev["action"] in ACTIONS
     assert rev["action"] == "merge"
     assert rev["value_label"] in VALUE_LABELS
-    assert rev["value_label"] == "mult:maintenance"
+    assert rev["value_label"] == "mult:contribution"
 
 
 # --- #414: non-list / non-string PR file paths must not abort review_pr --------------------
@@ -214,3 +269,58 @@ def test_review_pr_handles_non_dict_pr():
     assert result["action"] == "comment"
     result2 = review_pr(None, {}, llm)
     assert result2["action"] == "comment"
+
+
+class _CaptureUserLLM:
+    def __init__(self):
+        from agent.llm import LLM
+        self._llm = LLM(api_key="offline")
+        self.last_user = None
+
+    def __getattr__(self, name):
+        return getattr(self._llm, name)
+
+    def chat_json(self, system, user, stub=None):
+        self.last_user = user
+        return stub
+
+
+def test_review_pr_includes_empty_dict_philosophy():
+    pr = {"number": 1, "title": "Fix", "files": []}
+    llm = _CaptureUserLLM()
+    review_pr(pr, {}, llm)
+    assert "Repository philosophy" in llm.last_user
+
+
+def test_review_pr_omits_none_philosophy():
+    pr = {"number": 1, "title": "Fix", "files": []}
+    llm = _CaptureUserLLM()
+    review_pr(pr, None, llm)
+    assert "Repository philosophy" not in llm.last_user
+
+
+def test_pr_number_normalizes_non_scalar_and_bool():
+    assert _pr_number({"number": 7}) == 7
+    assert _pr_number({"number": [7]}) is None
+    assert _pr_number({"number": {"n": 7}}) is None
+    assert _pr_number({"number": True}) is None
+    assert _pr_number({"number": None}) is None
+    assert _pr_number({}) is None
+
+
+def test_review_pr_prompt_uses_pr_number_not_raw_number_field():
+    llm = _CaptureUserLLM()
+    review_pr({"number": 7, "title": "Fix bug", "author": "a", "files": []}, None, llm)
+    assert llm.last_user.startswith("PULL REQUEST #7: Fix bug")
+    assert "#True" not in llm.last_user
+
+    llm = _CaptureUserLLM()
+    review_pr({"number": True, "title": "Fix bug", "author": "a", "files": []}, None, llm)
+    assert llm.last_user.startswith("PULL REQUEST #?: Fix bug")
+    assert "#True" not in llm.last_user
+
+    llm = _CaptureUserLLM()
+    review_pr({"number": [7], "title": "Add streaming export", "author": "a", "files": []},
+              None, llm)
+    assert llm.last_user.startswith("PULL REQUEST #?: Add streaming export")
+    assert "#True" not in llm.last_user

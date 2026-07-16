@@ -19,6 +19,7 @@ Pure analysis: no I/O, and it never mutates its inputs.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.trend import headline_score
 
@@ -26,7 +27,19 @@ logger = logging.getLogger(__name__)
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Only a finite, non-boolean int/float counts as numeric.
+
+    A saved artifact round-trips ``NaN``/``Infinity`` verbatim through ``json``, so a non-finite
+    ``composite_parts`` mean must degrade to ``None`` in a leaderboard row rather than surfacing as
+    an ``inf``/``nan`` component — mirroring ``component_mix``, ``composite_spread`` (#1397), and
+    ``trend`` (#1183). ``OverflowError`` guards an oversized int that cannot convert to float.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
 
 
 def _round(value):
@@ -65,6 +78,26 @@ def _leaderboard_entries(entries) -> list:
     return []
 
 
+def _leaderboard_point(entry, index=None):
+    """Return a ``(label, artifact)`` pair from an entry, or ``None`` to skip it.
+
+    Entries come from the same malformed CLI / saved-artifact input the container guard covers
+    (#532). A non-pair entry — not a list/tuple, or the wrong length (including a ``bytes`` value,
+    which is not a ``(label, artifact)`` pair even though it is iterable) — is skipped rather than
+    crashing the ``label, artifact`` unpacking. The warning names the offending index and its
+    actual content so a bad saved leaderboard can be pinpointed, matching how the module already
+    logs a non-list ``entries`` / ``unscored``.
+    """
+    if isinstance(entry, (list, tuple)) and len(entry) == 2:
+        return entry[0], entry[1]
+    where = f"entries[{index}]" if index is not None else "a leaderboard entry"
+    logger.warning(
+        "leaderboard: %s is not a (label, artifact) pair (%s: %s); skipping",
+        where, type(entry).__name__, repr(entry)[:120],
+    )
+    return None
+
+
 def rank(entries) -> dict:
     """Rank an iterable of ``(label, artifact)`` by headline composite score, best first.
 
@@ -80,7 +113,11 @@ def rank(entries) -> dict:
     """
     scored = []       # (index, label, score, components) — index keeps ties in input order
     unscored = []
-    for index, (label, artifact) in enumerate(_leaderboard_entries(entries)):
+    for index, entry in enumerate(_leaderboard_entries(entries)):
+        pair = _leaderboard_point(entry, index)
+        if pair is None:
+            continue
+        label, artifact = pair
         score = headline_score(artifact)
         if score is None:
             unscored.append(label)

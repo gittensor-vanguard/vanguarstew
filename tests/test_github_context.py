@@ -4,6 +4,8 @@ import os
 import sys
 from datetime import datetime, timezone
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -15,6 +17,13 @@ def test_parse_owner_repo():
     assert gc.parse_owner_repo("git@github.com:foo/bar.git") == ("foo", "bar")
     assert gc.parse_owner_repo("https://github.com/foo/bar") == ("foo", "bar")
     assert gc.parse_owner_repo("https://github.com/foo/bar.git") == ("foo", "bar")
+
+
+def test_parse_owner_repo_ignores_trailing_subpaths():
+    assert gc.parse_owner_repo("https://github.com/foo/bar/tree/main") == ("foo", "bar")
+    assert gc.parse_owner_repo("https://github.com/org/repo/blob/main/README.md") == (
+        "org", "repo",
+    )
 
 
 def test_parse_owner_repo_tolerates_non_string_remote_url():
@@ -174,6 +183,123 @@ def test_labels_at_none_when_nothing_reconstructable():
     ) is None
 
 
+def test_title_at_uses_live_title_when_no_renames():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._title_at([], T, "original title") == "original title"
+
+
+def test_title_at_returns_title_before_post_T_rename():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        {"event": "renamed", "created_at": "2023-01-01T00:00:00Z",
+         "rename": {"from": "alpha", "to": "beta"}},
+        {"event": "renamed", "created_at": "2023-09-01T00:00:00Z",
+         "rename": {"from": "beta", "to": "future-only"}},
+    ]
+    assert gc._title_at(events, T, "future-only") == "beta"
+
+
+def test_title_at_replays_rename_chain_at_or_before_T():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    events = [
+        {"event": "renamed", "created_at": "2023-02-01T00:00:00Z",
+         "rename": {"from": "alpha", "to": "beta"}},
+        {"event": "renamed", "created_at": "2023-05-01T00:00:00Z",
+         "rename": {"from": "beta", "to": "gamma"}},
+    ]
+    assert gc._title_at(events, T, "gamma") == "gamma"
+
+
+def test_title_at_returns_none_for_non_string_live_title_without_renames():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._title_at([], T, None) is None
+    assert gc._title_at([], T, 42) is None
+
+
+def test_title_at_handles_unavailable_or_non_list_events():
+    # A missing (None) or malformed (non-list) timeline must not crash reconstruction; it is
+    # treated as "no timeline" (via _timeline_events) and falls back to the live title (a str)
+    # or None, exactly like _labels_at.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._title_at(None, T, "live title") == "live title"
+    assert gc._title_at("not-a-list", T, "live title") == "live title"
+    assert gc._title_at({"event": "renamed"}, T, "live title") == "live title"
+    assert gc._title_at(None, T, None) is None
+
+
+def test_title_at_skips_malformed_rename_payloads():
+    # A renamed event with a non-dict `rename`, a non-string from/to, or no timestamp is skipped
+    # rather than trusted; with no usable rename left, the live title stands.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    malformed = [
+        {"event": "renamed", "created_at": "2023-02-01T00:00:00Z", "rename": "oops"},
+        {"event": "renamed", "created_at": "2023-03-01T00:00:00Z", "rename": {"from": 1, "to": "x"}},
+        {"event": "renamed", "created_at": None, "rename": {"from": "a", "to": "b"}},
+    ]
+    assert gc._title_at(malformed, T, "live title") == "live title"
+    # A well-formed post-T rename mixed in with the malformed ones is still honored.
+    valid = malformed + [{"event": "renamed", "created_at": "2023-09-01T00:00:00Z",
+                          "rename": {"from": "as-of-T title", "to": "future title"}}]
+    assert gc._title_at(valid, T, "future title") == "as-of-T title"
+
+
+def test_open_issue_title_omitted_when_timeline_truncated(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 7, "title": "leaked future title", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return [{"event": "renamed", "created_at": "2023-01-01T00:00:00Z",
+                     "rename": {"from": "old", "to": "leaked future title"}}] * 100
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["title"] == ""
+    assert iss["title_as_of_t"] is False
+
+
+def test_open_issue_title_reconstructed_when_renamed_after_T(monkeypatch):
+    # End-to-end (#632): an issue renamed AFTER T must surface its as-of-T title, not the leaked
+    # present-day one — a post-T rename can describe work (a version/fix, a future issue ref) that
+    # had not happened at T and would otherwise leak forward signal into prompts and ground truth.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 7, "title": "Parser crash - fixed in v2.4 (#900)",
+               "created_at": "2023-01-01T00:00:00Z", "closed_at": None}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return [{"event": "renamed", "created_at": "2023-08-01T00:00:00Z",
+                     "rename": {"from": "Parser crash on nested input",
+                                "to": "Parser crash - fixed in v2.4 (#900)"}}]
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["title"] == "Parser crash on nested input"   # as-of-T title, not the post-T rename
+    assert iss["title_as_of_t"] is True
+    assert "v2.4" not in iss["title"] and "#900" not in iss["title"]  # future signal not leaked
+
+
+def test_issue_record_fails_closed_on_truncated_timeline_even_with_renames(monkeypatch):
+    # _issue_record_at must omit the title on a truncated timeline even when the partial events
+    # carry a usable rename: a later, unfetched rename could contradict it, so fail closed with
+    # title=""/title_as_of_t=False -- the same posture as labels (a direct unit on the guard).
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    partial = [{"event": "renamed", "created_at": "2023-02-01T00:00:00Z",
+                "rename": {"from": "old", "to": "new"}}]
+    monkeypatch.setattr(gc, "_issue_timeline", lambda *a, **k: (partial, True))
+    rec = gc._issue_record_at("base", {"number": 5, "title": "live title"}, T, None, 20)
+    assert rec["title"] == ""
+    assert rec["title_as_of_t"] is False
+    assert rec["labels_as_of_t"] is False  # truncation fails both fields closed together
+
+
 def test_open_issue_labels_reconstructed_as_of_T(monkeypatch):
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     # Live label list says "shipped" — that must NOT leak; only the as-of-T set from
@@ -240,6 +366,137 @@ def test_enrich_context_preserves_truncation_metadata(monkeypatch):
     assert out["_issues_truncated"] is True
     assert out["_knowable_until"] == T.isoformat()
     assert out["_source"] == "github-api"
+
+
+def _enrich_with_fake_fetch(monkeypatch, gh_payload, base):
+    """Run enrich_context with a stubbed fetch and origin URL."""
+    monkeypatch.setattr(gc, "fetch_context_at", lambda *a, **k: dict(gh_payload))
+    monkeypatch.setattr("benchmark.freeze.origin_url", lambda p: "https://github.com/foo/bar")
+    if "frozen_at" not in base:
+        base = {**base, "frozen_at": {"date": "2023-06-01T00:00:00Z"}}
+    return gc.enrich_context(base, "/some/repo")
+
+
+@pytest.mark.parametrize(
+    "gh_lists,base_stale,expected_lists",
+    [
+        pytest.param(
+            {
+                "open_issues": [],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale issue"}],
+                "open_prs": [{"number": 2, "title": "stale pr"}],
+                "milestones": [{"title": "stale milestone"}],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            {
+                "open_issues": [],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [],
+            },
+            id="all-empty-clears-all-stale",
+        ),
+        pytest.param(
+            {
+                "open_issues": [],
+                "open_prs": [{"number": 10, "title": "fresh pr"}],
+                "milestones": [{"title": "m1", "state": "open"}],
+                "releases": [{"tag": "v1.0.0"}],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale partial backlog"}],
+                "open_prs": [{"number": 2, "title": "stale partial pr"}],
+                "milestones": [{"title": "stale milestone"}],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            {
+                "open_issues": [],
+                "open_prs": [{"number": 10, "title": "fresh pr"}],
+                "milestones": [{"title": "m1", "state": "open"}],
+                "releases": [{"tag": "v1.0.0"}],
+            },
+            id="empty-issues-nonempty-other-lists",
+        ),
+        pytest.param(
+            {
+                "open_issues": [{"number": 3, "title": "fresh issue"}],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [{"tag": "v2.0.0"}],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale issue"}],
+                "open_prs": [{"number": 2, "title": "stale pr"}],
+                "milestones": [{"title": "stale milestone"}],
+                "releases": [{"tag": "v0.1.0"}],
+            },
+            {
+                "open_issues": [{"number": 3, "title": "fresh issue"}],
+                "open_prs": [],
+                "milestones": [],
+                "releases": [{"tag": "v2.0.0"}],
+            },
+            id="empty-prs-nonempty-other-lists",
+        ),
+        pytest.param(
+            {
+                "open_issues": [{"number": 4, "title": "only issue at T"}],
+                "open_prs": [{"number": 5, "title": "only pr at T"}],
+                "milestones": [],
+                "releases": [{"tag": "v1.1.0"}],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale issue"}],
+                "open_prs": [{"number": 2, "title": "stale pr"}],
+                "milestones": [{"title": "stale milestone"}],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            {
+                "open_issues": [{"number": 4, "title": "only issue at T"}],
+                "open_prs": [{"number": 5, "title": "only pr at T"}],
+                "milestones": [],
+                "releases": [{"tag": "v1.1.0"}],
+            },
+            id="empty-milestones-only-clears-stale-milestones",
+        ),
+        pytest.param(
+            {
+                "open_issues": [],
+                "open_prs": [],
+            },
+            {
+                "open_issues": [{"number": 1, "title": "stale issue"}],
+                "open_prs": [{"number": 2, "title": "stale pr"}],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            {
+                "open_issues": [],
+                "open_prs": [],
+                "releases": [{"tag": "v9.9.9"}],
+            },
+            id="absent-gh-key-preserves-stale-base-field",
+        ),
+    ],
+)
+def test_enrich_context_mixed_empty_nonempty_overwrites_stale_base(
+    monkeypatch, gh_lists, base_stale, expected_lists,
+):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    gh_payload = {
+        "repo": "foo/bar",
+        "_source": "github-api",
+        "_knowable_until": T.isoformat(),
+        "_issues_truncated": True,
+        **gh_lists,
+    }
+    out = _enrich_with_fake_fetch(monkeypatch, gh_payload, dict(base_stale))
+    for key, expected in expected_lists.items():
+        assert out[key] == expected, key
 
 
 def test_enrich_context_degrades_on_failure(monkeypatch):
@@ -351,6 +608,12 @@ def test_open_issues_from_context_omits_truncated_backlog():
     assert gc.open_issues_from_context(complete) == complete["open_issues"]
 
 
+def test_open_issues_from_context_keeps_backlog_when_truncated_is_not_boolean_true():
+    issues = [{"number": 1, "title": "Memory leak under load"}]
+    ctx = {"_issues_truncated": "false", "open_issues": issues}
+    assert gc.open_issues_from_context(ctx) == issues
+
+
 # --- contract edge cases (docstring "Field stability") -----------------------------
 
 def test_item_open_at_boundary_created_or_closed_exactly_at_T():
@@ -401,10 +664,9 @@ def test_releases_filtered_by_published_at_including_boundary_and_drafts(monkeyp
     assert [r["tag"] for r in ctx["releases"]] == ["v1.0", "v1.1"]
 
 
-def test_issue_record_copies_number_created_at_and_live_title(monkeypatch):
-    # Contract: number/created_at are immutable; title is copied live (present-day value).
-    # Pinned so a change that tries to as-of-T these fields also revisits the documented
-    # field-stability contract. Timeline is empty here to isolate title/number copying.
+def test_issue_record_copies_number_created_at_and_reconstructs_title(monkeypatch):
+    # Contract: number/created_at are immutable; title is as-of-T when the timeline is complete.
+    # Empty timeline here means no rename events — the live REST title is unchanged since creation.
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     issues = [{"number": 42, "title": "present-day title", "created_at": "2023-01-01T00:00:00Z",
                "closed_at": None, "labels": [{"name": "x"}]}]
@@ -420,6 +682,7 @@ def test_issue_record_copies_number_created_at_and_live_title(monkeypatch):
     iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
     assert iss["number"] == 42
     assert iss["title"] == "present-day title"
+    assert iss["title_as_of_t"] is True
     assert iss["created_at"] == "2023-01-01T00:00:00Z"
     assert iss["labels_as_of_t"] is False  # no timeline -> labels omitted, not leaked live
 
@@ -480,7 +743,26 @@ def test_list_pagination_respects_page_cap(monkeypatch):
     full = [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)]
     monkeypatch.setattr(gc, "_get", _list_pager({"/releases": {1: full, 2: full, 3: full}}))
     ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
-    assert len(ctx["releases"]) == 200  # bounded at the cap, never an unbounded loop
+    assert ctx["_releases_truncated"] is True
+    assert ctx["releases"] == []
+
+
+def test_releases_fail_closed_when_list_pagination_cap_hit(monkeypatch):
+    T = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    full = [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)]
+    monkeypatch.setattr(gc, "_get", _list_pager({"/releases": {1: full, 2: full, 3: full}}))
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
+    assert ctx["_releases_truncated"] is True
+    assert ctx["releases"] == []
+
+
+def test_milestones_fail_closed_when_list_pagination_cap_hit(monkeypatch):
+    T = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    full = [{"title": f"m{i}", "created_at": "2023-01-01T00:00:00Z"} for i in range(100)]
+    monkeypatch.setattr(gc, "_get", _list_pager({"/milestones": {1: full, 2: full, 3: full}}))
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None, max_list_pages=2)
+    assert ctx["_milestones_truncated"] is True
+    assert ctx["milestones"] == []
 
 
 # --- #345: a truncated timeline must fail closed, not report a partial (wrong) label set ----
@@ -500,12 +782,89 @@ def test_issue_timeline_signals_truncation(monkeypatch):
     events, truncated = gc._issue_timeline("base", 1, None, 20, max_pages=3)
     assert truncated is False and len(events) == 10
 
-    # An error or missing number degrades to the safe ([], False) fallback.
+    # An error or missing number yields an *unavailable* timeline: nothing was collected, so it is
+    # reported as ([], True) -- truncated -- and the caller fails both labels and title closed. A
+    # bare ([], False) there would leak the live title (an empty timeline reads as "never renamed").
     def err_get(url, token, timeout=20):
         raise RuntimeError("boom")
     monkeypatch.setattr(gc, "_get", err_get)
-    assert gc._issue_timeline("base", 1, None, 20) == ([], False)
-    assert gc._issue_timeline("base", None, None, 20) == ([], False)
+    assert gc._issue_timeline("base", 1, None, 20) == ([], True)
+    assert gc._issue_timeline("base", None, None, 20) == ([], True)
+
+
+def test_issue_timeline_marks_truncated_on_error_after_first_page(monkeypatch):
+    # A full first page followed by an error on page 2 leaves the timeline incomplete: the
+    # partial events must be flagged truncated (not returned as truncated=False), so the caller
+    # fails closed instead of trusting a reconstruction that a later unfetched event may
+    # contradict. A first-page error still yields ([], False) — nothing was collected.
+    full_first = [{"event": "commented", "created_at": "2023-01-01T00:00:00Z"}] * 100
+
+    def flaky_get(url, token, timeout=20):
+        if "&page=1" in url:
+            return full_first
+        raise RuntimeError("simulated transient error on page 2")
+
+    monkeypatch.setattr(gc, "_get", flaky_get)
+    events, truncated = gc._issue_timeline("base", 1, None, 20, max_pages=5)
+    assert len(events) == 100 and truncated is True
+
+
+def test_open_issue_labels_omitted_when_timeline_errors_after_first_page(monkeypatch):
+    # End-to-end guard: a labeled event on page 1 that a page-2 unlabeled (never fetched) would
+    # have removed before T must NOT be reported as an authoritative as-of-T label. Fail closed.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "open", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": [{"name": "bug"}]}]
+    page1 = [{"event": "labeled", "created_at": "2023-01-01T00:00:00Z", "label": {"name": "bug"}}]
+    page1 += [{"event": "commented", "created_at": "2023-01-02T00:00:00Z"}] * 99
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            if "&page=1" in url:
+                return page1
+            raise RuntimeError("simulated transient error on page 2")
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["labels"] == []
+    assert iss["labels_as_of_t"] is False
+
+
+def test_open_issue_title_omitted_when_timeline_errors_on_first_page(monkeypatch):
+    # A first-page timeline error leaves the timeline unavailable. The title must fail closed
+    # (title=""/title_as_of_t=False), exactly as labels do -- not fall back to the live REST
+    # title, which may have been renamed after T to reveal forward signal (a version, a fix,
+    # a future issue ref). The empty timeline would otherwise read as "never renamed" and leak it.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 7, "title": "Parser crash - fixed in v2.4 (#900)",
+               "created_at": "2023-01-01T00:00:00Z", "closed_at": None}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            raise RuntimeError("simulated transient error on page 1")
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    iss = gc.fetch_context_at("foo", "bar", T, token=None)["open_issues"][0]
+    assert iss["title"] == ""
+    assert iss["title_as_of_t"] is False
+    assert iss["labels_as_of_t"] is False  # both fields fail closed on an unavailable timeline
+
+
+def test_issue_record_fails_title_closed_when_timeline_unavailable(monkeypatch):
+    # Direct unit on the guard: an unavailable timeline (([], True) from a missing number or a
+    # first-page error) omits the title, mirroring the labels posture -- never the live value.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(gc, "_issue_timeline", lambda *a, **k: ([], True))
+    rec = gc._issue_record_at("base", {"number": 5, "title": "live title"}, T, None, 20)
+    assert rec["title"] == ""
+    assert rec["title_as_of_t"] is False
+    assert rec["labels_as_of_t"] is False
 
 
 def test_open_issue_labels_omitted_when_timeline_truncated(monkeypatch):

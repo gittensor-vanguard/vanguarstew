@@ -19,6 +19,78 @@ All notable changes to this project are documented here. The format is based on
   and the gap is reported only when both partitions scored a repo (#208).
 
 ### Fixed
+- Benchmark gates (`benchmark/judge_gate.py`, `benchmark/regression.py`): the order-disagreement
+  recompute accepted an incoherent telemetry block where `disagree > dual_order_tasks` — impossible,
+  since `disagree` is a subset of `dual_order_tasks` (stale/hand-edited data). It produced a rate
+  above 1.0 (`_disagreement_rate_from_telemetry`) and, for a `--generalization` artifact, pooled the
+  fabricated count into a plausible-but-wrong overall rate that could flip `check_regression`'s
+  `no_judge_instability_increase` verdict and block an otherwise-fine candidate. The recompute now
+  requires `0 <= disagree <= dual_order_tasks`; `_disagreement_rate_from_telemetry` falls back to a
+  literal `disagreement_rate` (else `None`) on impossible counts, and `_partition_disagreement_counts`
+  signals the incoherent partition so `_disagreement` fails the pooled rate closed to `None` (the
+  gate then passes vacuously per Spec 016, which is updated to match) (#1283).
+- Benchmark reporting (`benchmark/judge_wlt.py`): `summarize_judge_wlt` read only the top-level
+  `judge_report`, so a `--generalization` artifact (which nests a report under `tuned`/`held_out`
+  and emits none at the top level) reported `unavailable` for every generalization run — while its
+  sibling `win_rate` sums the partitions. It now sums the `tuned`/`held_out` W-L-T reports for the
+  overall and exposes a `partitions` map (Spec 025 updated to match). Single- and multi-repo
+  artifacts are unchanged.
+- Benchmark reporting (`benchmark/dual_order_coverage.py`): `_task_total` read only the
+  top-level `tasks` field, which a multi-repo run and each generalization partition never emit
+  (task counts live under `per_repo[*].tasks`), so coverage was `n/a` for every aggregate run —
+  contradicting the module's own docstring and its sibling `dual_order_share` (which reports a
+  value on the same artifact). It now falls back to summing `per_repo[*].tasks` (fail-closed on
+  a malformed entry), mirroring `coverage`/`sample_adequacy`/`repo_task_mean`; Spec 047 and its
+  tests are updated to match.
+- Benchmark reporting (`benchmark/gap_outlook.py`): the favorability verdict was sign-inverted.
+  `generalization_gap = tuned - held_out`, so a **positive** gap means held-out performance
+  dropped (worse generalization) — the sign `acceptance`, `runner`, and `gap_integrity` all use —
+  yet `gap_outlook` reported `"favorable"` for `gap >= 0`. It labelled exactly the runs the
+  `acceptance` gate *rejects* as favorable (and good generalization as unfavorable). The verdict
+  is now `"favorable"` when `gap <= 0`; Spec 052 and its tests are corrected to match.
+- Benchmark reporting (`benchmark/win_rate.py`): `summarize_win_rate` read only the artifact's
+  top-level `tally`, so a `--generalization` artifact (which carries a tally under
+  `tuned`/`held_out` only) reported `n/a` for every generalization run while sibling utilities
+  (`offline_share`, `dual_order_share`, `order_agree_rate`, …) summed the partitions.
+  Generalization artifacts now sum the `tuned`/`held_out` tallies for the overall and expose a
+  `partitions` map, and the summary carries a `kind` field like its siblings.
+- Benchmark reporting (`benchmark/order_agree_rate.py`): `summarize_order_agree_rate` read
+  only the artifact's top-level `judge_order_stats`, so a `--generalization` artifact (which
+  carries stats under `tuned`/`held_out` only) reported `agree_rate: n/a` for every
+  generalization run while sibling utilities (`offline_share`, `dual_order_share`, …) correctly
+  summed the partitions. Generalization artifacts now derive the overall rate from
+  `_combined(tuned, held_out)`.
+- Benchmark gates (`benchmark/repeatability.py`): `assess_repeatability` computed the
+  coefficient of variation from the *population* standard deviation (`pstdev`) rather than the
+  *sample* standard deviation. The repeats are a sample of a noisy run, so the CV must use the
+  Bessel-corrected sample stddev; `pstdev` underestimates run-to-run spread by
+  `sqrt(n/(n-1))` (~1.41x at n=2), biasing the reproducibility gate too lenient and flipping the
+  `stable` verdict near the `max_cv` boundary (e.g. runs `[0.96, 1.04]` scored a CV of 0.04 and
+  passed at `max_cv=0.05`, when the true sample CV is 0.057 and should fail).
+- Benchmark gates (`benchmark/sample_adequacy.py`): `_partition_entries` collected the
+  top-level `per_repo` list **and** the `tuned`/`held_out` partition lists additively, so an
+  artifact carrying both shapes had every task counted twice (`_total_tasks` returned 14 for a
+  7-task run), which then failed `all_tasks_decided` even when the tally accounted for every
+  real task. It is now mutually exclusive — top-level `per_repo` wins, else the partitions —
+  mirroring the sibling gates (`coverage`, `tally_integrity`, `weight_integrity`, ...). Stock
+  multi-repo and generalization artifacts are unaffected.
+- Leakage / fail-closed (`benchmark/github_context.py`): `_issue_timeline` swallowed a
+  transient error on a page *after* the first and returned the partial events with
+  `truncated=False`, so `_issue_record_at` trusted an incomplete timeline and reported
+  `labels_as_of_t=True` — potentially asserting an as-of-T label that a later (unfetched)
+  `unlabeled` event removed before T. A mid-pagination error now marks the timeline
+  `truncated`, so the caller fails closed (omits labels) exactly like the page-cap case; a
+  first-page error still yields `([], False)`. Extends the fail-closed guard from #345 (#865).
+- Scoring correctness (`benchmark/score.py`): the objective anchor now recognizes the
+  version-cut commit that release tooling authors under a chore/build Conventional-Commit type,
+  such as `chore(release): 1.4.0` (standard-version), `chore(main): release 1.2.3`
+  (release-please), and `build(release): 2.0.0`. The #431 "CC prefix is authoritative" rule
+  had dropped these as plain chores, so `is_release_subject` returned False, `commit_kind`
+  returned `chore`, and `released_version` returned None on a real release: a challenger that
+  correctly anticipated the release, its bump level, and the `release` kind earned zero credit
+  on all three axes of `objective_component`. Recognition is body-gated (the text after the
+  prefix must itself be a release-tag subject), so `ci(release): update pipeline` and
+  `docs: changelog` edits remain non-releases and the #431 posture is preserved (#753).
 - Leakage: ``agent/context.py::_mask_forward_refs`` (the git-only fallback used when
   ``.vanguarstew_context.json`` is absent) now masks GitHub deep-links and raw commit SHAs
   in README/commit text, matching ``benchmark/leakage.strip_forward_refs`` — completing the
