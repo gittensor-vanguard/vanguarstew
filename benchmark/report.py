@@ -161,6 +161,14 @@ def _foresight_dict(artifact: dict) -> dict:
 
 
 def _foresight_axis(foresight: dict, rate_key: str, n_key: str) -> str:
+    """One ``rate (n=count)`` fragment for a single foresight axis.
+
+    A sample count is never negative in a real ``foresight_breakdown()``/
+    ``combine_foresight_breakdowns()`` output (both build it from ``len()`` / summed ``len()``
+    values), so a missing, non-numeric, *or negative* ``n`` is equally malformed/absent data and
+    renders as ``n=0`` -- the same degradation the paired rate already gets (``_fmt_rate(None)``
+    -> ``"n/a"``), never a fabricated negative count.
+    """
     n = foresight.get(n_key)
     n_txt = str(int(n)) if _is_number(n) and n >= 0 else "0"
     return f"{_fmt_rate(foresight.get(rate_key))} (n={n_txt})"

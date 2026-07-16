@@ -100,6 +100,13 @@ def test_run_replay_composite_parts_match_rows():
         shutil.rmtree(d, ignore_errors=True)
 
 
+FORESIGHT_KEYS = {
+    "module_recall_mean", "module_recall_n",
+    "kind_recall_mean", "kind_recall_n",
+    "release_accuracy", "release_accuracy_n",
+}
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_run_replay_foresight_breakdown_matches_row_count():
     d = _tiny_repo(tempfile.mkdtemp())
@@ -107,6 +114,10 @@ def test_run_replay_foresight_breakdown_matches_row_count():
         n = 3
         res = run_replay(d, agent_file=AGENT, n_tasks=n, horizon=3, seed=0)
         foresight = res["foresight"]
+        # The real scoring pipeline (freeze -> objective_score -> foresight_breakdown) must
+        # produce exactly the keys runner.py/report.py/leaderboard.py read by name -- not just a
+        # dict that happens to carry the fields exercised below.
+        assert set(foresight) == FORESIGHT_KEYS
         # Module recall is always applicable, so its sample size tracks the task count exactly.
         assert foresight["module_recall_n"] == n
         assert foresight["module_recall_mean"] is None or 0.0 <= foresight["module_recall_mean"] <= 1.0
@@ -151,6 +162,7 @@ def test_run_multi_replay_combines_per_repo_foresight():
     try:
         res = run_multi_replay([a, b], agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
         foresight = res["foresight"]
+        assert set(foresight) == FORESIGHT_KEYS
         # module_recall_n sums across every scored repo's own foresight (always applicable),
         # matching how it is combined rather than a fixed expectation on task counts.
         expected_n = sum(

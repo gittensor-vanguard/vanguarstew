@@ -1382,3 +1382,25 @@ def test_combine_foresight_breakdowns_ignores_non_finite_rate():
     ])
     assert combined["module_recall_mean"] == 0.8
     assert combined["module_recall_n"] == 5
+
+
+# The exact key contract both aggregators must produce -- consumers (runner.py, report.py,
+# leaderboard.py) all read these six keys by name, so a shape drift here would silently break
+# every downstream reader without a single test failing at the call site.
+FORESIGHT_KEYS = {
+    "module_recall_mean", "module_recall_n",
+    "kind_recall_mean", "kind_recall_n",
+    "release_accuracy", "release_accuracy_n",
+}
+
+
+def test_foresight_breakdown_produces_the_documented_key_shape():
+    assert set(foresight_breakdown([])) == FORESIGHT_KEYS
+    real = objective_score([{"title": "prepare release", "kind": "release"}], REVEALED)
+    assert set(foresight_breakdown([real])) == FORESIGHT_KEYS
+
+
+def test_combine_foresight_breakdowns_produces_the_documented_key_shape():
+    assert set(combine_foresight_breakdowns([])) == FORESIGHT_KEYS
+    one = foresight_breakdown([objective_score([{"title": "x", "kind": "docs"}], REVEALED)])
+    assert set(combine_foresight_breakdowns([one])) == FORESIGHT_KEYS

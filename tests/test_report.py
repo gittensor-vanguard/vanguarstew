@@ -17,6 +17,9 @@ from benchmark.report import (  # noqa: E402
     _composite_parts_dict,
     _fmt_rate,
     _fmt_score,
+    _foresight_axis,
+    _foresight_dict,
+    _foresight_line,
     _is_multi_repo,
     _per_repo_rows,
     render_report,
@@ -90,6 +93,78 @@ def test_render_single_repo_includes_headline_and_judge():
     assert "Judge W-L-T: 2-1-0" in md
     assert "Order disagreement rate: 25.0%" in md
     assert "Tasks: 3" in md
+
+
+# ---- direct unit coverage for the foresight helpers (_foresight_dict/_foresight_axis/_foresight_line) ----
+
+
+def test_foresight_dict_returns_the_dict_when_present():
+    art = {"foresight": {"module_recall_mean": 0.5, "module_recall_n": 2}}
+    assert _foresight_dict(art) == {"module_recall_mean": 0.5, "module_recall_n": 2}
+
+
+def test_foresight_dict_returns_empty_when_absent():
+    assert _foresight_dict({}) == {}
+
+
+def test_foresight_dict_warns_and_degrades_for_non_dict(caplog):
+    with caplog.at_level(logging.WARNING):
+        result = _foresight_dict({"foresight": [1, 2, 3]})
+    assert result == {}
+    assert any("foresight is list" in r.message for r in caplog.records)
+
+
+def test_foresight_axis_renders_rate_and_n():
+    foresight = {"module_recall_mean": 0.6667, "module_recall_n": 3}
+    assert _foresight_axis(foresight, "module_recall_mean", "module_recall_n") == "66.7% (n=3)"
+
+
+def test_foresight_axis_renders_na_when_rate_and_n_absent():
+    assert _foresight_axis({}, "module_recall_mean", "module_recall_n") == "n/a (n=0)"
+
+
+def test_foresight_axis_treats_negative_n_as_malformed():
+    # A real breakdown never produces a negative n (it's always a len()/summed len()); a
+    # negative value is malformed input and must degrade to n=0, not surface as a fabricated
+    # negative sample count.
+    foresight = {"module_recall_mean": 0.5, "module_recall_n": -3}
+    assert _foresight_axis(foresight, "module_recall_mean", "module_recall_n") == "50.0% (n=0)"
+
+
+def test_foresight_axis_treats_non_numeric_n_as_malformed():
+    foresight = {"module_recall_mean": 0.5, "module_recall_n": "three"}
+    assert _foresight_axis(foresight, "module_recall_mean", "module_recall_n") == "50.0% (n=0)"
+
+
+def test_foresight_axis_treats_non_finite_n_as_malformed():
+    foresight = {"module_recall_mean": 0.5, "module_recall_n": float("nan")}
+    assert _foresight_axis(foresight, "module_recall_mean", "module_recall_n") == "50.0% (n=0)"
+
+
+def test_foresight_axis_accepts_a_float_n():
+    # n is always an int in practice, but a float count (e.g. round-tripped through JSON in a
+    # hand-edited artifact) must still render, not be treated as malformed.
+    foresight = {"module_recall_mean": 1.0, "module_recall_n": 4.0}
+    assert _foresight_axis(foresight, "module_recall_mean", "module_recall_n") == "100.0% (n=4)"
+
+
+def test_foresight_line_combines_all_three_axes():
+    foresight = {
+        "module_recall_mean": 1.0, "module_recall_n": 2,
+        "kind_recall_mean": None, "kind_recall_n": 0,
+        "release_accuracy": 0.5, "release_accuracy_n": 1,
+    }
+    line = _foresight_line({"foresight": foresight}, unscored=False)
+    assert line == "- Foresight — modules: 100.0% (n=2), kinds: n/a (n=0), release: 50.0% (n=1)"
+
+
+def test_foresight_line_forces_na_when_unscored_even_if_foresight_present():
+    # An unscored partition's composite/judge lines already render n/a even when stale fields
+    # are present (composite_mean: 0.0 is a placeholder, not a real score); foresight must match
+    # that, not leak a real-looking breakdown alongside a fabricated composite.
+    foresight = {"module_recall_mean": 1.0, "module_recall_n": 2}
+    line = _foresight_line({"foresight": foresight}, unscored=True)
+    assert line == "- Foresight — modules: n/a (n=0), kinds: n/a (n=0), release: n/a (n=0)"
 
 
 def test_render_single_repo_includes_foresight_breakdown():
