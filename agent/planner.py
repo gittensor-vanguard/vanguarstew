@@ -298,6 +298,43 @@ def _release_cadence_note(context: dict) -> str:
     return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
 
 
+def _is_planned_release(item) -> bool:
+    """True when a normalized plan item predicts a release cut.
+
+    Mirrors the objective anchor's ``release_predicted`` (benchmark/score.py): an item counts as a
+    release prediction if its ``kind`` is ``release`` OR its ``title`` reads as a release/version
+    cut. Detected with the planner's own vocabulary (``agent/`` must not import ``benchmark/``);
+    ``_commit_plan_kind`` already applies the same CC-prefix + release-tooling classification the
+    anchor uses, so the two stay aligned.
+    """
+    if not isinstance(item, dict):
+        return False
+    kind = item.get("kind")
+    if isinstance(kind, str) and kind.strip().lower() == "release":
+        return True
+    return _commit_plan_kind(item.get("title")) == "release"
+
+
+def _calibrate_release_prediction(plan: list, context: dict) -> list:
+    """Drop a spuriously-planned release item when recent history shows no release cadence (#1561).
+
+    ``RELEASE_CADENCE_GUIDANCE`` is only injected when a release cut is evidenced, but on
+    fast-moving repos the model still tends to add a ``release`` item on its own — absorbing "this
+    project releases constantly" from the philosophy read and predicting a version cut the revealed
+    window does not contain. When there is no release-cadence evidence in recent history, a release
+    prediction is unsupported, so it is removed and the plan reflects the work actually likely next;
+    when cadence IS evidenced the plan is returned unchanged. Runs BEFORE queue reconciliation so a
+    genuine release *PR* already open (real evidence a cut is imminent) is still merged back in.
+
+    A wrong item costs the objective anchor as much as a missed one, and a release the window does
+    not contain matches nothing, so dropping it removes a guaranteed non-match rather than a
+    potential hit.
+    """
+    if _release_cadence_signal(context):
+        return plan
+    return [item for item in plan if not _is_planned_release(item)]
+
+
 def _is_automation_subject(subject) -> bool:
     """True when a commit subject is one automation tooling emits (dep/action bump, pre-commit.ci).
 
@@ -801,6 +838,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         else:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
+    plan = _calibrate_release_prediction(plan, context)
     return reconcile_plan_with_queue(plan, context, n)
 
 

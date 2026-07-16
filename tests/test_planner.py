@@ -23,10 +23,12 @@ from agent.planner import (  # noqa: E402
     RELEASE_CADENCE_GUIDANCE,
     REPO_LAYOUT_GUIDANCE,
     _automation_surface_signal,
+    _calibrate_release_prediction,
     _commit_plan_kind,
     _config_surface_note,
     _explicit_pr_number,
     _is_automation_subject,
+    _is_planned_release,
     _is_review_item,
     _matched_pr,
     _normalize_files,
@@ -853,6 +855,78 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
     plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.0.0"}]},
                       {}, 2, CapturingLLM(api_key="offline"))
     assert RELEASE_CADENCE_GUIDANCE in captured["user"]
+
+
+# --- #1561: deterministic backstop against spurious release predictions --------------------
+
+def test_is_planned_release_detects_kind_and_title():
+    assert _is_planned_release({"title": "Cut the next version", "kind": "release"}) is True
+    # kind not release, but a release-tooling version-cut title still counts (matches the anchor)
+    assert _is_planned_release({"title": "chore(release): 2.0.0", "kind": "triage"}) is True
+    # ordinary work is not a release prediction
+    assert _is_planned_release({"title": "Fix the loader", "kind": "bugfix"}) is False
+    assert _is_planned_release({"title": "bump lodash to v4.17.21", "kind": "dep"}) is False
+    # malformed items never raise
+    assert _is_planned_release(None) is False
+    assert _is_planned_release({"kind": "release"}) is True
+    assert _is_planned_release({"title": None, "kind": "bugfix"}) is False
+
+
+def test_calibrate_release_drops_release_when_no_cadence():
+    plan = [
+        {"title": "Fix loader", "kind": "bugfix"},
+        {"title": "Cut 2.1.0", "kind": "release"},
+        {"title": "Refactor router", "kind": "refactor"},
+    ]
+    ctx = {"recent_commits": [{"subject": "fix: a"}, {"subject": "feat: b"}]}  # no release cut
+    out = _calibrate_release_prediction(plan, ctx)
+    assert [i["kind"] for i in out] == ["bugfix", "refactor"]  # release dropped, order preserved
+
+
+def test_calibrate_release_keeps_release_when_cadence_present():
+    plan = [
+        {"title": "Fix loader", "kind": "bugfix"},
+        {"title": "Cut 2.1.0", "kind": "release"},
+    ]
+    ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}]}  # cadence evidenced
+    out = _calibrate_release_prediction(plan, ctx)
+    assert out == plan  # untouched when a release is actually evidenced
+
+
+def test_calibrate_release_leaves_non_release_plans_untouched():
+    plan = [{"title": "Fix loader", "kind": "bugfix"}, {"title": "Docs", "kind": "docs"}]
+    ctx = {"recent_commits": [{"subject": "fix: a"}]}
+    assert _calibrate_release_prediction(plan, ctx) == plan
+
+
+def test_plan_next_actions_drops_spurious_release_without_cadence():
+    # The #1561 repro: the model adds a release item though nothing in recent history evidences a
+    # cut. The backstop removes it so the plan does not predict a release the window won't contain.
+    class ReleaseHappyLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return [
+                {"title": "Stabilize CI matrix", "kind": "ci"},
+                {"title": "Cut the next release", "kind": "release"},
+            ]
+
+    ctx = {"open_prs": [], "recent_commits": [{"subject": "fix: a"}, {"subject": "feat: b"}]}
+    plan = plan_next_actions(ctx, {}, 2, ReleaseHappyLLM(api_key="offline"))
+    assert not any(_is_planned_release(item) for item in plan)
+    assert any(item["kind"] == "ci" for item in plan)
+
+
+def test_plan_next_actions_keeps_release_with_cadence():
+    # When history evidences a release cut, an LLM release item is legitimate and must survive.
+    class ReleaseHappyLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return [
+                {"title": "Stabilize CI matrix", "kind": "ci"},
+                {"title": "Cut the next release", "kind": "release"},
+            ]
+
+    ctx = {"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.9.0"}]}
+    plan = plan_next_actions(ctx, {}, 2, ReleaseHappyLLM(api_key="offline"))
+    assert any(_is_planned_release(item) for item in plan)
 
 
 # --- #1640: config-surface directive gated on real automation evidence ---------------------
