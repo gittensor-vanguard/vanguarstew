@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -25,6 +27,7 @@ from benchmark.repeatability_gate import (  # noqa: E402
     failed_checks,
     repeatability_gate_headline,
 )
+from scripts import repeatability_gate as cli  # noqa: E402
 
 _MALFORMED_CHECKS = [
     "not a list", 42, 3.14, True, {"name": "scored_runs"}, ("a", "b"), range(2),
@@ -200,19 +203,24 @@ def test_cli_strict_fails_on_unstable_runs():
             os.unlink(path)
 
 
-def test_cli_missing_file_exits_two():
+def test_cli_missing_file_exits_two(tmp_path):
+    missing = tmp_path / "no-such-file.json"
     proc = subprocess.run(
-        [sys.executable, "-m", "scripts.repeatability_gate", "/no/such/file.json"],
+        [sys.executable, "-m", "scripts.repeatability_gate", str(missing)],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
     assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "artifact not found" in proc.stderr
+    assert str(missing) in proc.stderr
+    assert "Errno" not in proc.stderr
 
 
 def test_cli_rejects_a_directory_path(tmp_path):
     # A directory raises IsADirectoryError (POSIX) / PermissionError (Windows) from open() --
-    # both are OSError subclasses that must be caught, not just FileNotFoundError.
+    # both must exit 2 with an actionable message, never a raw errno string.
     proc = subprocess.run(
         [sys.executable, "-m", "scripts.repeatability_gate", str(tmp_path)],
         cwd=ROOT,
@@ -221,7 +229,160 @@ def test_cli_rejects_a_directory_path(tmp_path):
     )
     assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
+    assert "directory" in proc.stderr or "not readable" in proc.stderr
     assert str(tmp_path) in proc.stderr
+
+
+def test_cli_broken_symlink_exits_two(tmp_path):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repeatability_gate", str(link)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "broken symlink" in proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX permission bits are not enforced on Windows; root bypasses them too",
+)
+def test_cli_unreadable_file_reports_clean_error(tmp_path):
+    # Real chmod (no builtins.open monkeypatch): PermissionError must yield the actionable
+    # "not readable" message, never a raw errno string.
+    path = tmp_path / "artifact.json"
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.repeatability_gate", str(path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        os.chmod(path, 0o644)
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
+    assert "not readable" in proc.stderr
+    assert str(path) in proc.stderr
+
+
+def test_cli_oversized_int_literal_exits_two(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an oversized int literal.
+    path = tmp_path / "huge.json"
+    path.write_text('{"composite_mean": ' + "9" * 5000 + "}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repeatability_gate", str(path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "not valid JSON" in proc.stderr
+    assert str(path) in proc.stderr
+
+
+def test_cli_symlink_to_directory_exits_two(tmp_path):
+    # A symlink whose target is a directory must still fail closed with an actionable message
+    # (IsADirectoryError on POSIX, PermissionError on Windows) — not a raw errno.
+    target = tmp_path / "dir_target"
+    target.mkdir()
+    link = tmp_path / "link-to-dir.json"
+    link.symlink_to(target)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repeatability_gate", str(link)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
+    assert "directory" in proc.stderr or "not readable" in proc.stderr
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact is a broken symlink (target does not exist)" in err
+    assert str(link) in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    # Platform-agnostic: Windows raises PermissionError on a real directory, so force
+    # IsADirectoryError to prove the dedicated handler is not dead code.
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err == f"artifact path is a directory, not a file: {tmp_path / 'run.json'}\n"
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err == (
+        f"artifact is not readable (check file permissions): {tmp_path / 'run.json'}\n"
+    )
+
+
+def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err
+    assert "Input/output error" in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_invalid_json_exits_two(tmp_path, capsys):
+    path = tmp_path / "bad.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(path))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact is not valid JSON" in err
+    assert str(path) in err
+
+
+def test_load_artifact_non_object_exits_two(tmp_path, capsys):
+    path = tmp_path / "list.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(path))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact must be a JSON object" in err
 
 
 def test_check_repeatability_does_not_mutate_inputs():
