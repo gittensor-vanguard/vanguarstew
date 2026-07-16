@@ -13,6 +13,8 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
+    NON_REDUNDANCY_GUIDANCE,
+    SYSTEM,
     VALUE_LABELS,
     _clip_text,
     _normalize_bool,
@@ -275,12 +277,14 @@ class _CaptureUserLLM:
     def __init__(self):
         from agent.llm import LLM
         self._llm = LLM(api_key="offline")
+        self.last_system = None
         self.last_user = None
 
     def __getattr__(self, name):
         return getattr(self._llm, name)
 
     def chat_json(self, system, user, stub=None):
+        self.last_system = system
         self.last_user = user
         return stub
 
@@ -324,3 +328,21 @@ def test_review_pr_prompt_uses_pr_number_not_raw_number_field():
               None, llm)
     assert llm.last_user.startswith("PULL REQUEST #?: Add streaming export")
     assert "#True" not in llm.last_user
+
+
+# --- #1753: review prompt names Non-redundancy as a High REVIEW.md axis --------------------
+
+def test_system_prompt_names_non_redundancy_as_high_rubric_axis():
+    # REVIEW.md priority: correctness, scope fit, Non-redundancy (High), then quality.
+    assert "non-redundancy" in SYSTEM.lower()
+    assert "(3) non-redundancy" in SYSTEM.lower()
+    assert "(4) quality and clarity" in SYSTEM.lower()
+
+
+def test_review_pr_prompt_includes_non_redundancy_guidance():
+    llm = _CaptureUserLLM()
+    review_pr({"number": 1, "title": "Add metric", "files": ["benchmark/new_metric.py"]}, None, llm)
+    assert llm.last_system == SYSTEM
+    assert NON_REDUNDANCY_GUIDANCE in llm.last_user
+    assert "non-redundancy findings" in llm.last_user
+    assert "same data shape" in NON_REDUNDANCY_GUIDANCE
