@@ -188,6 +188,36 @@ def test_cli_unreadable_path_is_handled(tmp_path):
     assert cli.run([str(tmp_path)]) == 2
 
 
+def test_cli_broken_symlink_names_the_dangling_link(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err and "Traceback" not in err
+
+
+def test_cli_directory_path_reads_as_a_directory_not_a_raw_errno(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([str(tmp_path / "run.json")]) == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "Errno 21" not in err and "Traceback" not in err
+
+
+def test_cli_permission_error_reads_as_unreadable(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([str(tmp_path / "run.json")]) == 2
+    err = capsys.readouterr().err
+    assert "not readable" in err
+    assert "Errno 13" not in err and "Traceback" not in err
+
+
 def test_module_main_no_arg_exits_nonzero():
     proc = subprocess.run(
         [sys.executable, "-m", "scripts.error_repo_share"],
