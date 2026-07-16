@@ -14,6 +14,7 @@ if ROOT not in sys.path:
 from benchmark.dual_order_coverage import (  # noqa: E402
     _combined,
     _coverage,
+    _is_ratio,
     _slice_coverage,
     dual_order_coverage_headline,
     summarize_dual_order_coverage,
@@ -233,6 +234,25 @@ def test_headline_reports_and_degrades_gracefully():
     # Finite coverage but missing whole-number counts drops the detail clause.
     assert dual_order_coverage_headline({"coverage": 0.4, "dual_order_tasks": None, "tasks": 10}) == (
         "dual-order coverage: 40.0%")
+
+
+def test_is_ratio_rejects_non_finite_and_oversized_int():
+    assert _is_ratio(0.4) and _is_ratio(1)
+    assert not _is_ratio(float("nan"))
+    assert not _is_ratio(float("inf"))
+    assert not _is_ratio(True)
+    assert not _is_ratio(10**400)
+    assert not _is_ratio(-(10**400))
+
+
+def test_headline_degrades_on_non_finite_or_oversized_coverage():
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        line = dual_order_coverage_headline({
+            "coverage": bad, "dual_order_tasks": 1, "tasks": 2,
+        })
+        assert line == "dual-order coverage: n/a (1/2 tasks judged in both orders)", bad
+        assert "nan" not in line.lower()
+        assert "inf" not in line.lower()
 
 
 # --- CLI: success + every error path (incl. the OSError/permission branch) ------------------------

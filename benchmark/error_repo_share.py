@@ -14,6 +14,8 @@ top-level ``error`` is ignored, so an error is never double-counted.
 
 from __future__ import annotations
 
+import math
+
 from benchmark.comparability import artifact_kind
 
 
@@ -26,7 +28,18 @@ def _is_int(value) -> bool:
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A finite, non-boolean real number — used to guard headline formatting against ``NaN``/``inf``.
+
+    ``math.isfinite`` raises ``OverflowError`` for a Python ``int`` too large to convert to a
+    ``float`` (a hand-edited or degenerate ``error_share`` field); guard it the same way
+    ``skip_share`` does instead of crashing the ``:.1%`` formatter or printing ``nan%``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _has_error(entry) -> bool:

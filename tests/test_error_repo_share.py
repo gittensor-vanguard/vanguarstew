@@ -12,6 +12,7 @@ if ROOT not in sys.path:
 from benchmark.error_repo_share import (  # noqa: E402
     _error_share,
     _has_error,
+    _is_number,
     _repo_error_flags,
     error_repo_share_headline,
     summarize_error_repo_share,
@@ -148,6 +149,24 @@ def test_headline_variants():
     assert error_repo_share_headline("nope") == "error repo share: no repos"
     # Defensive: a positive repo count with a non-numeric share renders n/a, not a crash.
     assert "n/a" in error_repo_share_headline({"repos": 2, "error_repos": 0, "error_share": None})
+
+
+def test_is_number_rejects_non_finite_and_oversized_int():
+    assert _is_number(0.5) and _is_number(3)
+    assert not _is_number(float("nan"))
+    assert not _is_number(float("inf"))
+    assert not _is_number(True)
+    assert not _is_number(10**400)
+    assert not _is_number(-(10**400))
+
+
+def test_headline_degrades_on_non_finite_or_oversized_share():
+    # Hand-edited / degenerate shares must print n/a, not nan%/inf% or OverflowError.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        line = error_repo_share_headline({"repos": 2, "error_repos": 1, "error_share": bad})
+        assert line == "error repo share: n/a (1/2 repos errored)", bad
+        assert "nan" not in line.lower()
+        assert "inf" not in line.lower()
 
 
 # --- CLI: success + every error path -------------------------------------------------------------
