@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -248,11 +248,17 @@ def test_generate_tasks_preserves_large_revealed_file_list():
 # them because it measures the wrong dimension.
 
 def _dated_repo(dirpath, dates):
-    """A linear history whose commits land on the given ISO dates."""
+    """A linear history whose commits land on the given ISO dates.
+
+    ``gc.auto 0`` / ``commit.gpgsign false`` keep the many rapid commits from tripping a
+    background repack or a signing prompt — the source of the transient "cannot read commit
+    object" flake this repo's CI has seen. Histories are kept small for the same reason.
+    """
     os.makedirs(dirpath, exist_ok=True)
     _run(dirpath, "init", "-q", "-b", "main")
-    _run(dirpath, "config", "user.email", "t@t.t")
-    _run(dirpath, "config", "user.name", "t")
+    for key, value in (("user.email", "t@t.t"), ("user.name", "t"),
+                       ("gc.auto", "0"), ("commit.gpgsign", "false")):
+        _run(dirpath, "config", key, value)
     for i, when in enumerate(dates):
         full = os.path.join(dirpath, f"f{i}.txt")
         with open(full, "w", encoding="utf-8") as f:
@@ -265,10 +271,28 @@ def _dated_repo(dirpath, dates):
     return dirpath
 
 
+def _nonuniform_dates():
+    """A deliberately NON-uniform history: a dense daily cluster through the first week of
+    January, then sparse two-commit clusters in March and May, then a July commit.
+
+    Density is the whole point. A commit-INDEX stride draws evenly across the index list, so —
+    with most usable freeze points bunched in January — it lands two of three freeze points
+    inside that one week (one 30-day window), overlapping. A DAY stride must spread them across
+    January / March / May instead. A uniform 1-commit/day history would not distinguish the two
+    (index spacing == day spacing there), so it could not catch the regression this test names.
+
+    The March/May clusters and the trailing July commit exist so the later freeze points have a
+    full 30 days of real history after them (a freeze needs a complete window to be scoreable),
+    which is what lets two freeze points sit more than 30 days apart at all.
+    """
+    dense = [(date(2019, 1, 1) + timedelta(days=i)).isoformat() for i in range(8)]
+    return dense + ["2019-03-01", "2019-03-02", "2019-05-01", "2019-05-02", "2019-07-01"]
+
+
 def test_horizon_days_skips_freeze_points_whose_window_is_empty():
     # A slow repo's quiet stretch: calendar time after the freeze does not mean any maintainer
     # action landed in it. An empty revealed window is an unscoreable task.
-    dates = [f"2019-01-{d:02d}" for d in range(1, 16)] + ["2019-09-01", "2019-09-02"]
+    dates = [f"2019-01-{d:02d}" for d in range(1, 11)] + ["2019-09-01", "2019-09-02"]
     with tempfile.TemporaryDirectory() as tmp:
         repo = _dated_repo(os.path.join(tmp, "r"), dates)
         tasks = generate_tasks(repo, num_tasks=3, min_history=2, horizon_days=30)
@@ -277,11 +301,11 @@ def test_horizon_days_skips_freeze_points_whose_window_is_empty():
 
 
 def test_horizon_days_spaces_freeze_points_by_days_not_commit_index():
-    # 40 commits one day apart: any commit-index stride puts every freeze inside one 30-day
-    # window, so each task's judged future would contain the next task's frozen present.
-    dates = [f"2019-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(120)]
+    # Dense January cluster + a lone June commit: a commit-index stride would put multiple freeze
+    # points inside the cluster (one 30-day window), so each task's judged future would contain
+    # the next task's frozen present. A day stride must spread them.
     with tempfile.TemporaryDirectory() as tmp:
-        repo = _dated_repo(os.path.join(tmp, "r"), dates)
+        repo = _dated_repo(os.path.join(tmp, "r"), _nonuniform_dates())
         tasks = generate_tasks(repo, num_tasks=3, min_history=2, horizon_days=30)
     assert len(tasks) >= 2
     stamps = sorted(t["freeze_date"] for t in tasks)
@@ -291,16 +315,15 @@ def test_horizon_days_spaces_freeze_points_by_days_not_commit_index():
 
 
 def test_horizon_days_records_span_and_freeze_date():
-    dates = [f"2019-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(120)]
     with tempfile.TemporaryDirectory() as tmp:
-        repo = _dated_repo(os.path.join(tmp, "r"), dates)
+        repo = _dated_repo(os.path.join(tmp, "r"), _nonuniform_dates())
         tasks = generate_tasks(repo, num_tasks=2, min_history=2, horizon_days=30)
     assert all(t["horizon_days"] == 30 and t["freeze_date"] for t in tasks)
 
 
 def test_commit_horizon_mode_records_neither():
     # No horizon_days -> unchanged task shape (the integrity gates stay in commit mode).
-    dates = [f"2019-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(40)]
+    dates = [f"2019-01-{d:02d}" for d in range(1, 11)]
     with tempfile.TemporaryDirectory() as tmp:
         repo = _dated_repo(os.path.join(tmp, "r"), dates)
         tasks = generate_tasks(repo, num_tasks=2, horizon=5, min_history=2)
