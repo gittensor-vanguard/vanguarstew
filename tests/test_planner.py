@@ -21,6 +21,7 @@ from agent.planner import (  # noqa: E402
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
+    RELEASE_NOT_DUE_GUIDANCE,
     REPO_LAYOUT_GUIDANCE,
     _automation_surface_signal,
     _commit_plan_kind,
@@ -41,6 +42,8 @@ from agent.planner import (  # noqa: E402
     _recent_kinds_note,
     _release_cadence_note,
     _release_cadence_signal,
+    _release_cut_positions,
+    _release_due_within,
     _repo_layout_note,
     _safe_prs,
     _significant_tokens,
@@ -836,6 +839,81 @@ def test_release_cadence_note_only_when_history_signals_cadence():
     assert _release_cadence_note({}) == ""
     note = _release_cadence_note({"recent_commits": [{"subject": "release: 2.0"}]})
     assert RELEASE_CADENCE_GUIDANCE in note
+
+
+def _commits_with_cuts_at(positions, total=12):
+    """recent_commits (newest-first) with release cuts at the given indices."""
+    return [
+        {"subject": f"chore(release): 1.{i}.0" if i in positions else f"fix: patch {i}"}
+        for i in range(total)
+    ]
+
+
+def test_release_cut_positions_indexes_only_release_subjects():
+    ctx = {"recent_commits": _commits_with_cuts_at({0, 4})}
+    assert _release_cut_positions(ctx) == [0, 4]
+    assert _release_cut_positions({"recent_commits": [{"subject": "fix: x"}]}) == []
+    assert _release_cut_positions({}) == []
+    # A malformed row must not raise or shift the indices of the rows around it.
+    assert _release_cut_positions({"recent_commits": ["nope", {"subject": "release: 9.0"}]}) == [1]
+
+
+def test_release_due_within_is_unmeasurable_without_two_cuts():
+    # One cut gives no gap to compare against, so the caller keeps the presence rule
+    # rather than inventing a cadence from a single data point.
+    assert _release_due_within({"recent_commits": _commits_with_cuts_at({0})}, 5) is None
+    assert _release_due_within({"recent_commits": _commits_with_cuts_at(set())}, 5) is None
+    assert _release_due_within({}, 5) is None
+
+
+def test_release_due_within_needs_a_usable_horizon():
+    ctx = {"recent_commits": _commits_with_cuts_at({0, 4})}
+    assert _release_due_within(ctx, None) is None
+    assert _release_due_within(ctx, 0) is None
+
+
+def test_release_due_within_tracks_distance_from_the_last_cut():
+    # Cuts every 4 commits. Freeze sits directly on a cut (position 0), so with a horizon of
+    # 2 the next one is still 4 away -- not due. Widen the horizon past the gap and it is.
+    ctx = {"recent_commits": _commits_with_cuts_at({0, 4, 8})}
+    assert _release_due_within(ctx, 2) is False
+    assert _release_due_within(ctx, 4) is True
+    # Same cadence, but the freeze point already sits 3 commits past the last cut: due sooner.
+    stale = {"recent_commits": _commits_with_cuts_at({3, 7, 11})}
+    assert _release_due_within(stale, 2) is True
+
+
+def test_release_cadence_note_asks_for_no_release_when_one_is_not_due():
+    # The regression #1561 describes: a repo that releases often keeps predicting a release in
+    # every window. With a measurable gap the note must actively say "not due", not stay silent
+    # -- silence leaves the philosophy's "rapid release cadence" read unopposed.
+    ctx = {"recent_commits": _commits_with_cuts_at({0, 4, 8})}
+    note = _release_cadence_note(ctx, 2)
+    assert RELEASE_NOT_DUE_GUIDANCE.format(n=2) in note
+    assert RELEASE_CADENCE_GUIDANCE not in note
+
+
+def test_release_cadence_note_still_asks_for_a_release_when_due():
+    ctx = {"recent_commits": _commits_with_cuts_at({3, 7, 11})}
+    note = _release_cadence_note(ctx, 2)
+    assert RELEASE_CADENCE_GUIDANCE in note
+    assert "not due" not in note
+
+
+def test_release_cadence_note_keeps_presence_rule_without_a_measurable_gap():
+    # Single cut: unmeasurable -> unchanged behavior from before #1561.
+    ctx = {"recent_commits": _commits_with_cuts_at({0})}
+    assert RELEASE_CADENCE_GUIDANCE in _release_cadence_note(ctx, 5)
+
+
+def test_planner_prompt_carries_the_horizon_into_the_release_note():
+    llm = _PromptCaptureLLM([{"title": "t", "kind": "bugfix", "files": ["a.py"]}])
+    ctx = {"recent_commits": _commits_with_cuts_at({0, 4, 8}), "open_prs": []}
+    plan_next_actions(ctx, {}, 2, llm)
+    # The horizon reaching the note is the whole point: the same context is "due" at n=4 and
+    # "not due" at n=2, so a hardcoded default would silently score the wrong window.
+    assert RELEASE_NOT_DUE_GUIDANCE.format(n=2) in llm.last_user
+    assert RELEASE_CADENCE_GUIDANCE not in llm.last_user
 
 
 def test_planner_prompt_includes_release_cadence_only_with_history():

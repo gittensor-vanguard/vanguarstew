@@ -130,6 +130,18 @@ RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
 )
 
+# Counterpart to RELEASE_CADENCE_GUIDANCE for the "cadence exists, but a cut isn't due yet"
+# case (#1561). Without it, a repo whose philosophy reads "rapid release cadence" keeps
+# predicting a release in every window even when the last cut is still fresh, because
+# nothing in the prompt contradicts the philosophy. The anchor scores release_match as
+# signaled == predicted, so an unfounded release item is as wrong as a missing one.
+RELEASE_NOT_DUE_GUIDANCE = (
+    "Recent history shows release-cadence activity, but the most recent release cut is still "
+    "recent relative to this repo's typical gap between cuts — another release is not due "
+    "within the next {n} actions. Do not include a `release`-kind item unless the backlog "
+    "explicitly calls for one."
+)
+
 # Prompt fragment for config-surface planning (#1640). Kept as a named constant so tests can
 # assert prompt inclusion without parsing the full LLM user message.
 CONFIG_SURFACE_GUIDANCE = (
@@ -291,10 +303,53 @@ def _release_cadence_signal(context: dict) -> bool:
     )
 
 
-def _release_cadence_note(context: dict) -> str:
-    """Inject release-item guidance only when history evidences release cadence."""
+def _release_cut_positions(context: dict) -> list:
+    """Indices of release cuts within ``recent_commits`` (newest-first, as frozen)."""
+    return [
+        i
+        for i, commit in enumerate(_recent_commits(context))
+        if isinstance(commit, dict) and _commit_plan_kind(commit.get("subject")) == "release"
+    ]
+
+
+def _release_due_within(context: dict, n) -> bool:
+    """Whether a release cut is due within the next ``n`` commits, or None when unmeasurable.
+
+    ``release_signaled`` is true when a release subject appears in the revealed window — the
+    next ``n`` commits. So the question is one of *distance*, not of whether the repo releases
+    at all: measure the repo's typical gap between cuts and compare it to how far the freeze
+    point already sits past the last one.
+
+    Returns None when the gap can't be derived (fewer than two cuts in the frozen window), so
+    the caller keeps the presence rule rather than guessing. Distance is counted in commits
+    rather than time deliberately: ``releases`` carries only a tag (benchmark/freeze.py) and
+    the git-only context fallback omits ``recent_commits[].date``, so a wall-clock interval is
+    not derivable on every path — commit distance is.
+    """
+    if not isinstance(n, int) or n <= 0:
+        return None
+    positions = _release_cut_positions(context)
+    if len(positions) < 2:
+        return None
+    gaps = [later - earlier for earlier, later in zip(positions, positions[1:])]
+    typical = sorted(gaps)[len(gaps) // 2]
+    return positions[0] + n >= typical
+
+
+def _release_cadence_note(context: dict, n=None) -> str:
+    """Inject release guidance only when history evidences release cadence.
+
+    With a measurable gap between cuts, the guidance is *directional*: ask for a release item
+    when one is due within the horizon, and explicitly ask for none when it isn't (#1561). The
+    old rule keyed only on whether a cut appeared anywhere in recent history, which reads a
+    repo's overall cadence as a blanket prior — a fast-releasing repo then predicts a release
+    in every window regardless of the freeze point's own distance from the last cut.
+    """
     if not _release_cadence_signal(context):
         return ""
+    due = _release_due_within(context, n)
+    if due is False:
+        return f"\n{RELEASE_NOT_DUE_GUIDANCE.format(n=n)}\n"
     return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
 
 
@@ -780,7 +835,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Repository state:\n{_render(context)}\n"
         f"{_repo_layout_note(context)}"
         f"{_recent_kinds_note(context)}"
-        f"{_release_cadence_note(context)}"
+        f"{_release_cadence_note(context, n)}"
         f"{_config_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
