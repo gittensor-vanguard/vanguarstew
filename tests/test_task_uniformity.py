@@ -219,3 +219,37 @@ def test_cli_main_exits_with_the_return_code(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 1
+
+
+# --- time-horizon mode (taskgen `horizon_days`): equal weight = equal SPAN, not equal count ---
+
+def _time_task(span, n_revealed, date="2020-01-01T00:00:00+00:00"):
+    return {"freeze_commit": "a" * 10, "freeze_index": 0, "horizon_days": span,
+            "freeze_date": date, "revealed": [{"sha": "x", "subject": "s", "files": []}] * n_revealed}
+
+
+def test_time_mode_varying_revealed_lengths_still_uniform():
+    # The whole point of a time window: a busy month reveals more commits than a quiet one.
+    # That variance is BY DESIGN and must not fail the equal-weight gate.
+    tasks = [_time_task(90, 3), _time_task(90, 17), _time_task(90, 9)]
+    result = check_task_uniformity(tasks)
+    assert result["passed"] is True
+    assert "uniform_window_span" in [c["name"] for c in result["checks"]]
+    assert "uniform_window_length" not in [c["name"] for c in result["checks"]]
+
+
+def test_time_mode_differing_spans_fail():
+    # Different spans DO break equal weighting — one task judged over 90d, another over 30d.
+    tasks = [_time_task(90, 5), _time_task(30, 5)]
+    result = check_task_uniformity(tasks)
+    assert result["passed"] is False
+    assert "uniform_window_span" in failed_checks(result)
+
+
+def test_commit_mode_unaffected_by_time_mode_branch():
+    # No horizon_days -> the original commit-count check still governs.
+    tasks = [{"freeze_index": 0, "revealed": [{"sha": "x"}] * 5},
+             {"freeze_index": 9, "revealed": [{"sha": "y"}] * 2}]
+    result = check_task_uniformity(tasks)
+    assert result["passed"] is False
+    assert "uniform_window_length" in failed_checks(result)
