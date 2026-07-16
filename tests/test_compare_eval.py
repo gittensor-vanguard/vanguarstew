@@ -408,3 +408,44 @@ def test_comparison_headline_generalization_marks_unavailable_delta():
     )
     line = comparison_headline(diff)
     assert "tuned n/a" in line and "gap n/a" in line and "held_out +0.100" in line
+
+
+def test_a_delta_that_overflows_is_unavailable_not_infinity():
+    """Finite operands can produce a non-finite difference; the result needs its own guard.
+
+    Load-bearing: `_numeric` checks each operand, so `1e308` and `-1e308` both pass — but their
+    difference overflows to `inf`, and `_delta` returned it as if it were a real measurement.
+    """
+    diff = compare_eval_artifacts({"composite_mean": -1e308}, {"composite_mean": 1e308})
+    triplet = diff["composite_mean"]
+    # The operands are legitimate and reported as-is; only the difference is unusable.
+    assert triplet["baseline"] == -1e308
+    assert triplet["candidate"] == 1e308
+    assert triplet["delta"] is None
+
+
+def test_an_overflowing_delta_cannot_earn_the_top_band():
+    """The real harm: an arithmetic overflow used to clear every BAND_THRESHOLDS entry.
+
+    `score_pr_delta._delta` tests only `isinstance`, so an `inf` delta reached
+    `_band_for_delta`, cleared every floor and reported `xl` — the top multiplier — from two
+    finite composites that never measured anything.
+    """
+    from scripts.score_pr_delta import score_pr_delta
+
+    result = score_pr_delta({"composite_mean": -1e308}, {"composite_mean": 1e308})
+    assert result["composite_deltas"]["composite_mean"] is None
+    assert result["band"] == "none"
+
+
+def test_ordinary_deltas_are_unaffected_by_the_finiteness_guard():
+    """Control: a normal difference still bands exactly as before.
+
+    Passes both before and after the guard, so the `None`s above are caused by the overflow
+    rather than by the check firing indiscriminately.
+    """
+    from scripts.score_pr_delta import score_pr_delta
+
+    result = score_pr_delta({"composite_mean": 0.6}, {"composite_mean": 0.7})
+    assert result["composite_deltas"]["composite_mean"] == 0.1
+    assert result["band"] == "l"
