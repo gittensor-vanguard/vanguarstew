@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -201,13 +202,28 @@ def test_cli_strict_fails_on_unstable_runs():
 
 
 def test_cli_missing_file_exits_two():
+    path = "/no/such/file.json"
     proc = subprocess.run(
-        [sys.executable, "-m", "scripts.repeatability_gate", "/no/such/file.json"],
+        [sys.executable, "-m", "scripts.repeatability_gate", path],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
     assert proc.returncode == 2
+    assert f"artifact not found: {path}" in proc.stderr
+
+
+def test_cli_rejects_broken_symlink(tmp_path):
+    path = tmp_path / "dangling.json"
+    path.symlink_to(tmp_path / "missing.json")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repeatability_gate", str(path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert f"artifact is a broken symlink (target does not exist): {path}" in proc.stderr
 
 
 def test_cli_rejects_a_directory_path(tmp_path):
@@ -221,7 +237,40 @@ def test_cli_rejects_a_directory_path(tmp_path):
     )
     assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
-    assert str(tmp_path) in proc.stderr
+    assert f"artifact path is a directory, not a file: {tmp_path}" in proc.stderr
+
+
+def test_cli_rejects_invalid_json_and_non_object(tmp_path):
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{", encoding="utf-8")
+    non_object = tmp_path / "array.json"
+    non_object.write_text("[]", encoding="utf-8")
+
+    for path, message in (
+        (invalid, "artifact is not valid JSON"),
+        (non_object, f"artifact must be a JSON object: {non_object}"),
+    ):
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.repeatability_gate", str(path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 2
+        assert message in proc.stderr
+
+
+def test_load_artifact_reports_permission_error(capsys):
+    from scripts import repeatability_gate
+
+    with mock.patch("builtins.open", side_effect=PermissionError):
+        try:
+            repeatability_gate.load_artifact("unreadable.json")
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("load_artifact did not exit")
+    assert "artifact is not readable (check file permissions): unreadable.json" in capsys.readouterr().err
 
 
 def test_check_repeatability_does_not_mutate_inputs():
