@@ -48,7 +48,11 @@ a reviewable definition of the planning surface.
 ### Plan item normalization
 
 - Each normalized item SHALL contain at least `title` (non-empty `str`) and `kind` (one of
-  `feature`, `bugfix`, `refactor`, `docs`, `release`, `dep`, `triage`).
+  `feature`, `bugfix`, `refactor`, `docs`, `release`, `dep`, `build`, `ci`, `test`, `perf`,
+  `style`, `revert`, `triage`).
+- The non-`triage` kinds SHALL mirror the vocabulary the objective anchor scores
+  (`benchmark/score.py::_PLAN_KIND`), so any kind the anchor credits can be expressed by a
+  plan item.
 - WHEN `kind` is missing, blank, or unknown THEN the system SHALL default to `triage`.
 - WHEN `title` is missing, blank after strip, or the item is not a dict THEN the item SHALL
   be dropped.

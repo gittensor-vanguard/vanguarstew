@@ -803,16 +803,14 @@ def test_commit_plan_kind_release_tooling_cut_reads_as_release_not_dep():
     assert _commit_plan_kind("chore(release): 1.4.0") == "release"
     assert _commit_plan_kind("chore(main): release 1.2.3") == "release"
     assert _commit_plan_kind("build(release): v2.0.0") == "release"
-    # An ordinary chore stays dep; an ordinary build has no plan-kind equivalent.
+    # An ordinary chore stays dep; an ordinary build reads as its own kind (#1687).
     assert _commit_plan_kind("chore: update editorconfig") == "dep"
-    assert _commit_plan_kind("build: switch to bazel") is None
+    assert _commit_plan_kind("build: switch to bazel") == "build"
 
 
-def test_commit_plan_kind_drops_unexpressible_and_unknown_subjects():
-    # Types the plan "kind" vocabulary cannot express are dropped, not mis-binned.
-    assert _commit_plan_kind("test: cover the loader race") is None
-    assert _commit_plan_kind("ci: cache pip downloads") is None
-    assert _commit_plan_kind("perf: memoize the tokenizer") is None
+def test_commit_plan_kind_drops_unknown_subjects():
+    # Types the anchor classifies now read as their own kind (#1687) — see
+    # tests/test_planner_kind_vocabulary.py. Only subjects carrying no reliable kind drop.
     # Merge commits, prefix-less subjects, and non-strings carry no kind.
     assert _commit_plan_kind("Merge pull request from fork/branch") is None
     assert _commit_plan_kind("Add streaming export") is None

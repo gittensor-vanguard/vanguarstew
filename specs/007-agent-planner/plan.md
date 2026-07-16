@@ -55,8 +55,12 @@ reconcile_plan_with_queue(plan, context, n)
 
 ### Plan kinds
 
-`feature`, `bugfix`, `refactor`, `docs`, `release`, `dep`, `triage` — anything else becomes
-`triage`.
+`feature`, `bugfix`, `refactor`, `docs`, `release`, `dep`, `build`, `ci`, `test`, `perf`,
+`style`, `revert`, `triage` — anything else becomes `triage`.
+
+The non-`triage` kinds mirror the anchor's `_PLAN_KIND` vocabulary, so a plan can name any
+kind `kind_recall` scores; `triage` stays deliberately unmapped (a maintainer action, not a
+commit kind).
 
 ### PR matching priority (`_matched_pr`)
 
