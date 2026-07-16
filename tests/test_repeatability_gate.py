@@ -1,12 +1,14 @@
 """Tests for the repeatability stability gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -247,6 +249,33 @@ def test_cli_broken_symlink_exits_two(tmp_path):
     assert "broken symlink" in proc.stderr
     assert "Traceback" not in proc.stderr
     assert "Errno" not in proc.stderr
+
+
+def test_load_artifact_classifies_broken_symlink_after_open_fails(tmp_path, capsys):
+    path = str(tmp_path / "artifact.json")
+    with patch("builtins.open", side_effect=FileNotFoundError), \
+            patch("os.path.islink", return_value=True) as mocked_islink:
+        with pytest.raises(SystemExit) as excinfo:
+            cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    mocked_islink.assert_called_once_with(path)
+    err = capsys.readouterr().err
+    assert "broken symlink" in err
+    assert "Traceback" not in err
+    assert "Errno" not in err
+
+
+def test_load_artifact_symlink_loop_exits_two(tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+    error = OSError(errno.ELOOP, "Too many levels of symbolic links")
+    with patch("builtins.open", side_effect=error):
+        with pytest.raises(SystemExit) as excinfo:
+            cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "symlink loop" in err
+    assert "Traceback" not in err
+    assert "Errno" not in err
 
 
 @pytest.mark.skipif(

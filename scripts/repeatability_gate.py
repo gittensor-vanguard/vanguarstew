@@ -9,6 +9,7 @@ Prints named pass/fail checks and exits non-zero when the repeatability gate fai
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import sys
@@ -28,13 +29,13 @@ def load_artifact(path: str) -> dict:
     symlink (dangling target), ``FileNotFoundError`` (missing), ``PermissionError`` (unreadable),
     ``IsADirectoryError`` (a directory, not a file), and any other ``OSError``.
     """
-    if os.path.islink(path) and not os.path.exists(path):
-        print(f"artifact is a broken symlink (target does not exist): {path}", file=sys.stderr)
-        raise SystemExit(2) from None
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except FileNotFoundError:
+        if os.path.islink(path):
+            print(f"artifact is a broken symlink (target does not exist): {path}", file=sys.stderr)
+            raise SystemExit(2) from None
         print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except PermissionError:
@@ -44,6 +45,9 @@ def load_artifact(path: str) -> dict:
         print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            print(f"artifact path is a symlink loop: {path}", file=sys.stderr)
+            raise SystemExit(2) from None
         print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except ValueError as exc:
