@@ -29,6 +29,7 @@ from agent.planner import (  # noqa: E402
     _explicit_pr_number,
     _is_automation_subject,
     _is_planned_release,
+    _is_release_subject,
     _is_review_item,
     _matched_pr,
     _normalize_files,
@@ -859,17 +860,46 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
 
 # --- #1561: deterministic backstop against spurious release predictions --------------------
 
+def test_is_release_subject_mirrors_the_anchor():
+    # Full mirror of benchmark/score.py::is_release_subject (agent/ can't import it). Release cuts:
+    for good in ("Cut the 1.0 release", "Ship the v1.0 release", "Release v2.0.0", "Release 1.2.0",
+                 "bump version to 2.0", "version bump", "Update the changelog", "v1.2.0",
+                 "chore(release): 1.4.0", "build(release): 2.0.0", "chore: 2.0.0"):
+        assert _is_release_subject(good) is True, good
+    # NOT cuts — a version under a non-tooling prefix, an incidental version, a revert, plain work:
+    for bad in ("fix: 2.0.0", "ci: 3.0.0", "docs: 1.4.0", "revert: release 1.2.0",
+                "bump lodash to v4.17.21", "fix crash in v1.2.0 parser", "Fix the loader",
+                "test: tighten release assertions", None, 42, "", "   "):
+        assert _is_release_subject(bad) is False, bad
+
+
 def test_is_planned_release_detects_kind_and_title():
     assert _is_planned_release({"title": "Cut the next version", "kind": "release"}) is True
     # kind not release, but a release-tooling version-cut title still counts (matches the anchor)
     assert _is_planned_release({"title": "chore(release): 2.0.0", "kind": "triage"}) is True
+    # #1561 follow-up: the openclaw task2 gap — a plainly release-titled item under a NON-release
+    # kind. The kind-only check missed it; the anchor scored it as a release. Now gated.
+    assert _is_planned_release({"title": "Ship the v1.0 release", "kind": "feature"}) is True
+    assert _is_planned_release({"title": "Release 2.1.0", "kind": "ci"}) is True
     # ordinary work is not a release prediction
     assert _is_planned_release({"title": "Fix the loader", "kind": "bugfix"}) is False
     assert _is_planned_release({"title": "bump lodash to v4.17.21", "kind": "dep"}) is False
+    assert _is_planned_release({"title": "fix: 2.0.0", "kind": "bugfix"}) is False  # non-tooling
     # malformed items never raise
     assert _is_planned_release(None) is False
     assert _is_planned_release({"kind": "release"}) is True
     assert _is_planned_release({"title": None, "kind": "bugfix"}) is False
+
+
+def test_calibrate_release_drops_title_based_release_without_cadence():
+    # The exact openclaw task2 shape: a release-titled item whose kind isn't "release".
+    plan = [
+        {"title": "Stabilize CI", "kind": "ci"},
+        {"title": "Ship the v1.0 release", "kind": "feature"},
+    ]
+    ctx = {"recent_commits": [{"subject": "fix: a"}, {"subject": "feat: b"}]}  # no cadence
+    out = _calibrate_release_prediction(plan, ctx)
+    assert [i["title"] for i in out] == ["Stabilize CI"]  # the release-titled item is dropped
 
 
 def test_calibrate_release_drops_release_when_no_cadence():
