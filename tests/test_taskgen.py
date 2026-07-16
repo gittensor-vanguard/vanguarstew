@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -32,7 +32,12 @@ if ROOT not in sys.path:
 from benchmark.freeze import _git as _read_git
 from benchmark.freeze import parse_path_list  # noqa: E402
 from benchmark.score import changed_modules  # noqa: E402
-from benchmark.taskgen import generate_tasks, linear_history, revealed_window  # noqa: E402
+from benchmark.taskgen import (  # noqa: E402
+    _as_dt,
+    generate_tasks,
+    linear_history,
+    revealed_window,
+)
 
 
 def _run(repo, *args):
@@ -308,9 +313,11 @@ def test_horizon_days_spaces_freeze_points_by_days_not_commit_index():
         repo = _dated_repo(os.path.join(tmp, "r"), _nonuniform_dates())
         tasks = generate_tasks(repo, num_tasks=3, min_history=2, horizon_days=30)
     assert len(tasks) >= 2
-    stamps = sorted(t["freeze_date"] for t in tasks)
-    gaps = [(datetime.fromisoformat(b) - datetime.fromisoformat(a)).days
-            for a, b in zip(stamps, stamps[1:])]
+    # Parse via taskgen's own `_as_dt`, not datetime.fromisoformat: freeze_date is git's raw %cI,
+    # which on some runners is Z-suffixed (`...T12:00:00Z`), and datetime.fromisoformat rejected
+    # the Z form before Python 3.11. `_as_dt` normalizes it, exactly as production does.
+    stamps = sorted(_as_dt(t["freeze_date"]) for t in tasks)
+    gaps = [(b - a).days for a, b in zip(stamps, stamps[1:])]
     assert all(g > 30 for g in gaps), f"freeze points overlap inside one window: {gaps}d"
 
 
