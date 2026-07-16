@@ -117,6 +117,12 @@ def test_freeze_window_validation():
 @pytest.mark.parametrize("bad_fw, match", [
     ({"min_history": 0}, "min_history must be >= 1"),
     ({"min_history": -3}, "min_history must be >= 1"),
+    # A non-positive horizon_days is never a usable window and fails silently both ways: a
+    # negative cutoff lands before the freeze, so no commit falls inside it and the repo yields
+    # zero tasks (the same erosion the reversed after/before check rejects); a 0 is falsy, so
+    # taskgen reverts to the commit-count horizon and the configured day-window is ignored.
+    ({"horizon_days": 0}, "horizon_days must be >= 1"),
+    ({"horizon_days": -5}, "horizon_days must be >= 1"),
     ({"after": ""}, "after must be non-empty"),
     ({"before": "   "}, "before must be non-empty"),
     # Non-empty but unparseable date bounds pass the string check yet crash task generation
@@ -135,6 +141,17 @@ def test_freeze_window_accepts_valid_iso_date_bounds():
     rs = validate_repo_set(_mutate(freeze_window={"after": "2023-01-01", "before": "2024-12-31"}))
     assert rs.entries[0].freeze_window["after"] == "2023-01-01"
     assert validate_repo_set(_mutate(freeze_window={"after": "2023-06-15T00:00:00Z"}))
+
+
+def test_freeze_window_accepts_positive_horizon_days():
+    # The curated rule sets horizon_days per repo from the repo's median release cycle, clamped
+    # to [14, 90]; any positive day-window is a real window and must still load. A bool is not a
+    # real int (bool subclasses int), so it is still rejected by the type check.
+    for good in (1, 14, 30, 90):
+        rs = validate_repo_set(_mutate(freeze_window={"horizon_days": good}))
+        assert rs.entries[0].freeze_window["horizon_days"] == good
+    with pytest.raises(RepoSetError, match="horizon_days must be an integer"):
+        validate_repo_set(_mutate(freeze_window={"horizon_days": True}))
 
 
 def test_freeze_window_rejects_reversed_date_bounds():

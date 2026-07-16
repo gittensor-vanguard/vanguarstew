@@ -169,6 +169,16 @@ def _validate_freeze_window(fw, where):
                      f"{where}: freeze_window.{key} must be an integer")
             if key == "min_history":
                 _require(value >= 1, f"{where}: freeze_window.min_history must be >= 1")
+            # A non-positive `horizon_days` is never a usable window, and both ways it fails are
+            # silent. A negative value still enters taskgen's day-window path, but its cutoff
+            # (`freeze + timedelta(days=horizon_days)`) lands BEFORE the freeze, so no commit can
+            # fall inside it: every freeze point is unusable and the repo yields zero tasks and is
+            # quietly dropped from the (leakage-safe, curated) set -- the same erosion the reversed
+            # `after`/`before` check below rejects. A `0` is falsy, so taskgen silently reverts to
+            # the commit-count horizon and the configured day-window is ignored outright. Fail fast
+            # at load time instead, mirroring `min_history`.
+            elif key == "horizon_days":
+                _require(value >= 1, f"{where}: freeze_window.horizon_days must be >= 1")
     # Cross-field: a window whose `after` is later than its `before` can never contain a
     # commit, so taskgen silently yields zero tasks and the repo is quietly dropped from the
     # (leakage-safe, curated) benchmark with no error — a config typo that erodes the set
