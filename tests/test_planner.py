@@ -14,14 +14,19 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
+    _AUTOMATION_STREAM_MIN,
     _CC_TYPE_TO_PLAN_KIND,
     _PLAN_KINDS,
+    CONFIG_SURFACE_GUIDANCE,
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
     REPO_LAYOUT_GUIDANCE,
+    _automation_surface_signal,
     _commit_plan_kind,
+    _config_surface_note,
     _explicit_pr_number,
+    _is_automation_subject,
     _is_review_item,
     _matched_pr,
     _normalize_files,
@@ -849,6 +854,131 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
                       {}, 2, CapturingLLM(api_key="offline"))
     assert RELEASE_CADENCE_GUIDANCE in captured["user"]
 
+
+# --- #1640: config-surface directive gated on real automation evidence ---------------------
+
+def test_is_automation_subject_matches_only_tooling_markers():
+    # Real automation markers.
+    assert _is_automation_subject("build(deps): bump actions/checkout from 6.0.2 to 6.0.3") is True
+    assert _is_automation_subject("chore(deps-dev): update ruff") is True
+    assert _is_automation_subject("[pre-commit.ci] pre-commit autoupdate") is True
+    assert _is_automation_subject("Bump lodash via dependabot") is True
+    assert _is_automation_subject("chore: renovate pin update") is True
+    # Case-folded: every marker path is lowercased before matching, so mixed-case forms count.
+    assert _is_automation_subject("BUILD(DEPS): bump actions/checkout from 6 to 7") is True
+    assert _is_automation_subject("Chore(Deps-Dev): update ruff") is True
+    assert _is_automation_subject("[Pre-Commit.CI] pre-commit autoupdate") is True
+    assert _is_automation_subject("Bump lodash via Dependabot") is True
+    assert _is_automation_subject("Chore: Renovate pin update") is True
+    # Human subjects that merely mention the same words must NOT count (false positive = regression).
+    assert _is_automation_subject("docs: document our pre-commit setup") is False
+    assert _is_automation_subject("chore: bump version from 1.2.0 to 1.3.0") is False
+    assert _is_automation_subject("feat: add streaming export") is False
+    assert _is_automation_subject(None) is False
+    assert _is_automation_subject("") is False
+    assert _is_automation_subject("   ") is False
+    assert _is_automation_subject(42) is False
+
+
+def test_automation_surface_signal_needs_a_stream_not_a_one_off():
+    assert _AUTOMATION_STREAM_MIN == 2  # threshold locked; change needs new justification
+    one = {
+        "recent_commits": [
+            {"subject": "build(deps): bump x from 1 to 2"},
+            {"subject": "feat: a"},
+            {"subject": "fix: b"},
+        ]
+    }
+    assert _automation_surface_signal(one) is False  # a lone bump is not a pattern
+    stream = {
+        "recent_commits": [
+            {"subject": "build(deps): bump x from 1 to 2"},
+            {"subject": "[pre-commit.ci] pre-commit autoupdate"},
+            {"subject": "feat: a"},
+        ]
+    }
+    assert _automation_surface_signal(stream) is True
+    assert _automation_surface_signal({"recent_commits": [{"subject": "feat: a"}]}) is False
+    assert _automation_surface_signal({}) is False
+
+
+def test_automation_surface_signal_ignores_malformed_commits():
+    # Frozen context can carry junk: non-dict entries, missing subject, non-string subject.
+    # None of those may raise or inflate the automation count.
+    malformed = {
+        "recent_commits": [
+            "not-a-dict",
+            None,
+            7,
+            {},  # missing subject
+            {"subject": None},
+            {"subject": ["build(deps): bump x"]},
+            {"subject": "feat: clean work"},
+            # Only one real automation subject → still below the stream threshold.
+            {"subject": "build(deps): bump actions/checkout from 1 to 2"},
+        ]
+    }
+    assert _automation_surface_signal(malformed) is False
+    # Two real markers among junk → stream fires; junk still ignored.
+    two_real = {
+        "recent_commits": [
+            None,
+            {"subject": "BUILD(DEPS): bump x"},
+            {"no_subject": True},
+            {"subject": "[Pre-Commit.CI] pre-commit autoupdate"},
+        ]
+    }
+    assert _automation_surface_signal(two_real) is True
+    assert _automation_surface_signal({"recent_commits": "not-a-list"}) is False
+    assert _automation_surface_signal(None) is False
+
+
+def test_config_surface_note_only_with_automation_evidence():
+    assert _config_surface_note(
+        {"recent_commits": [{"subject": "feat: a"}, {"subject": "fix: b"}]}
+    ) == ""
+    note = _config_surface_note({
+        "recent_commits": [
+            {"subject": "build(deps): bump actions/checkout from 6.0.2 to 6.0.3"},
+            {"subject": "[pre-commit.ci] pre-commit autoupdate"},
+        ]
+    })
+    assert CONFIG_SURFACE_GUIDANCE in note
+
+
+def test_planner_prompt_includes_config_surface_only_with_automation():
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Fix loader", "kind": "bugfix"}]
+
+    # Source-driven history → byte-identical prompt, no config directive (must not regress it).
+    plan_next_actions(
+        {"open_prs": [], "recent_commits": [{"subject": "feat: a"}, {"subject": "fix: b"}]},
+        {},
+        2,
+        CapturingLLM(api_key="offline"),
+    )
+    assert CONFIG_SURFACE_GUIDANCE not in captured["user"]
+
+    # Automation-churn history → the directive appears in full (not truncated mid-sentence).
+    plan_next_actions(
+        {
+            "open_prs": [],
+            "recent_commits": [
+                {"subject": "build(deps): bump actions/checkout from 6.0.2 to 6.0.3"},
+                {"subject": "[pre-commit.ci] pre-commit autoupdate"},
+            ],
+        },
+        {},
+        2,
+        CapturingLLM(api_key="offline"),
+    )
+    assert CONFIG_SURFACE_GUIDANCE in captured["user"]
+    assert "`.github/workflows/`" in captured["user"]
+    assert "`.pre-commit-config.yaml`" in captured["user"]
 
 
 def test_every_plan_kind_names_a_kind_the_objective_anchor_scores():
