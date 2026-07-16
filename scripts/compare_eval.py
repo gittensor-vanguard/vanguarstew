@@ -236,31 +236,29 @@ def comparison_headline(diff: dict) -> str:
     )
 
 
+class ArtifactError(Exception):
+    """Raised when an artifact cannot be loaded or is invalid."""
+
+
 def load_artifact(path: str) -> dict:
-    """Load a JSON-object artifact, exiting with a clear message on bad input."""
+    """Load a JSON-object artifact, raising ArtifactError on bad input."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        print(f"artifact not found: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
+        raise ArtifactError(f"artifact not found: {path}") from None
     except PermissionError:
-        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
-        raise SystemExit(1) from None
+        raise ArtifactError(f"artifact is not readable (check file permissions): {path}") from None
     except IsADirectoryError:
-        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except OSError:
-        print(f"cannot read artifact: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
+        raise ArtifactError(f"artifact path is a directory, not a file: {path}") from None
+    except OSError as exc:
+        raise ArtifactError(f"cannot read artifact ({path}): {exc}") from exc
     except ValueError as exc:
         # json.load raises JSONDecodeError for malformed JSON and ValueError for an integer
         # literal beyond the Python int-string-conversion limit.
-        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
-        raise SystemExit(1) from None
+        raise ArtifactError(f"artifact is not valid JSON ({path}): {exc}") from exc
     if not isinstance(data, dict):
-        print(f"artifact must be a JSON object: {path}", file=sys.stderr)
-        raise SystemExit(1)
+        raise ArtifactError(f"artifact must be a JSON object: {path}")
     return data
 
 
@@ -270,8 +268,12 @@ def main() -> None:
     ap.add_argument("candidate", help="newer or candidate result JSON")
     args = ap.parse_args()
 
-    baseline = load_artifact(args.baseline)
-    candidate = load_artifact(args.candidate)
+    try:
+        baseline = load_artifact(args.baseline)
+        candidate = load_artifact(args.candidate)
+    except ArtifactError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
 
     diff = compare_eval_artifacts(baseline, candidate)
     print(comparison_headline(diff), file=sys.stderr)

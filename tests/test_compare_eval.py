@@ -256,6 +256,7 @@ def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
     assert "must be a JSON object" in result.stderr
+    assert str(bad) in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
@@ -267,6 +268,32 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
     assert "artifact is not valid JSON" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_an_empty_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    empty = tmp_path / "empty.json"
+    empty.write_text("", encoding="utf-8")
+    result = _run_cli(str(good), str(empty))
+    assert result.returncode == 1
+    assert "not valid JSON" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "symlink"),
+    reason="symlink not supported on this platform",
+)
+def test_cli_reports_a_clean_error_for_a_broken_symlink(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    broken = tmp_path / "broken.json"
+    os.symlink(tmp_path / "nonexistent.json", broken)
+    result = _run_cli(str(good), str(broken))
+    assert result.returncode == 1
+    assert "not found" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_cli_still_compares_well_formed_artifacts(tmp_path):
