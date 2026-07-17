@@ -198,7 +198,31 @@ def test_cli_non_object_json_exits_two(tmp_path, capsys):
 
 
 def test_cli_permission_error_exits_two(capsys):
+    # An unreadable file now names the permission problem distinctly rather than falling
+    # through to the generic "cannot read artifact ...: [Errno 13]" message.
     with patch("builtins.open", mock_open()) as mocked:
         mocked.side_effect = PermissionError("permission denied")
         assert cli.run(["locked.json"]) == 2
-    assert "cannot read artifact" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "artifact is not readable" in err and "locked.json" in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory raises IsADirectoryError; name it distinctly instead of the raw
+    # "[Errno 21] Is a directory" the generic OSError arm printed before.
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_generic_oserror_exits_two(capsys):
+    # The catch-all OSError arm (not FileNotFound/Permission/IsADirectory) must still exit
+    # cleanly with a message naming the path -- e.g. a device/IO error.
+    with patch("builtins.open", mock_open()) as mocked:
+        mocked.side_effect = OSError(5, "I/O error")
+        assert cli.run(["flaky.json"]) == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "flaky.json" in err
+    assert "Traceback" not in err
