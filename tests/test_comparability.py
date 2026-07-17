@@ -382,6 +382,27 @@ def test_cli_directory_path_exits_two(tmp_artifacts, tmp_path, capsys):
     assert ("directory" in err or "not readable" in err) and "Traceback" not in err
 
 
+def test_cli_broken_symlink_exits_two(tmp_artifacts, tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError; islink() distinguishes it so the message
+    # blames the missing target, not the (present) link path.
+    good = tmp_artifacts("good.json", _multi("a"))
+    link = tmp_path / "link.json"
+    link.symlink_to(tmp_path / "gone.json")
+    assert cli.run([good, str(link)]) == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err and "Traceback" not in err and "Errno" not in err
+
+
+def test_cli_symlink_loop_exits_two(tmp_artifacts, tmp_path, capsys):
+    # A self-referential symlink raises OSError(ELOOP), named distinctly by the catch-all.
+    good = tmp_artifacts("good.json", _multi("a"))
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    assert cli.run([good, str(loop)]) == 2
+    err = capsys.readouterr().err
+    assert "symlink loop" in err and "Traceback" not in err
+
+
 def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
     # Platform-agnostic: force IsADirectoryError (Windows raises PermissionError on a dir) so the
     # dedicated handler is proven live -- SystemExit(2), the specific message, and no traceback.
