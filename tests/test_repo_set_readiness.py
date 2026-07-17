@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -269,3 +271,107 @@ def test_cli_passes_for_curated_json():
     )
     assert proc.returncode == 0
     assert "READY" in proc.stderr
+
+
+# --- #1698: load_config reports actionable errors instead of a raw errno / traceback ------
+
+def test_cli_missing_config_reports_clean_error(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(missing)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config not found" in proc.stderr
+    assert str(missing) in proc.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "directory" in proc.stderr or "not readable" in proc.stderr
+
+
+def test_cli_oversized_int_config_reports_clean_error(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal past
+    # CPython's 4300-digit limit; without the ValueError arm this dumped a raw traceback.
+    huge = tmp_path / "huge.json"
+    huge.write_text('{"repos": ' + "9" * 4400 + "}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(huge)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config is not valid JSON" in proc.stderr
+
+
+def test_cli_invalid_json_config_reports_clean_error(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(bad)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config is not valid JSON" in proc.stderr
+
+
+def test_cli_non_object_config_reports_clean_error(tmp_path):
+    arr = tmp_path / "arr.json"
+    arr.write_text("[1, 2, 3]", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(arr)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config must be a JSON object" in proc.stderr
+
+
+def test_load_config_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "config path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_config_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_config_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot read config" in err and "Traceback" not in err
