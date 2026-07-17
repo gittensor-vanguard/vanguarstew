@@ -34,7 +34,8 @@ def _tiny_repo(dirpath, n=16, prefix="feat"):
     subprocess.run(["git", "init", "-q", dirpath], check=True)
     subprocess.run(["git", "-C", dirpath, "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", dirpath, "config", "user.name", "t"], check=True)
-    subprocess.run(["git", "-C", dirpath, "config", "core.fsync", "false"], check=True)
+    # Valid values are none|objects|reference|... — "false" is ignored as unknown.
+    subprocess.run(["git", "-C", dirpath, "config", "core.fsync", "none"], check=True)
     for i in range(n):
         with open(os.path.join(dirpath, f"{prefix}{i}.py"), "w", encoding="utf-8") as f:
             f.write(f"x = {i}\n")
@@ -47,7 +48,7 @@ def _tiny_repo(dirpath, n=16, prefix="feat"):
 
 SINGLE_REPO_KEYS = {
     "tasks", "baseline", "tally", "decisive_margin", "composite_mean",
-    "composite_parts", "weights", "rows", "judge_order_stats", "judge_report",
+    "composite_parts", "foresight", "weights", "rows", "judge_order_stats", "judge_report",
     "offline", "github_enriched", "judge_dual_order",
 }
 
@@ -100,6 +101,33 @@ def test_run_replay_composite_parts_match_rows():
         shutil.rmtree(d, ignore_errors=True)
 
 
+FORESIGHT_KEYS = {
+    "module_recall_mean", "module_recall_n",
+    "kind_recall_mean", "kind_recall_n",
+    "release_accuracy", "release_accuracy_n",
+}
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_replay_foresight_breakdown_matches_row_count():
+    d = _tiny_repo(tempfile.mkdtemp())
+    try:
+        n = 3
+        res = run_replay(d, agent_file=AGENT, n_tasks=n, horizon=3, seed=0)
+        foresight = res["foresight"]
+        # The real scoring pipeline (freeze -> objective_score -> foresight_breakdown) must
+        # produce exactly the keys runner.py/report.py/leaderboard.py read by name -- not just a
+        # dict that happens to carry the fields exercised below.
+        assert set(foresight) == FORESIGHT_KEYS
+        # Module recall is always applicable, so its sample size tracks the task count exactly.
+        assert foresight["module_recall_n"] == n
+        assert foresight["module_recall_mean"] is None or 0.0 <= foresight["module_recall_mean"] <= 1.0
+        for key in ("kind_recall_n", "release_accuracy_n"):
+            assert foresight[key] <= n
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_run_replay_too_small_repo_errors_cleanly():
     d = _tiny_repo(tempfile.mkdtemp(), n=5)
@@ -123,6 +151,30 @@ def test_run_multi_replay_produces_valid_composite_mean():
         assert res["scored_repos"] >= 1
         assert isinstance(res["composite_mean"], (int, float))
         assert 0.0 <= res["composite_mean"] <= 1.0
+    finally:
+        shutil.rmtree(a, ignore_errors=True)
+        shutil.rmtree(b, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_multi_replay_combines_per_repo_foresight():
+    a = _tiny_repo(tempfile.mkdtemp(), prefix="alpha")
+    b = _tiny_repo(tempfile.mkdtemp(), prefix="beta")
+    try:
+        res = run_multi_replay([a, b], agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
+        foresight = res["foresight"]
+        assert set(foresight) == FORESIGHT_KEYS
+        # module_recall_n sums across every scored repo's own foresight (always applicable),
+        # matching how it is combined rather than a fixed expectation on task counts.
+        expected_n = sum(
+            repo["foresight"]["module_recall_n"]
+            for repo in res["per_repo"] if repo.get("tasks", 0) > 0
+        )
+        assert expected_n > 0
+        assert foresight["module_recall_n"] == expected_n
+        for repo in res["per_repo"]:
+            if repo.get("tasks", 0) > 0:
+                assert "foresight" in repo
     finally:
         shutil.rmtree(a, ignore_errors=True)
         shutil.rmtree(b, ignore_errors=True)

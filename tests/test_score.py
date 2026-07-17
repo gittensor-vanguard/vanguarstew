@@ -25,7 +25,9 @@ from benchmark.score import (  # noqa: E402
     base_from_releases,
     bump_level,
     changed_modules,
+    combine_foresight_breakdowns,
     commit_kind,
+    foresight_breakdown,
     is_release_subject,
     kind_recall,
     module_recall,
@@ -1274,6 +1276,32 @@ def test_objective_component_rejects_bool_kind_recall():
     assert objective_component(obj) == 0.5
 
 
+def test_objective_component_rejects_oversized_int_recall_without_crashing():
+    from benchmark.score import objective_component
+
+    # json parses an arbitrarily long integer literal into a Python int; float(10**400) raises
+    # OverflowError. An oversized recall must score 0.0, not crash objective_component (and the
+    # row/objective integrity CLIs that call it).
+    big = 10 ** 400
+    assert objective_component({"weighted_module_recall": big}) == 0.0
+    assert objective_component({"module_recall": big}) == 0.0
+    # kind_recall on the same path; module_recall 0.5 -> mean of [0.5, 0.0] == 0.25
+    obj = {"module_recall": 0.5, "actual_kinds": ["feat"], "kind_recall": big}
+    assert objective_component(obj) == 0.25
+
+
+def test_objective_component_rejects_non_finite_recall():
+    from benchmark.score import objective_component
+
+    # json.loads parses the bare tokens NaN / Infinity into float nan / inf; either would poison
+    # the [0, 1] component mean (nan propagates, inf blows the scale). Both must score 0.0.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert objective_component({"weighted_module_recall": bad}) == 0.0
+        assert objective_component({"module_recall": bad}) == 0.0
+        obj = {"module_recall": 0.5, "actual_kinds": ["feat"], "kind_recall": bad}
+        assert objective_component(obj) == 0.25
+
+
 def test_bump_level_handles_non_tuple():
     assert bump_level(None, (1,0,0)) is None
     assert bump_level("str", (1,0,0)) is None
@@ -1284,3 +1312,121 @@ def test_composite_score_handles_non_numeric_weights():
     from benchmark.score import composite_score
     assert composite_score("tie", {"module_recall": 0.5}, w_judge=None) >= 0
     assert composite_score("tie", {"module_recall": 0.5}, w_objective="str") >= 0
+
+
+# ---- foresight_breakdown / combine_foresight_breakdowns (M7 legible foresight metric) ----
+
+
+def test_foresight_breakdown_aggregates_real_objective_scores():
+    plan_hit = [{"title": "prepare release v1.2.0", "kind": "release", "theme": "core"}]
+    plan_miss = [{"title": "unrelated work", "kind": "docs"}]
+    objectives = [objective_score(plan_hit, REVEALED), objective_score(plan_miss, REVEALED)]
+    breakdown = foresight_breakdown(objectives)
+    assert breakdown["module_recall_n"] == 2
+    assert breakdown["kind_recall_n"] == 2
+    assert breakdown["release_accuracy_n"] == 2
+    # plan_hit predicted the release and the "core" module; plan_miss predicted neither.
+    assert breakdown["release_accuracy"] == 0.5
+    assert 0.0 <= breakdown["module_recall_mean"] <= 1.0
+    assert 0.0 <= breakdown["kind_recall_mean"] <= 1.0
+
+
+def test_foresight_breakdown_gates_kind_and_release_like_objective_component():
+    # No revealed kinds and no release -> those two axes have zero applicable tasks, while
+    # module recall (always applicable) still gets a data point.
+    revealed = [{"subject": "assorted change with no cc prefix", "files": ["core/a.py"]}]
+    obj = objective_score([{"title": "touch core", "kind": "refactor"}], revealed)
+    breakdown = foresight_breakdown([obj])
+    assert breakdown["module_recall_n"] == 1
+    assert breakdown["kind_recall_n"] == 0
+    assert breakdown["kind_recall_mean"] is None
+    assert breakdown["release_accuracy_n"] == 0
+    assert breakdown["release_accuracy"] is None
+
+
+def test_foresight_breakdown_empty_and_malformed_input():
+    empty = foresight_breakdown([])
+    assert empty == {
+        "module_recall_mean": None, "module_recall_n": 0,
+        "kind_recall_mean": None, "kind_recall_n": 0,
+        "release_accuracy": None, "release_accuracy_n": 0,
+    }
+    assert foresight_breakdown(None) == empty
+    assert foresight_breakdown("not-a-list") == empty
+    # A non-dict entry is skipped rather than raising.
+    obj = objective_score([{"title": "prepare release", "kind": "release"}], REVEALED)
+    mixed = foresight_breakdown([obj, None, "junk", 42])
+    assert mixed["module_recall_n"] == 1
+
+
+def test_foresight_breakdown_rejects_bool_kind_recall():
+    # Mirrors objective_component's bool guard (#... same class of bug: float(True) == 1.0).
+    obj = {"weighted_module_recall": 0.5, "actual_kinds": ["feat"], "kind_recall": True}
+    breakdown = foresight_breakdown([obj])
+    assert breakdown["kind_recall_n"] == 0
+    assert breakdown["kind_recall_mean"] is None
+
+
+def test_combine_foresight_breakdowns_means_per_repo_and_sums_n():
+    repo_a = {
+        "module_recall_mean": 1.0, "module_recall_n": 2,
+        "kind_recall_mean": 0.5, "kind_recall_n": 2,
+        "release_accuracy": None, "release_accuracy_n": 0,
+    }
+    repo_b = {
+        "module_recall_mean": 0.0, "module_recall_n": 3,
+        "kind_recall_mean": None, "kind_recall_n": 0,
+        "release_accuracy": 1.0, "release_accuracy_n": 1,
+    }
+    combined = combine_foresight_breakdowns([repo_a, repo_b])
+    # Mean of per-repo means (0.5 weight each), matching how objective_mean is combined --
+    # NOT task-weighted (that would be (1*2 + 0*3)/5 = 0.4).
+    assert combined["module_recall_mean"] == 0.5
+    assert combined["module_recall_n"] == 5
+    # repo_b had no applicable kind tasks -> excluded from the mean, not treated as 0.
+    assert combined["kind_recall_mean"] == 0.5
+    assert combined["kind_recall_n"] == 2
+    assert combined["release_accuracy"] == 1.0
+    assert combined["release_accuracy_n"] == 1
+
+
+def test_combine_foresight_breakdowns_empty_and_malformed_input():
+    empty = combine_foresight_breakdowns([])
+    assert empty == {
+        "module_recall_mean": None, "module_recall_n": 0,
+        "kind_recall_mean": None, "kind_recall_n": 0,
+        "release_accuracy": None, "release_accuracy_n": 0,
+    }
+    assert combine_foresight_breakdowns(None) == empty
+    assert combine_foresight_breakdowns([None, "junk", 42]) == empty
+
+
+def test_combine_foresight_breakdowns_ignores_non_finite_rate():
+    combined = combine_foresight_breakdowns([
+        {"module_recall_mean": float("nan"), "module_recall_n": 4},
+        {"module_recall_mean": 0.8, "module_recall_n": 1},
+    ])
+    assert combined["module_recall_mean"] == 0.8
+    assert combined["module_recall_n"] == 5
+
+
+# The exact key contract both aggregators must produce -- consumers (runner.py, report.py,
+# leaderboard.py) all read these six keys by name, so a shape drift here would silently break
+# every downstream reader without a single test failing at the call site.
+FORESIGHT_KEYS = {
+    "module_recall_mean", "module_recall_n",
+    "kind_recall_mean", "kind_recall_n",
+    "release_accuracy", "release_accuracy_n",
+}
+
+
+def test_foresight_breakdown_produces_the_documented_key_shape():
+    assert set(foresight_breakdown([])) == FORESIGHT_KEYS
+    real = objective_score([{"title": "prepare release", "kind": "release"}], REVEALED)
+    assert set(foresight_breakdown([real])) == FORESIGHT_KEYS
+
+
+def test_combine_foresight_breakdowns_produces_the_documented_key_shape():
+    assert set(combine_foresight_breakdowns([])) == FORESIGHT_KEYS
+    one = foresight_breakdown([objective_score([{"title": "x", "kind": "docs"}], REVEALED)])
+    assert set(combine_foresight_breakdowns([one])) == FORESIGHT_KEYS
