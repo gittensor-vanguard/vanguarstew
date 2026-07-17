@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -475,6 +477,29 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
     assert str(missing) in result.stderr
+    assert "artifact not found" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
+    result = _run_cli(str(tmp_path))
+    assert result.returncode == 1
+    assert "artifact path is a directory, not a file" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root bypasses file permission bits")
+def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
+    locked = tmp_path / "locked.json"
+    locked.write_text(json.dumps(_result()), encoding="utf-8")
+    locked.chmod(0o000)
+    try:
+        result = _run_cli(str(locked))
+    finally:
+        locked.chmod(0o600)
+    assert result.returncode == 1
+    assert "not readable" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):

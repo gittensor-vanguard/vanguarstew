@@ -27,7 +27,8 @@ def _tiny_repo(dirpath, n=4, prefix="feat"):
     subprocess.run(["git", "init", "-q", dirpath], check=True)
     subprocess.run(["git", "-C", dirpath, "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", dirpath, "config", "user.name", "t"], check=True)
-    subprocess.run(["git", "-C", dirpath, "config", "core.fsync", "false"], check=True)
+    # Valid values are none|objects|reference|... — "false" is ignored as unknown.
+    subprocess.run(["git", "-C", dirpath, "config", "core.fsync", "none"], check=True)
     for i in range(n):
         with open(os.path.join(dirpath, f"{prefix}{i}.py"), "w", encoding="utf-8") as f:
             f.write(f"x = {i}\n")
@@ -105,6 +106,30 @@ def test_check_score_floor_fails_when_missing():
     assert "missing" in msg
 
 
+def test_check_score_floor_fails_closed_on_non_finite_composite():
+    # NaN/Inf must not silently pass --fail-under (nan < x and inf < x are both False).
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        msg = check_score_floor({"composite_mean": bad}, 0.5)
+        assert msg is not None, bad
+        assert "missing or non-numeric" in msg
+        assert "--fail-under=0.5" in msg
+
+
+def test_check_score_floor_fails_closed_on_oversized_int_composite():
+    # json.load can yield an int too large for float(); treat as non-numeric, never crash.
+    msg = check_score_floor({"composite_mean": 10**400}, 0.5)
+    assert msg is not None
+    assert "missing or non-numeric" in msg
+
+
+def test_check_score_floor_rejects_bool_and_string_scores():
+    # bool is an int subclass; string "NaN" is not numeric — both fail closed.
+    for bad in (True, False, "NaN", "0.9"):
+        msg = check_score_floor({"composite_mean": bad}, 0.5)
+        assert msg is not None, bad
+        assert "missing or non-numeric" in msg
+
+
 def test_check_score_floor_skipped_when_disabled():
     assert check_score_floor({"composite_mean": 0.1}, None) is None
 
@@ -128,6 +153,22 @@ def test_check_score_floor_fails_when_generalization_partition_below_floor():
     assert msg is not None and "tuned" in msg and "0.400" in msg
     msg = check_score_floor(_generalization_result(tuned=0.6, held_out=0.4), 0.5)
     assert msg is not None and "held_out" in msg
+
+
+def test_check_score_floor_fails_closed_on_non_finite_generalization_partition():
+    # A scored partition with NaN/Inf/oversized composite must fail closed, not skip.
+    for label, bad in (
+        ("tuned", float("nan")),
+        ("held_out", float("inf")),
+        ("tuned", 10**400),
+        ("held_out", True),
+    ):
+        result = _generalization_result()
+        result[label]["composite_mean"] = bad
+        msg = check_score_floor(result, 0.5)
+        assert msg is not None, (label, bad)
+        assert label in msg
+        assert "missing or non-numeric" in msg
 
 
 def test_check_score_floor_skips_unscored_generalization_partition():

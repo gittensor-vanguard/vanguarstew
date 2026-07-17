@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -174,15 +176,46 @@ def test_cli_non_object_artifact(tmp_path):
     assert cli.run([_write(tmp_path, "arr.json", "[1, 2, 3]")]) == 2
 
 
-def test_cli_non_utf8_file(tmp_path):
-    # A non-UTF-8 file raises UnicodeDecodeError mid-read; the CLI must exit 2, not crash.
+def test_cli_non_utf8_file(tmp_path, capsys):
+    # A non-UTF-8 file raises UnicodeDecodeError mid-read; keep the distinct UTF-8 message.
     path = tmp_path / "latin1.json"
     path.write_bytes(b'{"repos": 5, "scored_repos": \xff}')
     assert cli.run([str(path)]) == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "not valid UTF-8 JSON" in err
 
 
-def test_cli_unreadable_path_is_handled(tmp_path):
+def test_cli_oversized_int_literal(tmp_path, capsys):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an oversized int literal.
+    path = _write(tmp_path, "huge.json", '{"repos": ' + "9" * 5000 + "}")
+    assert cli.run([path]) == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "not valid JSON" in err
+    assert "UTF-8" not in err
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path, capsys):
     assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "[Errno" not in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_clean(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact is not readable" in err
+    assert "[Errno" not in err
+    assert "Traceback" not in err
 
 
 def test_module_main_no_arg_exits_nonzero():

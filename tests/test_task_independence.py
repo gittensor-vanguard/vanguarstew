@@ -226,3 +226,25 @@ def test_cli_main_exits_with_the_return_code(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 1
+
+
+# --- time-horizon mode: windows overlap in DAYS, not commits ---
+
+def _t(idx, date, span=90):
+    return {"freeze_index": idx, "freeze_date": date, "horizon_days": span,
+            "revealed": [{"sha": "x"}]}
+
+
+def test_time_mode_freezes_far_apart_are_independent():
+    tasks = [_t(0, "2019-01-01T00:00:00+00:00"), _t(50, "2019-06-01T00:00:00+00:00")]
+    result = check_task_independence(tasks)
+    assert result["passed"] is True
+
+
+def test_time_mode_freezes_inside_one_window_overlap():
+    # 6 commits apart clears horizon=5, but both sit inside the same 90-day window: overlapping
+    # futures the commit-index check would have waved through.
+    tasks = [_t(0, "2019-01-01T00:00:00+00:00"), _t(6, "2019-02-01T00:00:00+00:00")]
+    result = check_task_independence(tasks)
+    assert result["passed"] is False
+    assert "windows_independent" in failed_checks(result)

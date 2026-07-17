@@ -12,6 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import scripts.weight_integrity as weight_integrity_cli  # noqa: E402
 from benchmark.weight_integrity import (  # noqa: E402
     _check_rows_list,
     _is_number,
@@ -385,7 +386,50 @@ def test_cli_strict_exit_codes(tmp_path):
 
 
 def test_cli_missing_and_non_object_files(tmp_path):
-    assert _run_cli(tmp_path / "does-not-exist.json", "--strict").returncode == 1
+    missing = _run_cli(tmp_path / "does-not-exist.json", "--strict")
+    assert missing.returncode == 1
+    assert "Traceback" not in missing.stderr
+    assert "artifact not found" in missing.stderr
     arr = tmp_path / "arr.json"
     arr.write_text("[1, 2, 3]")
     assert _run_cli(arr, "--strict").returncode == 1
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    result = _run_cli(tmp_path)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        weight_integrity_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        weight_integrity_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
+
+
+def test_cli_reports_clean_error_for_invalid_json(tmp_path):
+    path = tmp_path / "broken.json"
+    path.write_text("{not json", encoding="utf-8")
+    result = _run_cli(path)
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "artifact is not valid JSON" in result.stderr

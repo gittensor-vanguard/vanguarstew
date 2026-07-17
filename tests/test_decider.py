@@ -324,16 +324,41 @@ def test_decide_offline_runs_lenses_without_network_and_keeps_stub_shape():
     }
 
 
-def test_release_context_note_surfaces_frozen_tags():
-    note = _release_context_note({"releases": [{"tag": "v2.1.0"}, {"tag": "v2.0.3"}]})
+def test_release_context_note_surfaces_highest_frozen_tag():
+    # Highest semver among frozen releases, regardless of list order (git is oldest-first;
+    # the GitHub path is newest-first — see #1635).
+    note = _release_context_note({"releases": [{"tag": "v2.0.3"}, {"tag": "v2.1.0"}]})
     assert "v2.1.0" in note
     assert "version_bump" in note
+    assert "newest first" not in note.lower()
+
+
+def test_release_context_note_uses_anchor_base_not_list_head():
+    # Git builders store releases oldest-first; slicing [:3] previously labeled the three
+    # OLDEST tags "newest first", pointing version_bump at a stale base (e.g. 0.13.0 when
+    # the objective anchor's base_from_releases is 1.6.0).
+    releases = [
+        {"tag": "0.13.0"},
+        {"tag": "0.13.1"},
+        {"tag": "1.0.0.dev0"},
+        {"tag": "1.5.0"},
+        {"tag": "1.6.0"},
+    ]
+    note = _release_context_note({"releases": releases})
+    assert "1.6.0" in note
+    assert "0.13.0" not in note
+    assert "0.13.1" not in note
+    # Newest-first order (GitHub API path) must resolve to the same base.
+    note_rev = _release_context_note({"releases": list(reversed(releases))})
+    assert "1.6.0" in note_rev
+    assert "0.13.0" not in note_rev
 
 
 def test_release_context_note_empty_when_no_releases():
     assert _release_context_note({}) == ""
     assert _release_context_note({"releases": []}) == ""
     assert _release_context_note({"releases": [{"tag": ""}]}) == ""
+    assert _release_context_note({"releases": [{"tag": "nightly"}]}) == ""  # no parseable semver
 
 
 def test_is_planning_request():

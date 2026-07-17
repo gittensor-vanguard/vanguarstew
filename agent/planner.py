@@ -54,8 +54,13 @@ _PR_NUMBER = re.compile(
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
 _MIN_SUBJECT_PHRASE = 8
 
+# Plan-item `kind` vocabulary. Every entry except "triage" maps to a normalized commit kind in
+# the objective anchor's `benchmark/score.py::_PLAN_KIND`, so a plan can name any kind the
+# anchor actually scores. "triage" is a maintainer action, not a commit kind, and deliberately
+# maps to nothing there — it is the fallback for an item that names no recognizable kind.
 _PLAN_KINDS = frozenset({
     "feature", "bugfix", "refactor", "docs", "release", "dep", "triage",
+    "build", "ci", "test", "perf", "style", "revert",
 })
 
 # Conventional-Commit prefix on a commit subject: "feat:", "fix(scope):", "docs!:". This block
@@ -65,10 +70,12 @@ _PLAN_KINDS = frozenset({
 # two aligned, as agent/context.py already does for forward-reference scrubbing.
 _CC_PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
 
-# Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Only types a plan item can
-# express appear here; types with no plan-kind equivalent (test, ci, perf, style, revert,
-# build) are dropped rather than mis-binned under a neighboring kind, since a wrong hint is
-# worse than none.
+# Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Every type the anchor's own
+# classifier (`benchmark/score.py::_COMMIT_KIND`) recognizes has an entry here, so a kind the
+# anchor reads out of a subject is one the plan can name back. No type is dropped for lack of
+# an equivalent: a dropped type is invisible to `_recent_kinds_note`, which then describes a
+# history the repo does not have, and unnameable by the plan, which pins `kind_recall` at 0.000
+# for any repo whose work lands under it.
 _CC_TYPE_TO_PLAN_KIND = {
     "feat": "feature", "feature": "feature",
     "fix": "bugfix", "bugfix": "bugfix", "bug": "bugfix",
@@ -76,6 +83,12 @@ _CC_TYPE_TO_PLAN_KIND = {
     "refactor": "refactor",
     "release": "release",
     "chore": "dep", "deps": "dep", "dep": "dep",
+    "build": "build",
+    "ci": "ci",
+    "test": "test", "tests": "test",
+    "perf": "perf",
+    "style": "style",
+    "revert": "revert",
 }
 
 # Release tooling (standard-version / release-please) cuts versions under a chore/build type:
@@ -84,6 +97,11 @@ _CC_TYPE_TO_PLAN_KIND = {
 # the anchor classifies them. The body regex matches benchmark/score.py `_RELEASE_TAG_SUBJECT`.
 _RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
 _RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
+# Explicit release wording anywhere in a subject. Mirrors benchmark/score.py `_RELEASE_KW` so the
+# release backstop recognizes a release-titled plan item (`Cut the 1.0 release`, `bump version`)
+# the same way the objective anchor's `is_release_subject` does — a title-shaped release the
+# `_commit_plan_kind` (Conventional-Commit-prefix only) check alone would miss (#1561 follow-up).
+_RELEASE_KW_RE = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
 
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
@@ -97,7 +115,8 @@ SYSTEM = (
 # constants so tests can lock the contract without parsing full LLM prompts.
 PLAN_ITEM_SCHEMA = (
     '  "title": short imperative title,\n'
-    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","triage",\n'
+    '  "kind": one of "feature","bugfix","refactor","docs","release","dep","build","ci",\n'
+    '          "test","perf","style","revert","triage",\n'
     '  "rationale": why this, now, given the philosophy,\n'
     '  "theme": the higher-level direction this advances,\n'
     '  "files": optional list of repo-relative paths or top-level modules likely touched.'
@@ -107,12 +126,46 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
     "Concrete specificity matters: for each non-triage item, include `files` naming the "
     "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
     "Pick `kind` to match the maintainer commit type the action would produce "
-    "(bugfix/fix, feature/feat, docs, release, refactor, dep). When several kinds recur in "
-    "recent history, plan separate items so each kind is covered."
+    "(bugfix/fix, feature/feat, docs, release, refactor, dep, build, ci, test, perf, style, "
+    "revert). When several kinds recur in recent history, plan separate items so each kind is "
+    "covered."
 )
 
 RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
+)
+
+# Prompt fragment for config-surface planning (#1640). Kept as a named constant so tests can
+# assert prompt inclusion without parsing the full LLM user message.
+CONFIG_SURFACE_GUIDANCE = (
+    "Recent history shows a steady stream of automation churn — dependency/GitHub-Actions bumps "
+    "and pre-commit autoupdates. That work lands under config-surface modules (e.g. `.github`, "
+    "`.pre-commit-config`, dependency manifests), which the objective anchor scores by changed "
+    "path just like source. Include one plan item covering that surface, with `files` naming the "
+    "relevant config paths (e.g. `.github/workflows/`, `.pre-commit-config.yaml`)."
+)
+
+# Markers that only automation tooling emits — used to gate the config-surface directive on real
+# evidence, not human vocabulary. Matched against a *case-folded* subject so BUILD(DEPS): and
+# build(deps): are treated identically (same for [pre-commit.ci] / Dependabot / Renovate).
+# A ``(deps)``/``(deps-dev)`` Conventional-Commit scope, the fixed pre-commit.ci subject, and
+# dependabot/renovate self-references all qualify; a human "docs: document our pre-commit setup"
+# or "chore: bump version 1.2.0" deliberately does NOT.
+_AUTOMATION_SCOPE_RE = re.compile(r"^[a-z]+\((?:deps|deps-dev)\)!?:")
+
+# Minimum distinct automation subjects in recent history before the config-surface note fires.
+# A lone bump is common noise even on source-driven repos; requiring two matches the
+# "steady stream" claim in CONFIG_SURFACE_GUIDANCE and mirrors how release cadence waits for
+# an evidenced pattern rather than a single noisy subject. On public freeze windows where
+# weighted module weight is mostly config (e.g. pluggy-style), recent history routinely carries
+# ≥2 of these markers; firing on 1 would steer source-led plans toward config work that is
+# not coming (a wrong module costs as much as a missed one).
+_AUTOMATION_STREAM_MIN = 2
+
+REPO_LAYOUT_GUIDANCE = (
+    "Ground each non-triage item's `files` in that listing — name the entries the item actually "
+    "touches (a path under a listed directory is fine), rather than a conventional source "
+    "layout this repository may not have."
 )
 
 
@@ -248,6 +301,188 @@ def _release_cadence_note(context: dict) -> str:
     if not _release_cadence_signal(context):
         return ""
     return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+
+
+def _is_release_subject(text) -> bool:
+    """Planner-local mirror of benchmark/score.py ``is_release_subject`` (``agent/`` must not import
+    ``benchmark/``). True only for a genuine release/version cut:
+
+    - a version-cut body under a **release-tooling** CC type (``chore``/``build`` only) —
+      ``chore(release): 1.4.0``; or
+    - explicit release wording anywhere (``release``, ``changelog``, ``bump version``); or
+    - a subject leading with a version tag (``v1.2.0``, ``Release 1.2.0``).
+
+    A version under any **non-tooling** CC prefix is NOT a cut (``fix: 2.0.0``, ``ci: 3.0.0``) —
+    the prefix is authoritative there — matching the anchor so the backstop gates exactly what the
+    anchor would score as a release prediction. A non-string title never raises.
+    """
+    if not isinstance(text, str):
+        return False
+    m = _CC_PREFIX_RE.match(text)
+    if m:
+        cc_type = m.group(1).lower()
+        mapped = _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+        if mapped and mapped != "release":
+            # A recognized non-release prefix is authoritative unless it is release tooling.
+            if cc_type not in _RELEASE_TOOLING_TYPES:
+                return False
+            body = text[m.end():].lstrip(" :\t")
+            return bool(_RELEASE_CUT_BODY_RE.match(body))
+    return bool(_RELEASE_KW_RE.search(text) or _RELEASE_CUT_BODY_RE.match(text))
+
+
+def _is_planned_release(item) -> bool:
+    """True when a normalized plan item predicts a release cut.
+
+    Mirrors the objective anchor's ``release_predicted`` (benchmark/score.py): an item counts as a
+    release prediction if its ``kind`` is ``release`` OR its ``title`` reads as a release/version
+    cut. Both halves use the planner's own vocabulary (``agent/`` must not import ``benchmark/``):
+    the title half is :func:`_is_release_subject`, a full mirror of the anchor's
+    ``is_release_subject`` — so a release-*titled* item under a non-release ``kind`` is gated too,
+    not just ``kind == "release"`` (#1561 follow-up: openclaw task2 slipped the kind-only check).
+    """
+    if not isinstance(item, dict):
+        return False
+    kind = item.get("kind")
+    if isinstance(kind, str) and kind.strip().lower() == "release":
+        return True
+    return _is_release_subject(item.get("title"))
+
+
+def _calibrate_release_prediction(plan: list, context: dict) -> list:
+    """Drop a spuriously-planned release item when recent history shows no release cadence (#1561).
+
+    ``RELEASE_CADENCE_GUIDANCE`` is only injected when a release cut is evidenced, but on
+    fast-moving repos the model still tends to add a ``release`` item on its own — absorbing "this
+    project releases constantly" from the philosophy read and predicting a version cut the revealed
+    window does not contain. When there is no release-cadence evidence in recent history, a release
+    prediction is unsupported, so it is removed and the plan reflects the work actually likely next;
+    when cadence IS evidenced the plan is returned unchanged. Runs BEFORE queue reconciliation so a
+    genuine release *PR* already open (real evidence a cut is imminent) is still merged back in.
+
+    A wrong item costs the objective anchor as much as a missed one, and a release the window does
+    not contain matches nothing, so dropping it removes a guaranteed non-match rather than a
+    potential hit.
+    """
+    if _release_cadence_signal(context):
+        return plan
+    return [item for item in plan if not _is_planned_release(item)]
+
+
+def _is_automation_subject(subject) -> bool:
+    """True when a commit subject is one automation tooling emits (dep/action bump, pre-commit.ci).
+
+    Keys on markers only the tools produce so a human subject that merely *mentions* pre-commit or
+    a version bump ("docs: document our pre-commit setup", "chore: bump version from 1.2.0") is not
+    misread as automation — a false positive would spend a plan slot on config work that isn't
+    coming (worse than a miss), so this stays deliberately narrow.
+
+    Every check runs on a case-folded subject so ``BUILD(DEPS):``, ``Build(Deps):``, and
+    ``[Pre-Commit.CI]`` match the same way as their lower-case forms — no mixed ``re.I`` /
+    substring-lower rules.
+    """
+    if not isinstance(subject, str):
+        return False
+    s = subject.strip().lower()
+    if not s:
+        return False
+    if _AUTOMATION_SCOPE_RE.match(s):
+        return True
+    return "[pre-commit.ci]" in s or "dependabot" in s or "renovate" in s
+
+
+def _automation_surface_signal(context: dict) -> bool:
+    """True when recent history shows a *steady stream* of automation/config churn.
+
+    Requires ``_AUTOMATION_STREAM_MIN`` matching subjects (default 2), not one: a lone
+    incidental bump must not steer the plan toward a config surface the repo does not
+    actually churn. The objective anchor penalizes a wrong module as much as a missed
+    one, so the bar to fire is evidence of an ongoing pattern (see the constant's
+    docstring and issue #1640's pluggy freeze windows, which carry ≫2 markers).
+
+    Malformed history is ignored rather than raising: non-dict commits, missing
+    ``subject`` keys, and non-string subjects contribute zero to the count.
+    """
+    n = 0
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        if _is_automation_subject(commit.get("subject")):
+            n += 1
+            if n >= _AUTOMATION_STREAM_MIN:
+                return True
+    return False
+
+
+def _config_surface_note(context: dict) -> str:
+    """Inject config-surface guidance only when automation churn is evidenced (#1640).
+
+    A source-driven repo (no automation markers) must see a byte-identical prompt, so this
+    returns the empty string there and never shifts that plan.
+    """
+    if not _automation_surface_signal(context):
+        return ""
+    return f"\n{CONFIG_SURFACE_GUIDANCE}\n"
+
+
+def _repo_layout(context: dict) -> list:
+    """The frozen checkout's top-level entries, or ``[]`` when absent or malformed.
+
+    ``repo_layout`` is derived by ``agent.context.load_context``, but the planner is also
+    called directly with hand-built context (tests, callers, older frozen artifacts), so the
+    shape is guarded here rather than assumed: a non-list value, and any non-string or blank
+    entry within it, is dropped instead of reaching the prompt.
+
+    An entry carrying a rendering separator — a comma (the delimiter the note joins on) or a
+    newline — is dropped too. Repository filenames are not authored by this project, and the
+    note is the one place in ``agent/`` that renders them into a prompt: a name containing a
+    newline would otherwise occupy its own prompt line as free-standing text, and one
+    containing a comma would read as two entries while the stated count said otherwise.
+    """
+    if not isinstance(context, dict):
+        return []
+    raw = context.get("repo_layout")
+    if not isinstance(raw, list):
+        if raw is not None:
+            logger.warning(
+                "planner: repo_layout is %s, not a list; treating as empty",
+                type(raw).__name__,
+            )
+        return []
+    entries = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        name = entry.strip()
+        if not name or any(sep in name for sep in (",", "\n", "\r")):
+            continue
+        entries.append(name)
+    return entries
+
+
+def _repo_layout_note(context: dict) -> str:
+    """Prompt note grounding the plan's `files` in the repo's real top-level entries at T.
+
+    Without it the only concrete guidance is ``OBJECTIVE_ANCHOR_GUIDANCE``'s illustrative
+    examples (`src/loader.py`, `docs/`, `tests/`), which name a conventional source layout many
+    repositories do not have — so `files` gets filled with plausible-looking paths that are not
+    in the tree. Empty when the layout could not be read, so the prompt is unchanged rather
+    than carrying an empty list.
+
+    The note describes the listing as the repository's top-level entries and claims nothing
+    more. It deliberately does not assert that these are the only paths that exist: the listing
+    is top-level only (nested paths are legitimate and `OBJECTIVE_ANCHOR_GUIDANCE` asks for
+    them) and it is capped, so an exhaustiveness claim would be false — and would tell the plan
+    that a real module it had correctly identified does not exist.
+    """
+    entries = _repo_layout(context)
+    if not entries:
+        return ""
+    return (
+        f"\nRepository layout at the freeze commit — its top-level entries "
+        f"({len(entries)}): {', '.join(entries)}.\n"
+        f"{REPO_LAYOUT_GUIDANCE}\n"
+    )
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -614,8 +849,10 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
+        f"{_repo_layout_note(context)}"
         f"{_recent_kinds_note(context)}"
         f"{_release_cadence_note(context)}"
+        f"{_config_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"
@@ -635,6 +872,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         else:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
+    plan = _calibrate_release_prediction(plan, context)
     return reconcile_plan_with_queue(plan, context, n)
 
 

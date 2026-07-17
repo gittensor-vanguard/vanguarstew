@@ -22,6 +22,17 @@ CONTEXT_FILE = ".vanguarstew_context.json"
 # imports this tuple so freeze and agent fallback stay aligned (#749 tag filtering already does).
 README_PROBE_NAMES = ("README.md", "README.rst", "README.txt", "README", "docs/README.md")
 
+# Entries that are not part of the repository's own structure and so are never surfaced as
+# repo layout: the freeze writes CONTEXT_FILE into the checkout, and the git-only fallback
+# reads a real working tree that still carries `.git`. Neither is a surface a maintainer
+# plans work in.
+_LAYOUT_EXCLUDED = frozenset({CONTEXT_FILE, ".git"})
+
+# Upper bound on how many top-level entries are surfaced. The layout is prompt context, not a
+# manifest: a pathological repo root must not crowd out the commit history the plan reasons
+# from. Real repos sit far below this (7-25 entries across the curated set).
+REPO_LAYOUT_LIMIT = 40
+
 # Issue/PR back-reference (`#123`), GitHub deep-links, and raw commit SHAs. The scored replay
 # path masks all three via ``benchmark.leakage.strip_forward_refs`` before the agent sees the
 # text; this module's git-only fallback must mirror that policy locally. We deliberately do NOT
@@ -102,12 +113,72 @@ def _git(repo_path, *args):
     return out.stdout.strip()
 
 
+def repo_layout(repo_path: str, limit: int = REPO_LAYOUT_LIMIT) -> list:
+    """The repository's real top-level entries at T, or ``[]`` when they cannot be read.
+
+    Read from the frozen checkout itself, so it is leakage-safe by construction: the tree is
+    exported at T (``benchmark/freeze.py::export_tree``) and carries nothing that happened
+    after it. Directories are marked with a trailing ``/`` so a plan can tell a tree
+    (``docs/``) from a top-level file (``NEWS``) — both are real maintainer surfaces.
+
+    The freeze artifact and `.git` are excluded (see ``_LAYOUT_EXCLUDED``); entries are sorted
+    for a deterministic prompt and capped at ``limit`` (a non-int or negative ``limit`` falls
+    back to ``REPO_LAYOUT_LIMIT`` and zero yields no entries). A missing, non-directory, or
+    unreadable ``repo_path`` degrades to "layout unknown" (``[]``) rather than raising — the
+    planner then simply omits the layout note, exactly as for a repo whose root cannot be
+    listed. This module's "degrade rather than crash on malformed frozen input" posture.
+    """
+    if not isinstance(repo_path, str) or not repo_path:
+        return []
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        limit = REPO_LAYOUT_LIMIT
+    try:
+        names = sorted(os.listdir(repo_path))
+    except (OSError, ValueError) as exc:
+        # OSError covers NotADirectoryError/FileNotFoundError/PermissionError; ValueError is
+        # raised for a path containing a NUL byte, which never reaches the OS call. The layout
+        # is optional prompt context, so log and continue without it rather than abort solve().
+        logger.warning(
+            "repo_layout: cannot list %s (%s: %s); continuing without repo layout",
+            repo_path, type(exc).__name__, exc,
+        )
+        return []
+    entries = []
+    for name in names:
+        if len(entries) >= limit:
+            break
+        if name in _LAYOUT_EXCLUDED:
+            continue
+        entries.append(f"{name}/" if os.path.isdir(os.path.join(repo_path, name)) else name)
+    return entries
+
+
+def _with_repo_layout(context, repo_path: str) -> dict:
+    """Attach the checkout's real top-level layout to a loaded context.
+
+    The layout is always *derived* from the frozen checkout, never read from the context
+    file: ``build_context`` never emits a ``repo_layout`` key, so a value present in the JSON
+    could only come from a hand-authored or tampered artifact and must not be able to feed
+    invented paths into the plan. A non-dict context is passed through untouched, matching the
+    pass-through ``context_for_agent`` already guards.
+    """
+    if not isinstance(context, dict):
+        return context
+    return {**context, "repo_layout": repo_layout(repo_path)}
+
+
 def load_context(repo_path: str) -> dict:
+    """The frozen, knowable-at-T context, plus the checkout's real top-level ``repo_layout``.
+
+    The GitHub-derived content of ``CONTEXT_FILE`` is returned as written; ``repo_layout`` is
+    derived from the checkout on every load (see :func:`_with_repo_layout`), on both the
+    frozen-file and git-fallback paths, so the plan can name paths that actually exist.
+    """
     path = os.path.join(repo_path, CONTEXT_FILE)
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                return _with_repo_layout(json.load(f), repo_path)
         except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
             # A present-but-unreadable context file must not abort solve(): fall back to
             # rebuilding the knowable-at-T context from the frozen git checkout (leakage-safe —
@@ -128,7 +199,7 @@ def load_context(repo_path: str) -> dict:
                 "load_context: %s unreadable (%s bytes, %s: %s); rebuilding from git",
                 path, size, type(exc).__name__, exc,
             )
-    return _context_from_git(repo_path)
+    return _with_repo_layout(_context_from_git(repo_path), repo_path)
 
 
 def _agent_context_list(items, field: str) -> list:
