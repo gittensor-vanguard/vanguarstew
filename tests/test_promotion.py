@@ -487,6 +487,33 @@ def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
     assert "Traceback" not in result.stderr
 
 
+def test_cli_reports_a_clean_error_for_a_broken_symlink(tmp_path):
+    # A dangling symlink raises FileNotFoundError like a missing path, but the link itself
+    # exists — only its target is gone. It must be named as a broken link, not "not found".
+    link = tmp_path / "dangling.json"
+    link.symlink_to(tmp_path / "does-not-exist.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "broken symlink" in result.stderr
+    assert "artifact not found" not in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_symlink_loop(tmp_path):
+    # A symlink loop raises OSError(ELOOP) on open(), which none of the specific arms catch; it
+    # must be named as a loop instead of leaking a raw "[Errno 40] ..." errno string. Use a
+    # mutual a -> b -> a loop (a real cycle, not just a self-referential link).
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.symlink_to(b)
+    b.symlink_to(a)
+    result = _run_cli(str(a))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "symlink loop" in result.stderr
+    assert "Errno" not in result.stderr
+
+
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
                     reason="root bypasses file permission bits")
 def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):

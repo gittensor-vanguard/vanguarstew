@@ -10,7 +10,9 @@ process exits non-zero when the promotion gate fails.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import sys
 
 from benchmark.promotion import (
@@ -25,15 +27,27 @@ from benchmark.promotion import (
 def load_artifact(path: str) -> dict:
     """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON.
 
-    Each failure mode gets its own actionable message instead of a raw errno string: the path is
-    missing, unreadable, or a directory; the file is not valid JSON; or the root value is not an
-    object. Every case exits 1 via ``SystemExit`` so the caller needs no error handling.
+    Each failure mode gets its own actionable message instead of a raw errno string: a broken
+    symlink (dangling target), a symlink loop, or a path that is missing, unreadable, or a
+    directory; the file is not valid JSON; or the root value is not an object. Every case exits 1
+    via ``SystemExit`` so the caller needs no error handling.
+
+    Broken-symlink detection runs *after* ``open`` fails (``FileNotFoundError`` +
+    ``os.path.islink``), so there is no ``exists``/``islink`` pre-check that could race with
+    ``open`` or raise on a symlink loop. Mirrors the merged ``skip_budget`` (#1813) /
+    ``margin_outlook`` (#1811) CLIs.
     """
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        print(f"artifact not found: {path}", file=sys.stderr)
+        # open() already failed; classify a dangling symlink vs a genuinely missing path.
+        # os.path.islink uses lstat (no target traversal), so it does not follow — and cannot
+        # loop on — the link, and it is only reached here, never on the ELOOP path below.
+        if os.path.islink(path):
+            print(f"artifact is a broken symlink (target does not exist): {path}", file=sys.stderr)
+        else:
+            print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(1) from None
     except PermissionError:
         print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
@@ -41,8 +55,11 @@ def load_artifact(path: str) -> dict:
     except IsADirectoryError:
         print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
         raise SystemExit(1) from None
-    except OSError:
-        print(f"cannot read artifact: {path}", file=sys.stderr)
+    except OSError as exc:
+        if getattr(exc, "errno", None) == errno.ELOOP:
+            print(f"artifact path is a symlink loop: {path}", file=sys.stderr)
+        else:
+            print(f"cannot read artifact: {path}", file=sys.stderr)
         raise SystemExit(1) from None
     except ValueError as exc:
         # json.load raises JSONDecodeError (a ValueError) for malformed JSON, and a plain
