@@ -10,8 +10,20 @@ or a leftover starter placeholder, wastes the run.
 
 1. ``min_tuned`` — at least ``min_tuned`` tuned (non-held-out) repos;
 2. ``min_held_out`` — at least ``min_held_out`` held-out repos;
-3. ``both_tiers`` — both ``recent`` and ``obscure`` tiers are represented;
+3. ``pre_llm_windows`` — every repo bounds its freeze points before ``PRE_LLM_CUTOFF``;
 4. ``no_placeholder_sources`` — no starter ``OWNER/...`` placeholder URLs remain.
+
+``both_tiers`` (both ``recent`` and ``obscure`` tiers represented) was check 3 until 2026-07-16.
+It encoded the recent+obscure hedge: "recent" freeze windows sit past a model's training cutoff so
+the outcome cannot have been memorized. Two findings retired it. First, the hedge's premise did not
+hold — a leakage probe asked the scoring model to recall the commits following a known commit and it
+declined for every repo tested, *including* ``pallets/flask`` and ``psf/requests``; commit-sequence
+recall is not a realistic vector for famous or obscure repos alike, so "recent" was guarding a door
+that was not open (and the model knows the *content* of obscure repos regardless, so obscurity never
+bought memorization protection either). Second, "recent" is now actively harmful: a post-cutoff
+window is by definition the LLM-assisted era, so its ground truth is partly LLM-written — and
+"predict what the maintainer did next" is circular when an LLM did it. ``pre_llm_windows`` replaces
+it with the invariant the set is now built on, so a recent-window repo cannot quietly reappear.
 
 The companion ``scripts/repo_set_readiness.py`` exits non-zero when the set is not ready.
 
@@ -23,12 +35,16 @@ from __future__ import annotations
 
 import logging
 
-from benchmark.repo_set import TIERS, RepoSetError, is_placeholder_source, validate_repo_set
+from benchmark.repo_set import RepoSetError, is_placeholder_source, validate_repo_set
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_TUNED = 2
 DEFAULT_MIN_HELD_OUT = 1
+# Freeze points must land before widespread LLM-assisted development, so the "next maintainer
+# actions" a replay scores against are human decisions rather than an LLM's — otherwise the task
+# is circular. A window with no `before` bound samples all of history, including the LLM era.
+PRE_LLM_CUTOFF = "2021-01-01"
 
 
 def _check_rows_list(checks) -> list[dict]:
@@ -96,11 +112,14 @@ def check_readiness(config, min_tuned: int = DEFAULT_MIN_TUNED,
     add("min_held_out", n_held_out >= min_held_out,
         f"{n_held_out} held-out repo(s) >= min_held_out {min_held_out}")
 
-    tiers_present = {entry.tier for entry in repo_set.entries}
-    missing_tiers = sorted(set(TIERS) - tiers_present)
-    add("both_tiers", not missing_tiers,
-        f"tiers present: {sorted(tiers_present)}" if not missing_tiers
-        else f"missing tier(s): {missing_tiers}")
+    late = sorted(
+        entry.name for entry in repo_set.entries
+        if not isinstance((entry.freeze_window or {}).get("before"), str)
+        or (entry.freeze_window or {}).get("before", "") > PRE_LLM_CUTOFF
+    )
+    add("pre_llm_windows", not late,
+        f"all freeze windows bounded before {PRE_LLM_CUTOFF}" if not late
+        else f"repo(s) sampling LLM-era history (no/late `before` bound): {late}")
 
     placeholders = [entry.name for entry in repo_set.entries if is_placeholder_source(entry.source)]
     add("no_placeholder_sources", not placeholders,

@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -17,6 +19,7 @@ from benchmark.repeatability import (  # noqa: E402
     assess_repeatability,
     repeatability_headline,
 )
+from scripts import repeatability as repeatability_cli  # noqa: E402
 
 
 def _run(score):
@@ -305,6 +308,7 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     result = _run_cli(str(missing))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+    assert "artifact not found" in result.stderr
     assert str(missing) in result.stderr
 
 
@@ -325,6 +329,54 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     result = _run_cli(str(path))
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    result = _run_cli(str(tmp_path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "directory" in result.stderr
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        repeatability_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        repeatability_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_generic_oserror_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise OSError("disk offline")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        repeatability_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err
+    assert "disk offline" in err
+    assert "Traceback" not in err
 
 
 def test_cli_still_reports_stable_for_well_formed_artifacts(tmp_path):

@@ -289,6 +289,65 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
     assert "CONSISTENT" in proc.stderr
 
 
+# --- bad artifact paths get an actionable message, never a raw errno or a traceback ----------
+# Each failure mode is exercised end-to-end through the real CLI process, so the exit code and
+# the stderr the user actually sees are both covered.
+
+
+def _run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.judge_report_integrity", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_missing_file_reports_clean_error(tmp_path):
+    proc = _run_cli(str(tmp_path / "does-not-exist.json"))
+    assert proc.returncode == 1
+    assert "artifact not found" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    proc = _run_cli(str(tmp_path))
+    assert proc.returncode == 1
+    assert "artifact path is a directory, not a file" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root bypasses file permission bits")
+def test_cli_unreadable_file_reports_clean_error(tmp_path):
+    locked = tmp_path / "locked.json"
+    locked.write_text(json.dumps(_artifact()), encoding="utf-8")
+    locked.chmod(0o000)
+    try:
+        proc = _run_cli(str(locked))
+    finally:
+        locked.chmod(0o600)
+    assert proc.returncode == 1
+    assert "not readable" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_invalid_json_reports_clean_error(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text("{not json", encoding="utf-8")
+    proc = _run_cli(str(path))
+    assert proc.returncode == 1
+    assert "not valid JSON" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_non_object_json_reports_clean_error(tmp_path):
+    path = tmp_path / "list.json"
+    path.write_text("[1, 2]", encoding="utf-8")
+    proc = _run_cli(str(path))
+    assert proc.returncode == 1
+    assert "must be a JSON object" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
 # --- #783: checks row sanitization for judge report integrity headlines -----------------
 
 _MALFORMED_CHECKS = [

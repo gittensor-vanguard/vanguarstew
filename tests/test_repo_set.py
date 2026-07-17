@@ -49,9 +49,13 @@ def test_shipped_example_config_loads_and_is_wellformed():
     assert len(rs) >= 2
     assert len(rs.names()) == len(set(rs.names()))            # unique names
     assert all(e.tier in ("recent", "obscure") for e in rs)
-    # a leakage-safe set is a mix and reserves held-out repos for generalization
+    # a leakage-safe set reserves held-out repos for generalization, and (since 2026-07-16)
+    # is all-obscure with pre-2021 windows: obscurity defends memorization, and a pre-LLM
+    # bound keeps the predicted maintainer decisions human. `recent` remains a legal tier
+    # value, but the set no longer requires one (see repo_set_readiness.pre_llm_windows).
     assert rs.held_out() and rs.tuned()
-    assert rs.by_tier("recent") and rs.by_tier("obscure")
+    assert rs.by_tier("obscure")
+    assert all(e.freeze_window.get("before", "") <= "2021-01-01" for e in rs)
 
 
 def test_strict_top_level_validation():
@@ -245,7 +249,11 @@ def test_curated_config_loads_and_has_real_sources():
     assert all(not is_placeholder_source(e.source) for e in rs)
     assert all(e.source.startswith("https://github.com/") for e in rs)
     assert rs.tuned() and rs.held_out()
-    assert rs.by_tier("recent") and rs.by_tier("obscure")
+    # The set is deliberately all-obscure since 2026-07-16: memorization is defended by
+    # obscurity, and every freeze window is bounded pre-2021 so the ground truth is human
+    # (see benchmark/repo_set_readiness.py's pre_llm_windows check, which replaced both_tiers).
+    assert rs.by_tier("obscure")
+    assert all(e.freeze_window.get("before", "") <= "2021-01-01" for e in rs)
 
 
 def test_partition_and_replay_kwargs():
