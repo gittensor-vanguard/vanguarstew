@@ -18,6 +18,8 @@ from benchmark.regression import (  # noqa: E402
     _artifact_error,
     _check_rows_list,
     _headline_source,
+    _is_number,
+    _round,
     check_regression,
     failed_checks,
     regression_headline,
@@ -337,6 +339,14 @@ def test_headline_reports_ok_and_blocked():
     assert "BLOCKED" in blocked and "no_composite_regression" in blocked
     assert regression_headline({}) == "regression: no checks evaluated"
     assert DEFAULT_MAX_COMPOSITE_DROP == 0.02
+
+
+def test_is_number_and_round_reject_non_finite_and_oversized_int():
+    assert _is_number(0.5) is True
+    assert _round(1.2346) == 1.235
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400, True, False, "0.5", None):
+        assert _is_number(bad) is False, bad
+        assert _round(bad) is None, bad
 
 
 def test_disagreement_increase_exactly_at_bound_passes():

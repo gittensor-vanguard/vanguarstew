@@ -46,20 +46,40 @@ def _round(value):
     return round(float(value), 3) if _is_number(value) else None
 
 
-def _components(artifact) -> dict:
-    """The judge and objective component means behind an artifact's headline score.
+_EMPTY_COMPONENTS = {
+    "judge_mean": None,
+    "objective_mean": None,
+    "module_recall_mean": None,
+    "kind_recall_mean": None,
+    "release_accuracy": None,
+}
 
-    Reads ``composite_parts`` from the headline partition — the top level for single/multi-repo
-    artifacts, or ``tuned`` for a ``--generalization`` artifact — so a leaderboard row can show
-    *why* an entry ranks where it does. Missing/malformed parts yield ``None`` components.
+
+def _components(artifact) -> dict:
+    """The judge/objective component means, plus the M7 foresight breakdown, behind an
+    artifact's headline score.
+
+    Reads ``composite_parts`` and ``foresight`` from the headline partition — the top level for
+    single/multi-repo artifacts, or ``tuned`` for a ``--generalization`` artifact — so a
+    leaderboard row can show *why* an entry ranks where it does: not just the blended
+    ``objective_mean``, but whether that came from getting the modules, the commit-kinds, or the
+    releases right. Missing/malformed parts yield ``None`` components; an artifact saved before
+    the foresight breakdown existed degrades the same way.
     """
     if not isinstance(artifact, dict):
-        return {"judge_mean": None, "objective_mean": None}
+        return dict(_EMPTY_COMPONENTS)
     partition = artifact
     if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
         partition = artifact["tuned"]
     parts = partition.get("composite_parts") if isinstance(partition.get("composite_parts"), dict) else {}
-    return {"judge_mean": _round(parts.get("judge_mean")), "objective_mean": _round(parts.get("objective_mean"))}
+    foresight = partition.get("foresight") if isinstance(partition.get("foresight"), dict) else {}
+    return {
+        "judge_mean": _round(parts.get("judge_mean")),
+        "objective_mean": _round(parts.get("objective_mean")),
+        "module_recall_mean": _round(foresight.get("module_recall_mean")),
+        "kind_recall_mean": _round(foresight.get("kind_recall_mean")),
+        "release_accuracy": _round(foresight.get("release_accuracy")),
+    }
 
 
 def _leaderboard_entries(entries) -> list:
@@ -103,10 +123,13 @@ def rank(entries) -> dict:
 
     Returns a stable summary:
 
-    - ``ranking``: ``{rank, label, composite_mean, delta_from_best}`` for every *scored* entry,
-      highest score first. ``rank`` is competition-ranked (ties share a rank); ``delta_from_best``
-      is ``composite_mean - best`` (``0.0`` for the leader, negative for the rest). Ties keep the
-      input order.
+    - ``ranking``: ``{rank, label, composite_mean, delta_from_best, judge_mean, objective_mean,
+      module_recall_mean, kind_recall_mean, release_accuracy}`` for every *scored* entry, highest
+      score first. ``rank`` is competition-ranked (ties share a rank); ``delta_from_best`` is
+      ``composite_mean - best`` (``0.0`` for the leader, negative for the rest). Ties keep the
+      input order. The last three fields are the M7 foresight breakdown (see ``_components``) —
+      the legible, independently-checkable axes behind ``objective_mean``, ``None`` when an axis
+      had no applicable tasks or the artifact predates the breakdown.
     - ``best``: ``{label, composite_mean}`` of the top entry, or ``None`` if nothing scored.
     - ``unscored``: labels of entries with no usable score (never ranked).
     - ``scored`` / ``total``: how many entries carried a usable score, and how many were given.
@@ -143,6 +166,9 @@ def rank(entries) -> dict:
             "delta_from_best": _round(score - best_score),
             "judge_mean": components["judge_mean"],
             "objective_mean": components["objective_mean"],
+            "module_recall_mean": components["module_recall_mean"],
+            "kind_recall_mean": components["kind_recall_mean"],
+            "release_accuracy": components["release_accuracy"],
         })
 
     return {

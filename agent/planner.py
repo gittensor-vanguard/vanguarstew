@@ -97,6 +97,11 @@ _CC_TYPE_TO_PLAN_KIND = {
 # the anchor classifies them. The body regex matches benchmark/score.py `_RELEASE_TAG_SUBJECT`.
 _RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
 _RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
+# Explicit release wording anywhere in a subject. Mirrors benchmark/score.py `_RELEASE_KW` so the
+# release backstop recognizes a release-titled plan item (`Cut the 1.0 release`, `bump version`)
+# the same way the objective anchor's `is_release_subject` does — a title-shaped release the
+# `_commit_plan_kind` (Conventional-Commit-prefix only) check alone would miss (#1561 follow-up).
+_RELEASE_KW_RE = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
 
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
@@ -296,6 +301,72 @@ def _release_cadence_note(context: dict) -> str:
     if not _release_cadence_signal(context):
         return ""
     return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+
+
+def _is_release_subject(text) -> bool:
+    """Planner-local mirror of benchmark/score.py ``is_release_subject`` (``agent/`` must not import
+    ``benchmark/``). True only for a genuine release/version cut:
+
+    - a version-cut body under a **release-tooling** CC type (``chore``/``build`` only) —
+      ``chore(release): 1.4.0``; or
+    - explicit release wording anywhere (``release``, ``changelog``, ``bump version``); or
+    - a subject leading with a version tag (``v1.2.0``, ``Release 1.2.0``).
+
+    A version under any **non-tooling** CC prefix is NOT a cut (``fix: 2.0.0``, ``ci: 3.0.0``) —
+    the prefix is authoritative there — matching the anchor so the backstop gates exactly what the
+    anchor would score as a release prediction. A non-string title never raises.
+    """
+    if not isinstance(text, str):
+        return False
+    m = _CC_PREFIX_RE.match(text)
+    if m:
+        cc_type = m.group(1).lower()
+        mapped = _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+        if mapped and mapped != "release":
+            # A recognized non-release prefix is authoritative unless it is release tooling.
+            if cc_type not in _RELEASE_TOOLING_TYPES:
+                return False
+            body = text[m.end():].lstrip(" :\t")
+            return bool(_RELEASE_CUT_BODY_RE.match(body))
+    return bool(_RELEASE_KW_RE.search(text) or _RELEASE_CUT_BODY_RE.match(text))
+
+
+def _is_planned_release(item) -> bool:
+    """True when a normalized plan item predicts a release cut.
+
+    Mirrors the objective anchor's ``release_predicted`` (benchmark/score.py): an item counts as a
+    release prediction if its ``kind`` is ``release`` OR its ``title`` reads as a release/version
+    cut. Both halves use the planner's own vocabulary (``agent/`` must not import ``benchmark/``):
+    the title half is :func:`_is_release_subject`, a full mirror of the anchor's
+    ``is_release_subject`` — so a release-*titled* item under a non-release ``kind`` is gated too,
+    not just ``kind == "release"`` (#1561 follow-up: openclaw task2 slipped the kind-only check).
+    """
+    if not isinstance(item, dict):
+        return False
+    kind = item.get("kind")
+    if isinstance(kind, str) and kind.strip().lower() == "release":
+        return True
+    return _is_release_subject(item.get("title"))
+
+
+def _calibrate_release_prediction(plan: list, context: dict) -> list:
+    """Drop a spuriously-planned release item when recent history shows no release cadence (#1561).
+
+    ``RELEASE_CADENCE_GUIDANCE`` is only injected when a release cut is evidenced, but on
+    fast-moving repos the model still tends to add a ``release`` item on its own — absorbing "this
+    project releases constantly" from the philosophy read and predicting a version cut the revealed
+    window does not contain. When there is no release-cadence evidence in recent history, a release
+    prediction is unsupported, so it is removed and the plan reflects the work actually likely next;
+    when cadence IS evidenced the plan is returned unchanged. Runs BEFORE queue reconciliation so a
+    genuine release *PR* already open (real evidence a cut is imminent) is still merged back in.
+
+    A wrong item costs the objective anchor as much as a missed one, and a release the window does
+    not contain matches nothing, so dropping it removes a guaranteed non-match rather than a
+    potential hit.
+    """
+    if _release_cadence_signal(context):
+        return plan
+    return [item for item in plan if not _is_planned_release(item)]
 
 
 def _is_automation_subject(subject) -> bool:
@@ -801,6 +872,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         else:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
+    plan = _calibrate_release_prediction(plan, context)
     return reconcile_plan_with_queue(plan, context, n)
 
 
