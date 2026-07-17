@@ -364,6 +364,7 @@ def test_release_context_note_empty_when_no_releases():
 def test_is_planning_request():
     assert _is_planning_request("plan the next 5 maintainer actions") is True
     assert _is_planning_request("Plan The Next 3 actions") is True
+    assert _is_planning_request("plan the maintainer actions for the next 90 days") is True
     assert _is_planning_request("review PR #1") is False
     assert _is_planning_request(None) is False
 
@@ -372,6 +373,10 @@ def test_planning_version_bump_note_on_planning_request_with_tags():
     ctx = {"releases": [{"tag": "v1.2.0"}], "recent_commits": [{"subject": "fix: a"}]}
     note = _planning_version_bump_note(ctx, "plan the next 5 maintainer actions")
     assert "version_bump" in note
+    horizon_note = _planning_version_bump_note(
+        ctx, "plan the maintainer actions for the next 90 days"
+    )
+    assert "version_bump" in horizon_note
     assert _planning_version_bump_note(ctx, "merge PR #9") == ""
     assert _planning_version_bump_note({}, "plan the next 5 maintainer actions") == ""
 

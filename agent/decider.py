@@ -260,7 +260,12 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
 
 
 def _is_planning_request(request: str) -> bool:
-    return isinstance(request, str) and "plan the next" in request.lower()
+    if not isinstance(request, str):
+        return False
+    text = request.lower()
+    return "plan the next" in text or (
+        text.startswith("plan the ") and " for the next " in text
+    )
 
 
 def _planning_version_bump_note(context: dict, request: str) -> str:
