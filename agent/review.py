@@ -18,8 +18,17 @@ logger = logging.getLogger(__name__)
 SYSTEM = (
     "You are an experienced repository maintainer reviewing a pull request. Assess it on the "
     "project's rubric, in priority order: (1) correctness and tests, (2) scope fit — does it "
-    "address a referenced issue without unrelated churn, (3) quality and clarity. Be specific, "
-    "and decisive about the action. Respond ONLY with JSON."
+    "address a referenced issue without unrelated churn, (3) non-redundancy — does it duplicate "
+    "existing analysis over the same data shape rather than extending what is already there, "
+    "(4) quality and clarity. Be specific, and decisive about the action. Respond ONLY with JSON."
+)
+
+# Prompt fragment for the High Non-redundancy rubric axis (#1753). Kept as a named constant so
+# tests can lock inclusion without parsing the full LLM user message.
+NON_REDUNDANCY_GUIDANCE = (
+    "Non-redundancy is a High rubric axis: request-changes or reject when the diff re-derives a "
+    "helper, metric, or report that already exists over the same data shape — prefer extending "
+    "or parametrizing the existing code. Flag that finding in concerns and recommendation."
 )
 
 ACTIONS = ["merge", "request-changes", "reject", "comment"]
@@ -47,6 +56,21 @@ _ACTION_SYNONYMS = {
     "abstain": "comment",
     "hold": "comment",
 }
+
+# Phrases the model (or guidance) uses when flagging REVIEW.md Non-redundancy. If any appear
+# in concerns/recommendation while action is still merge, post-processing downgrades the action.
+_NON_REDUNDANCY_MARKERS = (
+    "non-redundancy",
+    "non redundancy",
+    "redundant",
+    "redundancy",
+    "re-deriv",
+    "rederiv",
+    "same data shape",
+    "conceptual duplication",
+    "duplicate existing",
+    "duplicates existing",
+)
 
 
 def _normalize_review_action(action) -> str:
@@ -120,11 +144,36 @@ def _normalize_concerns(value) -> list:
     return []
 
 
+def _flags_non_redundancy(concerns: list, recommendation: str) -> bool:
+    """True when concerns/recommendation name a Non-redundancy finding."""
+    parts = [c for c in concerns if isinstance(c, str)]
+    if isinstance(recommendation, str) and recommendation:
+        parts.append(recommendation)
+    blob = " ".join(parts).lower()
+    return any(marker in blob for marker in _NON_REDUNDANCY_MARKERS)
+
+
+def _enforce_non_redundancy(review: dict) -> dict:
+    """Block merge when the model already flagged Non-redundancy but still said merge.
+
+    Prompt guidance alone is not enough — an LLM can emit concerns about re-deriving an
+    existing helper while still returning action=merge. Downgrade to request-changes so the
+    High Non-redundancy axis cannot be silently ignored (#1753 / #1754 review).
+    """
+    if review.get("action") != "merge":
+        return review
+    if not _flags_non_redundancy(review.get("concerns") or [], review.get("recommendation") or ""):
+        return review
+    out = dict(review)
+    out["action"] = "request-changes"
+    return out
+
+
 def _normalize_review(out: dict, stub: dict) -> dict:
     """Map an LLM review object onto the documented field types."""
     if not isinstance(out, dict):
         return dict(stub)
-    return {
+    normalized = {
         "action": _normalize_review_action(out.get("action")),
         "value_label": _normalize_value_label(out.get("value_label")),
         "scope_ok": _normalize_bool(out.get("scope_ok"), stub["scope_ok"]),
@@ -133,6 +182,7 @@ def _normalize_review(out: dict, stub: dict) -> dict:
         "concerns": _normalize_concerns(out.get("concerns")),
         "recommendation": _normalize_text(out.get("recommendation"), ""),
     }
+    return _enforce_non_redundancy(normalized)
 
 
 def _pr_number(pr: dict):
@@ -190,6 +240,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
         + f"changed files: {', '.join(files[:30])}\n\n"
         + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n\n"
+        + f"{NON_REDUNDANCY_GUIDANCE}\n\n"
         + "Return JSON with keys:\n"
         + f'  "action": one of {ACTIONS},\n'
         + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
@@ -198,7 +249,8 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
         + '  "tests_present": boolean — does it add or update tests,\n'
         + '  "summary": one sentence on what the PR does,\n'
-        + '  "concerns": list of specific, actionable concerns (empty list if none),\n'
+        + '  "concerns": list of specific, actionable concerns (empty list if none) — include '
+        + "non-redundancy findings when the PR re-derives existing analysis,\n"
         + '  "recommendation": one or two sentences of advice to the maintainer.'
     )
     stub = {
