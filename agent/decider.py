@@ -241,13 +241,14 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     if not isinstance(out, dict):
         out = dict(stub)
     out["action"] = _normalize_action(out.get("action"))
-    # A planning request ("plan the next N maintainer actions") asks for a plan — it is never a
+    # A planning request (commit-horizon "plan the next N …" or time-horizon
+    # "plan the maintainer actions for the next N days") asks for a plan — it is never a
     # code contribution to accept or reject. The action list still offers "reject", so the LLM
     # sometimes reads a repo's "only merges code changes" philosophy as grounds to reject the
     # planning request itself as out-of-scope (observed on openclaw/openclaw #1562, while the
-    # identical request returned "plan" on entrius/gittensor). Coerce that back to "plan":
-    # the requested plan already exists in the `plan` field; the decision is not a merge/close
-    # verdict on a contribution.
+    # identical request returned "plan" on entrius/gittensor; time-horizon wording must match
+    # too — #1768). Coerce that back to "plan": the requested plan already exists in the `plan`
+    # field; the decision is not a merge/close verdict on a contribution.
     if _is_planning_request(request) and out["action"] == "reject":
         logger.debug("decide: a planning request cannot be rejected as out-of-scope; using 'plan'")
         out["action"] = "plan"
@@ -260,7 +261,21 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
 
 
 def _is_planning_request(request: str) -> bool:
-    return isinstance(request, str) and "plan the next" in request.lower()
+    """True for either runner planning template (commit-horizon or time-horizon).
+
+    Commit-horizon: ``plan the next {N} maintainer actions``.
+    Time-horizon: ``plan the maintainer actions for the next {days} days``.
+    The latter does not contain the contiguous substring ``plan the next``, so a
+    naive match would skip the reject→plan coerce and the planning version_bump note
+    on every curated ``horizon_days`` replay.
+    """
+    if not isinstance(request, str):
+        return False
+    text = request.lower()
+    return (
+        "plan the next" in text
+        or "plan the maintainer actions for the next" in text
+    )
 
 
 def _planning_version_bump_note(context: dict, request: str) -> str:

@@ -197,6 +197,15 @@ def test_planning_request_is_never_rejected_as_out_of_scope():
     assert "out of scope" in out["rationale"]
 
 
+def test_time_horizon_planning_request_is_never_rejected_as_out_of_scope():
+    # #1768: runner's horizon_days wording ("plan the maintainer actions for the next N days")
+    # must get the same reject→plan coerce as the commit-horizon template. Matching only
+    # "plan the next" leaves every curated time-horizon replay unprotected.
+    out = decide({}, {}, "plan the maintainer actions for the next 90 days", _RejectingLLM())
+    assert out["action"] == "plan"
+    assert "out of scope" in out["rationale"]
+
+
 def test_non_planning_request_may_still_be_rejected():
     # The coercion is scoped to planning requests only — a real reject verdict on a concrete
     # contribution review must survive.
@@ -364,6 +373,9 @@ def test_release_context_note_empty_when_no_releases():
 def test_is_planning_request():
     assert _is_planning_request("plan the next 5 maintainer actions") is True
     assert _is_planning_request("Plan The Next 3 actions") is True
+    # runner time-horizon template (horizon_days) — must match despite lacking "plan the next"
+    assert _is_planning_request("plan the maintainer actions for the next 90 days") is True
+    assert _is_planning_request("Plan the Maintainer Actions for the Next 14 days") is True
     assert _is_planning_request("review PR #1") is False
     assert _is_planning_request(None) is False
 
@@ -374,6 +386,10 @@ def test_planning_version_bump_note_on_planning_request_with_tags():
     assert "version_bump" in note
     assert _planning_version_bump_note(ctx, "merge PR #9") == ""
     assert _planning_version_bump_note({}, "plan the next 5 maintainer actions") == ""
+    # time-horizon wording must also surface the bump note (#1768)
+    assert "version_bump" in _planning_version_bump_note(
+        ctx, "plan the maintainer actions for the next 90 days",
+    )
 
 
 def test_planning_version_bump_note_on_cadence_without_tags():
