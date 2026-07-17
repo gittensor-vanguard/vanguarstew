@@ -1,1 +1,42 @@
-[]
+[
+  {
+    "timestamp": "2026-07-17T12:59:29.032666+00:00",
+    "pr_number": 1772,
+    "band": "xl",
+    "label": "perf:xl",
+    "public": {
+      "composite_delta": 0.206,
+      "per_repo": [
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.037
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.417
+        },
+        {
+          "repo": "https://github.com/hgrecco/pint",
+          "composite_delta": 0.164
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.22
+    },
+    "since_anchor": {
+      "anchor": "v0.7.0",
+      "public": {
+        "composite_delta": 0.27,
+        "composite_score": 0.945,
+        "anchor_score": 0.675
+      },
+      "private": {
+        "composite_delta": 0.274,
+        "composite_score": 0.875,
+        "anchor_score": 0.601
+      }
+    },
+    "merged": true
+  }
+]
