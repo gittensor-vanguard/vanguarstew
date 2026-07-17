@@ -173,6 +173,19 @@ def test_held_out_repo_count_falls_back_to_per_repo_length():
     assert result["passed"] is True
 
 
+def test_held_out_repo_fallback_excludes_skipped_zero_task_repos():
+    # A held-out repo skipped for having zero tasks (too small for the horizon, etc.) must not
+    # be counted as having scored -- only 1 of 4 entries here actually scored.
+    result = check_generalization({
+        "tuned": {"composite_mean": 0.68, "scored_repos": 3,
+                  "per_repo": [{"tasks": 5}, {"tasks": 5}, {"tasks": 5}]},
+        "held_out": {"composite_mean": 0.63,
+                     "per_repo": [{"tasks": 5}, {"tasks": 0}, {"tasks": 0}, {"tasks": 0}]},
+    }, min_held_out_repos=3)
+    assert result["held_out_repos"] == 1
+    assert result["passed"] is False
+
+
 def test_thresholds_are_configurable():
     run = _gen(0.70, 0.62, held_repos=3)                  # gap 0.08
     assert check_generalization(run, max_gap=0.1, min_held_out_repos=3)["passed"] is True
