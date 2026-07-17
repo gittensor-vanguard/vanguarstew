@@ -1,5 +1,6 @@
 """Tests for composite spread summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import sys
@@ -89,8 +90,9 @@ def test_cli(tmp_artifact, capsys):
 
 
 def test_cli_missing_file(tmp_path, capsys):
+    # A missing path now names the real reason instead of the generic "cannot read artifact".
     assert cli.run([str(tmp_path / "missing.json")]) == 2
-    assert "cannot read artifact" in capsys.readouterr().err
+    assert "artifact not found" in capsys.readouterr().err
 
 
 def test_cli_invalid_json(tmp_path, capsys):
@@ -109,4 +111,85 @@ def test_cli_non_object_artifact(tmp_path, capsys):
 
 def test_cli_unreadable_path_is_handled(tmp_path, capsys):
     assert cli.run([str(tmp_path)]) == 2
-    assert "cannot read artifact" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert ("directory, not a file" in err) or ("not readable" in err)   # POSIX / Windows
+
+
+# --- path errors get a specific, actionable message -- never a raw errno string ---------------
+
+
+def test_cli_directory_path_reports_the_specific_reason(tmp_path, capsys):
+    # POSIX: IsADirectoryError -> "directory ... not a file".
+    # Windows: PermissionError -> "not readable" (directory permission error).
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "Errno" not in err
+    if os.name == "nt":
+        assert err == f"artifact is not readable (check file permissions): {tmp_path}\n"
+    else:
+        assert err == f"artifact path is a directory, not a file: {tmp_path}\n"
+
+
+def test_cli_missing_file_reports_not_found(tmp_path, capsys):
+    missing = tmp_path / "nope.json"
+    assert cli.run([str(missing)]) == 2
+    err = capsys.readouterr().err
+    assert "Errno" not in err
+    assert err == f"artifact not found: {missing}\n"
+
+
+def test_cli_broken_symlink_reports_the_dangling_target(tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError just like a missing path; islink() separates
+    # them so the message names the real problem (the link exists, its target does not).
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX permission bits are not enforced on Windows; root bypasses them too",
+)
+def test_cli_unreadable_file_reports_a_permission_hint(tmp_path, capsys):
+    path = tmp_path / "artifact.json"
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0)
+    try:
+        assert cli.run([str(path)]) == 2
+    finally:
+        os.chmod(path, 0o644)
+    assert capsys.readouterr().err == (
+        f"artifact is not readable (check file permissions): {path}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_reports_a_loop(monkeypatch, tmp_path, capsys):
+    # A symlink loop surfaces as a bare OSError(ELOOP), not one of the named subclasses.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_load_artifact_other_oserror_keeps_the_generic_message(monkeypatch, tmp_path, capsys):
+    # A non-ELOOP OSError with no dedicated arm still reports the underlying text.
+    path = str(tmp_path / "run.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err.startswith(f"cannot read artifact ({path}):")
