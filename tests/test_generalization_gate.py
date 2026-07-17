@@ -1,6 +1,7 @@
 """Tests for the generalization gate (deterministic, offline)."""
 
 import copy
+import errno
 import os
 import subprocess
 import sys
@@ -398,3 +399,40 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err
     assert "Traceback" not in err
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.generalization_gate", str(link)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert proc.stderr == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
