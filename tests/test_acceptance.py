@@ -434,6 +434,40 @@ def test_cli_directory_path_reports_clean_error(tmp_path):
     assert "directory" in result.stderr
 
 
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    # A dangling symlink raises FileNotFoundError; islink() distinguishes it so the message
+    # blames the missing target, not the (present) path.
+    link = tmp_path / "link.json"
+    link.symlink_to(tmp_path / "gone.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 1
+    assert "broken symlink" in result.stderr
+    assert "Traceback" not in result.stderr and "Errno" not in result.stderr
+
+
+def test_cli_symlink_loop_reports_clean_error(tmp_path):
+    # A self-referential symlink raises OSError(ELOOP), which the catch-all names distinctly
+    # rather than letting it escape as a raw traceback.
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    result = _run_cli(str(loop))
+    assert result.returncode == 1
+    assert "symlink loop" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_load_artifact_not_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(20, "Not a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        acceptance_cli.load_artifact(str(tmp_path / "a" / "gen.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "a parent component is not a directory" in err and "Traceback" not in err
+
+
 def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
     def _raise(*args, **kwargs):
         raise IsADirectoryError(21, "Is a directory")
