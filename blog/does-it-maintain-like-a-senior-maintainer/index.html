@@ -119,9 +119,9 @@
   /* vanguarstew-cursor-glow-v070 */
   #cursorglow{position:fixed; top:0; left:0; width:560px; height:560px; margin:-280px 0 0 -280px;
     border-radius:50%; pointer-events:none; z-index:0; opacity:0; transition:opacity .6s ease;
-    background:radial-gradient(circle, rgba(207,169,84,.15), rgba(207,169,84,.05) 40%, transparent 68%);
+    background:radial-gradient(circle, rgba(207,169,84,.21), rgba(207,169,84,.08) 42%, transparent 72%);
     filter:blur(32px); will-change:transform}
-  #cursorglow.on{opacity:.6}
+  #cursorglow.on{opacity:.8}
   @media(prefers-reduced-motion:reduce){ #cursorglow{display:none} }
 </style>
 </head>
@@ -294,7 +294,7 @@
     if(!raf) raf=requestAnimationFrame(loop);
   }, {passive:true});
   function loop(){
-    cx+=(tx-cx)*0.09; cy+=(ty-cy)*0.09;
+    cx+=(tx-cx)*0.05; cy+=(ty-cy)*0.05;
     g.style.transform='translate('+cx+'px,'+cy+'px)';
     if(Math.abs(tx-cx)>0.4 || Math.abs(ty-cy)>0.4){ raf=requestAnimationFrame(loop); } else { raf=null; }
   }
