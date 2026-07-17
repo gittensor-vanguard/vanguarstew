@@ -1,0 +1,1197 @@
+[
+  {
+    "timestamp": "2026-07-10T09:24:53.447705+00:00",
+    "pr_number": 1351,
+    "band": "s",
+    "label": "perf:s",
+    "public": {
+      "composite_delta": 0.028,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.017
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.1
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.05
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.0,
+        "composite_score": 0.717,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.056,
+        "composite_score": 0.7,
+        "anchor_score": 0.644
+      }
+    }
+  },
+  {
+    "timestamp": "2026-07-10T21:27:22.240246+00:00",
+    "pr_number": 1388,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.011,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.034
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.0
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.024
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": -0.022,
+        "composite_score": 0.695,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": -0.027,
+        "composite_score": 0.617,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-11T09:27:21.816254+00:00",
+    "pr_number": 1415,
+    "band": "none",
+    "label": null,
+    "public": {
+      "composite_delta": 0.01,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.134
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.066
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.1
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.078
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": -0.023,
+        "composite_score": 0.694,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.084,
+        "composite_score": 0.728,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": true
+  },
+  {
+    "timestamp": "2026-07-11T09:42:13.376016+00:00",
+    "pr_number": 1431,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.068,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.12
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.017
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.1
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.003
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.0,
+        "composite_score": 0.717,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.009,
+        "composite_score": 0.653,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-11T15:37:37.502385+00:00",
+    "pr_number": 1442,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.005,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.014
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.0
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.017
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": -0.078,
+        "composite_score": 0.639,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.034,
+        "composite_score": 0.678,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-11T18:11:33.975601+00:00",
+    "pr_number": 1384,
+    "band": "l",
+    "label": "perf:l",
+    "public": {
+      "composite_delta": 0.1,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.052
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.15
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.2
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.148
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.094,
+        "composite_score": 0.811,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.171,
+        "composite_score": 0.815,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": true
+  },
+  {
+    "timestamp": "2026-07-12T03:23:52.059331+00:00",
+    "pr_number": 1495,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.086,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.234
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.025
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.071
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.011,
+        "composite_score": 0.728,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.254,
+        "composite_score": 0.898,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-12T15:28:12.662252+00:00",
+    "pr_number": 1532,
+    "band": "m",
+    "label": "perf:m",
+    "public": {
+      "composite_delta": 0.044,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.017
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.131
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.122,
+        "composite_score": 0.839,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.282,
+        "composite_score": 0.926,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": true
+  },
+  {
+    "timestamp": "2026-07-12T15:42:19.369805+00:00",
+    "pr_number": 1534,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.053,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.033
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.125
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.051
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.097,
+        "composite_score": 0.814,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.157,
+        "composite_score": 0.801,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-12T15:58:45.966769+00:00",
+    "pr_number": 1538,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.022,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.027
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.067
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.025
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.175
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.144,
+        "composite_score": 0.861,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.029,
+        "composite_score": 0.673,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-13T09:16:47.690623+00:00",
+    "pr_number": 1560,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.067,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.05
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.087
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.139,
+        "composite_score": 0.856,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.162,
+        "composite_score": 0.806,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-13T21:14:37.976368+00:00",
+    "pr_number": 1566,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.033,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.1
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.175
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.175
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.077
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.064,
+        "composite_score": 0.781,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.24,
+        "composite_score": 0.884,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-13T21:25:12.513290+00:00",
+    "pr_number": 1570,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.033,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.075
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.025
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.063
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.122,
+        "composite_score": 0.839,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.258,
+        "composite_score": 0.902,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-13T21:49:58.614187+00:00",
+    "pr_number": 1581,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.049,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.051
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.075
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.125
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.018
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.0,
+        "composite_score": 0.717,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.205,
+        "composite_score": 0.849,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T12:41:30.899446+00:00",
+    "pr_number": 1609,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.059,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.175
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.052
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.092,
+        "composite_score": 0.809,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.243,
+        "composite_score": 0.887,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T12:53:09.353926+00:00",
+    "pr_number": 1615,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.025,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.1
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.175
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.109
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.092,
+        "composite_score": 0.809,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.25,
+        "composite_score": 0.894,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T13:06:08.900848+00:00",
+    "pr_number": 1620,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.017,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.05
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.012
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.134,
+        "composite_score": 0.851,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.235,
+        "composite_score": 0.879,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T13:20:33.185797+00:00",
+    "pr_number": 1633,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.084,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.1
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.3
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.007
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.017,
+        "composite_score": 0.734,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.242,
+        "composite_score": 0.886,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T13:31:51.724352+00:00",
+    "pr_number": 1634,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.05,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.15
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.0
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.087
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.092,
+        "composite_score": 0.809,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.138,
+        "composite_score": 0.782,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T13:42:09.262209+00:00",
+    "pr_number": 1636,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.066,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.075
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.125
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.03
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.076,
+        "composite_score": 0.793,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.241,
+        "composite_score": 0.885,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T14:08:12.121475+00:00",
+    "pr_number": 1642,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.017,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.1
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.013
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.092,
+        "composite_score": 0.809,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.211,
+        "composite_score": 0.855,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T14:21:52.400519+00:00",
+    "pr_number": 1652,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.159,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.45
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.025
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.05
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.151,
+        "composite_score": 0.868,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.232,
+        "composite_score": 0.876,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T15:53:55.912241+00:00",
+    "pr_number": 1668,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.05,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.053
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.092,
+        "composite_score": 0.809,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.163,
+        "composite_score": 0.807,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T17:02:31.935846+00:00",
+    "pr_number": 1678,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.0,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.15
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.038
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.059,
+        "composite_score": 0.776,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.258,
+        "composite_score": 0.902,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-15T17:31:32.177148+00:00",
+    "pr_number": 1686,
+    "band": "none",
+    "label": null,
+    "public": {
+      "composite_delta": 0.0,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.027
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.025
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.05
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.01
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.142,
+        "composite_score": 0.859,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.226,
+        "composite_score": 0.87,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": true
+  },
+  {
+    "timestamp": "2026-07-15T18:13:35.009430+00:00",
+    "pr_number": 1688,
+    "band": "s",
+    "label": "perf:s",
+    "public": {
+      "composite_delta": 0.025,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.125
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.05
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.106
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.09,
+        "composite_score": 0.807,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.289,
+        "composite_score": 0.933,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": true
+  },
+  {
+    "timestamp": "2026-07-15T19:43:45.500207+00:00",
+    "pr_number": 1710,
+    "band": "s",
+    "label": "perf:s",
+    "public": {
+      "composite_delta": 0.025,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": 0.05
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.025
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.073
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.081,
+        "composite_score": 0.798,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.289,
+        "composite_score": 0.933,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": true
+  },
+  {
+    "timestamp": "2026-07-15T20:13:28.569059+00:00",
+    "pr_number": 1712,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.166,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.247
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.1
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.047
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.023,
+        "composite_score": 0.74,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.257,
+        "composite_score": 0.901,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-16T00:42:02.198955+00:00",
+    "pr_number": 1717,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.019,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pypa/hatch",
+          "composite_delta": -0.233
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.025
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.004
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.09,
+        "composite_score": 0.807,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.231,
+        "composite_score": 0.875,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  },
+  {
+    "timestamp": "2026-07-16T14:39:39.613699+00:00",
+    "pr_number": 1750,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.119,
+      "per_repo": [
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.541
+        },
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.142
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": -0.022
+    },
+    "since_anchor": {
+      "anchor": "v0.5.0",
+      "public": {
+        "composite_delta": 0.101,
+        "composite_score": 0.818,
+        "anchor_score": 0.717
+      },
+      "private": {
+        "composite_delta": 0.213,
+        "composite_score": 0.857,
+        "anchor_score": 0.644
+      }
+    },
+    "merged": false
+  }
+]

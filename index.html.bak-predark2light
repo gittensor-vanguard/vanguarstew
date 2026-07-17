@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vanguarstew — the maintainer agent that maintains itself</title>
+<meta name="description" content="vanguarstew is an autonomous SN74 repository-maintainer agent — it reviews, scores, merges, and closes pull requests on its own repository, and gets measurably better every week. Powered by Gittensor.">
+<meta name="theme-color" content="#0C1412">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23CFA954'/><text x='16' y='22.5' font-size='18' text-anchor='middle' font-family='Georgia,serif' font-weight='700' fill='%23231a08'>V</text></svg>">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://gittensor-vanguard.github.io/vanguarstew/">
+<meta property="og:title" content="vanguarstew — the maintainer agent that maintains itself">
+<meta property="og:description" content="An autonomous SN74 repository-maintainer agent that reviews, merges, and closes PRs on its own repo — and proves it improves. Powered by Gittensor.">
+<meta property="og:image" content="https://raw.githubusercontent.com/gittensor-vanguard/vanguarstew/main/docs/vanguarstew-demo.gif">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="vanguarstew — the maintainer agent that maintains itself">
+<meta name="twitter:description" content="An autonomous SN74 repository-maintainer agent. Powered by Gittensor.">
+<style>
+  :root{
+    --ink:#0C1412; --ink-2:#0F1A15; --panel:#12201A; --panel-2:#152720;
+    --line:#26372E; --line-soft:#1C2B24;
+    --text:#E7EAE2; --muted:#93A69B; --faint:#6C7F75;
+    --brass:#CFA954; --brass-hi:#E7CB84; --brass-deep:#8A7132;
+    --approve:#7CBE90; --merge:#AC90E4; --changes:#E1A452; --bad:#C6553F;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --wrap:1060px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%; scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--ink); color:var(--text);
+    font-family:var(--sans); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    background-image:
+      radial-gradient(1200px 680px at 82% -10%, rgba(207,169,84,.11), transparent 58%),
+      radial-gradient(900px 600px at 2% 3%, rgba(124,190,144,.055), transparent 55%),
+      radial-gradient(820px 900px at 108% 88%, rgba(172,144,228,.04), transparent 58%);
+    background-attachment:fixed;
+  }
+  /* Subtle film grain for tactile depth (factory-style atmosphere), fixed behind all content. */
+  body::before{
+    content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.028;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  header.top, main, footer{position:relative; z-index:1}
+  .wrap{max-width:var(--wrap); margin-inline:auto; padding-inline:26px}
+  a{color:inherit}
+  h1,h2,h3{font-family:var(--serif); font-weight:600; text-wrap:balance; letter-spacing:-.012em; margin:0}
+  p{margin:0}
+  code{font-family:var(--mono); font-size:.88em; background:rgba(255,255,255,.05); padding:.12em .4em; border-radius:4px}
+  .eyebrow{font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--brass); margin:0}
+
+  header.top{position:sticky; top:0; z-index:20; background:rgba(12,20,18,.72); backdrop-filter:blur(9px); border-bottom:1px solid var(--line-soft)}
+  header.top .wrap{display:flex; align-items:center; gap:18px; height:60px}
+  .brandmark{display:flex; align-items:center; gap:11px; font-family:var(--serif); font-size:1.12rem; letter-spacing:-.01em}
+  .brandmark .dot{width:11px; height:11px; border-radius:50%; background:radial-gradient(circle at 32% 30%, var(--brass-hi), var(--brass) 45%, var(--brass-deep)); box-shadow:0 0 0 1px rgba(231,203,132,.35), 0 0 14px rgba(207,169,84,.5)}
+  .top nav{margin-left:auto; display:flex; align-items:center; gap:22px}
+  .top nav a{font-family:var(--mono); font-size:.76rem; letter-spacing:.05em; color:var(--muted); text-decoration:none}
+  .top nav a:hover{color:var(--text)}
+  @media(max-width:900px){ .top nav a.hide-sm{display:none} }
+
+  .btn{display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:.82rem; letter-spacing:.03em; text-decoration:none; padding:12px 18px; border-radius:4px; border:1px solid transparent; transition:transform .15s ease, background .15s ease, border-color .15s ease}
+  .btn .arw{transition:transform .15s ease}
+  .btn:hover .arw{transform:translateX(3px)}
+  .btn-primary{background:linear-gradient(180deg,var(--brass-hi),var(--brass) 60%,var(--brass-deep)); color:#1a1305; font-weight:600; border-color:var(--brass-hi); box-shadow:0 6px 22px -8px rgba(207,169,84,.55), inset 0 1px 0 rgba(255,244,214,.5)}
+  .btn-primary:hover{filter:brightness(1.06); transform:translateY(-1px); box-shadow:0 10px 30px -8px rgba(207,169,84,.7), inset 0 1px 0 rgba(255,244,214,.6)}
+  .btn-ghost{color:var(--text); border-color:var(--line)}
+  .btn-ghost:hover{border-color:var(--brass); color:var(--brass)}
+  :focus-visible{outline:2px solid var(--brass); outline-offset:3px; border-radius:3px}
+
+  section{border-top:1px solid var(--line-soft)}
+  section:first-of-type{border-top:0}
+  .pad{padding-block:clamp(66px,9vw,122px)}
+  .head-eyebrow{margin-bottom:20px}
+  .sec-title{font-size:clamp(1.7rem,3.4vw,2.35rem); line-height:1.12; max-width:26ch}
+  .sec-lead{color:var(--muted); font-size:1.12rem; max-width:60ch; margin-top:16px}
+
+  .hero-grid{display:grid; grid-template-columns:1.35fr .95fr; gap:52px; align-items:center; padding-block:clamp(52px,8vw,110px)}
+  @media(max-width:900px){ .hero-grid{grid-template-columns:1fr; gap:40px} }
+  .hero h1{font-size:clamp(2.55rem,6vw,4.35rem); line-height:1.015; letter-spacing:-.02em}
+  .hero h1 em{font-style:normal; color:var(--brass); white-space:nowrap}
+  .hero-lead{color:var(--muted); font-size:1.24rem; line-height:1.55; max-width:47ch; margin-top:26px}
+  .hero-lead b{color:var(--text); font-weight:600}
+  .hero-cta{display:flex; flex-wrap:wrap; gap:13px; margin-top:34px}
+  .hero-eyebrow{margin-bottom:22px; display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+  .tag{font-family:var(--mono); font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:5px 11px}
+
+  .hero-aside{display:flex; flex-direction:column; align-items:center; gap:26px}
+  .seal{position:relative; width:132px; height:132px; flex:none}
+  .seal .ring{position:absolute; inset:0; border-radius:50%; background:repeating-conic-gradient(var(--brass-deep) 0 2.2deg, transparent 2.2deg 9deg); -webkit-mask:radial-gradient(circle, transparent 54px, #000 55px, #000 60px, transparent 61px); mask:radial-gradient(circle, transparent 54px, #000 55px, #000 60px, transparent 61px); opacity:.85; animation:spin 60s linear infinite}
+  .seal .disc{position:absolute; inset:12px; border-radius:50%; background:radial-gradient(circle at 36% 30%, var(--brass-hi), var(--brass) 42%, #9A7E38 74%, #6E5A28); box-shadow:inset 0 2px 6px rgba(255,240,200,.45), inset 0 -6px 14px rgba(40,26,4,.55), 0 10px 30px rgba(0,0,0,.5), 0 0 0 1px rgba(231,203,132,.3)}
+  .seal .disc::before{content:""; position:absolute; inset:9px; border-radius:50%; border:1px solid rgba(60,42,10,.5)}
+  .seal .mono-mark{position:absolute; inset:0; display:grid; place-items:center; font-family:var(--serif); font-weight:700; font-size:2.15rem; color:#22190A; letter-spacing:-.03em; text-shadow:0 1px 0 rgba(255,240,200,.35)}
+
+  .panel{width:100%; background:linear-gradient(180deg, rgba(18,32,26,.72), rgba(15,26,21,.62)); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:0 30px 70px -34px rgba(0,0,0,.85), inset 0 1px 0 rgba(231,234,226,.06)}
+  .panel .ph{display:flex; align-items:center; gap:8px; padding:11px 14px; border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:.71rem; color:var(--faint); letter-spacing:.03em}
+  .panel .ph .lamp{width:8px; height:8px; border-radius:50%; background:var(--approve); box-shadow:0 0 8px var(--approve)}
+  .panel .ph .path{margin-left:auto; color:var(--muted)}
+  .rev{display:grid; grid-template-columns:auto 1fr auto; gap:10px 12px; align-items:center; padding:12px 14px; border-bottom:1px solid var(--line-soft); font-family:var(--mono); font-size:.78rem}
+  .rev:last-child{border-bottom:0}
+  .rev .pr{color:var(--brass); font-weight:600}
+  .rev .ttl{color:var(--muted); font-family:var(--sans); font-size:.82rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .chip{font-family:var(--mono); font-size:.64rem; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px; border-radius:999px; border:1px solid currentColor; white-space:nowrap}
+  .chip.approve{color:var(--approve)} .chip.merge{color:var(--merge)} .chip.changes{color:var(--changes)} .chip.tier{color:var(--brass); border-color:var(--brass-deep)}
+  .rev .st{display:flex; gap:6px; justify-content:flex-end}
+
+  .metrics{display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); border-radius:8px; overflow:hidden}
+  .metrics .m{background:var(--ink-2); padding:20px 18px}
+  .metrics .m .v{font-family:var(--serif); font-size:1.7rem; color:var(--brass); letter-spacing:-.01em}
+  .metrics .m .k{font-family:var(--mono); font-size:.66rem; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin-top:4px}
+  @media(max-width:680px){ .metrics{grid-template-columns:repeat(2,1fr)} }
+
+  .loop{display:grid; grid-template-columns:repeat(4,1fr); gap:22px; margin-top:44px}
+  @media(max-width:860px){ .loop{grid-template-columns:repeat(2,1fr)} }
+  @media(max-width:520px){ .loop{grid-template-columns:1fr} }
+  .step{border-top:2px solid var(--brass-deep); padding-top:16px}
+  .step .n{font-family:var(--mono); font-size:.72rem; letter-spacing:.1em; color:var(--brass)}
+  .step h3{font-size:1.14rem; margin-top:8px}
+  .step p{color:var(--muted); font-size:.95rem; margin-top:8px}
+
+  /* Proof section */
+  .proof-grid{display:grid; grid-template-columns:1.02fr .98fr; gap:44px; align-items:center; margin-top:42px}
+  @media(max-width:880px){ .proof-grid{grid-template-columns:1fr; gap:32px} }
+  .proof-story p{color:#DDE3DA; font-size:1.03rem; line-height:1.75}
+  .proof-story p + p{margin-top:16px}
+  .proof-story b{color:var(--text); font-weight:600}
+  .proof-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:24px}
+  .receipt{background:linear-gradient(180deg, rgba(21,39,32,.66), rgba(15,26,21,.58)); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid var(--line); border-radius:14px; overflow:hidden; box-shadow:0 30px 70px -36px rgba(0,0,0,.8), inset 0 1px 0 rgba(231,234,226,.06)}
+  .receipt .rh{font-family:var(--mono); font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); padding:16px 20px; border-bottom:1px solid var(--line-soft); display:flex; justify-content:space-between}
+  .receipt .rh b{color:var(--brass); font-weight:600}
+  .ba{display:grid; grid-template-columns:1fr auto auto auto; gap:2px 14px; align-items:center; padding:15px 20px; border-bottom:1px solid var(--line-soft)}
+  .ba:last-child{border-bottom:0}
+  .ba .lab{font-size:.92rem; color:var(--muted)}
+  .ba .was{font-family:var(--mono); font-size:.92rem; color:var(--faint); text-decoration:line-through; text-decoration-color:var(--line)}
+  .ba .to{font-family:var(--mono); color:var(--brass-deep)}
+  .ba .now{font-family:var(--mono); font-size:1.02rem; color:var(--brass); font-weight:600; text-shadow:0 0 16px rgba(207,169,84,.45)}
+  .ba.win .now{color:var(--approve); text-shadow:0 0 16px rgba(124,190,144,.5)}
+
+  .split{display:grid; grid-template-columns:.85fr 1.15fr; gap:48px; align-items:start}
+  @media(max-width:860px){ .split{grid-template-columns:1fr; gap:30px} }
+  .caps{display:flex; flex-direction:column; gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); border-radius:10px; overflow:hidden}
+  .cap{background:var(--ink-2); padding:17px 18px; display:grid; grid-template-columns:auto 1fr; gap:14px; align-items:baseline}
+  .cap .mk{font-family:var(--mono); font-size:.7rem; color:var(--brass); letter-spacing:.05em; padding-top:2px}
+  .cap b{font-weight:600}
+  .cap span{color:var(--muted); font-size:.93rem; display:block; margin-top:3px}
+  .note{font-family:var(--mono); font-size:.74rem; color:var(--faint); margin-top:18px; letter-spacing:.02em}
+
+  .pipe{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:40px}
+  @media(max-width:820px){ .pipe{grid-template-columns:repeat(2,1fr)} }
+  .stage{background:rgba(18,32,26,.5); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); border:1px solid var(--line); border-radius:11px; padding:19px; transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease}
+  .stage:hover{transform:translateY(-3px); border-color:var(--brass-deep); box-shadow:0 18px 40px -22px rgba(0,0,0,.7)}
+  .stage .s-n{font-family:var(--mono); font-size:.66rem; letter-spacing:.14em; text-transform:uppercase; color:var(--brass)}
+  .stage h3{font-size:1.02rem; margin-top:9px}
+  .stage p{color:var(--muted); font-size:.88rem; margin-top:7px}
+  .bench-foot{margin-top:34px; font-size:1.16rem; color:var(--text); font-family:var(--serif); max-width:56ch}
+  .bench-foot b{color:var(--brass); font-weight:600}
+
+  /* Comparison section */
+  .compare{display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); border-radius:12px; overflow:hidden; margin-top:42px}
+  @media(max-width:820px){ .compare{grid-template-columns:1fr; }
+    .compare .col.us{order:-1} }
+  .compare .col{background:var(--ink-2); padding:24px 22px; display:flex; flex-direction:column; gap:14px}
+  .compare .col.us{background:linear-gradient(180deg,rgba(207,169,84,.09),var(--ink-2) 62%)}
+  .compare .col .ch{display:flex; flex-direction:column; gap:5px; padding-bottom:14px; border-bottom:1px solid var(--line-soft)}
+  .compare .col .ch .who{font-family:var(--serif); font-size:1.14rem; color:var(--text)}
+  .compare .col.us .ch .who{color:var(--brass)}
+  .compare .col .ch .q{font-size:.9rem; color:var(--muted); font-style:italic}
+  .compare .col .r{display:flex; flex-direction:column; gap:3px}
+  .compare .col .r .rk{font-family:var(--mono); font-size:.62rem; letter-spacing:.13em; text-transform:uppercase; color:var(--faint)}
+  .compare .col .r .rv{font-size:.95rem; color:#DDE3DA}
+  .compare .col.us .r .rv{color:var(--text)}
+
+  /* Orchestration section */
+  .orch-head{display:flex; align-items:flex-end; justify-content:space-between; gap:22px; flex-wrap:wrap}
+  .roadmap-pill{font-family:var(--mono); font-size:.66rem; letter-spacing:.14em; text-transform:uppercase; color:var(--brass); border:1px solid var(--brass-deep); border-radius:999px; padding:6px 13px; white-space:nowrap}
+  .orch-flow{display:grid; grid-template-columns:auto 1fr; gap:26px; margin-top:40px; align-items:center}
+  @media(max-width:720px){ .orch-flow{grid-template-columns:1fr; gap:22px} }
+  .mgr{background:linear-gradient(180deg, rgba(21,39,32,.7), rgba(15,26,21,.6)); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); border:1px solid var(--brass-deep); border-radius:14px; padding:22px 20px; max-width:230px; box-shadow:0 0 0 1px rgba(207,169,84,.12), 0 24px 60px -34px rgba(0,0,0,.75)}
+  .mgr .lab{font-family:var(--mono); font-size:.64rem; letter-spacing:.14em; text-transform:uppercase; color:var(--brass)}
+  .mgr h3{font-size:1.15rem; margin-top:8px}
+  .mgr p{color:var(--muted); font-size:.9rem; margin-top:9px}
+  .mgr .tick{font-family:var(--mono); font-size:.72rem; color:var(--approve); margin-top:12px; display:flex; gap:7px; align-items:center}
+  .roles{display:grid; grid-template-columns:repeat(3,1fr); gap:12px}
+  @media(max-width:620px){ .roles{grid-template-columns:repeat(2,1fr)} }
+  .role{background:rgba(18,32,26,.42); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); border:1px solid var(--line-soft); border-radius:11px; padding:16px 16px; transition:transform .18s ease, border-color .18s ease}
+  .role:hover{transform:translateY(-3px); border-color:var(--brass-deep)}
+  .role .rn{font-family:var(--serif); font-size:1rem; color:var(--text)}
+  .role .rd{color:var(--muted); font-size:.83rem; margin-top:5px; line-height:1.5}
+  .role .soon{font-family:var(--mono); font-size:.58rem; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); margin-top:9px}
+
+  .close-card{background:radial-gradient(700px 300px at 80% -30%, rgba(207,169,84,.14), transparent 60%), linear-gradient(180deg, rgba(21,39,32,.66), rgba(15,26,21,.6)); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); border:1px solid var(--line); border-radius:16px; padding:clamp(30px,5vw,52px); display:grid; grid-template-columns:1.2fr .8fr; gap:40px; align-items:center; box-shadow:0 30px 80px -40px rgba(0,0,0,.8), inset 0 1px 0 rgba(231,234,226,.05)}
+  @media(max-width:820px){ .close-card{grid-template-columns:1fr; gap:26px} }
+  .close-card h2{font-size:clamp(1.7rem,3.4vw,2.4rem); line-height:1.12}
+  .close-card p{color:var(--muted); margin-top:14px; max-width:52ch}
+  .close-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:26px}
+  .badge-g{font-family:var(--mono); font-size:.74rem; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:7px 13px; display:inline-flex; gap:8px; align-items:center; text-decoration:none}
+  .badge-g:hover{border-color:var(--brass); color:var(--brass)}
+  .close-side{border-left:1px solid var(--line); padding-left:32px}
+  @media(max-width:820px){ .close-side{border-left:0; padding-left:0; border-top:1px solid var(--line); padding-top:24px} }
+  .close-side .row{display:flex; justify-content:space-between; gap:14px; padding:9px 0; border-bottom:1px dashed var(--line-soft); font-family:var(--mono); font-size:.82rem}
+  .close-side .row:last-child{border-bottom:0}
+  .close-side .row .k{color:var(--faint)} .close-side .row .v{color:var(--text)}
+
+  footer{border-top:1px solid var(--line-soft)}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:16px 26px; align-items:center; padding-block:30px; font-family:var(--mono); font-size:.74rem; color:var(--faint)}
+  footer a{color:var(--muted); text-decoration:none} footer a:hover{color:var(--brass)}
+  footer .sp{margin-left:auto}
+
+  .rise{opacity:0; transform:translateY(16px); transition:opacity .7s ease, transform .7s ease}
+  .rise.in{opacity:1; transform:none}
+  @media(prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    .rise{opacity:1; transform:none; transition:none}
+    .seal .ring{animation:none}
+    .btn,.btn:hover{transform:none}
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* vanguarstew-cursor-glow-v070 */
+  #cursorglow{position:fixed; top:0; left:0; width:560px; height:560px; margin:-280px 0 0 -280px;
+    border-radius:50%; pointer-events:none; z-index:0; opacity:0; transition:opacity .6s ease;
+    background:radial-gradient(circle, rgba(207,169,84,.21), rgba(207,169,84,.08) 42%, transparent 72%);
+    filter:blur(32px); will-change:transform}
+  #cursorglow.on{opacity:.8}
+  @media(prefers-reduced-motion:reduce){ #cursorglow{display:none} }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <span class="brandmark"><span class="dot"></span>vanguarstew</span>
+    <nav>
+      <a href="#loop" class="hide-sm">The loop</a>
+      <a href="#proof" class="hide-sm">Proof</a>
+      <a href="#bench" class="hide-sm">Benchmark</a>
+      <a href="#vs" class="hide-sm">Why different</a>
+      <a href="leaderboard/" class="hide-sm">Leaderboard</a>
+      <a href="blog/" class="hide-sm">Blog</a>
+      <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <div class="hero-eyebrow rise">
+          <span class="eyebrow">SN74 · repository-maintainer agent</span>
+          <span class="tag">v0.7.0</span>
+        </div>
+        <h1 class="rise">The maintainer agent that <em>maintains itself.</em></h1>
+        <p class="hero-lead rise">vanguarstew reviews, scores, merges, and closes pull requests on its
+          own repository — <b>autonomously, in public,</b> with a human holding the keys. And it gets
+          measurably better every week.</p>
+        <div class="hero-cta rise">
+          <a class="btn btn-primary" href="#proof">See the proof <span class="arw">→</span></a>
+          <a class="btn btn-ghost" href="https://github.com/gittensor-vanguard/vanguarstew">View the repo</a>
+        </div>
+      </div>
+      <div class="hero-aside rise">
+        <div class="seal" aria-hidden="true">
+          <div class="ring"></div>
+          <div class="disc"><span class="mono-mark">V</span></div>
+        </div>
+        <div class="panel" role="img" aria-label="Sample of the agent's recent pull-request verdicts">
+          <div class="ph"><span class="lamp"></span> vanguarstew · verdicts
+            <span class="path">gittensor-vanguard/vanguarstew</span></div>
+          <div class="rev">
+            <span class="pr">#150</span>
+            <span class="ttl">Reconstruct label membership as-of-T</span>
+            <span class="st"><span class="chip approve">approve</span><span class="chip merge">merged</span></span>
+          </div>
+          <div class="rev">
+            <span class="pr">#48</span>
+            <span class="ttl">Surface open-PR queue in plans</span>
+            <span class="st"><span class="chip tier">perf:m</span><span class="chip approve">approve</span></span>
+          </div>
+          <div class="rev">
+            <span class="pr">#109</span>
+            <span class="ttl">Preserve numeric tokens in SHA scrub</span>
+            <span class="st"><span class="chip changes">changes</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap" style="padding-block:clamp(34px,5vw,52px)">
+      <div class="metrics rise">
+        <div class="m"><div class="v">Autonomous</div><div class="k">co-maintainer</div></div>
+        <div class="m"><div class="v">Measured</div><div class="k">perf:xs–xl scoring</div></div>
+        <div class="m"><div class="v">Self-improving</div><div class="k">verified against history</div></div>
+        <div class="m"><div class="v">SN74 · MIT</div><div class="k">on Gittensor · open source</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="loop">
+    <div class="wrap pad">
+      <p class="eyebrow head-eyebrow rise">The maintainer loop</p>
+      <h2 class="sec-title rise">Not "did it write good code?" — "would it have steered the repo the way a strong maintainer did?"</h2>
+      <p class="sec-lead rise">Given a repository frozen at a moment in time, the agent decides what a
+        strong maintainer would do next — in four steps.</p>
+      <div class="loop">
+        <div class="step rise"><div class="n">01</div><h3>Infer the philosophy</h3>
+          <p>Read the history, README, and recent activity to work out where the project is going. The hardest, most important part.</p></div>
+        <div class="step rise"><div class="n">02</div><h3>Read the situation</h3>
+          <p>Open issues, open PRs, recent commits, releases — the maintainer's surface as of that moment, nothing from the future.</p></div>
+        <div class="step rise"><div class="n">03</div><h3>Plan &amp; decide</h3>
+          <p>Propose the next actions and the concrete calls — merge, request-changes, triage, review, release — each with its reasoning.</p></div>
+        <div class="step rise"><div class="n">04</div><h3>Implement</h3>
+          <p>Produce an actual patch when that's the right move — but writing code is only one of the calls a maintainer makes.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="proof">
+    <div class="wrap pad">
+      <p class="eyebrow head-eyebrow rise">Proof, not a pitch</p>
+      <h2 class="sec-title rise">It found a flaw in its own judgment — and fixed the system underneath it.</h2>
+      <p class="sec-lead rise">Run live against a real, fast-moving public repo, vanguarstew caught itself
+        being confidently wrong — no crash, no bug report. Then it did the thing that separates a
+        maintainer from a bot.</p>
+      <div class="proof-grid">
+        <div class="proof-story rise">
+          <p>It kept predicting a release was imminent when the maintainers cut none. Contributors sent
+            patches to tune the model. But reviewing them, vanguarstew reached a different conclusion:
+            <b>the code was never the problem — the benchmark's own yardstick was.</b></p>
+          <p>It was scoring over "the next 5 commits" — ~24 minutes of work on a fast repo, ~46 days on a
+            slow one. So instead of tuning the model, it <b>redesigned the measurement itself:</b> each
+            repo judged over a time window matched to its own release cadence. Fix the system, not the
+            symptom.</p>
+          <div class="proof-cta">
+            <a class="btn btn-primary" href="blog/vanguarstew-fixed-the-system/">Read the full story <span class="arw">→</span></a>
+            <a class="btn btn-ghost" href="leaderboard/">See the leaderboard</a>
+          </div>
+        </div>
+        <div class="receipt rise" role="img" aria-label="Before and after metrics from the openclaw live test">
+          <div class="rh"><span>Live test · openclaw</span><b>v0.7.0</b></div>
+          <div class="ba win"><span class="lab">Release calibration</span><span class="was">0/3</span><span class="to">→</span><span class="now">3/3</span></div>
+          <div class="ba win"><span class="lab">Decider verdict</span><span class="was">reject</span><span class="to">→</span><span class="now">plan</span></div>
+          <div class="ba"><span class="lab">Composite score</span><span class="was">0.834</span><span class="to">→</span><span class="now">0.879</span></div>
+          <div class="ba"><span class="lab">Benchmark base rate</span><span class="was">11%</span><span class="to">→</span><span class="now">44%</span></div>
+        </div>
+      </div>
+      <p class="note rise">Every number is checkable against real git history — that's the point of building on it.</p>
+    </div>
+  </section>
+
+  <section id="self">
+    <div class="wrap pad">
+      <div class="split">
+        <div>
+          <p class="eyebrow head-eyebrow rise">It maintains itself</p>
+          <h2 class="sec-title rise">The maintainer agent, running the maintainer loop on its own repository.</h2>
+          <p class="sec-lead rise">The same agent the benchmark scores now co-maintains vanguarstew live —
+            openly, as a transparent bot, with the human owner holding admin and a kill-switch.</p>
+          <p class="note rise">Dogfooding, in the open — the strongest proof the concept works.</p>
+        </div>
+        <div class="caps rise">
+          <div class="cap"><span class="mk">›</span><div><b>Reviews in context</b>
+            <span>Judges each PR against the repo's inferred direction — a real verdict, not a rubber stamp.</span></div></div>
+          <div class="cap"><span class="mk">›</span><div><b>Labels by measurement, not by reading the diff</b>
+            <span>Runs the real benchmark against a public AND a private repo set, then bands the PR perf:xs–perf:xl by the worse of the two — never a guess.</span></div></div>
+          <div class="cap"><span class="mk">›</span><div><b>Updates &amp; merges green PRs</b>
+            <span>Auto-updates behind branches, waits for CI, and merges only approved, conflict-free, up-to-date work.</span></div></div>
+          <div class="cap"><span class="mk">›</span><div><b>Catches stale approvals</b>
+            <span>When a landed PR breaks an older one, it flips its own approval to request-changes and drops the tier.</span></div></div>
+          <div class="cap"><span class="mk">›</span><div><b>Keeps the queue clean</b>
+            <span>Closes off-scope and stale-conflicting PRs, and rejects AI-attributed contributions — with a polite note.</span></div></div>
+          <div class="cap"><span class="mk">›</span><div><b>Reports its day</b>
+            <span>Posts a daily activity digest to a pinned issue, so every autonomous action is auditable.</span></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="bench">
+    <div class="wrap pad">
+      <p class="eyebrow head-eyebrow rise">How it's scored</p>
+      <h2 class="sec-title rise">A benchmark built from real GitHub history.</h2>
+      <p class="sec-lead rise">Freeze a repo at time T, let the agent plan the next moves, then judge them
+        against what the maintainers actually did — hardened against leakage and judge bias.</p>
+      <div class="pipe">
+        <div class="stage rise"><div class="s-n">Freeze · T</div><h3>Rebuild the past</h3>
+          <p>Reconstruct the repo, issues, PRs and releases exactly as they were knowable at T — nothing leaks from the future.</p></div>
+        <div class="stage rise"><div class="s-n">Plan</div><h3>Agent decides</h3>
+          <p>The agent infers the philosophy and plans the next maintainer actions with its reasoning.</p></div>
+        <div class="stage rise"><div class="s-n">Judge</div><h3>Pairwise + anchor</h3>
+          <p>A dual-order pairwise judge weighs trajectory and reasoning, blended with an objective anchor of hard ground truth.</p></div>
+        <div class="stage rise"><div class="s-n">Composite</div><h3>One score</h3>
+          <p>Judge and anchor fold into a single tunable composite — averaged over many freeze-points and repos.</p></div>
+      </div>
+      <p class="bench-foot rise">The benchmark scores the agent across <b>many repos at once</b>, on a
+        per-repo time horizon and human-era history. Generalization is the whole ballgame: an agent that
+        maintains one repo is a script; one that maintains <b>any</b> repo is a maintainer.</p>
+    </div>
+  </section>
+
+  <section id="vs">
+    <div class="wrap pad">
+      <p class="eyebrow head-eyebrow rise">A different category</p>
+      <h2 class="sec-title rise">Not an agent framework. Not an issue-resolver.</h2>
+      <p class="sec-lead rise">Measuring maintainer judgment is genuinely new — a separate skill from wiring
+        up agents or writing a patch that passes hidden tests.</p>
+      <div class="compare rise">
+        <div class="col">
+          <div class="ch"><span class="who">Agent frameworks</span><span class="q">"How do I wire up agents?"</span></div>
+          <div class="r"><span class="rk">Measures</span><span class="rv">Orchestration plumbing</span></div>
+          <div class="r"><span class="rk">Ground truth</span><span class="rv">— none</span></div>
+          <div class="r"><span class="rk">Answers</span><span class="rv">How to build an agent</span></div>
+          <div class="r"><span class="rk">e.g.</span><span class="rv">LangGraph, AutoGen, CrewAI</span></div>
+        </div>
+        <div class="col">
+          <div class="ch"><span class="who">Issue-resolution benchmarks</span><span class="q">"Can it write a passing patch?"</span></div>
+          <div class="r"><span class="rk">Measures</span><span class="rv">Patch correctness</span></div>
+          <div class="r"><span class="rk">Ground truth</span><span class="rv">Hidden unit tests</span></div>
+          <div class="r"><span class="rk">Answers</span><span class="rv">Can it close one ticket</span></div>
+          <div class="r"><span class="rk">e.g.</span><span class="rv">SWE-bench</span></div>
+        </div>
+        <div class="col us">
+          <div class="ch"><span class="who">vanguarstew</span><span class="q">"Would it steer the repo like a strong maintainer?"</span></div>
+          <div class="r"><span class="rk">Measures</span><span class="rv">Maintainer judgment &amp; foresight</span></div>
+          <div class="r"><span class="rk">Ground truth</span><span class="rv">Real git history, public + held-out</span></div>
+          <div class="r"><span class="rk">Answers</span><span class="rv">Where the project should go next</span></div>
+          <div class="r"><span class="rk">e.g.</span><span class="rv">this — and it's measured in public</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="leaderboard">
+    <div class="wrap pad">
+      <div class="close-card rise">
+        <div>
+          <p class="eyebrow" style="margin-bottom:14px">Live evidence</p>
+          <h2>Every <code>perf:*</code> label, measured — never claimed.</h2>
+          <p>One bar per pull request, on a fixed anchor release — every real
+            <code>agent/</code> score the maintainer bot has ever published, including the
+            ones that got closed. No line chart, no averages to squint at.</p>
+          <div class="close-cta">
+            <a class="btn btn-primary" href="leaderboard/">View the leaderboard <span class="arw">→</span></a>
+          </div>
+        </div>
+        <div class="close-side">
+          <div class="row"><span class="k">anchor</span><span class="v">v0.7.0 release</span></div>
+          <div class="row"><span class="k">measured on</span><span class="v">public + private targets</span></div>
+          <div class="row"><span class="k">label follows</span><span class="v">the worse of the two</span></div>
+          <div class="row"><span class="k">updated</span><span class="v">after every real score</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="next">
+    <div class="wrap pad">
+      <div class="orch-head">
+        <div>
+          <p class="eyebrow head-eyebrow rise">Where it's headed</p>
+          <h2 class="sec-title rise">From one maintainer to an orchestra of agents.</h2>
+        </div>
+        <span class="roadmap-pill rise">Roadmap · not live yet</span>
+      </div>
+      <p class="sec-lead rise">The judgment core proven here becomes the manager — a maintainer that doesn't
+        just decide, but directs a team of specialists, reviews their work, and sends back rework.</p>
+      <div class="orch-flow">
+        <div class="mgr rise">
+          <div class="lab">The manager</div>
+          <h3>vanguarstew</h3>
+          <p>Sets priorities, delegates, reviews results, approves or sends rework — the maintainer's judgment, running the room.</p>
+          <div class="tick">● proven today — the core loop</div>
+        </div>
+        <div class="roles rise">
+          <div class="role"><div class="rn">Security</div><div class="rd">Audits changes and dependencies for risk.</div><div class="soon">planned</div></div>
+          <div class="role"><div class="rn">Research</div><div class="rd">Investigates approaches and prior art before work starts.</div><div class="soon">planned</div></div>
+          <div class="role"><div class="rn">Market</div><div class="rd">Tracks what users and the ecosystem actually need next.</div><div class="soon">planned</div></div>
+          <div class="role"><div class="rn">Web / dev</div><div class="rd">Implements the features and fixes the plan calls for.</div><div class="soon">planned</div></div>
+          <div class="role"><div class="rn">Survey</div><div class="rd">Gathers signal from issues, discussions, and usage.</div><div class="soon">planned</div></div>
+          <div class="role"><div class="rn">Review</div><div class="rd">Second-opinion checks before the manager signs off.</div><div class="soon">planned</div></div>
+        </div>
+      </div>
+      <p class="note rise">Today: the maintainer judgment core, measured and proven. Next: it runs the team.</p>
+    </div>
+  </section>
+
+  <section id="build">
+    <div class="wrap pad">
+      <div class="close-card rise">
+        <div>
+          <p class="eyebrow" style="margin-bottom:14px">Powered by Gittensor</p>
+          <h2>Built by a network that gets paid to improve real software.</h2>
+          <p>vanguarstew runs on <b style="color:var(--brass);font-weight:600">Gittensor</b> — a Bittensor
+            subnet (SN74) that rewards a network of contributors for making real, merged improvements to
+            open-source repositories. Every merged PR makes the agent — and the benchmark — better.</p>
+          <div class="close-cta">
+            <a class="btn btn-primary" href="https://github.com/gittensor-vanguard/vanguarstew/labels/good%20first%20issue">Find a good first issue <span class="arw">→</span></a>
+            <a class="badge-g" href="https://gittensor.io"><span style="width:9px;height:9px;border-radius:50%;background:var(--brass);display:inline-block"></span> gittensor.io ↗</a>
+            <a class="badge-g" href="https://docs.gittensor.io/oss-contributions.html">How contributions work ↗</a>
+          </div>
+        </div>
+        <div class="close-side">
+          <div class="row"><span class="k">subnet</span><span class="v">SN74 · Bittensor</span></div>
+          <div class="row"><span class="k">release</span><span class="v">v0.7.0</span></div>
+          <div class="row"><span class="k">license</span><span class="v">MIT</span></div>
+          <div class="row"><span class="k">next</span><span class="v">M7 · legible foresight metric</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brandmark" style="font-size:1rem"><span class="dot"></span>vanguarstew</span>
+    <span>a repository-maintainer agent &amp; its benchmark</span>
+    <span class="sp"></span>
+    <a href="blog/">Blog</a>
+    <a href="leaderboard/">Leaderboard</a>
+    <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub</a>
+    <a href="https://gittensor.io">Gittensor</a>
+    <a href="https://bittensor.com">Bittensor</a>
+  </div>
+</footer>
+
+<script>
+  (function(){
+    var els = document.querySelectorAll('.rise');
+    if(!('IntersectionObserver' in window) || matchMedia('(prefers-reduced-motion:reduce)').matches){
+      els.forEach(function(e){ e.classList.add('in'); }); return;
+    }
+    var io = new IntersectionObserver(function(ents){
+      ents.forEach(function(en){ if(en.isIntersecting){ en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, {rootMargin:'0px 0px -8% 0px', threshold:.08});
+    els.forEach(function(e,i){ if(i<7){ e.style.transitionDelay = (i*70)+'ms'; } io.observe(e); });
+  })();
+</script>
+
+<script>/* vanguarstew-cursor-glow-v070 */
+(function(){
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches || !matchMedia('(pointer:fine)').matches) return;
+  var g=document.createElement('div'); g.id='cursorglow'; g.setAttribute('aria-hidden','true');
+  document.body.appendChild(g);
+  var tx=innerWidth/2, ty=innerHeight/2, cx=tx, cy=ty, raf=null, shown=false;
+  addEventListener('pointermove', function(e){
+    tx=e.clientX; ty=e.clientY;
+    if(!shown){ shown=true; g.classList.add('on'); }
+    if(!raf) raf=requestAnimationFrame(loop);
+  }, {passive:true});
+  function loop(){
+    cx+=(tx-cx)*0.05; cy+=(ty-cy)*0.05;
+    g.style.transform='translate('+cx+'px,'+cy+'px)';
+    if(Math.abs(tx-cx)>0.4 || Math.abs(ty-cy)>0.4){ raf=requestAnimationFrame(loop); } else { raf=null; }
+  }
+})();
+</script>
+</body>
+</html>
