@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -184,6 +186,37 @@ def test_cli_directory_path_reports_distinct_error(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err
     assert "Errno" not in err and "Traceback" not in err
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root bypasses file-permission bits")
+def test_cli_unreadable_file_reports_distinct_error(tmp_path, capsys):
+    # A truly unreadable file (chmod 0) raises PermissionError -> its own message, naming
+    # the path, with no raw errno.
+    path = tmp_path / "locked.json"
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0)
+    try:
+        rc = cli.run([str(path)])
+    finally:
+        os.chmod(path, 0o644)
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "artifact is not readable" in err and str(path) in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_generic_oserror_arm_is_covered(tmp_path, capsys, monkeypatch):
+    # The catch-all OSError arm (not FileNotFound/Permission/IsADirectory) must still exit
+    # cleanly with an actionable message naming the path -- e.g. a device/IO error.
+    def _raise(*args, **kwargs):
+        raise OSError(5, "I/O error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([str(tmp_path / "x.json")]) == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and str(tmp_path / "x.json") in err
+    assert "Traceback" not in err
 
 
 def test_module_main_no_arg_exits_nonzero():
