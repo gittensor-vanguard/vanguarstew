@@ -65,6 +65,16 @@
   .lb-legend span{display:inline-flex; align-items:center; gap:7px}
   .lb-legend .dot{width:9px; height:9px; border-radius:2px; display:inline-block}
 
+  .fs-card{background:linear-gradient(180deg, rgba(207,169,84,.08), transparent 60%), var(--panel); border:1px solid var(--line); border-radius:12px; padding:26px 28px; margin-top:28px}
+  .fs-top{display:flex; align-items:baseline; gap:16px; flex-wrap:wrap}
+  .fs-num{font-family:var(--serif); font-size:2.6rem; color:var(--brass); letter-spacing:-.01em; line-height:1}
+  .fs-sub{font-family:var(--mono); font-size:.78rem; color:var(--muted)}
+  .fs-axes{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line-soft); border:1px solid var(--line-soft); border-radius:8px; overflow:hidden; margin-top:20px}
+  @media(max-width:620px){ .fs-axes{grid-template-columns:1fr} }
+  .fs-axes .a{background:var(--panel-2); padding:14px 16px}
+  .fs-axes .a .k{font-family:var(--mono); font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--faint)}
+  .fs-axes .a .v{font-family:var(--serif); font-size:1.3rem; color:var(--text); margin-top:4px}
+  .fs-axes .a .n{font-family:var(--mono); font-size:.7rem; color:var(--faint); margin-top:2px}
   .empty{color:var(--muted); font-family:var(--mono); font-size:.92rem; margin-top:34px; padding:20px; border:1px dashed var(--line); border-radius:8px}
 
   table.prs{width:100%; border-collapse:collapse; margin-top:14px; font-size:.92rem}
@@ -203,6 +213,33 @@
     </div>
   </section>
 
+
+  <section>
+    <div class="wrap pad">
+      <p class="eyebrow head-eyebrow">Maintainer foresight (M7)</p>
+      <h2 class="sec-title">Did it predict what the maintainers actually did next?</h2>
+      <p class="sec-lead">The objective, independently-checkable half of the score, on the
+        <b>held-out target</b> the agent is never tuned against — no trust in our judge required.
+        From the most recently scored real pull request.</p>
+
+      <p id="fs-empty" class="empty" style="display:none">No pull request has published a
+        foresight breakdown yet — check back after the next real <code>agent/</code> pull
+        request lands.</p>
+
+      <div id="fs-content" class="fs-card" style="display:none">
+        <div class="fs-top">
+          <span id="fs-headline" class="fs-num">—</span>
+          <span class="fs-sub">foresight accuracy · held-out target · <span id="fs-pr"></span></span>
+        </div>
+        <div class="fs-axes">
+          <div class="a"><div class="k">Modules</div><div id="fs-module" class="v">—</div><div id="fs-module-n" class="n"></div></div>
+          <div class="a"><div class="k">Commit kinds</div><div id="fs-kind" class="v">—</div><div id="fs-kind-n" class="n"></div></div>
+          <div class="a"><div class="k">Release timing</div><div id="fs-release" class="v">—</div><div id="fs-release-n" class="n"></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section>
     <div class="wrap pad">
       <p class="eyebrow head-eyebrow">Optimization journey</p>
@@ -320,10 +357,49 @@
         renderTable(data);
       }
       renderJourney(data, anchor);
+      renderForesight(data);
     }).catch(function(){
       document.getElementById('jr-empty').style.display = 'block';
       document.getElementById('prs-empty').style.display = 'block';
     });
+
+    function renderForesight(data){
+      // Most recent entry (scan backwards) whose private/held-out report carries a foresight
+      // breakdown -- an artifact scored before M7 shipped its publish path has none, so this
+      // finds the newest one that does rather than assuming the very last entry has it.
+      var entry = null;
+      for(var i = data.length - 1; i >= 0; i--){
+        if(data[i] && data[i].private && data[i].private.foresight){ entry = data[i]; break; }
+      }
+      if(!entry){
+        document.getElementById('fs-empty').style.display = 'block';
+        return;
+      }
+      var fs = entry.private.foresight;
+      function pct(v){ return typeof v === 'number' && isFinite(v) ? Math.round(v * 100) + '%' : 'n/a'; }
+      function axis(id, rate, n){
+        document.getElementById(id).textContent = pct(rate);
+        document.getElementById(id + '-n').textContent = 'n=' + (typeof n === 'number' ? n : 0);
+      }
+      axis('fs-module', fs.module_recall_mean, fs.module_recall_n);
+      axis('fs-kind', fs.kind_recall_mean, fs.kind_recall_n);
+      axis('fs-release', fs.release_accuracy, fs.release_accuracy_n);
+      // Headline = simple mean of whichever axes actually had applicable tasks (n > 0); an axis
+      // with no data (null) is excluded rather than treated as a 0, matching how the underlying
+      // foresight_breakdown() itself already reports "not applicable" as null, not a fabricated
+      // failure.
+      var axes = [
+        [fs.module_recall_mean, fs.module_recall_n],
+        [fs.kind_recall_mean, fs.kind_recall_n],
+        [fs.release_accuracy, fs.release_accuracy_n],
+      ].filter(function(a){ return typeof a[0] === 'number' && isFinite(a[0]) && a[1] > 0; });
+      var headline = axes.length
+        ? axes.reduce(function(sum, a){ return sum + a[0]; }, 0) / axes.length
+        : null;
+      document.getElementById('fs-headline').textContent = pct(headline);
+      document.getElementById('fs-pr').textContent = '#' + entry.pr_number;
+      document.getElementById('fs-content').style.display = 'block';
+    }
 
     function renderTable(data){
       var rows = data.slice().reverse().map(function(d){
