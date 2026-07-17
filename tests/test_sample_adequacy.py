@@ -1,6 +1,7 @@
 """Tests for the sample-adequacy gate (deterministic, offline)."""
 
 import copy
+import errno
 import logging
 import os
 import stat
@@ -482,3 +483,27 @@ def test_load_artifact_still_reports_bad_json_and_non_object(tmp_path, capsys):
     with pytest.raises(SystemExit):
         cli.load_artifact(str(lst))
     assert "JSON object" in capsys.readouterr().err
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"

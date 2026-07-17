@@ -1,6 +1,7 @@
 """Tests for the per-task objective integrity gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from benchmark.objective_integrity import (  # noqa: E402
     integrity_headline,
 )
 from benchmark.score import composite_score, objective_component  # noqa: E402
+from scripts import objective_integrity as cli  # noqa: E402
 
 _MALFORMED_CHECKS = [
     "not a list", 42, 3.14, True, {"name": "rows_present"}, ("a", "b"), range(2),
@@ -282,7 +284,10 @@ def test_cli_missing_file_exits_two():
     assert "Traceback" not in proc.stderr
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+@pytest.mark.skipif(
+    os.name == "nt" or getattr(os, "geteuid", lambda: -1)() == 0,
+    reason="POSIX file permissions required; root ignores them",
+)
 def test_cli_permission_denied_exits_two(tmp_path):
     good = tmp_path / "good.json"
     good.write_text("{}", encoding="utf-8")
@@ -311,7 +316,8 @@ def test_cli_directory_path_exits_two(tmp_path):
         text=True,
     )
     assert proc.returncode == 2
-    assert "directory, not a file" in proc.stderr
+    # IsADirectoryError on POSIX; PermissionError on Windows.
+    assert "directory" in proc.stderr or "not readable" in proc.stderr
     assert "Traceback" not in proc.stderr
 
 
@@ -325,9 +331,33 @@ def test_cli_broken_symlink_exits_two(tmp_path):
         text=True,
     )
     assert proc.returncode == 2
-    assert "Traceback" not in proc.stderr
-    # A broken symlink resolves to FileNotFoundError on open()
-    assert "artifact not found" in proc.stderr
+    assert proc.stderr == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
 
 
 def test_cli_invalid_json_exits_two(tmp_path):

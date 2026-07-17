@@ -10,7 +10,9 @@ non-zero when the run judged fewer than ``--min-tasks`` tasks or didn't account 
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import sys
 
 from benchmark.sample_adequacy import (
@@ -23,25 +25,37 @@ from benchmark.sample_adequacy import (
 def load_artifact(path: str) -> dict:
     """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON.
 
-    A path that reaches ``open()`` can raise ``OSError`` for several distinct reasons; each is
-    reported with an actionable message (and exit code 2) rather than a raw traceback: the path is
-    a directory, the file is unreadable (permission denied), or any other read failure. A broken
-    symlink surfaces as ``FileNotFoundError`` (the target is missing) and is reported as not found.
+    Path problems get a specific, actionable message instead of a raw traceback / errno string:
+    a broken symlink (dangling target), a symlink loop, ``FileNotFoundError`` (missing),
+    ``PermissionError`` (unreadable — including a directory on Windows), ``IsADirectoryError``
+    (a directory on POSIX), and any other ``OSError``.
+
+    Broken-symlink detection runs *after* ``open`` fails (``FileNotFoundError`` + ``islink``),
+    so there is no ``exists``/``open`` TOCTOU pre-check that can raise on a symlink loop.
     """
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        print(f"artifact not found: {path}", file=sys.stderr)
+        # open() already failed; classify dangling symlink vs missing path without a prior
+        # exists() probe (which can raise on a symlink loop and races with open).
+        if os.path.islink(path):
+            print(f"artifact is a broken symlink (target does not exist): {path}", file=sys.stderr)
+        else:
+            print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except IsADirectoryError:
         print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except PermissionError as exc:
+        # Windows raises PermissionError (not IsADirectoryError) when ``path`` is a directory.
         print(f"permission denied reading artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except OSError as exc:
-        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+        if getattr(exc, "errno", None) == errno.ELOOP:
+            print(f"artifact path is a symlink loop: {path}", file=sys.stderr)
+        else:
+            print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except ValueError as exc:
         # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
