@@ -13,6 +13,7 @@ Neither is the final ranking (that's the pairwise judge); the objective score an
 from __future__ import annotations
 
 import logging
+import math
 import re
 
 logger = logging.getLogger(__name__)
@@ -661,24 +662,38 @@ def _objective_for_component(objective: dict) -> dict:
     return {k: objective[k] for k in _COMPONENT_SCORE_KEYS if k in objective}
 
 
+def _finite_component_value(value) -> float | None:
+    """A finite float for a numeric score-component field, or ``None`` when it cannot be one.
+
+    Rejects, in order, values that would corrupt a ``[0, 1]`` component mean rather than score it:
+    a ``bool`` (``float(True)`` would count as ``1.0``); a non-numeric; an oversized integer
+    literal (``json`` parses an arbitrarily long integer, and ``float(10**400)`` raises
+    ``OverflowError``); and a non-finite ``NaN``/``Infinity`` (which ``json`` parses from the bare
+    tokens and which would poison the mean). Mirrors the oversized-int / non-finite guards merged
+    across the codebase (repo_task_mean, gap_outlook, compare_eval).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _recall_for_component(obj: dict) -> float:
     """Return a numeric module-recall value for :func:`objective_component`.
 
-  ``float(True)`` / ``float(False)`` would silently score bool recalls as 1.0 / 0.0; reject
-  booleans and other non-numeric values (falling back from a bool weighted recall to plain
-  ``module_recall`` when present).
+    Prefers the file-weighted recall, falling back to plain ``module_recall`` when the weighted
+    value is absent or a bool. A value that is not a finite number — a bool, a non-numeric, an
+    oversized integer, or ``NaN``/``Infinity`` — scores ``0.0`` rather than crashing or poisoning
+    the component mean (see :func:`_finite_component_value`).
     """
     recall = obj.get("weighted_module_recall")
-    if recall is None:
+    if recall is None or isinstance(recall, bool):
         recall = obj.get("module_recall", 0.0)
-    elif isinstance(recall, bool):
-        recall = obj.get("module_recall", 0.0)
-    if isinstance(recall, bool) or not isinstance(recall, (int, float)):
-        return 0.0
-    try:
-        return float(recall)
-    except (ValueError, TypeError):
-        return 0.0
+    value = _finite_component_value(recall)
+    return value if value is not None else 0.0
 
 
 def objective_component(objective: dict) -> float:
@@ -700,14 +715,8 @@ def objective_component(objective: dict) -> float:
     recall = _recall_for_component(obj)
     parts = [recall]
     if obj.get("actual_kinds"):
-        kind = obj.get("kind_recall", 0.0)
-        if isinstance(kind, bool) or not isinstance(kind, (int, float)):
-            parts.append(0.0)
-        else:
-            try:
-                parts.append(float(kind))
-            except (ValueError, TypeError):
-                parts.append(0.0)
+        kind = _finite_component_value(obj.get("kind_recall", 0.0))
+        parts.append(kind if kind is not None else 0.0)
     if obj.get("release_signaled"):
         parts.append(1.0 if obj.get("release_predicted") else 0.0)
     if obj.get("bump_actual") is not None:
@@ -729,6 +738,93 @@ def composite_score(winner: str, objective: dict, w_judge: float = 0.6,
     wo = w_objective if isinstance(w_objective, (int, float)) and not isinstance(w_objective, bool) else 0.4
     total = (wj + wo) or 1.0
     return round((wj * judged + wo * anchored) / total, 3)
+
+
+def _is_number(value) -> bool:
+    """Only a finite, non-boolean int/float — mirrors the same guard in report.py/leaderboard.py
+    so a NaN/Infinity mean (round-tripped through a saved JSON artifact) degrades to `None`
+    rather than poisoning a foresight aggregate."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, OverflowError):
+        return False
+
+
+def _mean_or_none(values):
+    return round(sum(values) / len(values), 3) if values else None
+
+
+def foresight_breakdown(objectives) -> dict:
+    """Aggregate per-task `objective_score()` results into the three legible foresight rates
+    M7 asks for: did the agent predict the *modules*, the *commit-kinds*, and the *releases*
+    the maintainers actually produced — reported separately instead of only as the single
+    blended `objective_component` scalar.
+
+    Applicability mirrors `objective_component` exactly, so the three rates are a strict
+    un-blending of the same anchor rather than a different metric: module recall counts every
+    task (using the file-weighted recall when present, like `objective_component`); kind recall
+    counts only tasks whose revealed window carried a recognizable maintainer kind; release
+    accuracy counts only tasks that actually had a release to get right. Each rate carries its
+    own `_n` (how many tasks it was averaged over) so a run with few/no releases states its own
+    coverage instead of implying a full-run figure. A non-list input, or a non-dict entry within
+    it, is skipped rather than raising — malformed rows degrade the sample size, not a crash.
+
+    Returns `None` for a rate with no applicable tasks (`_n == 0`), never a fabricated 0.0.
+    """
+    module_vals, kind_vals, release_vals = [], [], []
+    for obj in objectives if isinstance(objectives, list) else []:
+        if not isinstance(obj, dict):
+            continue
+        module_vals.append(_recall_for_component(obj))
+        if obj.get("actual_kinds"):
+            kind = obj.get("kind_recall", 0.0)
+            if not isinstance(kind, bool) and isinstance(kind, (int, float)):
+                kind_vals.append(float(kind))
+        if obj.get("release_signaled"):
+            release_vals.append(1.0 if obj.get("release_predicted") else 0.0)
+    return {
+        "module_recall_mean": _mean_or_none(module_vals),
+        "module_recall_n": len(module_vals),
+        "kind_recall_mean": _mean_or_none(kind_vals),
+        "kind_recall_n": len(kind_vals),
+        "release_accuracy": _mean_or_none(release_vals),
+        "release_accuracy_n": len(release_vals),
+    }
+
+
+_FORESIGHT_AXES = (
+    ("module_recall_mean", "module_recall_n"),
+    ("kind_recall_mean", "kind_recall_n"),
+    ("release_accuracy", "release_accuracy_n"),
+)
+
+
+def combine_foresight_breakdowns(breakdowns) -> dict:
+    """Combine several repos' `foresight_breakdown()` results into one cross-repo summary.
+
+    Mirrors how `run_multi_replay` combines `composite_parts`: each rate is the mean of the
+    per-repo means (equal weight per repo, like `objective_mean`), skipping a repo where that
+    axis had no applicable tasks (a `None` rate) rather than treating it as 0. The `_n` fields
+    sum, since those are real task counts, not scores. A non-list input, or a non-dict entry
+    within it, is skipped rather than raising.
+    """
+    buckets = {rate_key: [] for rate_key, _n_key in _FORESIGHT_AXES}
+    totals = {n_key: 0 for _rate_key, n_key in _FORESIGHT_AXES}
+    for breakdown in breakdowns if isinstance(breakdowns, list) else []:
+        if not isinstance(breakdown, dict):
+            continue
+        for rate_key, n_key in _FORESIGHT_AXES:
+            if _is_number(breakdown.get(rate_key)):
+                buckets[rate_key].append(float(breakdown[rate_key]))
+            n = breakdown.get(n_key)
+            if isinstance(n, int) and not isinstance(n, bool):
+                totals[n_key] += n
+    return {
+        **{rate_key: _mean_or_none(buckets[rate_key]) for rate_key, _n_key in _FORESIGHT_AXES},
+        **totals,
+    }
 
 
 def trajectory_overlap(plan, revealed) -> float:

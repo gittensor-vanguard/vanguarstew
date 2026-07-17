@@ -202,8 +202,20 @@ def _slice_has_judge_telemetry(slice_: dict) -> bool:
 
 
 def _expand_slice(label: str, part: dict) -> list[tuple[str, dict]]:
-    if part.get("judge_report") is not None or part.get("judge_order_stats") is not None:
-        return [(label, part)]
+    """The verifiable judge-report slices in ``part``: its ``per_repo`` rows, else ``part`` itself.
+
+    A ``per_repo`` key marks an aggregate, not a leaf. ``run_multi_replay`` writes a *pooled*
+    ``judge_report``/``judge_order_stats`` alongside ``per_repo``, so keying the leaf branch on
+    that telemetry made a multi-repo partition short-circuit as a leaf and never expand its rows.
+    An aggregate carries no top-level ``tally``, so the W-L-T checks were then skipped as
+    "no tally to compare" and every per-repo count went unverified. Check ``per_repo`` first,
+    mirroring the sibling gates ``tally_integrity`` and ``objective_integrity``, which discriminate
+    on the leaf-only ``rows`` key.
+    """
+    if "per_repo" not in part:
+        if part.get("judge_report") is not None or part.get("judge_order_stats") is not None:
+            return [(label, part)]
+        return []
     slices = []
     for index, entry in enumerate(_per_repo_list(part.get("per_repo"))):
         if _slice_has_judge_telemetry(entry):
