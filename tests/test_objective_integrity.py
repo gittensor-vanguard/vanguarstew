@@ -316,6 +316,8 @@ def test_cli_directory_path_exits_two(tmp_path):
 
 
 def test_cli_broken_symlink_exits_two(tmp_path):
+    # A dangling symlink raises FileNotFoundError like a missing path, but the link itself
+    # exists — only its target is gone. It must be named as a broken link, not "not found".
     link = tmp_path / "dangling.json"
     link.symlink_to(tmp_path / "does-not-exist.json")
     proc = subprocess.run(
@@ -326,8 +328,28 @@ def test_cli_broken_symlink_exits_two(tmp_path):
     )
     assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
-    # A broken symlink resolves to FileNotFoundError on open()
-    assert "artifact not found" in proc.stderr
+    assert "broken symlink" in proc.stderr
+    assert "artifact not found" not in proc.stderr
+
+
+def test_cli_symlink_loop_exits_two(tmp_path):
+    # A symlink loop raises OSError(ELOOP) on open(), which none of the specific arms catch; it
+    # must be named as a loop instead of leaking a raw "[Errno 40] ..." errno string. Use a
+    # mutual a -> b -> a loop (not just a self-referential link) to exercise a real cycle.
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.symlink_to(b)
+    b.symlink_to(a)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(a)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "symlink loop" in proc.stderr
+    assert "Errno" not in proc.stderr
 
 
 def test_cli_invalid_json_exits_two(tmp_path):
