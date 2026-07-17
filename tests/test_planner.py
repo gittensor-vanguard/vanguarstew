@@ -25,6 +25,7 @@ from agent.planner import (  # noqa: E402
     _automation_surface_signal,
     _calibrate_release_prediction,
     _commit_plan_kind,
+    _commit_scope,
     _config_surface_note,
     _explicit_pr_number,
     _is_automation_subject,
@@ -32,6 +33,8 @@ from agent.planner import (  # noqa: E402
     _is_release_subject,
     _is_review_item,
     _matched_pr,
+    _module_activity_counts,
+    _module_activity_note,
     _normalize_files,
     _normalize_plan,
     _normalize_plan_item,
@@ -801,6 +804,75 @@ def test_repo_layout_note_is_empty_without_a_usable_layout():
     assert _repo_layout_note({}) == ""
     assert _repo_layout_note({"repo_layout": []}) == ""
     assert _repo_layout_note(None) == ""
+
+
+# --- #1535: rank the real modules by where recent maintainer effort is concentrated ----------
+
+
+def _activity_context(subjects, layout=("agent/", "benchmark/", "docs/", "README.md")):
+    return {"open_prs": [], "repo_layout": list(layout),
+            "recent_commits": [{"subject": s} for s in subjects]}
+
+
+def test_module_activity_counts_rank_real_modules_by_commit_scope():
+    # Maintainers scope commits by the module they touched, so scope frequency over the frozen
+    # history says where effort is concentrating. Busiest first, ties alphabetical.
+    counts = _module_activity_counts(_activity_context([
+        "fix(agent): guard planner", "feat(agent): add note", "perf(agent): trim prompt",
+        "docs(docs): tidy", "test(benchmark): cover score", "refactor(benchmark): split",
+    ]))
+    assert counts == [("agent/", 3), ("benchmark/", 2), ("docs/", 1)]
+
+
+def test_module_activity_matches_the_anchors_top_level_file_normalization():
+    # The anchor keys module_recall on a top-level file's extension-stripped name
+    # (README.md -> readme), so a `docs(README):` scope must resolve to that real entry.
+    assert _module_activity_counts(_activity_context(["docs(README): fix typo"])) == [
+        ("README.md", 1)
+    ]
+
+
+def test_module_activity_ignores_a_scope_that_is_not_a_real_module():
+    # A scope naming something absent from the tree (`ci` on a repo with no `ci` entry) must not
+    # reach the prompt -- it would push an invented path into `files`.
+    assert _module_activity_counts(_activity_context(["ci(ci): bump runner"])) == []
+
+
+def test_module_activity_ignores_unscoped_and_malformed_subjects():
+    ctx = _activity_context(["chore: no scope", "Merge branch 'x'", "fix(agent): real"])
+    ctx["recent_commits"] += [{"subject": None}, {"subject": 123}, "not-a-dict"]
+    assert _module_activity_counts(ctx) == [("agent/", 1)]
+
+
+def test_plan_prompt_surfaces_where_effort_is_concentrated():
+    llm = _PromptCaptureLLM([{"title": "Harden planner", "kind": "bugfix"}])
+    plan_next_actions(
+        _activity_context(["fix(agent): a", "feat(agent): b", "docs(docs): c"]), {}, 1, llm,
+    )
+    assert "agent/ (2)" in llm.last_user
+    assert "docs/ (1)" in llm.last_user
+    # It reports the observed counts and stops there: padding `files` with the whole active
+    # list to farm module_recall is exactly what the anti-cheating pass looks for.
+    assert "name only the modules an action genuinely touches" in llm.last_user
+
+
+def test_module_activity_note_is_empty_without_layout_or_matching_scope():
+    # Degrade to the previous prompt rather than assert an empty/dormant repository.
+    assert _module_activity_note({}) == ""
+    assert _module_activity_note(None) == ""
+    assert _module_activity_note({"recent_commits": [{"subject": "fix(agent): x"}]}) == ""
+    assert _module_activity_note(_activity_context(["chore: unscoped"])) == ""
+
+
+def test_commit_scope_reads_the_cc_scope_without_breaking_kind_parsing():
+    # The scope capture is added to the shared CC regex, so the type group must be unchanged --
+    # including the release-tooling precedence that reads `chore(release): 1.4.0` as a release.
+    assert _commit_scope("fix(loader): x") == "loader"
+    assert _commit_scope("feat(API)!: x") == "api"
+    assert _commit_scope("fix: no scope") is None
+    assert _commit_scope(None) is None
+    assert _commit_plan_kind("fix(loader): x") == "bugfix"
+    assert _commit_plan_kind("chore(release): 1.4.0") == "release"
 
 
 def test_repo_layout_note_guards_a_malformed_or_unsafe_layout():

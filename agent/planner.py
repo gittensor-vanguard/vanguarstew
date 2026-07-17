@@ -68,7 +68,10 @@ _PLAN_KINDS = frozenset({
 # form, mapped into the planner's own `kind` vocabulary. We deliberately do NOT import from
 # ``benchmark/`` (``agent/`` must not depend on it — a miner-only split is planned); keep the
 # two aligned, as agent/context.py already does for forward-reference scrubbing.
-_CC_PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
+# Group 1 is the type ("feat"); group 2 is the optional scope ("loader" in "fix(loader):"), which
+# `_commit_scope` reads for the module-activity signal. Capturing the scope here keeps one CC
+# shape in the module rather than a second, drifting parser.
+_CC_PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\(([^)]*)\))?!?:", re.I)
 
 # Conventional-Commit type -> plan-item "kind" (_PLAN_KINDS). Every type the anchor's own
 # classifier (`benchmark/score.py::_COMMIT_KIND`) recognizes has an entry here, so a kind the
@@ -485,6 +488,97 @@ def _repo_layout_note(context: dict) -> str:
     )
 
 
+def _layout_modules(context: dict) -> dict:
+    """``{normalized module -> layout entry}`` for the repo's top-level entries at T.
+
+    Normalization mirrors the objective anchor's ``benchmark/score.py::_top_module``, which keys
+    ``module_recall`` on a changed path's first segment (``agent/foo.py`` -> ``agent``) and on a
+    top-level file's extension-stripped name (``README.md`` -> ``readme``). Matching that here is
+    what lets a commit scope be checked against a module the anchor would actually score. The
+    entry is kept alongside so the note can name it as it appears in the tree (``docs/``).
+    """
+    out: dict = {}
+    for entry in _repo_layout(context):
+        if not isinstance(entry, str):
+            continue
+        name = entry.rstrip("/")
+        if not name:
+            continue
+        module = (name.rsplit(".", 1)[0] or name.lstrip(".")).lower() if "." in name else name.lower()
+        if module:
+            out.setdefault(module, entry)
+    return out
+
+
+def _commit_scope(subject) -> str | None:
+    """The lowercased Conventional-Commit scope of a subject (``fix(loader):`` -> ``loader``).
+
+    ``None`` when the subject carries no CC prefix, no scope, or is not a string (malformed
+    frozen context), so it is ignored rather than raising inside ``re``.
+    """
+    if not isinstance(subject, str):
+        return None
+    m = _CC_PREFIX_RE.match(subject)
+    if not m:
+        return None
+    scope = (m.group(2) or "").strip().lower()
+    return scope or None
+
+
+def _module_activity_counts(context: dict) -> list:
+    """``(layout entry, count)`` for real top-level modules recent commit scopes name, busiest
+    first, ties alphabetical.
+
+    Maintainers scope their commits by the module they touched (``fix(loader):``), so scope
+    frequency over the frozen ``recent_commits`` is a knowable-at-T read on where effort is
+    concentrating -- the strongest available predictor of what changes next (#1535). This is a
+    different signal from ``_repo_layout``: that says which modules *exist*, this says which are
+    *active*, and the anchor's ``weighted_module_recall`` weights each module by how many files
+    it changes, so the busiest modules carry the most score.
+
+    A scope is only reported when it matches a module in the repo's real layout, so a scope that
+    is not a module (``fix(ci):`` on a repo with no ``ci`` entry) can't push an invented path
+    into `files`. Empty when the layout is unreadable or no scope matches, leaving the prompt
+    unchanged.
+    """
+    modules = _layout_modules(context)
+    if not modules:
+        return []
+    counts: dict = {}
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        scope = _commit_scope(commit.get("subject"))
+        entry = modules.get(scope) if scope else None
+        if entry:
+            counts[entry] = counts.get(entry, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _module_activity_note(context: dict) -> str:
+    """Prompt note ranking the repo's real modules by recent commit-scope frequency (#1535).
+
+    ``_repo_layout_note`` grounds `files` in modules that exist, but says nothing about which of
+    them the maintainer is actually working in, so a plan can name a real-but-dormant module and
+    still miss the window. This adds that ordering.
+
+    It reports the observed counts and stops there. It deliberately does not tell the plan to
+    name every listed module: the anchor scores the modules an action genuinely touches, and
+    padding `files` with the whole active list to farm recall is exactly what the anti-cheating
+    pass looks for. Empty when no scope maps to a real module, so the prompt is unchanged.
+    """
+    counts = _module_activity_counts(context)
+    if not counts:
+        return ""
+    mix = ", ".join(f"{entry} ({n})" for entry, n in counts)
+    return (
+        f"\nWhere recent maintainer effort is concentrated, by Conventional-Commit scope: {mix}.\n"
+        "Near-future work usually lands in the same modules. Weigh this when choosing which "
+        "actions to plan and what `files` each one names -- but name only the modules an action "
+        "genuinely touches, never the whole list.\n"
+    )
+
+
 def _pr_queue_note(context: dict) -> str:
     prs = [p for p in _safe_prs(context) if _pr_title(p)]
     if not prs:
@@ -850,6 +944,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
         f"{_repo_layout_note(context)}"
+        f"{_module_activity_note(context)}"
         f"{_recent_kinds_note(context)}"
         f"{_release_cadence_note(context)}"
         f"{_config_surface_note(context)}"
