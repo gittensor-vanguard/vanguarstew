@@ -1,6 +1,7 @@
 """Tests for the benchmark task-independence gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import os
 import sys
@@ -210,6 +211,94 @@ def test_cli_rejects_a_directory_path(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Traceback" not in captured.err
     assert str(tmp_path) in captured.err
+
+
+# --- path errors get a specific, actionable message -- never a raw errno string ---------------
+
+
+def test_cli_directory_path_reports_the_specific_reason(tmp_path, capsys):
+    # POSIX: IsADirectoryError -> "directory ... not a file".
+    # Windows: PermissionError -> "not readable" (directory permission error).
+    with pytest.raises(SystemExit) as exc:
+        cli.run([str(tmp_path)])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "Errno" not in err
+    if os.name == "nt":
+        assert err == f"task file is not readable (check file permissions): {tmp_path}\n"
+    else:
+        assert err == f"task file path is a directory, not a file: {tmp_path}\n"
+
+
+def test_cli_missing_file_reports_not_found(tmp_path, capsys):
+    missing = tmp_path / "nope.json"
+    with pytest.raises(SystemExit) as exc:
+        cli.run([str(missing)])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "Errno" not in err
+    assert err == f"task file not found: {missing}\n"
+
+
+def test_cli_broken_symlink_reports_the_dangling_target(tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError just like a missing path; islink() separates
+    # them so the message names the real problem (the link exists, its target does not).
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as exc:
+        cli.run([str(link)])
+    assert exc.value.code == 2
+    assert capsys.readouterr().err == (
+        f"task file is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX permission bits are not enforced on Windows; root bypasses them too",
+)
+def test_cli_unreadable_file_reports_a_permission_hint(tmp_path, capsys):
+    path = tmp_path / "tasks.json"
+    path.write_text("[]", encoding="utf-8")
+    os.chmod(path, 0)
+    try:
+        with pytest.raises(SystemExit) as exc:
+            cli.run([str(path)])
+    finally:
+        os.chmod(path, 0o644)
+    assert exc.value.code == 2
+    assert capsys.readouterr().err == (
+        f"task file is not readable (check file permissions): {path}\n"
+    )
+
+
+def test_load_tasks_symlink_loop_reports_a_loop(monkeypatch, tmp_path, capsys):
+    # A symlink loop surfaces as a bare OSError(ELOOP), not one of the named subclasses.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as exc:
+        cli.load_tasks(path)
+    assert exc.value.code == 2
+    assert capsys.readouterr().err == f"task file path is a symlink loop: {path}\n"
+
+
+def test_load_tasks_other_oserror_keeps_the_generic_message(monkeypatch, tmp_path, capsys):
+    # A non-ELOOP OSError with no dedicated arm still reports the underlying text.
+    path = str(tmp_path / "tasks.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as exc:
+        cli.load_tasks(path)
+    assert exc.value.code == 2
+    assert capsys.readouterr().err.startswith(f"cannot read task file ({path}):")
 
 
 def test_cli_rejects_malformed_json(tmp_path):
