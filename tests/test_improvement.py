@@ -14,6 +14,7 @@ if ROOT not in sys.path:
 from benchmark.improvement import (  # noqa: E402
     DEFAULT_MIN_GAIN,
     _check_rows_list,
+    _is_number,
     check_improvement,
     failed_checks,
     improvement_headline,
@@ -182,6 +183,29 @@ def test_headline_reports_adopt_and_hold_without_bare_none():
     assert "None" not in missing
     assert improvement_headline({}) == "improvement: no checks evaluated"
     assert DEFAULT_MIN_GAIN == 0.02
+
+
+def test_is_number_rejects_non_finite_and_oversized_int():
+    assert _is_number(0.5) is True
+    assert _is_number(0) is True
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400, True, False, "0.5", None):
+        assert _is_number(bad) is False, bad
+
+
+def test_headline_degrades_on_oversized_or_non_finite_composites():
+    # Previously: OverflowError from f"{10**400:.3f}" / printed "nan" for a non-finite float.
+    checks = [{"name": "improved_enough", "passed": True}]
+    line = improvement_headline({
+        "passed": True,
+        "baseline_composite": 10**400,
+        "candidate_composite": float("nan"),
+        "gain": float("inf"),
+        "checks": checks,
+    })
+    assert "ADOPT" in line
+    assert "n/a" in line
+    assert "nan" not in line.lower()
+    assert "inf" not in line.lower()
 
 
 def test_failed_checks_helper_is_robust():

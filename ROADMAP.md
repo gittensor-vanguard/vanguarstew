@@ -110,9 +110,9 @@ Live on gittensor as a scored repository — no separate subnet fork needed.
 
 Turn the internal composite score into a single number an outsider instantly understands and can check — the leaderboard's hero stat.
 
-- A public **maintainer-foresight accuracy** metric built from the *objective, verifiable* side of the score: did the agent predict the modules, commit-kinds, and releases that the maintainers actually produced next. This is the half that anyone can independently confirm against real git history — no trust in our judge required.
+- [x] A **foresight breakdown** built from the *objective, verifiable* side of the score: did the agent predict the modules, commit-kinds, and releases that the maintainers actually produced next — reported as three named, independently-checkable rates (`module_recall_mean`, `kind_recall_mean`, `release_accuracy`, each with its own sample size), not just the single blended `objective_mean`. `benchmark/score.py`'s `foresight_breakdown()`/`combine_foresight_breakdowns()`; surfaced in the `run_eval` artifact (`foresight`, see [README.md](README.md)), the Markdown report, and `benchmark/leaderboard.py`'s ranking.
 - Raise objective predictive accuracy as the primary optimization target contributors compete on (the benchmark already rewards exactly this): every `agent/` PR is measured on whether it makes the agent predict *what real maintainers did* more accurately, on repos it has never seen.
-- Surface the metric as the leaderboard's headline, with the composite/judge detail available underneath for depth.
+- Remaining: surface the metric as gittensor's own public leaderboard's headline (external to this repo), with the composite/judge detail available underneath for depth.
 - **Acceptance:** the leaderboard leads with a single objective foresight-accuracy figure on the held-out target; it moves only when a merged PR genuinely improves verifiable prediction accuracy, and cannot be moved by prose-quality alone.
 
 ## M8 — The verifiable public demonstration
