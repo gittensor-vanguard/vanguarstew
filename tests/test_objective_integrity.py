@@ -316,6 +316,8 @@ def test_cli_directory_path_exits_two(tmp_path):
 
 
 def test_cli_broken_symlink_exits_two(tmp_path):
+    # A broken symlink raises FileNotFoundError on open() just like a missing path; islink()
+    # separates them so the message names the real problem (the link exists, its target does not).
     link = tmp_path / "dangling.json"
     link.symlink_to(tmp_path / "does-not-exist.json")
     proc = subprocess.run(
@@ -325,9 +327,72 @@ def test_cli_broken_symlink_exits_two(tmp_path):
         text=True,
     )
     assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr and "Errno" not in proc.stderr
+    assert "artifact is a broken symlink (target does not exist)" in proc.stderr
+
+
+def test_cli_symlink_to_directory_exits_two(tmp_path):
+    # A symlink pointing at a directory resolves to IsADirectoryError through the link; the
+    # message must stay actionable, never a raw traceback.
+    target_dir = tmp_path / "adir"
+    target_dir.mkdir()
+    link = tmp_path / "todir.json"
+    link.symlink_to(target_dir)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(link)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "directory" in proc.stderr
+    assert "Traceback" not in proc.stderr and "Errno" not in proc.stderr
+
+
+def test_cli_self_referential_symlink_loop_exits_two(tmp_path):
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(loop)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "artifact path is a symlink loop" in proc.stderr
     assert "Traceback" not in proc.stderr
-    # A broken symlink resolves to FileNotFoundError on open()
-    assert "artifact not found" in proc.stderr
+
+
+def test_cli_mutual_symlink_loop_exits_two(tmp_path):
+    # A mutual loop (a -> b -> a), not just a self-loop, also raises OSError(ELOOP).
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.symlink_to(b)
+    b.symlink_to(a)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(a)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "artifact path is a symlink loop" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_non_directory_parent_component_exits_two(tmp_path):
+    # A real NotADirectoryError: a regular file used as a parent component of the artifact path.
+    afile = tmp_path / "afile.json"
+    afile.write_text("{}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(afile / "child.json")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "not a file (a parent component is not a directory)" in proc.stderr
+    assert "Traceback" not in proc.stderr and "Errno" not in proc.stderr
 
 
 def test_cli_invalid_json_exits_two(tmp_path):
