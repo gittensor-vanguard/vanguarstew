@@ -287,6 +287,78 @@ def _recent_kinds_note(context: dict) -> str:
     )
 
 
+# A kind must actually *recur* before an item is planned for it. A single occurrence is noise --
+# planning off it would be padding the plan with kinds the repo does not really do, and
+# `kind_recall` is a pure recall (matched/actual, no precision penalty), so an unbounded fill
+# would be farming rather than prediction. Recurrence + the plan's own `n` cap keep this a
+# prediction from observed momentum.
+_KIND_GAP_MIN = 2
+
+
+def _planned_kinds(plan) -> set:
+    """The plan-vocabulary kinds a plan already names."""
+    out = set()
+    for item in plan if isinstance(plan, list) else []:
+        if isinstance(item, dict):
+            kind = item.get("kind")
+            if isinstance(kind, str) and kind:
+                out.add(kind)
+    return out
+
+
+def _kind_gap(plan, context: dict):
+    """``(kind, count)`` for the most frequent recurring kind the plan omits, or ``None``.
+
+    ``_recent_kinds_note`` already asks the model to cover the recurring kinds, but nothing
+    enforces it, so a plan that ignores the note leaves `kind_recall` short on a kind the repo
+    demonstrably keeps doing. ``triage`` is excluded: it is a maintainer action the anchor
+    deliberately does not score (`plan_kind("triage")` is None), so filling it would add an
+    unscoreable item for no gain.
+    """
+    covered = _planned_kinds(plan)
+    for kind, count in _recent_kind_counts(context):
+        if kind != "triage" and count >= _KIND_GAP_MIN and kind not in covered:
+            return kind, count
+    return None
+
+
+def _kind_gap_fill(plan, context: dict, n: int) -> list:
+    """Add one deterministic item for the top recurring kind the plan omitted (#1559).
+
+    The deterministic backstop for kind coverage, mirroring how
+    ``reconcile_plan_with_queue`` prepends a review item when the model ignores the PR queue:
+    the prompt asks for the behavior, this guarantees it when the model does not comply.
+
+    Deliberately bounded so it stays a prediction rather than recall farming:
+
+    - **one item, ever** -- never a sweep of every uncovered kind;
+    - only a kind that **recurs** (``>= _KIND_GAP_MIN``) in the frozen history;
+    - appended **last**, so the model's own prioritization keeps the top slots. When the plan is
+      already at ``n`` the lowest-priority item is dropped to make room -- the smallest possible
+      displacement, and never the queue-review item ``reconcile`` prepends first.
+
+    Runs after ``reconcile_plan_with_queue`` so the queue guarantee is already applied and the
+    plan is capped at ``n``. A non-positive ``n`` leaves the plan untouched.
+    """
+    if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+        return plan
+    gap = _kind_gap(plan, context)
+    if gap is None:
+        return plan
+    kind, count = gap
+    total = len(_recent_commits(context))
+    item = _normalize_plan_item({
+        "title": f"Continue the recurring {kind} work this repository keeps landing",
+        "kind": kind,
+        "rationale": (
+            f"{count} of the last {total} recorded commits are {kind} work, and the plan does "
+            f"not cover it; near-future maintainer activity usually continues the recent mix"
+        ),
+        "theme": "recent maintainer momentum",
+    })
+    return (list(plan)[:n - 1] if len(plan) >= n else list(plan)) + [item]
+
+
 def _release_cadence_signal(context: dict) -> bool:
     """True when recent commits show a release cut (mirrors heuristic_plan cadence)."""
     return any(
@@ -873,7 +945,8 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
     plan = _calibrate_release_prediction(plan, context)
-    return reconcile_plan_with_queue(plan, context, n)
+    plan = reconcile_plan_with_queue(plan, context, n)
+    return _kind_gap_fill(plan, context, n)
 
 
 def _render(context: dict) -> str:

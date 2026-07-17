@@ -31,6 +31,8 @@ from agent.planner import (  # noqa: E402
     _is_planned_release,
     _is_release_subject,
     _is_review_item,
+    _kind_gap,
+    _kind_gap_fill,
     _matched_pr,
     _normalize_files,
     _normalize_plan,
@@ -1232,3 +1234,73 @@ def test_planner_prompt_omits_kind_note_without_conventional_commits():
     ctx = {"open_prs": [], "recent_commits": [{"subject": "Add streaming export"}]}
     plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
     assert "Recent maintainer activity by kind" not in captured["user"]
+
+
+# --- #1559: deterministic kind-coverage gap-fill ---------------------------------------------
+
+
+def _kind_history(subjects):
+    return {"open_prs": [], "recent_commits": [{"subject": s} for s in subjects]}
+
+
+_RECURRING = ["ci(x): a", "ci(x): b", "ci(x): c", "fix: d", "fix: e", "docs: f"]  # ci=3 fix=2 docs=1
+
+
+def test_kind_gap_fill_covers_the_top_recurring_kind_the_plan_omitted():
+    # _recent_kinds_note asks the model to cover the recurring kinds but nothing enforces it, so
+    # a plan that ignores it leaves kind_recall short on a kind the repo demonstrably keeps doing.
+    plan = [{"title": "Fix loader", "kind": "bugfix"}]
+    out = _kind_gap_fill(plan, _kind_history(_RECURRING), 3)
+    assert [i["kind"] for i in out] == ["bugfix", "ci"]
+    assert out[-1]["theme"] == "recent maintainer momentum"
+    # the rationale states the observed evidence, not a generic filler line
+    assert "3 of the last 6" in out[-1]["rationale"]
+
+
+def test_kind_gap_fill_is_a_noop_when_the_kind_is_already_covered():
+    plan = [{"title": "Pin the CI runner", "kind": "ci"}, {"title": "Fix loader", "kind": "bugfix"}]
+    assert _kind_gap_fill(plan, _kind_history(_RECURRING), 3) == plan
+
+
+def test_kind_gap_fill_ignores_a_one_off_kind():
+    # kind_recall is a pure recall (matched/actual, no precision penalty), so filling every
+    # uncovered kind would farm it. Only a kind that RECURS is a prediction from momentum;
+    # docs appears once here and must not be planned off.
+    plan = [{"title": "Pin CI", "kind": "ci"}, {"title": "Fix loader", "kind": "bugfix"}]
+    assert _kind_gap(plan, _kind_history(_RECURRING)) is None
+
+
+def test_kind_gap_fill_adds_at_most_one_item_and_displaces_only_the_lowest_priority():
+    # A full plan drops its LAST item to make room -- never the queue-review item reconcile
+    # prepends first, and never more than one fill item.
+    plan = [{"title": "Review pull request #7", "kind": "triage"},
+            {"title": "B", "kind": "bugfix"}, {"title": "C", "kind": "refactor"}]
+    out = _kind_gap_fill(plan, _kind_history(_RECURRING), 3)
+    assert len(out) == 3
+    assert out[0]["title"].startswith("Review pull request")     # queue guarantee preserved
+    assert out[-1]["kind"] == "ci"
+    assert sum(1 for i in out if i.get("theme") == "recent maintainer momentum") == 1
+
+
+def test_kind_gap_fill_never_plans_triage():
+    # plan_kind("triage") is None by design, so filling it would add an unscoreable item.
+    plan = [{"title": "Fix loader", "kind": "bugfix"}]
+    ctx = _kind_history(["Merge branch 'x'", "Merge branch 'y'", "Merge branch 'z'"])
+    assert _kind_gap_fill(plan, ctx, 3) == plan
+
+
+def test_kind_gap_fill_degrades_on_empty_history_or_bad_n():
+    plan = [{"title": "Fix loader", "kind": "bugfix"}]
+    assert _kind_gap_fill(plan, {"recent_commits": []}, 3) == plan
+    assert _kind_gap_fill(plan, {}, 3) == plan
+    for bad_n in (0, -1, True, "3"):
+        assert _kind_gap_fill(plan, _kind_history(_RECURRING), bad_n) == plan
+
+
+def test_plan_next_actions_guarantees_recurring_kind_coverage():
+    # End-to-end: the model returns a plan ignoring the repo's dominant ci momentum; the plan
+    # that reaches the scorer covers it anyway, and stays within n.
+    llm = _PromptCaptureLLM([{"title": "Fix loader", "kind": "bugfix", "files": ["src/"]}])
+    out = plan_next_actions(_kind_history(_RECURRING), {}, 2, llm)
+    assert len(out) <= 2
+    assert "ci" in {i["kind"] for i in out}
