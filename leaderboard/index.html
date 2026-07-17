@@ -86,6 +86,26 @@
   footer .wrap{display:flex; flex-wrap:wrap; gap:16px 26px; align-items:center; padding-block:30px; font-family:var(--mono); font-size:.74rem; color:var(--faint)}
   footer a{color:var(--muted); text-decoration:none} footer a:hover{color:var(--brass)}
   footer .sp{margin-left:auto}
+
+  /* vanguarstew-ui-polish-v070 */
+  body{background-image:
+    radial-gradient(1200px 680px at 82% -10%, rgba(207,169,84,.11), transparent 58%),
+    radial-gradient(900px 600px at 2% 3%, rgba(124,190,144,.055), transparent 55%),
+    radial-gradient(820px 900px at 108% 88%, rgba(172,144,228,.04), transparent 58%);}
+  body::before{content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.028;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  header.top, main, footer, article{position:relative; z-index:1}
+  .btn-primary{background:linear-gradient(180deg,var(--brass-hi),var(--brass) 60%,var(--brass-deep));
+    box-shadow:0 6px 22px -8px rgba(207,169,84,.55), inset 0 1px 0 rgba(255,244,214,.5)}
+  .btn-primary:hover{filter:brightness(1.06); transform:translateY(-1px);
+    box-shadow:0 10px 30px -8px rgba(207,169,84,.7), inset 0 1px 0 rgba(255,244,214,.6)}
+  .callout{background:linear-gradient(180deg, rgba(18,32,26,.62), rgba(15,26,21,.55));
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    box-shadow:0 22px 56px -34px rgba(0,0,0,.75), inset 0 1px 0 rgba(231,234,226,.05)}
+  .close-card, .pillars{backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px)}
+  .close-card{box-shadow:0 26px 64px -36px rgba(0,0,0,.8), inset 0 1px 0 rgba(231,234,226,.05)}
+  .post{transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease}
+  .post:hover{transform:translateY(-3px); box-shadow:0 18px 44px -26px rgba(0,0,0,.7)}
 </style>
 </head>
 <body>
