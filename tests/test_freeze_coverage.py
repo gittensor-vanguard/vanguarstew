@@ -45,11 +45,13 @@ def test_single_repo_without_freeze():
 
 
 def test_multi_repo_coverage():
-    out = summarize_freeze_coverage(_multi(
-        _repo("a", "sha1"),
-        _repo("b"),
-        _repo("c", "sha2"),
-    ))
+    out = summarize_freeze_coverage(
+        _multi(
+            _repo("a", "sha1"),
+            _repo("b"),
+            _repo("c", "sha2"),
+        )
+    )
     assert out["repos_total"] == 3
     assert out["repos_frozen"] == 2
     assert out["freeze_coverage"] == round(2 / 3, 3)
@@ -201,4 +203,34 @@ def test_cli_permission_error_exits_two(capsys):
     with patch("builtins.open", mock_open()) as mocked:
         mocked.side_effect = PermissionError("permission denied")
         assert cli.run(["locked.json"]) == 2
-    assert "cannot read artifact" in capsys.readouterr().err
+    assert "artifact is not readable: locked.json" in capsys.readouterr().err
+
+
+def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    path = tmp_path / "run.json"
+
+    def raise_directory_error(*args, **kwargs):
+        raise IsADirectoryError
+
+    monkeypatch.setattr("builtins.open", raise_directory_error)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.load_artifact(str(path))
+
+    assert exc_info.value.code == 2
+    assert capsys.readouterr().err == f"artifact is a directory: {path}\n"
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    path = tmp_path / "run.json"
+
+    def raise_permission_error(*args, **kwargs):
+        raise PermissionError
+
+    monkeypatch.setattr("builtins.open", raise_permission_error)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.load_artifact(str(path))
+
+    assert exc_info.value.code == 2
+    assert capsys.readouterr().err == f"artifact is not readable: {path}\n"
