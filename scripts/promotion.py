@@ -10,7 +10,9 @@ process exits non-zero when the promotion gate fails.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import sys
 
 from benchmark.promotion import (
@@ -33,7 +35,12 @@ def load_artifact(path: str) -> dict:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        print(f"artifact not found: {path}", file=sys.stderr)
+        # A dangling symlink raises FileNotFoundError too; islink() separates it from a plain
+        # missing path so the message names the real problem (the link exists, its target does not).
+        if os.path.islink(path):
+            print(f"artifact is a broken symlink (target does not exist): {path}", file=sys.stderr)
+        else:
+            print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(1) from None
     except PermissionError:
         print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
@@ -41,8 +48,17 @@ def load_artifact(path: str) -> dict:
     except IsADirectoryError:
         print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
         raise SystemExit(1) from None
-    except OSError:
-        print(f"cannot read artifact: {path}", file=sys.stderr)
+    except NotADirectoryError:
+        print(f"artifact path is not a file (a parent component is not a directory): {path}",
+              file=sys.stderr)
+        raise SystemExit(1) from None
+    except OSError as exc:
+        # A symlink loop raises OSError(ELOOP), which none of the arms above catch. Name it
+        # distinctly; any other real read failure keeps its underlying text with a clean exit.
+        if getattr(exc, "errno", None) == errno.ELOOP:
+            print(f"artifact path is a symlink loop: {path}", file=sys.stderr)
+        else:
+            print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(1) from None
     except ValueError as exc:
         # json.load raises JSONDecodeError (a ValueError) for malformed JSON, and a plain

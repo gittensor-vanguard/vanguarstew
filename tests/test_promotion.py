@@ -519,6 +519,68 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     assert "Traceback" not in result.stderr
 
 
+# --- symlink edge cases: real filesystem links, distinct actionable messages -----------------
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
+def test_cli_reports_a_broken_symlink_distinctly(tmp_path):
+    # A dangling symlink raises FileNotFoundError like a missing path; islink() separates them so
+    # the message blames the missing target, not the (present) link.
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "gone.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 1
+    assert "artifact is a broken symlink (target does not exist)" in result.stderr
+    assert "Traceback" not in result.stderr and "Errno" not in result.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
+def test_cli_reports_a_symlink_to_a_directory_cleanly(tmp_path):
+    # A symlink pointing at a directory resolves to IsADirectoryError through the link; the message
+    # must stay actionable (never a raw traceback), even though the path is a symlink.
+    target_dir = tmp_path / "adir"
+    target_dir.mkdir()
+    link = tmp_path / "todir.json"
+    link.symlink_to(target_dir)
+    result = _run_cli(str(link))
+    assert result.returncode == 1
+    assert "directory" in result.stderr
+    assert "Traceback" not in result.stderr and "Errno" not in result.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
+def test_cli_reports_a_self_referential_symlink_loop(tmp_path):
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    result = _run_cli(str(loop))
+    assert result.returncode == 1
+    assert "artifact path is a symlink loop" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
+def test_cli_reports_a_mutual_symlink_loop(tmp_path):
+    # A mutual loop (a -> b -> a), not just a self-loop, also raises OSError(ELOOP).
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.symlink_to(b)
+    b.symlink_to(a)
+    result = _run_cli(str(a))
+    assert result.returncode == 1
+    assert "artifact path is a symlink loop" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_reports_a_non_directory_parent_component(tmp_path):
+    # A real NotADirectoryError: a regular file used as a parent component of the artifact path.
+    afile = tmp_path / "afile.json"
+    afile.write_text("{}", encoding="utf-8")
+    result = _run_cli(str(afile / "child.json"))
+    assert result.returncode == 1
+    assert "not a file (a parent component is not a directory)" in result.stderr
+    assert "Traceback" not in result.stderr and "Errno" not in result.stderr
+
+
 def test_cli_still_reports_promote_for_a_well_formed_artifact(tmp_path):
     path = tmp_path / "good.json"
     path.write_text(json.dumps(_result(composite=0.7, margin=2, disagreement=0.1)), encoding="utf-8")
