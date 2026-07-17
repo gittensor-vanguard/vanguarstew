@@ -164,6 +164,28 @@ def test_compare_eval_artifacts_reports_per_repo_deltas():
     assert by_repo["/b"]["composite_mean"]["delta"] == 0.0
 
 
+def test_per_repo_zero_task_placeholder_mean_is_unavailable():
+    # A skipped per-repo row (tasks: 0) carries composite_mean: 0.0 as a placeholder from
+    # averaging an empty task list — not a measured score. Diffing it against a real peer
+    # score must not fabricate a ±0.7 swing (#1846; #557 covers partition scored_repos:0 only).
+    from scripts.compare_eval import _per_repo_deltas
+
+    # Candidate skips a repo the baseline scored → candidate side None, delta None.
+    base = {"per_repo": [{"repo": "b", "tasks": 3, "composite_mean": 0.7}]}
+    cand = {"per_repo": [{"repo": "b", "tasks": 0, "composite_mean": 0.0}]}
+    row = _per_repo_deltas(base, cand)[0]["composite_mean"]
+    assert row == {"baseline": 0.7, "candidate": None, "delta": None}
+
+    # Baseline skipped, candidate scored → baseline side None.
+    row = _per_repo_deltas(cand, base)[0]["composite_mean"]
+    assert row == {"baseline": None, "candidate": 0.7, "delta": None}
+
+    # Both skipped → both sides None (not delta 0.0 from two placeholders).
+    both = {"per_repo": [{"repo": "b", "tasks": 0, "composite_mean": 0.0}]}
+    row = _per_repo_deltas(both, both)[0]["composite_mean"]
+    assert row == {"baseline": None, "candidate": None, "delta": None}
+
+
 def test_compare_eval_artifacts_tolerates_non_list_per_repo():
     # A malformed artifact whose per_repo is not a list must not crash the diff (#464); it is
     # treated as an empty repo table, so the top-level composite_mean still diffs.

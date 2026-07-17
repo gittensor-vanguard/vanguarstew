@@ -28,11 +28,25 @@ def _numeric(value) -> float | None:
 
 
 def _is_scored_unavailable(artifact: dict) -> bool:
-    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder."""
+    """True when ``composite_mean`` is a placeholder, not a measured score.
+
+    Partition/aggregate rows signal this with ``scored_repos: 0``. Per-repo rows carry
+    no ``scored_repos`` — a skipped repo is ``tasks: 0`` with a placeholder ``0.0`` mean
+    from averaging an empty task list, and must be masked the same way or
+    :func:`_per_repo_deltas` fabricates a ±0.6–0.7 swing against a real peer score.
+    """
     if not isinstance(artifact, dict):
         return False
     scored = artifact.get("scored_repos")
-    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
+    if isinstance(scored, (int, float)) and not isinstance(scored, bool):
+        return not scored
+    # Per-repo (and any row without scored_repos): tasks == 0 ⇒ skipped placeholder.
+    if "tasks" in artifact:
+        tasks = artifact.get("tasks")
+        if not (isinstance(tasks, (int, float)) and not isinstance(tasks, bool)):
+            return True
+        return tasks <= 0
+    return False
 
 
 def _effective_composite_mean(artifact: dict):
