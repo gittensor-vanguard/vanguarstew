@@ -1,9 +1,11 @@
 """Tests for agree-order share summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import subprocess
 import sys
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -190,11 +192,46 @@ def test_cli_non_object_artifact(tmp_path):
 
 
 def test_cli_directory_path_reports_distinct_error(tmp_path, capsys):
-    # A directory raises IsADirectoryError; name it distinctly instead of the raw
-    # "[Errno 21] Is a directory" the generic OSError arm printed before.
+    # POSIX: IsADirectoryError -> "directory ... not a file".
+    # Windows: PermissionError -> "not readable" (directory permission error).
     assert cli.run([str(tmp_path)]) == 2
     err = capsys.readouterr().err
-    assert "artifact path is a directory, not a file" in err
+    assert "Errno" not in err and "Traceback" not in err
+    if os.name == "nt":
+        assert err == f"artifact is not readable (check file permissions): {tmp_path}\n"
+    else:
+        assert err == f"artifact path is a directory, not a file: {tmp_path}\n"
+
+
+def test_cli_broken_symlink_exits_two(tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError like a missing path; it must be named as a
+    # broken link (its target is gone, the link itself exists), not reported as "not found".
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_cli_symlink_loop_exits_two(capsys):
+    # A symlink loop raises OSError(ELOOP), which none of the specific arms catch; it must be
+    # named as a loop, not leaked as a raw errno string.
+    path = "loop.json"
+    with patch(
+        "builtins.open",
+        side_effect=OSError(errno.ELOOP, "Too many levels of symbolic links", path),
+    ):
+        assert cli.run([path]) == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_cli_generic_os_error_exits_two(capsys):
+    # Any other OSError (e.g. an I/O error) is reported cleanly with its message, not a traceback.
+    with patch("builtins.open", side_effect=OSError("I/O error")):
+        assert cli.run(["flaky.json"]) == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "I/O error" in err
     assert "Errno" not in err and "Traceback" not in err
 
 
