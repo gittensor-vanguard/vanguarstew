@@ -1276,6 +1276,32 @@ def test_objective_component_rejects_bool_kind_recall():
     assert objective_component(obj) == 0.5
 
 
+def test_objective_component_rejects_oversized_int_recall_without_crashing():
+    from benchmark.score import objective_component
+
+    # json parses an arbitrarily long integer literal into a Python int; float(10**400) raises
+    # OverflowError. An oversized recall must score 0.0, not crash objective_component (and the
+    # row/objective integrity CLIs that call it).
+    big = 10 ** 400
+    assert objective_component({"weighted_module_recall": big}) == 0.0
+    assert objective_component({"module_recall": big}) == 0.0
+    # kind_recall on the same path; module_recall 0.5 -> mean of [0.5, 0.0] == 0.25
+    obj = {"module_recall": 0.5, "actual_kinds": ["feat"], "kind_recall": big}
+    assert objective_component(obj) == 0.25
+
+
+def test_objective_component_rejects_non_finite_recall():
+    from benchmark.score import objective_component
+
+    # json.loads parses the bare tokens NaN / Infinity into float nan / inf; either would poison
+    # the [0, 1] component mean (nan propagates, inf blows the scale). Both must score 0.0.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert objective_component({"weighted_module_recall": bad}) == 0.0
+        assert objective_component({"module_recall": bad}) == 0.0
+        obj = {"module_recall": 0.5, "actual_kinds": ["feat"], "kind_recall": bad}
+        assert objective_component(obj) == 0.25
+
+
 def test_bump_level_handles_non_tuple():
     assert bump_level(None, (1,0,0)) is None
     assert bump_level("str", (1,0,0)) is None

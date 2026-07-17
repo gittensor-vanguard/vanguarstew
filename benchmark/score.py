@@ -662,24 +662,38 @@ def _objective_for_component(objective: dict) -> dict:
     return {k: objective[k] for k in _COMPONENT_SCORE_KEYS if k in objective}
 
 
+def _finite_component_value(value) -> float | None:
+    """A finite float for a numeric score-component field, or ``None`` when it cannot be one.
+
+    Rejects, in order, values that would corrupt a ``[0, 1]`` component mean rather than score it:
+    a ``bool`` (``float(True)`` would count as ``1.0``); a non-numeric; an oversized integer
+    literal (``json`` parses an arbitrarily long integer, and ``float(10**400)`` raises
+    ``OverflowError``); and a non-finite ``NaN``/``Infinity`` (which ``json`` parses from the bare
+    tokens and which would poison the mean). Mirrors the oversized-int / non-finite guards merged
+    across the codebase (repo_task_mean, gap_outlook, compare_eval).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _recall_for_component(obj: dict) -> float:
     """Return a numeric module-recall value for :func:`objective_component`.
 
-  ``float(True)`` / ``float(False)`` would silently score bool recalls as 1.0 / 0.0; reject
-  booleans and other non-numeric values (falling back from a bool weighted recall to plain
-  ``module_recall`` when present).
+    Prefers the file-weighted recall, falling back to plain ``module_recall`` when the weighted
+    value is absent or a bool. A value that is not a finite number — a bool, a non-numeric, an
+    oversized integer, or ``NaN``/``Infinity`` — scores ``0.0`` rather than crashing or poisoning
+    the component mean (see :func:`_finite_component_value`).
     """
     recall = obj.get("weighted_module_recall")
-    if recall is None:
+    if recall is None or isinstance(recall, bool):
         recall = obj.get("module_recall", 0.0)
-    elif isinstance(recall, bool):
-        recall = obj.get("module_recall", 0.0)
-    if isinstance(recall, bool) or not isinstance(recall, (int, float)):
-        return 0.0
-    try:
-        return float(recall)
-    except (ValueError, TypeError):
-        return 0.0
+    value = _finite_component_value(recall)
+    return value if value is not None else 0.0
 
 
 def objective_component(objective: dict) -> float:
@@ -701,14 +715,8 @@ def objective_component(objective: dict) -> float:
     recall = _recall_for_component(obj)
     parts = [recall]
     if obj.get("actual_kinds"):
-        kind = obj.get("kind_recall", 0.0)
-        if isinstance(kind, bool) or not isinstance(kind, (int, float)):
-            parts.append(0.0)
-        else:
-            try:
-                parts.append(float(kind))
-            except (ValueError, TypeError):
-                parts.append(0.0)
+        kind = _finite_component_value(obj.get("kind_recall", 0.0))
+        parts.append(kind if kind is not None else 0.0)
     if obj.get("release_signaled"):
         parts.append(1.0 if obj.get("release_predicted") else 0.0)
     if obj.get("bump_actual") is not None:

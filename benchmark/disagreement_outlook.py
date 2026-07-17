@@ -62,9 +62,15 @@ def _disagreement_counts(telemetry: dict) -> tuple[int, int] | None:
         disagreements = telemetry.get("disagreements")
     if disagreements is None:
         rate = telemetry.get("disagreement_rate")
-        if _is_number(rate) and _is_int(dual):
+        if not (_is_number(rate) and _is_int(dual)):
+            return None
+        try:
             disagreements = round(rate * dual)
-        else:
+        except OverflowError:
+            # json parses an arbitrarily long integer literal into a Python int, and
+            # ``rate * dual`` (float * int) forces that int to float and raises OverflowError for
+            # an oversized ``dual_order_tasks``. Treat the block as unusable rather than raising,
+            # per the module's fail-soft contract.
             return None
     if not _is_int(disagreements) or disagreements < 0 or not _is_int(dual) or dual < 0:
         return None
