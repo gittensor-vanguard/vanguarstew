@@ -893,7 +893,15 @@ def _normalize_plan_item(item) -> dict | None:
     else:
         kind = ""
     if kind not in _PLAN_KINDS:
-        kind = "triage"
+        # The model routinely tags an item with the Conventional-Commit *type* ("feat", "fix",
+        # "chore", "doc", "tests", "bug") rather than this vocabulary's long form -- the prompt
+        # itself talks in commit types, and CC is the ubiquitous convention. The objective anchor
+        # scores those aliases (`benchmark.score._PLAN_KIND` maps feat->feat, fix->fix, ...), but
+        # coercing them straight to "triage" here made `plan_kind("triage")` -> None, so a
+        # correctly anticipated kind was discarded and `kind_recall` missed it. Map a known alias
+        # to its canonical kind via the same table `_recent_kinds_note` reads commit subjects with;
+        # only a genuinely unrecognized kind falls back to "triage".
+        kind = _CC_TYPE_TO_PLAN_KIND.get(kind, "triage")
     normalized = {
         "title": title,
         "kind": kind,

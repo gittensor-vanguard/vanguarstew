@@ -380,6 +380,35 @@ def test_normalize_plan_item_coerces_non_string_fields():
     assert _normalize_plan_item({"title": "work", "kind": "mystery"})["kind"] == "triage"
 
 
+def test_normalize_plan_item_maps_conventional_commit_kind_aliases():
+    # The model routinely tags an item with the Conventional-Commit TYPE ("feat", "fix", "chore")
+    # rather than this vocabulary's long form. The objective anchor scores those aliases, so
+    # coercing them to the unscoreable "triage" silently discarded a correctly anticipated kind and
+    # missed kind_recall. Map a known alias to its canonical kind instead.
+    aliases = {
+        "feat": "feature", "fix": "bugfix", "bug": "bugfix", "doc": "docs",
+        "chore": "dep", "deps": "dep", "tests": "test",
+    }
+    for alias, canonical in aliases.items():
+        assert _normalize_plan_item({"title": "work", "kind": alias})["kind"] == canonical
+        assert _normalize_plan_item({"title": "work", "kind": alias.upper()})["kind"] == canonical
+    # Long forms already in the vocabulary are untouched, and a genuinely unknown kind still
+    # falls back to triage (the alias map is a fallback, not a replacement).
+    for canonical in ("feature", "bugfix", "docs", "dep", "ci", "test", "perf", "release"):
+        assert _normalize_plan_item({"title": "w", "kind": canonical})["kind"] == canonical
+    assert _normalize_plan_item({"title": "w", "kind": "mystery"})["kind"] == "triage"
+
+
+def test_conventional_commit_alias_kind_is_scored_not_dropped():
+    # End-to-end: a plan that correctly predicts a `feat` window used to score kind_recall 0.0
+    # because feat -> triage -> plan_kind(None). It is now credited.
+    from benchmark.score import kind_recall  # noqa: PLC0415
+
+    revealed = [{"subject": "feat: add streaming API", "files": ["x.py"]}]
+    plan = [_normalize_plan_item({"title": "Add streaming API", "kind": "feat"})]
+    assert kind_recall(plan, revealed)["kind_recall"] == 1.0
+
+
 def test_normalize_files_coerces_scalar_and_list_shapes():
     assert _normalize_files(None) == []
     assert _normalize_files("core/loader.py") == ["core/loader.py"]
