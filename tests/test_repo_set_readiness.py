@@ -29,14 +29,14 @@ VALID = {
     "description": "d",
     "strategy": "s",
     "repos": [
-        {"name": "tuned-recent", "source": "https://github.com/org/a", "tier": "recent",
-         "freeze_window": {"after": "2025-09-01", "recent_bias": True}},
-        {"name": "tuned-obscure", "source": "https://github.com/org/b", "tier": "obscure",
-         "freeze_window": {"min_history": 30}},
-        {"name": "held-recent", "source": "https://github.com/org/c", "tier": "recent",
-         "held_out": True, "freeze_window": {"after": "2025-10-01", "recent_bias": True}},
-        {"name": "held-obscure", "source": "https://github.com/org/d", "tier": "obscure",
-         "held_out": True, "freeze_window": {"rotation_seed": 3}},
+        {"name": "tuned-a", "source": "https://github.com/org/a", "tier": "obscure",
+         "freeze_window": {"before": "2021-01-01", "min_history": 30, "horizon_days": 60}},
+        {"name": "tuned-b", "source": "https://github.com/org/b", "tier": "obscure",
+         "freeze_window": {"before": "2021-01-01", "min_history": 30}},
+        {"name": "held-c", "source": "https://github.com/org/c", "tier": "obscure",
+         "held_out": True, "freeze_window": {"before": "2020-06-01", "min_history": 25}},
+        {"name": "held-d", "source": "https://github.com/org/d", "tier": "obscure",
+         "held_out": True, "freeze_window": {"before": "2021-01-01", "rotation_seed": 3}},
     ],
 }
 
@@ -56,7 +56,7 @@ def test_a_ready_set_passes_all_checks():
     result = check_readiness(VALID)
     assert result["passed"] is True
     assert _names(result) == [
-        "valid_config", "min_tuned", "min_held_out", "both_tiers", "no_placeholder_sources",
+        "valid_config", "min_tuned", "min_held_out", "pre_llm_windows", "no_placeholder_sources",
     ]
 
 
@@ -82,12 +82,12 @@ def test_too_few_tuned_repos_fails_min_tuned():
     config = {
         "name": "m",
         "repos": [
-            {"name": "held-recent", "source": "https://github.com/org/c", "tier": "recent",
-             "held_out": True, "freeze_window": {"after": "2025-10-01", "recent_bias": True}},
-            {"name": "held-obscure", "source": "https://github.com/org/d", "tier": "obscure",
-             "held_out": True, "freeze_window": {"rotation_seed": 3}},
-            {"name": "tuned-recent", "source": "https://github.com/org/a", "tier": "recent",
-             "freeze_window": {"after": "2025-09-01", "recent_bias": True}},
+            {"name": "held-c", "source": "https://github.com/org/c", "tier": "obscure",
+             "held_out": True, "freeze_window": {"before": "2021-01-01", "min_history": 25}},
+            {"name": "held-d", "source": "https://github.com/org/d", "tier": "obscure",
+             "held_out": True, "freeze_window": {"before": "2021-01-01", "rotation_seed": 3}},
+            {"name": "tuned-a", "source": "https://github.com/org/a", "tier": "obscure",
+             "freeze_window": {"before": "2021-01-01", "min_history": 30}},
         ],
     }
     result = check_readiness(config, min_tuned=2)
@@ -105,13 +105,24 @@ def test_too_few_held_out_repos_fails_min_held_out():
     assert failed_checks(result) == ["min_held_out"]
 
 
-def test_missing_tier_fails_both_tiers():
+def test_llm_era_window_fails_pre_llm_windows():
+    # A freeze window bounded after the LLM-era cutoff (or unbounded) samples history whose
+    # "next maintainer actions" may themselves be LLM-written — circular ground truth. This
+    # replaced the retired `both_tiers` check (see benchmark/repo_set_readiness.py).
     config = json.loads(json.dumps(VALID))
-    for repo in config["repos"]:
-        repo["tier"] = "recent"
+    config["repos"][0]["freeze_window"] = {"after": "2025-09-01", "recent_bias": True}
     result = check_readiness(config)
     assert result["passed"] is False
-    assert "both_tiers" in failed_checks(result)
+    assert "pre_llm_windows" in failed_checks(result)
+
+
+def test_unbounded_window_fails_pre_llm_windows():
+    # No `before` bound at all -> samples ALL history, including the LLM era.
+    config = json.loads(json.dumps(VALID))
+    config["repos"][1]["freeze_window"] = {"min_history": 30}
+    result = check_readiness(config)
+    assert result["passed"] is False
+    assert "pre_llm_windows" in failed_checks(result)
 
 
 def test_starter_placeholder_fails_no_placeholder_sources():
@@ -153,12 +164,12 @@ def test_thresholds_are_configurable():
     minimal = {
         "name": "m",
         "repos": [
-            {"name": "a", "source": "https://github.com/org/a", "tier": "recent",
-             "freeze_window": {"after": "2025-09-01", "recent_bias": True}},
+            {"name": "a", "source": "https://github.com/org/a", "tier": "obscure",
+             "freeze_window": {"before": "2021-01-01", "min_history": 30}},
             {"name": "b", "source": "https://github.com/org/b", "tier": "obscure",
-             "freeze_window": {"min_history": 20}},
-            {"name": "c", "source": "https://github.com/org/c", "tier": "recent",
-             "held_out": True, "freeze_window": {"after": "2025-10-01", "recent_bias": True}},
+             "freeze_window": {"before": "2021-01-01", "min_history": 20}},
+            {"name": "c", "source": "https://github.com/org/c", "tier": "obscure",
+             "held_out": True, "freeze_window": {"before": "2021-01-01", "min_history": 25}},
         ],
     }
     assert check_readiness(minimal, min_tuned=1, min_held_out=1)["passed"] is True

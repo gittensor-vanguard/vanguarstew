@@ -120,13 +120,14 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                enrich_github=False, github_token=None,
                recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
                w_judge=0.6, w_objective=0.4, dual_order_judge=True,
-               min_history=10, after=None, before=None) -> dict:
+               min_history=10, after=None, before=None, horizon_days=None) -> dict:
     solve = load_solve(agent_file)
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
     tasks = generate_tasks(
         repo_path, n_tasks, horizon, min_history=min_history,
-        recent_bias=recent_bias, rotation_seed=rotation_seed, after=after, before=before)
+        recent_bias=recent_bias, rotation_seed=rotation_seed, after=after, before=before,
+        horizon_days=horizon_days)
     if not tasks:
         return {"error": "no usable tasks (repo too small for horizon/min_history)", "tasks": 0}
 
@@ -144,7 +145,10 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 ctx = scrub_context(enrich_context(ctx, repo_path, token=github_token))
                 with open(os.path.join(dest, CONTEXT_FILE), "w", encoding="utf-8") as f:
                     json.dump(ctx, f, indent=1)
-            request = f"plan the next {horizon} maintainer actions"
+            # A time-horizon run asks for the same JUDGMENT over a period rather than a count of
+            # actions — "what lands in the next N days" is the question the ground truth answers.
+            request = (f"plan the maintainer actions for the next {horizon_days} days"
+                       if horizon_days else f"plan the next {horizon} maintainer actions")
             challenger = solve(
                 repo_path=dest, request=request,
                 model=model or "validator-managed-model",
