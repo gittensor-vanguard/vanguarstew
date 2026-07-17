@@ -115,6 +115,14 @@
   .close-card{box-shadow:0 26px 64px -36px rgba(0,0,0,.8), inset 0 1px 0 rgba(231,234,226,.05)}
   .post{transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease}
   .post:hover{transform:translateY(-3px); box-shadow:0 18px 44px -26px rgba(0,0,0,.7)}
+
+  /* vanguarstew-cursor-glow-v070 */
+  #cursorglow{position:fixed; top:0; left:0; width:560px; height:560px; margin:-280px 0 0 -280px;
+    border-radius:50%; pointer-events:none; z-index:0; opacity:0; transition:opacity .6s ease;
+    background:radial-gradient(circle, rgba(207,169,84,.15), rgba(207,169,84,.05) 40%, transparent 68%);
+    filter:blur(32px); will-change:transform}
+  #cursorglow.on{opacity:.6}
+  @media(prefers-reduced-motion:reduce){ #cursorglow{display:none} }
 </style>
 </head>
 <body>
@@ -273,5 +281,24 @@
     <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub</a>
   </div>
 </footer>
+
+<script>/* vanguarstew-cursor-glow-v070 */
+(function(){
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches || !matchMedia('(pointer:fine)').matches) return;
+  var g=document.createElement('div'); g.id='cursorglow'; g.setAttribute('aria-hidden','true');
+  document.body.appendChild(g);
+  var tx=innerWidth/2, ty=innerHeight/2, cx=tx, cy=ty, raf=null, shown=false;
+  addEventListener('pointermove', function(e){
+    tx=e.clientX; ty=e.clientY;
+    if(!shown){ shown=true; g.classList.add('on'); }
+    if(!raf) raf=requestAnimationFrame(loop);
+  }, {passive:true});
+  function loop(){
+    cx+=(tx-cx)*0.09; cy+=(ty-cy)*0.09;
+    g.style.transform='translate('+cx+'px,'+cy+'px)';
+    if(Math.abs(tx-cx)>0.4 || Math.abs(ty-cy)>0.4){ raf=requestAnimationFrame(loop); } else { raf=null; }
+  }
+})();
+</script>
 </body>
 </html>

@@ -217,6 +217,14 @@
     .btn,.btn:hover{transform:none}
   }
   @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* vanguarstew-cursor-glow-v070 */
+  #cursorglow{position:fixed; top:0; left:0; width:560px; height:560px; margin:-280px 0 0 -280px;
+    border-radius:50%; pointer-events:none; z-index:0; opacity:0; transition:opacity .6s ease;
+    background:radial-gradient(circle, rgba(207,169,84,.15), rgba(207,169,84,.05) 40%, transparent 68%);
+    filter:blur(32px); will-change:transform}
+  #cursorglow.on{opacity:.6}
+  @media(prefers-reduced-motion:reduce){ #cursorglow{display:none} }
 </style>
 </head>
 <body>
@@ -529,6 +537,25 @@
     }, {rootMargin:'0px 0px -8% 0px', threshold:.08});
     els.forEach(function(e,i){ if(i<7){ e.style.transitionDelay = (i*70)+'ms'; } io.observe(e); });
   })();
+</script>
+
+<script>/* vanguarstew-cursor-glow-v070 */
+(function(){
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches || !matchMedia('(pointer:fine)').matches) return;
+  var g=document.createElement('div'); g.id='cursorglow'; g.setAttribute('aria-hidden','true');
+  document.body.appendChild(g);
+  var tx=innerWidth/2, ty=innerHeight/2, cx=tx, cy=ty, raf=null, shown=false;
+  addEventListener('pointermove', function(e){
+    tx=e.clientX; ty=e.clientY;
+    if(!shown){ shown=true; g.classList.add('on'); }
+    if(!raf) raf=requestAnimationFrame(loop);
+  }, {passive:true});
+  function loop(){
+    cx+=(tx-cx)*0.09; cy+=(ty-cy)*0.09;
+    g.style.transform='translate('+cx+'px,'+cy+'px)';
+    if(Math.abs(tx-cx)>0.4 || Math.abs(ty-cy)>0.4){ raf=requestAnimationFrame(loop); } else { raf=null; }
+  }
+})();
 </script>
 </body>
 </html>
