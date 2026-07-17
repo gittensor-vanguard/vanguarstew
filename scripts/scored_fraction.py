@@ -19,12 +19,27 @@ def load_artifact(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+    except FileNotFoundError:
+        print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
     except OSError as exc:
         print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        # A non-UTF-8 file raises UnicodeDecodeError (a ValueError, not an OSError) mid-read.
+    except UnicodeDecodeError as exc:
+        # Non-UTF-8 mid-read: keep a distinct message (UnicodeDecodeError subclasses
+        # ValueError, so this arm must come first).
         print(f"artifact is not valid UTF-8 JSON ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except ValueError as exc:
+        # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
+        # beyond the int-string-conversion limit (py3.11+); JSONDecodeError subclasses it.
+        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     if not isinstance(data, dict):
         print(f"artifact must be a JSON object: {path}", file=sys.stderr)
