@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 
 from agent.context import context_for_agent
 
@@ -134,6 +135,24 @@ OBJECTIVE_ANCHOR_GUIDANCE = (
 RELEASE_CADENCE_GUIDANCE = (
     "Recent history shows release-cadence activity — include one `release`-kind item in the plan."
 )
+
+# Injected when freeze-T timing says a cut is due (#1561 residual): long enough since the last
+# release that the revealed window is likely to contain one. Distinct from RELEASE_CADENCE_GUIDANCE,
+# which only said "this repo releases" — that prior over-predicted right after a cut.
+RELEASE_PRESSURE_GUIDANCE = (
+    "Freeze-T timing shows release pressure (long enough since the last cut that another is "
+    "due) — include one `release`-kind item in the plan, with a concrete version bump in mind."
+)
+
+# Window-local release timing thresholds (#1561). Suppress right after a cut; pressure when the
+# cycle is due. Tuned to the curated horizon_days band [14, 90]: a cut within a week is almost
+# never followed by another in the same short window, while ≥28 days (or ≥20 non-release commits)
+# is past half a typical cycle for the set's median repos.
+_RELEASE_SUPPRESS_DAYS = 7
+_RELEASE_PRESSURE_DAYS = 28
+_RELEASE_PRESSURE_COMMITS = 20
+# Undated fallback: a release subject among the newest N commits ≈ "just cut".
+_RELEASE_JUST_CUT_LOOKBACK = 3
 
 # Prompt fragment for config-surface planning (#1640). Kept as a named constant so tests can
 # assert prompt inclusion without parsing the full LLM user message.
@@ -287,6 +306,135 @@ def _recent_kinds_note(context: dict) -> str:
     )
 
 
+def _parse_iso_dt(value):
+    """Parse a frozen ISO-8601 timestamp into an aware UTC ``datetime``, else ``None``.
+
+    Frozen context dates come from git ``%cI`` / GitHub ``published_at``. Malformed or
+    non-string values are ignored rather than raising inside the planner path.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    # fromisoformat accepts "Z" only on 3.11+; normalize for 3.10 CI.
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _freeze_dt(context: dict):
+    """The freeze-T clock: ``frozen_at.date``, else the newest dated recent commit."""
+    if not isinstance(context, dict):
+        return None
+    frozen = context.get("frozen_at")
+    if isinstance(frozen, dict):
+        dt = _parse_iso_dt(frozen.get("date"))
+        if dt is not None:
+            return dt
+    for commit in _recent_commits(context):
+        if isinstance(commit, dict):
+            dt = _parse_iso_dt(commit.get("date"))
+            if dt is not None:
+                return dt
+    return None
+
+
+def _last_release_dt(context: dict):
+    """Most recent knowable-at-T release instant, or ``None`` when undated.
+
+    Prefers dated release-cut commits in ``recent_commits``, then ``releases[].published_at``
+    (enriched GitHub context). Tag-only releases without dates do not contribute.
+    """
+    newest = None
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        if _commit_plan_kind(commit.get("subject")) != "release":
+            continue
+        dt = _parse_iso_dt(commit.get("date"))
+        if dt is not None and (newest is None or dt > newest):
+            newest = dt
+    releases = context.get("releases") if isinstance(context, dict) else None
+    if isinstance(releases, list):
+        for rel in releases:
+            if not isinstance(rel, dict):
+                continue
+            dt = _parse_iso_dt(rel.get("published_at"))
+            if dt is not None and (newest is None or dt > newest):
+                newest = dt
+    return newest
+
+
+def _days_since_last_release(context: dict):
+    """Whole days from the last knowable release to freeze T, or ``None`` when undated."""
+    freeze = _freeze_dt(context)
+    last = _last_release_dt(context)
+    if freeze is None or last is None:
+        return None
+    delta = (freeze - last).total_seconds()
+    # A release dated after freeze is a leak / clock skew — treat as unknown, not negative pressure.
+    if delta < 0:
+        return None
+    return int(delta // 86400)
+
+
+def _commits_since_last_release(context: dict):
+    """Count of newest recent commits before the first release-cut subject, or ``None``.
+
+    ``recent_commits`` is newest-first. A release at index 0 means ``0`` commits since the cut
+    (just released). If no release subject appears in the window, returns the window length —
+    a lower bound on commits since the last cut visible at T.
+    """
+    commits = _recent_commits(context)
+    if not commits:
+        return None
+    n = 0
+    saw_any = False
+    for commit in commits:
+        if not isinstance(commit, dict):
+            continue
+        saw_any = True
+        if _commit_plan_kind(commit.get("subject")) == "release":
+            return n
+        n += 1
+    return n if saw_any else None
+
+
+def _release_just_cut_undated(context: dict) -> bool:
+    """True when a release subject sits among the newest commits and dates are unavailable."""
+    for commit in _recent_commits(context)[:_RELEASE_JUST_CUT_LOOKBACK]:
+        if isinstance(commit, dict) and _commit_plan_kind(commit.get("subject")) == "release":
+            return True
+    return False
+
+
+def _release_timing_state(context: dict) -> str:
+    """Freeze-window release timing: ``suppress`` | ``pressure`` | ``neutral`` (#1561).
+
+    - **suppress** — a cut landed very recently; predicting another release overfits cadence vibe.
+    - **pressure** — long enough since the last cut (days or commits) that the revealed window
+      is likely to contain one; prompt for a release item.
+    - **neutral** — no clear timing read (or mid-cycle); fall back to the cadence backstop.
+    """
+    days = _days_since_last_release(context)
+    if days is not None and days <= _RELEASE_SUPPRESS_DAYS:
+        return "suppress"
+    if days is None and _release_just_cut_undated(context):
+        return "suppress"
+
+    commits = _commits_since_last_release(context)
+    if days is not None and days >= _RELEASE_PRESSURE_DAYS:
+        return "pressure"
+    if commits is not None and commits >= _RELEASE_PRESSURE_COMMITS:
+        return "pressure"
+    return "neutral"
+
+
 def _release_cadence_signal(context: dict) -> bool:
     """True when recent commits show a release cut (mirrors heuristic_plan cadence)."""
     return any(
@@ -297,10 +445,14 @@ def _release_cadence_signal(context: dict) -> bool:
 
 
 def _release_cadence_note(context: dict) -> str:
-    """Inject release-item guidance only when history evidences release cadence."""
-    if not _release_cadence_signal(context):
+    """Inject release-item guidance from freeze-T timing, not from cadence vibe (#1561).
+
+    Pressure → ask for a release item. Suppress / mid-cycle → stay silent (a just-cut release
+    subject in history must NOT re-trigger "include a release" — that was the over-predict).
+    """
+    if _release_timing_state(context) != "pressure":
         return ""
-    return f"\n{RELEASE_CADENCE_GUIDANCE}\n"
+    return f"\n{RELEASE_PRESSURE_GUIDANCE}\n"
 
 
 def _is_release_subject(text) -> bool:
@@ -350,20 +502,23 @@ def _is_planned_release(item) -> bool:
 
 
 def _calibrate_release_prediction(plan: list, context: dict) -> list:
-    """Drop a spuriously-planned release item when recent history shows no release cadence (#1561).
+    """Gate release predictions on freeze-T timing rather than cadence vibe (#1561).
 
-    ``RELEASE_CADENCE_GUIDANCE`` is only injected when a release cut is evidenced, but on
-    fast-moving repos the model still tends to add a ``release`` item on its own — absorbing "this
-    project releases constantly" from the philosophy read and predicting a version cut the revealed
-    window does not contain. When there is no release-cadence evidence in recent history, a release
-    prediction is unsupported, so it is removed and the plan reflects the work actually likely next;
-    when cadence IS evidenced the plan is returned unchanged. Runs BEFORE queue reconciliation so a
-    genuine release *PR* already open (real evidence a cut is imminent) is still merged back in.
+    - **suppress** (just cut): drop release-kind / release-titled items — another cut in the
+      revealed window is unlikely, and a false positive costs as much as a miss.
+    - **pressure** (cycle due): leave the plan unchanged; the prompt's pressure note asks for
+      a release item, and stripping would undo that foresight.
+    - **neutral**: keep the #1758 backstop — drop unsupported release items when recent history
+      shows no release cut (openclaw-style philosophy over-predict); keep them when a cut is
+      evidenced mid-history (not tip-just-cut).
 
-    A wrong item costs the objective anchor as much as a missed one, and a release the window does
-    not contain matches nothing, so dropping it removes a guaranteed non-match rather than a
-    potential hit.
+    Runs BEFORE queue reconciliation so a genuine open release *PR* is still merged back in.
     """
+    state = _release_timing_state(context)
+    if state == "suppress":
+        return [item for item in plan if not _is_planned_release(item)]
+    if state == "pressure":
+        return plan
     if _release_cadence_signal(context):
         return plan
     return [item for item in plan if not _is_planned_release(item)]
