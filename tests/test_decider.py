@@ -4,6 +4,8 @@ import logging
 import os
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -197,6 +199,22 @@ def test_planning_request_is_never_rejected_as_out_of_scope():
     assert "out of scope" in out["rationale"]
 
 
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        "plan the next 5 maintainer actions",
+        "plan the maintainer actions for the next 90 days",
+        "Please plan maintainer actions for the coming sprint",
+        "Plan future maintainer actions over the next two weeks",
+    ],
+)
+def test_planning_request_variants_are_never_rejected_as_out_of_scope(request_text):
+    # #1768: detection must not depend on one exact runner substring.
+    out = decide({}, {}, request_text, _RejectingLLM())
+    assert out["action"] == "plan"
+    assert "out of scope" in out["rationale"]
+
+
 def test_non_planning_request_may_still_be_rejected():
     # The coercion is scoped to planning requests only — a real reject verdict on a concrete
     # contribution review must survive.
@@ -362,13 +380,18 @@ def test_release_context_note_empty_when_no_releases():
 
 
 def test_is_planning_request():
+    # Both runner templates + mild rewordings: require "plan" AND "maintainer actions".
     assert _is_planning_request("plan the next 5 maintainer actions") is True
-    assert _is_planning_request("Plan The Next 3 actions") is True
-    # Time-horizon curated template (#1768) — must match or reject→plan / bump notes never fire.
     assert _is_planning_request("plan the maintainer actions for the next 90 days") is True
-    assert _is_planning_request("Plan the maintainer actions for the next 14 days") is True
+    assert _is_planning_request("Plan the Maintainer Actions for the Next 14 days") is True
+    assert _is_planning_request("Please plan maintainer actions for the coming sprint") is True
+    assert _is_planning_request("Plan future maintainer actions over the next two weeks") is True
+    # Missing either token is not a planning request (avoids brittle exact-template matching).
+    assert _is_planning_request("Plan The Next 3 actions") is False  # no "maintainer actions"
+    assert _is_planning_request("list maintainer actions without a plan") is False  # no "plan"
     assert _is_planning_request("review PR #1") is False
     assert _is_planning_request(None) is False
+    assert _is_planning_request(42) is False
 
 
 def test_planning_version_bump_note_on_planning_request_with_tags():
@@ -377,16 +400,22 @@ def test_planning_version_bump_note_on_planning_request_with_tags():
     assert "version_bump" in note
     assert _planning_version_bump_note(ctx, "merge PR #9") == ""
     assert _planning_version_bump_note({}, "plan the next 5 maintainer actions") == ""
-    # Time-horizon wording also solicits the bump note when tags are visible.
-    assert "version_bump" in _planning_version_bump_note(
-        ctx, "plan the maintainer actions for the next 51 days"
-    )
+    # Time-horizon and reworded planning requests also solicit the bump note when tags are visible.
+    for request_text in (
+        "plan the maintainer actions for the next 51 days",
+        "Please plan maintainer actions for the coming sprint",
+        "Plan future maintainer actions over the next two weeks",
+    ):
+        assert "version_bump" in _planning_version_bump_note(ctx, request_text), request_text
 
 
 def test_planning_version_bump_note_silent_right_after_a_cut():
     # Tip release without dates → suppress; do not solicit version_bump.
     ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}]}
     assert _planning_version_bump_note(ctx, "plan the next 3 maintainer actions") == ""
+    assert _planning_version_bump_note(
+        ctx, "plan the maintainer actions for the next 90 days"
+    ) == ""
 
 
 def test_planning_version_bump_note_on_pressure():
@@ -397,8 +426,18 @@ def test_planning_version_bump_note_on_pressure():
             {"subject": "chore(release): 2.0.0", "date": "2020-04-01T12:00:00+00:00"},
         ],
     }
-    note = _planning_version_bump_note(ctx, "plan the maintainer actions for the next 51 days")
-    assert "version_bump" in note
+    for request_text in (
+        "plan the maintainer actions for the next 51 days",
+        "Please plan maintainer actions for the coming sprint",
+    ):
+        note = _planning_version_bump_note(ctx, request_text)
+        assert "version_bump" in note, request_text
+
+
+def test_planning_version_bump_note_absent_without_planning_request():
+    ctx = {"releases": [{"tag": "v1.2.0"}], "recent_commits": [{"subject": "fix: a"}]}
+    assert _planning_version_bump_note(ctx, "review PR #9") == ""
+    assert _planning_version_bump_note(ctx, "Plan The Next 3 actions") == ""
 
 
 def test_decide_clears_version_bump_when_just_cut():

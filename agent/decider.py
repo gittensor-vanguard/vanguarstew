@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from agent.context import context_for_agent
 from agent.planner import _release_cadence_signal, _release_timing_state
@@ -241,13 +242,13 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     if not isinstance(out, dict):
         out = dict(stub)
     out["action"] = _normalize_action(out.get("action"))
-    # A planning request ("plan the next N maintainer actions") asks for a plan — it is never a
-    # code contribution to accept or reject. The action list still offers "reject", so the LLM
-    # sometimes reads a repo's "only merges code changes" philosophy as grounds to reject the
-    # planning request itself as out-of-scope (observed on openclaw/openclaw #1562, while the
-    # identical request returned "plan" on entrius/gittensor). Coerce that back to "plan":
-    # the requested plan already exists in the `plan` field; the decision is not a merge/close
-    # verdict on a contribution.
+    # A planning request (any phrasing that asks to plan maintainer actions) asks for a plan —
+    # it is never a code contribution to accept or reject. The action list still offers "reject",
+    # so the LLM sometimes reads a repo's "only merges code changes" philosophy as grounds to
+    # reject the planning request itself as out-of-scope (observed on openclaw/openclaw #1562,
+    # while the identical request returned "plan" on entrius/gittensor). Coerce that back to
+    # "plan": the requested plan already exists in the `plan` field; the decision is not a
+    # merge/close verdict on a contribution.
     if _is_planning_request(request) and out["action"] == "reject":
         logger.debug("decide: a planning request cannot be rejected as out-of-scope; using 'plan'")
         out["action"] = "plan"
@@ -264,19 +265,21 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
 
 
 def _is_planning_request(request: str) -> bool:
-    """True for either runner planning template (commit-horizon or time-horizon).
+    """True when the request asks to plan maintainer actions.
 
-    Commit-horizon: ``plan the next N maintainer actions``.
-    Time-horizon (curated ``horizon_days``): ``plan the maintainer actions for the next N days``.
-    The latter does not contain the contiguous substring ``plan the next``, so a naive check
-    skipped the reject→plan guard and the version_bump note on every production curated task (#1768).
+    Matches on the presence of both a ``plan`` word and ``maintainer actions`` (with
+    ``plan`` appearing before the actions phrase) rather than a fixed runner template
+    string, so commit-horizon, time-horizon (``horizon_days``), and minor rewordings
+    stay covered without another silent miss (#1768).
     """
     if not isinstance(request, str):
         return False
-    low = request.lower()
-    if "plan the next" in low:
-        return True
-    return "plan the maintainer actions for the next" in low and "day" in low
+    text = request.lower()
+    actions_at = text.find("maintainer actions")
+    if actions_at < 0:
+        return False
+    match = re.search(r"\bplan\b", text)
+    return match is not None and match.start() < actions_at
 
 
 def _planning_version_bump_note(context: dict, request: str) -> str:
