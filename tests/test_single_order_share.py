@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -147,8 +149,10 @@ def test_cli_generalization_reports_partitions(tmp_path, capsys):
     assert body["partitions"]["held_out"]["single"] == 1
 
 
-def test_cli_missing_file(tmp_path):
+def test_cli_missing_file(tmp_path, capsys):
     assert cli.run([str(tmp_path / "nope.json")]) == 2
+    err = capsys.readouterr().err
+    assert "artifact not found" in err and "Errno" not in err and "Traceback" not in err
 
 
 def test_cli_invalid_json(tmp_path):
@@ -159,8 +163,47 @@ def test_cli_non_object_artifact(tmp_path):
     assert cli.run([_write(tmp_path, "arr.json", "[1, 2, 3]")]) == 2
 
 
-def test_cli_unreadable_path_is_handled(tmp_path):
+def test_cli_directory_path_reports_distinct_error(tmp_path, capsys):
+    # A real directory raises IsADirectoryError; name it distinctly instead of the raw errno.
     assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and str(tmp_path) in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root bypasses file-permission bits")
+def test_cli_unreadable_file_reports_distinct_error(tmp_path, capsys):
+    path = tmp_path / "locked.json"
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0)
+    try:
+        rc = cli.run([str(path)])
+    finally:
+        os.chmod(path, 0o644)
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "artifact is not readable" in err and str(path) in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_broken_symlink_reports_distinct_error(tmp_path, capsys):
+    link = tmp_path / "link.json"
+    link.symlink_to(tmp_path / "gone.json")
+    assert cli.run([str(link)]) == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err and str(link) in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_generic_oserror_reports_distinct_error(tmp_path, capsys, monkeypatch):
+    def _raise(*args, **kwargs):
+        raise OSError(5, "I/O error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([str(tmp_path / "flaky.json")]) == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "Traceback" not in err
 
 
 def test_module_main_no_arg_exits_nonzero():
