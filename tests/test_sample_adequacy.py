@@ -244,6 +244,21 @@ def test_an_empty_per_repo_list_is_untrustworthy():
     assert result["tasks"] is None
 
 
+def test_a_partition_missing_per_repo_entirely_fails_the_same_as_an_empty_one():
+    # A held_out partition that never got populated (no per_repo, no error) carries the same
+    # real-world meaning as an explicit `per_repo: []` -- both must fail closed identically,
+    # not be silently dropped from consideration.
+    tuned = {"per_repo": [{"repo": "a", "tasks": 5,
+                            "tally": {"challenger": 2, "baseline": 2, "tie": 1}}]}
+    missing_key = check_sample_adequacy({"tuned": tuned, "held_out": {}}, min_tasks=3)
+    explicit_empty = check_sample_adequacy(
+        {"tuned": tuned, "held_out": {"per_repo": []}}, min_tasks=3)
+    assert missing_key["passed"] is False
+    assert missing_key["tasks"] is None
+    assert missing_key["passed"] == explicit_empty["passed"]
+    assert missing_key["tasks"] == explicit_empty["tasks"]
+
+
 def test_an_errored_run_fails_run_scored():
     result = check_sample_adequacy({"error": "clone failed", "tasks": 0}, min_tasks=3)
     assert result["passed"] is False

@@ -72,7 +72,10 @@ def main() -> None:
     for row in summary["ranking"]:
         print(f"  #{row['rank']} {row['label']}: {row['composite_mean']:.3f} "
               f"({row['delta_from_best']:+.3f}) "
-              f"[judge {_c(row['judge_mean'])}, objective {_c(row['objective_mean'])}]",
+              f"[judge {_c(row['judge_mean'])}, objective {_c(row['objective_mean'])}] "
+              f"[foresight — modules {_c(row['module_recall_mean'])}, "
+              f"kinds {_c(row['kind_recall_mean'])}, "
+              f"release {_c(row['release_accuracy'])}]",
               file=sys.stderr)
     for label in summary["unscored"]:
         print(f"  (unscored) {label}", file=sys.stderr)
