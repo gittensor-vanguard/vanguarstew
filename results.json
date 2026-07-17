@@ -118,5 +118,45 @@
       }
     },
     "merged": false
+  },
+  {
+    "timestamp": "2026-07-17T14:53:12.111403+00:00",
+    "pr_number": 1799,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.013,
+      "per_repo": [
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.151
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.037
+        },
+        {
+          "repo": "https://github.com/hgrecco/pint",
+          "composite_delta": -0.15
+        }
+      ]
+    },
+    "private": {
+      "composite_delta": 0.038
+    },
+    "since_anchor": {
+      "anchor": "v0.7.0",
+      "public": {
+        "composite_delta": 0.181,
+        "composite_score": 0.856,
+        "anchor_score": 0.675
+      },
+      "private": {
+        "composite_delta": 0.327,
+        "composite_score": 0.928,
+        "anchor_score": 0.601
+      }
+    },
+    "merged": false
   }
 ]
