@@ -30,6 +30,7 @@
     --grain-op:.05; --glow-a:rgba(154,122,43,.16);
     --btn-sh:0 8px 24px -10px rgba(154,122,43,.55);
     --aur-1:rgba(207,169,84,.34); --aur-2:rgba(124,190,144,.26); --aur-3:rgba(150,176,224,.22);
+    --video-tint:linear-gradient(180deg, rgba(244,240,230,.74), rgba(244,240,230,.60));
     --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
     --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -48,6 +49,7 @@
     --grain-op:.028; --glow-a:rgba(207,169,84,.15);
     --btn-sh:0 6px 22px -8px rgba(207,169,84,.55);
     --aur-1:rgba(207,169,84,.16); --aur-2:rgba(124,190,144,.10); --aur-3:rgba(172,144,228,.09);
+    --video-tint:linear-gradient(180deg, rgba(12,20,18,.68), rgba(12,20,18,.58));
   }
   html{color-scheme:light} :root[data-theme="dark"]{color-scheme:dark}
   *{box-sizing:border-box}
@@ -67,6 +69,12 @@
   @keyframes aur1{to{transform:translate(16vw,12vh) scale(1.18)}}
   @keyframes aur2{to{transform:translate(-13vw,9vh) scale(1.12)}}
   @keyframes aur3{to{transform:translate(11vw,-9vh) scale(1.22)}}
+  /* Real looping video background (layers over the aurora fallback), with a theme-aware readability tint. */
+  .videobg{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none}
+  .videobg video{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 1s ease}
+  .videobg video.ready{opacity:1}
+  .videobg .tint{position:absolute; inset:0; background:var(--video-tint)}
+  @media(prefers-reduced-motion:reduce){ .videobg video{display:none} }
   /* Subtle film grain for tactile depth, fixed behind all content. */
   body::before{
     content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:var(--grain-op);
@@ -265,6 +273,12 @@
 </head>
 <body>
 <div class="aurora" aria-hidden="true"><b class="a1"></b><b class="a2"></b><b class="a3"></b></div>
+<div class="videobg" aria-hidden="true">
+  <video id="bgvid" autoplay muted loop playsinline preload="auto">
+    <source src="/vanguarstew/bg.mp4" type="video/mp4">
+  </video>
+  <div class="tint"></div>
+</div>
 <header class="top">
   <div class="wrap">
     <span class="brandmark"><span class="dot"></span>vanguarstew</span>
@@ -595,6 +609,7 @@
   }
 })();
 </script>
+<script>(function(){var v=document.getElementById('bgvid');if(v){var show=function(){v.classList.add('ready');};if(v.readyState>=3)show();else v.addEventListener('canplay',show,{once:true});v.addEventListener('error',function(){v.style.display='none';});}})();</script>
 <script>(function(){var b=document.getElementById('themebtn');if(!b)return;b.addEventListener('click',function(){var c=document.documentElement.getAttribute('data-theme')||'light';var n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('vgs-theme',n);}catch(e){}});})();</script>
 </body>
 </html>
