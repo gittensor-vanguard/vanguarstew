@@ -121,6 +121,10 @@ def test_freeze_window_validation():
 @pytest.mark.parametrize("bad_fw, match", [
     ({"min_history": 0}, "min_history must be >= 1"),
     ({"min_history": -3}, "min_history must be >= 1"),
+    # Non-positive horizon_days loads today but silently empties (negative) or ignores (0)
+    # the day window in taskgen — same class of curated-set erosion as reversed after/before.
+    ({"horizon_days": 0}, "horizon_days must be >= 1"),
+    ({"horizon_days": -5}, "horizon_days must be >= 1"),
     ({"after": ""}, "after must be non-empty"),
     ({"before": "   "}, "before must be non-empty"),
     # Non-empty but unparseable date bounds pass the string check yet crash task generation
@@ -132,6 +136,13 @@ def test_freeze_window_validation():
 def test_freeze_window_value_validation(bad_fw, match):
     with pytest.raises(RepoSetError, match=match):
         validate_repo_set(_mutate(freeze_window=bad_fw))
+
+
+def test_freeze_window_accepts_positive_horizon_days():
+    rs = validate_repo_set(_mutate(freeze_window={"horizon_days": 1}))
+    assert rs.entries[0].freeze_window["horizon_days"] == 1
+    rs = validate_repo_set(_mutate(freeze_window={"horizon_days": 30}))
+    assert rs.entries[0].freeze_window["horizon_days"] == 30
 
 
 def test_freeze_window_accepts_valid_iso_date_bounds():
