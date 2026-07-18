@@ -19,8 +19,8 @@ def load_artifact(path: str) -> dict:
 
     Path problems get a specific, actionable message instead of a raw traceback / errno string:
     a broken symlink (dangling target), a symlink loop, ``FileNotFoundError`` (missing),
-    ``PermissionError`` (unreadable — including a directory on Windows), ``IsADirectoryError``
-    (a directory on POSIX), and any other ``OSError``.
+    ``PermissionError`` (unreadable), ``IsADirectoryError`` (a directory, not a file), and any
+    other ``OSError``.
 
     Broken-symlink detection runs *after* ``open`` fails (``FileNotFoundError`` + ``islink``),
     so there is no ``exists``/``open`` TOCTOU pre-check that can raise on a symlink loop.
@@ -37,7 +37,6 @@ def load_artifact(path: str) -> dict:
             print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except PermissionError:
-        # Windows raises PermissionError (not IsADirectoryError) when ``path`` is a directory.
         print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except IsADirectoryError:
