@@ -315,8 +315,13 @@ def test_cli_directory_path_exits_two(tmp_path):
         text=True,
     )
     assert proc.returncode == 2
-    assert "directory, not a file" in proc.stderr
     assert "Traceback" not in proc.stderr
+    # POSIX: IsADirectoryError → "directory … not a file".
+    # Windows: PermissionError → "not readable" (directory permission error).
+    if os.name == "nt":
+        assert "not readable" in proc.stderr
+    else:
+        assert "directory, not a file" in proc.stderr
 
 
 def test_cli_broken_symlink_exits_two(monkeypatch, tmp_path, capsys):
