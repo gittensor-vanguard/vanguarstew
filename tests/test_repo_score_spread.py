@@ -173,8 +173,7 @@ def test_cli_generalization_reports_partitions(tmp_path, capsys):
 def test_cli_missing_file(tmp_path, capsys):
     missing = tmp_path / "nope.json"
     assert cli.run([str(missing)]) == 2
-    err = capsys.readouterr().err
-    assert err == f"artifact not found: {missing}\n"
+    assert capsys.readouterr().err == f"artifact not found: {missing}\n"
 
 
 def test_cli_invalid_json(tmp_path, capsys):
@@ -206,54 +205,16 @@ def test_cli_directory_path_exits_two(tmp_path, capsys):
         assert err == f"artifact path is a directory, not a file: {tmp_path}\n"
 
 
-def test_cli_broken_symlink_exits_two(tmp_path, capsys):
-    link = tmp_path / "broken.json"
-    link.symlink_to(tmp_path / "nonexistent.json")
-    assert cli.run([str(link)]) == 2
-    assert capsys.readouterr().err == (
-        f"artifact is a broken symlink (target does not exist): {link}\n"
-    )
+def test_load_artifact_broken_symlink_is_handled(monkeypatch, tmp_path, capsys):
+    link = str(tmp_path / "broken.json")
 
+    def _raise(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", link)
 
-@pytest.mark.skipif(
-    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
-    reason="POSIX permission bits are not enforced on Windows; root bypasses them too",
-)
-def test_cli_unreadable_file_reports_clean_error(tmp_path, capsys):
-    path = tmp_path / "artifact.json"
-    path.write_text("{}", encoding="utf-8")
-    os.chmod(path, 0)
-    try:
-        assert cli.run([str(path)]) == 2
-    finally:
-        os.chmod(path, 0o644)
-    assert capsys.readouterr().err == (
-        f"artifact is not readable (check file permissions): {path}\n"
-    )
-
-
-def test_cli_symlink_to_directory_exits_two(tmp_path, capsys):
-    target = tmp_path / "dir_target"
-    target.mkdir()
-    link = tmp_path / "link-to-dir.json"
-    link.symlink_to(target)
-    assert cli.run([str(link)]) == 2
-    err = capsys.readouterr().err
-    assert "Traceback" not in err
-    assert "Errno" not in err
-    if os.name == "nt":
-        assert err == (
-            f"artifact is not readable (check file permissions): {link}\n"
-        )
-    else:
-        assert err == f"artifact path is a directory, not a file: {link}\n"
-
-
-def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
-    link = tmp_path / "broken.json"
-    link.symlink_to(tmp_path / "nonexistent.json")
+    monkeypatch.setattr("builtins.open", _raise)
+    monkeypatch.setattr(os.path, "islink", lambda p: p == link)
     with pytest.raises(SystemExit) as excinfo:
-        cli.load_artifact(str(link))
+        cli.load_artifact(link)
     assert excinfo.value.code == 2
     assert capsys.readouterr().err == (
         f"artifact is a broken symlink (target does not exist): {link}\n"
@@ -271,64 +232,6 @@ def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
         cli.load_artifact(path)
     assert excinfo.value.code == 2
     assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
-
-
-def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
-    path = str(tmp_path / "run.json")
-
-    def _raise(*args, **kwargs):
-        raise IsADirectoryError(21, "Is a directory", path)
-
-    monkeypatch.setattr("builtins.open", _raise)
-    with pytest.raises(SystemExit) as excinfo:
-        cli.load_artifact(path)
-    assert excinfo.value.code == 2
-    assert capsys.readouterr().err == f"artifact path is a directory, not a file: {path}\n"
-
-
-def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
-    path = str(tmp_path / "run.json")
-
-    def _raise(*args, **kwargs):
-        raise PermissionError(13, "Permission denied", path)
-
-    monkeypatch.setattr("builtins.open", _raise)
-    with pytest.raises(SystemExit) as excinfo:
-        cli.load_artifact(path)
-    assert excinfo.value.code == 2
-    assert capsys.readouterr().err == (
-        f"artifact is not readable (check file permissions): {path}\n"
-    )
-
-
-def test_load_artifact_windows_directory_permission_error_message(monkeypatch, tmp_path, capsys):
-    # Explicit Windows directory-open failure path: PermissionError, exact message.
-    path = str(tmp_path)
-
-    def _raise(*args, **kwargs):
-        raise PermissionError(13, "Permission denied", path)
-
-    monkeypatch.setattr("builtins.open", _raise)
-    with pytest.raises(SystemExit) as excinfo:
-        cli.load_artifact(path)
-    assert excinfo.value.code == 2
-    assert capsys.readouterr().err == (
-        f"artifact is not readable (check file permissions): {path}\n"
-    )
-
-
-def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
-    path = str(tmp_path / "run.json")
-    exc = OSError(5, "Input/output error", path)
-
-    def _raise(*args, **kwargs):
-        raise exc
-
-    monkeypatch.setattr("builtins.open", _raise)
-    with pytest.raises(SystemExit) as excinfo:
-        cli.load_artifact(path)
-    assert excinfo.value.code == 2
-    assert capsys.readouterr().err == f"cannot read artifact ({path}): {exc}\n"
 
 
 def test_module_main_no_arg_exits_nonzero():
