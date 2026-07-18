@@ -1,6 +1,7 @@
 """Tests for the per-task objective integrity gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
@@ -282,7 +283,10 @@ def test_cli_missing_file_exits_two():
     assert "Traceback" not in proc.stderr
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX permission bits are not enforced on Windows; root bypasses them too",
+)
 def test_cli_permission_denied_exits_two(tmp_path):
     good = tmp_path / "good.json"
     good.write_text("{}", encoding="utf-8")
@@ -315,19 +319,37 @@ def test_cli_directory_path_exits_two(tmp_path):
     assert "Traceback" not in proc.stderr
 
 
-def test_cli_broken_symlink_exits_two(tmp_path):
-    link = tmp_path / "dangling.json"
-    link.symlink_to(tmp_path / "does-not-exist.json")
-    proc = subprocess.run(
-        [sys.executable, "-m", "scripts.objective_integrity", str(link)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
+def test_cli_broken_symlink_exits_two(monkeypatch, tmp_path, capsys):
+    from scripts import objective_integrity as cli
+
+    link = str(tmp_path / "dangling.json")
+
+    def _raise(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", link)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    monkeypatch.setattr(os.path, "islink", lambda p: p == link)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(link)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
     )
-    assert proc.returncode == 2
-    assert "Traceback" not in proc.stderr
-    # A broken symlink resolves to FileNotFoundError on open()
-    assert "artifact not found" in proc.stderr
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import objective_integrity as cli
+
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
 
 
 def test_cli_invalid_json_exits_two(tmp_path):
