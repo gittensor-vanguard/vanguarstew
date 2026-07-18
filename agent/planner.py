@@ -249,21 +249,30 @@ def _commit_plan_kind(subject):
     """The plan-vocabulary kind a recent-commit subject evidences, or None.
 
     Reads the Conventional-Commit prefix; a version-cut subject under a release-tooling type
-    ("chore(release): 1.4.0") reads as ``release`` rather than ``dep``. Merge commits and
-    prefix-less subjects carry no reliable kind, and a non-string subject (malformed frozen
-    context) is ignored rather than raising inside ``re``.
+    ("chore(release): 1.4.0") reads as ``release`` rather than ``dep``. Failing that, a subject
+    that reads as a release cut on its own wording is a ``release`` — the anchor's ``commit_kind``
+    ends with exactly that arm (``if is_release_subject(subject): return "release"``), and a repo
+    predating Conventional Commits authors nearly every cut that way ("Bump version numbers to
+    5.1.3", "prepare pluggy-0.4.0 release"). Without it this classifier is blind to the release
+    history the anchor scores, which leaves the freeze-T timing gate unable to time anything
+    (#1871). Everything else prefix-less carries no reliable kind, and a non-string subject
+    (malformed frozen context) is ignored rather than raising inside ``re``.
     """
     if not isinstance(subject, str):
         return None
     m = _CC_PREFIX_RE.match(subject)
-    if not m:
-        return None
-    cc_type = m.group(1).lower()
-    if cc_type in _RELEASE_TOOLING_TYPES:
-        body = subject[m.end():].lstrip(" :\t")
-        if _RELEASE_CUT_BODY_RE.match(body):
-            return "release"
-    return _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+    if m:
+        cc_type = m.group(1).lower()
+        if cc_type in _RELEASE_TOOLING_TYPES:
+            body = subject[m.end():].lstrip(" :\t")
+            if _RELEASE_CUT_BODY_RE.match(body):
+                return "release"
+        mapped = _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+        if mapped:
+            return mapped
+        # An unrecognized CC type is not authoritative: the anchor drops to the release check
+        # below rather than returning None here ("wip: prepare release 1.2.0").
+    return "release" if _is_release_subject(subject) else None
 
 
 def _recent_commits(context: dict) -> list:
