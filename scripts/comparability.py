@@ -28,8 +28,8 @@ def load_artifact(path: str) -> dict:
 
     Path problems get a specific, actionable message instead of a raw traceback / errno string:
     a broken symlink (dangling target), a symlink loop, ``FileNotFoundError`` (missing),
-    ``PermissionError`` (unreadable — including a directory on Windows), ``IsADirectoryError``
-    (a directory on POSIX), and any other ``OSError``.
+    ``PermissionError`` (unreadable), ``IsADirectoryError`` (a directory, not a file), and any
+    other ``OSError``.
 
     Broken-symlink detection runs *after* ``open`` fails (``FileNotFoundError`` + ``islink``),
     so there is no ``exists``/``open`` TOCTOU pre-check that can raise on a symlink loop.
@@ -38,27 +38,20 @@ def load_artifact(path: str) -> dict:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        # A dangling symlink raises FileNotFoundError too; islink() separates it from a plain
-        # missing path so the message names the real problem (the link exists, its target does not).
+        # open() already failed; classify dangling symlink vs missing path without a prior
+        # exists() probe (which can raise on a symlink loop and races with open).
         if os.path.islink(path):
             print(f"artifact is a broken symlink (target does not exist): {path}", file=sys.stderr)
         else:
             print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except PermissionError:
-        # Windows raises PermissionError (not IsADirectoryError) when ``path`` is a directory.
         print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except IsADirectoryError:
         print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
         raise SystemExit(2) from None
-    except NotADirectoryError:
-        print(f"artifact path is not a file (a parent component is not a directory): {path}",
-              file=sys.stderr)
-        raise SystemExit(2) from None
     except OSError as exc:
-        # A symlink loop raises OSError(ELOOP), which none of the arms above catch. Name it
-        # distinctly; any other real read failure keeps its underlying text with a clean exit.
         if getattr(exc, "errno", None) == errno.ELOOP:
             print(f"artifact path is a symlink loop: {path}", file=sys.stderr)
         else:

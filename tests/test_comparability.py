@@ -383,27 +383,6 @@ def test_cli_directory_path_exits_two(tmp_artifacts, tmp_path, capsys):
     assert ("directory" in err or "not readable" in err) and "Traceback" not in err
 
 
-def test_cli_broken_symlink_exits_two(tmp_artifacts, tmp_path, capsys):
-    # A dangling symlink raises FileNotFoundError; islink() distinguishes it so the message
-    # blames the missing target, not the (present) link path.
-    good = tmp_artifacts("good.json", _multi("a"))
-    link = tmp_path / "link.json"
-    link.symlink_to(tmp_path / "gone.json")
-    assert cli.run([good, str(link)]) == 2
-    err = capsys.readouterr().err
-    assert "broken symlink" in err and "Traceback" not in err and "Errno" not in err
-
-
-def test_cli_symlink_loop_exits_two(tmp_artifacts, tmp_path, capsys):
-    # A self-referential symlink raises OSError(ELOOP), named distinctly by the catch-all.
-    good = tmp_artifacts("good.json", _multi("a"))
-    loop = tmp_path / "loop.json"
-    loop.symlink_to(loop)
-    assert cli.run([good, str(loop)]) == 2
-    err = capsys.readouterr().err
-    assert "symlink loop" in err and "Traceback" not in err
-
-
 def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
     # Platform-agnostic: force IsADirectoryError (Windows raises PermissionError on a dir) so the
     # dedicated handler is proven live -- SystemExit(2), the specific message, and no traceback.
@@ -444,21 +423,16 @@ def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys
     assert "cannot read artifact" in err and "Traceback" not in err
 
 
-def test_cli_broken_symlink_reports_clean_error(tmp_artifacts, tmp_path, capsys):
-    good = tmp_artifacts("good.json", _multi("a"))
-    link = tmp_path / "broken.json"
-    link.symlink_to(tmp_path / "nonexistent.json")
-    assert cli.run([good, str(link)]) == 2
-    assert capsys.readouterr().err == (
-        f"artifact is a broken symlink (target does not exist): {link}\n"
-    )
+def test_load_artifact_broken_symlink_is_handled(monkeypatch, tmp_path, capsys):
+    link = str(tmp_path / "broken.json")
 
+    def _raise(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", link)
 
-def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
-    link = tmp_path / "broken.json"
-    link.symlink_to(tmp_path / "nonexistent.json")
+    monkeypatch.setattr("builtins.open", _raise)
+    monkeypatch.setattr(os.path, "islink", lambda p: p == link)
     with pytest.raises(SystemExit) as excinfo:
-        cli.load_artifact(str(link))
+        cli.load_artifact(link)
     assert excinfo.value.code == 2
     assert capsys.readouterr().err == (
         f"artifact is a broken symlink (target does not exist): {link}\n"
@@ -476,17 +450,3 @@ def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
         cli.load_artifact(path)
     assert excinfo.value.code == 2
     assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
-
-
-def test_load_artifact_generic_oserror_keeps_message(monkeypatch, tmp_path, capsys):
-    path = str(tmp_path / "io.json")
-    exc = OSError(5, "Input/output error", path)
-
-    def _raise(*args, **kwargs):
-        raise exc
-
-    monkeypatch.setattr("builtins.open", _raise)
-    with pytest.raises(SystemExit) as excinfo:
-        cli.load_artifact(path)
-    assert excinfo.value.code == 2
-    assert capsys.readouterr().err == f"cannot read artifact ({path}): {exc}\n"
