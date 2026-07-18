@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 
 from scripts.compare_eval import compare_eval_artifacts
@@ -67,12 +68,68 @@ def _delta(triplet: dict | None) -> float | None:
     if not isinstance(triplet, dict):
         return None
     delta = triplet.get("delta")
-    return delta if isinstance(delta, (int, float)) else None
+    if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+        return None
+    # Defense in depth: compare_eval already filters non-finite values, but a crafted
+    # triplet (or a future loader change) must never treat Inf/NaN as a real delta.
+    try:
+        number = float(delta)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _regressed(delta: float | None, noise_floor: float) -> bool:
     """True only when ``delta`` is a real (past-noise-floor) negative move."""
     return delta is not None and delta < -noise_floor
+
+
+def _is_corrupt_number(value) -> bool:
+    """True when ``value`` is a numeric payload that cannot be a finite score.
+
+    Distinguishes *corrupt* (NaN / ±Inf / overflow int) from *missing* (absent key, ``None``,
+    non-numeric). ``compare_eval._numeric`` maps both to ``None``, which is correct for a
+    reporter — but the Pareto floor must fail closed on corrupt axes rather than treat them
+    as unavailable and award a ``perf:*`` band.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return not math.isfinite(float(value))
+    except OverflowError:
+        return True
+
+
+def _partition_scores_corrupt(partition: dict) -> bool:
+    """True when a generalization partition carries a present-but-non-finite composite."""
+    if not isinstance(partition, dict):
+        return False
+    return _is_corrupt_number(partition.get("composite_mean"))
+
+
+def _artifact_scores_corrupt(baseline: dict, candidate: dict) -> bool:
+    """True when either artifact carries a present-but-non-finite score the Pareto floor
+    (or composite banding) depends on.
+
+    Missing fields stay excluded (offline stubs / pre-parts artifacts). A key that is
+    present with NaN/±Inf/overflow must block — otherwise ``_numeric`` → ``None`` looks
+    like "unavailable" and a Goodhart trade-off on the other axis can still mint ``perf:xl``.
+    """
+    for artifact in (baseline, candidate):
+        if not isinstance(artifact, dict):
+            continue
+        if _is_corrupt_number(artifact.get("composite_mean")):
+            return True
+        parts = artifact.get("composite_parts")
+        if isinstance(parts, dict):
+            for axis in ("judge_mean", "objective_mean"):
+                if axis in parts and _is_corrupt_number(parts[axis]):
+                    return True
+        for name in ("tuned", "held_out"):
+            part = artifact.get(name)
+            if isinstance(part, dict) and _partition_scores_corrupt(part):
+                return True
+    return False
 
 
 def _foresight_of(artifact: dict) -> dict | None:
@@ -155,7 +212,11 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
         any_regressed = any(_regressed(d, noise_floor) for d in axis_deltas)
         banding_delta = composite_deltas["composite_mean"]
 
-    if any_regressed:
+    scores_corrupt = _artifact_scores_corrupt(baseline, candidate)
+    if scores_corrupt:
+        band = "blocked"
+        reason = "a scored dimension carried a non-finite value (Pareto floor fail-closed)"
+    elif any_regressed:
         band = "blocked"
         reason = "a scored dimension regressed past the noise floor (Pareto floor)"
     else:

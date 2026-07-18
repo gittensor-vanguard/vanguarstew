@@ -157,6 +157,55 @@ def test_missing_composite_parts_excludes_pareto_axis_rather_than_failing_open_o
     assert report["band"] == "l"  # composite improved into a band, no axis data to block on
 
 
+def test_nonfinite_pareto_axis_fail_closes_instead_of_awarding_a_band():
+    """A present-but-NaN (or ±Inf) judge/objective mean must not look like an unavailable
+    axis. compare_eval maps non-finite → None; without a corrupt-score check the Pareto
+    floor would exclude the axis and still mint perf:xl off the other component."""
+    baseline = _artifact(0.5, 0.5, 0.5)
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        candidate = _artifact(0.7, bad, 0.7)
+        report = score_pr_delta(baseline, candidate)
+        assert report["band"] == "blocked", bad
+        assert report["blocks_merge"] is True, bad
+        assert report["label"] is None, bad
+        assert "non-finite" in report["reason"], bad
+
+
+def test_nonfinite_objective_axis_also_blocks_when_judge_improves():
+    baseline = _artifact(0.5, 0.5, 0.5)
+    candidate = _artifact(0.7, 0.7, float("nan"))
+    report = score_pr_delta(baseline, candidate)
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+
+
+def test_nonfinite_composite_mean_fail_closes():
+    baseline = _artifact(0.5, 0.5, 0.5)
+    candidate = {
+        "composite_mean": float("nan"),
+        "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.7},
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+
+
+def test_nonfinite_generalization_partition_composite_fail_closes():
+    baseline = {
+        "repo_set": "curated", "generalization_gap": 0.1,
+        "tuned": {"composite_mean": 0.6, "scored_repos": 3},
+        "held_out": {"composite_mean": 0.5, "scored_repos": 2},
+    }
+    candidate = {
+        "repo_set": "curated", "generalization_gap": 0.05,
+        "tuned": {"composite_mean": float("nan"), "scored_repos": 3},
+        "held_out": {"composite_mean": 0.55, "scored_repos": 2},
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+
+
 def test_custom_noise_floor_is_honored():
     baseline = _artifact(0.60, 0.55, 0.65)
     candidate = _artifact(0.62, 0.57, 0.67)
