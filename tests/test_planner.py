@@ -54,7 +54,7 @@ from agent.planner import (  # noqa: E402
     plan_next_actions,
     reconcile_plan_with_queue,
 )
-from benchmark.score import commit_kind, plan_kind  # noqa: E402
+from benchmark.score import commit_kind, kind_recall, plan_kind  # noqa: E402
 
 CTX = {"open_prs": [{"number": 7, "title": "Add streaming export"}]}
 
@@ -1260,6 +1260,69 @@ def test_normalize_keeps_the_kinds_the_anchor_scores_instead_of_coercing_to_tria
     # An unrecognized kind is still coerced to triage rather than passed through.
     assert _normalize_plan_item({"title": "x", "kind": "wat"})["kind"] == "triage"
     assert _normalize_plan_item({"title": "x", "kind": 7})["kind"] == "triage"
+
+
+def test_normalize_resolves_a_conventional_commit_alias_instead_of_coercing_to_triage():
+    # The read-side half of the alias-parity gap. OBJECTIVE_ANCHOR_GUIDANCE asks the model to
+    # "Pick `kind` to match the maintainer commit type" and spells the pairs out
+    # ("bugfix/fix, feature/feat"), so the model emitting the CC type is the prompt working as
+    # designed -- but every one of those aliases sits outside _PLAN_KINDS and was rewritten to
+    # "triage", which the anchor maps to None. A correctly anticipated kind was discarded
+    # before kind_recall could score it (#1834).
+    for alias, canonical in sorted(_CC_TYPE_TO_PLAN_KIND.items()):
+        item = _normalize_plan_item({"title": "Add the streaming API", "kind": alias})
+        assert item["kind"] == canonical, (
+            f"alias {alias!r} normalized to {item['kind']!r}, expected {canonical!r}"
+        )
+        # The point of resolving it: the anchor can now score the prediction.
+        assert plan_kind(item["kind"]) is not None
+
+
+def test_normalize_alias_is_case_and_whitespace_insensitive():
+    # `kind` is free-form LLM output: "Feat", " fix ", "TESTS" are all shapes the model emits.
+    # The alias lookup runs on the already-stripped/case-folded value, so it must not be the
+    # one branch where surrounding whitespace or capitalization silently costs a match.
+    for raw in ("Feat", "  feat  ", "FEAT", "\tFeAt\n"):
+        assert _normalize_plan_item({"title": "x", "kind": raw})["kind"] == "feature"
+
+
+def test_normalize_alias_round_trips_to_the_kind_the_anchor_reads_from_the_subject():
+    # Closure with the write side: for a subject the anchor classifies, the alias the model is
+    # most likely to echo back must normalize to a kind that scores as that same commit kind.
+    # This is what turns the fix into kind_recall credit rather than merely a different label.
+    for subject, alias in (
+        ("feat: add streaming API", "feat"),
+        ("fix(parser): handle empty payload", "fix"),
+        ("docs: document the flag", "doc"),
+        ("test: cover the loader race", "tests"),
+        ("chore: tidy the Makefile", "chore"),
+    ):
+        normalized = _normalize_plan_item({"title": "x", "kind": alias})["kind"]
+        assert plan_kind(normalized) == commit_kind(subject), (
+            f"{subject!r}: plan alias {alias!r} -> {normalized!r} -> {plan_kind(normalized)!r}, "
+            f"anchor reads {commit_kind(subject)!r}"
+        )
+
+
+def test_kind_recall_credits_a_plan_that_answered_in_conventional_commit_types():
+    # End-to-end payoff on the metric itself, at the objective_score boundary: a plan that
+    # anticipated every revealed kind, phrased in CC types, scored 0.333 because two of its
+    # three items were rewritten to "triage" before scoring.
+    revealed = [
+        {"subject": "feat: add streaming API", "files": ["src/api.py"]},
+        {"subject": "fix: handle empty payload", "files": ["src/api.py"]},
+        {"subject": "ci: pin the runner image", "files": [".github/workflows/ci.yml"]},
+    ]
+    plan = _normalize_plan([
+        {"title": "Add the streaming API", "kind": "feat", "files": ["src/api.py"]},
+        {"title": "Handle an empty payload", "kind": "fix", "files": ["src/api.py"]},
+        {"title": "Pin the CI runner image", "kind": "ci",
+         "files": [".github/workflows/ci.yml"]},
+    ])
+    assert [i["kind"] for i in plan] == ["feature", "bugfix", "ci"]
+    scored = kind_recall(plan, revealed)
+    assert scored["kind_recall"] == 1.0
+    assert scored["matched_kinds"] == ["ci", "feat", "fix"]
 
 
 def test_recent_kinds_note_surfaces_the_kinds_the_anchor_scores():

@@ -893,7 +893,14 @@ def _normalize_plan_item(item) -> dict | None:
     else:
         kind = ""
     if kind not in _PLAN_KINDS:
-        kind = "triage"
+        # The model routinely tags an item with the Conventional-Commit *type* rather than the
+        # planner's long-form kind -- OBJECTIVE_ANCHOR_GUIDANCE itself offers the pairs
+        # ("bugfix/fix, feature/feat"), and CC is the ubiquitous convention. Resolving a known
+        # alias before falling back keeps a correctly anticipated kind scoreable: "triage" maps
+        # to nothing in the anchor, so coercing "feat" there discarded the prediction before
+        # kind_recall ever saw it. Only aliases are resolved -- an unrecognized kind still
+        # falls back to "triage" (#1834).
+        kind = _CC_TYPE_TO_PLAN_KIND.get(kind, "triage")
     normalized = {
         "title": title,
         "kind": kind,
