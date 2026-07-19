@@ -36,7 +36,7 @@ import argparse
 import json
 import sys
 
-from scripts.compare_eval import compare_eval_artifacts
+from scripts.compare_eval import _numeric, compare_eval_artifacts
 
 DEFAULT_NOISE_FLOOR = 0.01
 
@@ -87,6 +87,27 @@ def _pareto_axes(diff: dict) -> dict:
     return {axis: parts.get(axis) for axis in ("judge_mean", "objective_mean")}
 
 
+def _pareto_axis_corrupt(baseline: dict, candidate: dict) -> bool:
+    """True when a Pareto axis key is present but not a finite, convertible number.
+
+    ``compare_eval`` maps ``NaN`` / ``±Inf`` (and overflow ints) to ``None``, which
+    ``score_pr_delta`` would otherwise treat as an *unavailable* axis and exclude from
+    the floor. A present-but-corrupt axis must fail closed instead — otherwise a
+    Goodhart trade-off (or corrupt eval output) can still earn a ``perf:*`` band.
+    A key that is absent from both artifacts remains unavailable (not corrupt).
+    """
+    for axis in ("judge_mean", "objective_mean"):
+        for artifact in (baseline, candidate):
+            if not isinstance(artifact, dict):
+                continue
+            parts = artifact.get("composite_parts")
+            if not isinstance(parts, dict) or axis not in parts:
+                continue
+            if _numeric(parts[axis]) is None:
+                return True
+    return False
+
+
 def _band_for_delta(delta: float | None, noise_floor: float) -> str:
     """Bucket a composite_mean delta into a performance band. ``None`` or <= the noise
     floor is "none" (no measurable improvement, still mergeable, no multiplier). Otherwise
@@ -119,6 +140,7 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
     """
     diff = compare_eval_artifacts(baseline, candidate)
 
+    axis_corrupt = False
     if "generalization" in diff:
         gen = diff["generalization"]
         composite_deltas = {
@@ -134,11 +156,15 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
         pareto_axes = _pareto_axes(diff)
         axis_deltas = [_delta(v) for v in pareto_axes.values()]
         any_regressed = any(_regressed(d, noise_floor) for d in axis_deltas)
+        axis_corrupt = _pareto_axis_corrupt(baseline, candidate)
         banding_delta = composite_deltas["composite_mean"]
 
     if any_regressed:
         band = "blocked"
         reason = "a scored dimension regressed past the noise floor (Pareto floor)"
+    elif axis_corrupt:
+        band = "blocked"
+        reason = "a Pareto axis is present but non-finite or not safely convertible"
     else:
         band = _band_for_delta(banding_delta, noise_floor)
         reason = (

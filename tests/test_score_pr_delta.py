@@ -156,6 +156,26 @@ def test_missing_composite_parts_excludes_pareto_axis_rather_than_failing_open_o
     assert report["band"] == "l"  # composite improved into a band, no axis data to block on
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_present_but_nonfinite_pareto_axis_fails_closed(bad):
+    """A present-but-non-finite Pareto axis must block, not be treated as unavailable (#1867).
+
+    ``compare_eval`` maps NaN/Inf to None; without an explicit corrupt-axis check that
+    looks like a missing axis and the Pareto floor would false-pass a rising composite.
+    """
+    baseline = _artifact(0.5, 0.5, 0.5)
+    candidate = {
+        "composite_mean": 0.7,
+        "composite_parts": {"judge_mean": bad, "objective_mean": 0.7},
+        "tasks": 3,
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+    assert report["label"] is None
+    assert "non-finite" in report["reason"]
+
+
 def test_custom_noise_floor_is_honored():
     baseline = _artifact(0.60, 0.55, 0.65)
     candidate = _artifact(0.62, 0.57, 0.67)
