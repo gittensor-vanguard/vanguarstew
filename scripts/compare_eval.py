@@ -27,12 +27,44 @@ def _numeric(value) -> float | None:
     return None
 
 
+def _per_repo_unavailable(artifact: dict) -> bool:
+    """The per-repo / single-repo placeholder signal: ``tasks`` present and not a positive count.
+
+    A *skipped* repo is recorded as ``tasks: 0`` with a ``_mean([])`` placeholder
+    ``composite_mean`` of ``0.0``; a missing-target / non-numeric / ``<= 0`` count likewise can't
+    attest a real score. Mirrors the ``tasks > 0`` gate already used by
+    ``weight_integrity._scored_repo``, ``aggregate_integrity``, and ``repo_task_mean``.
+
+    A row with *no* ``tasks`` key is not a per-repo placeholder (it is some other shape) and is
+    left to the caller — this helper only speaks to the task-count signal.
+    """
+    if "tasks" not in artifact:
+        return False
+    tasks = _numeric(artifact.get("tasks"))
+    return tasks is None or tasks <= 0
+
+
 def _is_scored_unavailable(artifact: dict) -> bool:
-    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder."""
+    """True when the artifact's ``composite_mean`` is a placeholder rather than a real score.
+
+    The two placeholder signals key off *disjoint* fields, so the two artifact shapes are never
+    conflated:
+
+    * an aggregate / partition is governed **solely** by ``scored_repos`` (#557) — present and
+      zero means nothing was scored, so the reported ``composite_mean`` is ``_mean([])`` == ``0.0``.
+      When ``scored_repos`` is a real number it decides the result outright, so a genuine aggregate
+      (``scored_repos > 0``) is never masked by a stray ``tasks`` field;
+    * a per-repo / single-repo result — which never carries ``scored_repos`` (#1846) — is governed
+      **solely** by its ``tasks`` count (see :func:`_per_repo_unavailable`). Without this gate a
+      skipped repo's placeholder ``0.0`` is compared as a real score and fabricates a per-repo
+      delta.
+    """
     if not isinstance(artifact, dict):
         return False
     scored = artifact.get("scored_repos")
-    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
+    if isinstance(scored, (int, float)) and not isinstance(scored, bool):
+        return not scored
+    return _per_repo_unavailable(artifact)
 
 
 def _effective_composite_mean(artifact: dict):
