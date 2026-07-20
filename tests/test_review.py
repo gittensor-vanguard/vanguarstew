@@ -13,6 +13,8 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
+    NON_REDUNDANCY_GUIDANCE,
+    SYSTEM,
     VALUE_LABELS,
     _clip_text,
     _normalize_bool,
@@ -324,3 +326,27 @@ def test_review_pr_prompt_uses_pr_number_not_raw_number_field():
               None, llm)
     assert llm.last_user.startswith("PULL REQUEST #?: Add streaming export")
     assert "#True" not in llm.last_user
+
+
+def test_system_prompt_names_non_redundancy_as_a_high_axis():
+    # REVIEW.md ranks Non-redundancy as High; the SYSTEM priority list must name it, before the
+    # Medium quality/clarity axis, so the review path stops waving through conceptually
+    # duplicative PRs (#1753).
+    low = SYSTEM.lower()
+    assert "non-redundancy" in low
+    assert "conceptual duplication is rejected the same as literal duplication" in low
+    # Ordering: correctness -> scope -> non-redundancy -> quality (High axes before Medium).
+    assert low.index("correctness") < low.index("scope fit") < low.index("non-redundancy") \
+        < low.index("quality and clarity")
+
+
+def test_review_prompt_includes_non_redundancy_guidance():
+    llm = _CaptureUserLLM()
+    review_pr({"number": 1, "title": "Add new metric module", "author": "a", "files": []},
+              None, llm)
+    assert NON_REDUNDANCY_GUIDANCE in llm.last_user
+    # The operative test (same data shape, already produced elsewhere) and the preferred remedy
+    # (extend/parametrize existing code) must both reach the model.
+    low = NON_REDUNDANCY_GUIDANCE.lower()
+    assert "same data shape" in low or "data shape" in low
+    assert "extend" in low and "parametrize" in low

@@ -18,8 +18,26 @@ logger = logging.getLogger(__name__)
 SYSTEM = (
     "You are an experienced repository maintainer reviewing a pull request. Assess it on the "
     "project's rubric, in priority order: (1) correctness and tests, (2) scope fit — does it "
-    "address a referenced issue without unrelated churn, (3) quality and clarity. Be specific, "
-    "and decisive about the action. Respond ONLY with JSON."
+    "address a referenced issue without unrelated churn, (3) non-redundancy — does it duplicate "
+    "existing analysis over the same data shape, re-deriving a value or slicing a dict an "
+    "existing module/helper already handles (High: conceptual duplication is rejected the same "
+    "as literal duplication), (4) quality and clarity. Be specific, and decisive about the "
+    "action. Respond ONLY with JSON."
+)
+
+# Non-redundancy is a High rubric axis in REVIEW.md that the SYSTEM priority list names but does
+# not define; this fragment gives the model the one operative test — same data shape, already
+# handled elsewhere — plus the maintainer's preferred remedy, so a review can flag "extend the
+# existing X instead of adding new module Y" rather than waving a passing-but-duplicative diff
+# through. Kept as a named constant so a test can lock the language into the prompt, matching the
+# planner/decider convention (#1753).
+NON_REDUNDANCY_GUIDANCE = (
+    "Non-redundancy is a High-priority axis: a change is redundant when it re-derives a value or "
+    "slices a data shape that an existing module, helper, metric, or report already produces — "
+    "even when its diff is original and its tests pass. Conceptual duplication is rejected the "
+    "same as literal duplication. When the diff reads as parallel analysis over an existing "
+    "shape, prefer recommending the author extend or parametrize the existing code, and say so "
+    "in `concerns`/`recommendation` (e.g. \"extend existing X instead of adding new module Y\")."
 )
 
 ACTIONS = ["merge", "request-changes", "reject", "comment"]
@@ -199,7 +217,8 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + '  "tests_present": boolean — does it add or update tests,\n'
         + '  "summary": one sentence on what the PR does,\n'
         + '  "concerns": list of specific, actionable concerns (empty list if none),\n'
-        + '  "recommendation": one or two sentences of advice to the maintainer.'
+        + '  "recommendation": one or two sentences of advice to the maintainer.\n\n'
+        + NON_REDUNDANCY_GUIDANCE
     )
     stub = {
         "action": "comment",
