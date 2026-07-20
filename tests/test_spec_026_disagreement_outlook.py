@@ -106,6 +106,26 @@ def test_counts_derive_disagreements_from_rate():
     assert _disagreement_counts({"dual_order_tasks": 4, "disagreement_rate": 0.5}) == (2, 4)
 
 
+def test_counts_reject_oversized_dual_in_rate_derivation_without_crashing():
+    # json parses an arbitrarily long integer literal into a Python int; deriving the count as
+    # round(rate * dual) forces that int to float and raises OverflowError. The block must be
+    # rejected as unusable (None), not crash -- there is no explicit disagree count here, so the
+    # rate-derivation path is the one exercised.
+    assert _disagreement_counts({"dual_order_tasks": 10 ** 400, "disagreement_rate": 0.1}) is None
+
+
+def test_summarize_does_not_raise_on_oversized_dual_from_rate():
+    # End to end through the public entry point: an oversized dual_order_tasks with only a rate
+    # must degrade to empty telemetry rather than raising, per the module's fail-soft contract.
+    summary = summarize_disagreement_outlook(
+        {"judge_order_stats": {"dual_order_tasks": 10 ** 400, "disagreement_rate": 0.1}}
+    )
+    assert summary["dual_order_tasks"] is None
+    assert summary["disagreements"] is None
+    assert summary["disagreement_rate"] is None
+    assert summary["verdict"] is None
+
+
 def test_counts_reject_invalid_or_negative():
     assert _disagreement_counts({"foo": 1}) is None            # nothing usable
     assert _disagreement_counts({"dual_order_tasks": 2.5, "disagree": 1}) is None   # non-int dual

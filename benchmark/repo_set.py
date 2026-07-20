@@ -22,14 +22,25 @@ from datetime import date
 TIERS = ("recent", "obscure")
 
 # Allowed freeze-window hint keys and their required types. `recent_bias` is a bool;
-# `rotation_seed`/`min_history` are ints (and must NOT be bools). `after`/`before` are
-# date-ish strings the curator uses to bound freeze-point selection.
+# `rotation_seed`/`min_history`/`horizon_days` are ints (and must NOT be bools). `after`/`before`
+# are date-ish strings the curator uses to bound freeze-point selection.
+#
+# `horizon_days` switches the revealed window from "the next N commits" to "everything landing in
+# the next N days", and is set PER REPO from one uniform rule: the repo's own median release-cycle
+# length, clamped to [14, 90] days. A fixed commit count is uniform in a dimension that carries no
+# meaning and wildly non-uniform in the one that does — `horizon=5` is ~24 minutes of work on a
+# repo doing ~290 commits/day and ~46 days on one doing ~40/year. Over so short a span the ground
+# truth is dominated by which maintainer happened to be at the keyboard, not by where the project
+# was going. A release-cycle window makes the task mean the same thing everywhere ("what lands
+# before the next release?") and takes the release signal from degenerate (~24% of windows contain
+# one, so a no-op predictor wins) to discriminating (~42-48%).
 _FREEZE_KEYS = {
     "after": "str",
     "before": "str",
     "recent_bias": "bool",
     "rotation_seed": "int",
     "min_history": "int",
+    "horizon_days": "int",
 }
 
 # A checked-in *starter* config with placeholder sources — replace with vetted repos before
@@ -118,6 +129,8 @@ def replay_kwargs(entry: RepoEntry) -> dict:
         kwargs["after"] = fw["after"]
     if "before" in fw:
         kwargs["before"] = fw["before"]
+    if "horizon_days" in fw:
+        kwargs["horizon_days"] = fw["horizon_days"]
     return kwargs
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from benchmark.partition_task_share import (
@@ -18,13 +19,26 @@ from benchmark.partition_task_share import (
 
 
 def load_artifact(path: str) -> dict:
+    # A dangling symlink surfaces from open() as FileNotFoundError, which reads as "you typed
+    # the wrong path" and hides the real problem: the path is right but its target is gone.
+    # Name it before opening so the message points at the link, not a missing file.
+    if os.path.islink(path) and not os.path.exists(path):
+        print(f"artifact is a broken symlink (its target is missing): {path}", file=sys.stderr)
+        raise SystemExit(2)
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except FileNotFoundError:
         print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
     except OSError as exc:
+        # Catch-all for the rest (a symlink loop's ELOOP, a device/IO error): still clean.
         print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except ValueError as exc:

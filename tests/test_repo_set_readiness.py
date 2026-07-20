@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -29,14 +31,14 @@ VALID = {
     "description": "d",
     "strategy": "s",
     "repos": [
-        {"name": "tuned-recent", "source": "https://github.com/org/a", "tier": "recent",
-         "freeze_window": {"after": "2025-09-01", "recent_bias": True}},
-        {"name": "tuned-obscure", "source": "https://github.com/org/b", "tier": "obscure",
-         "freeze_window": {"min_history": 30}},
-        {"name": "held-recent", "source": "https://github.com/org/c", "tier": "recent",
-         "held_out": True, "freeze_window": {"after": "2025-10-01", "recent_bias": True}},
-        {"name": "held-obscure", "source": "https://github.com/org/d", "tier": "obscure",
-         "held_out": True, "freeze_window": {"rotation_seed": 3}},
+        {"name": "tuned-a", "source": "https://github.com/org/a", "tier": "obscure",
+         "freeze_window": {"before": "2021-01-01", "min_history": 30, "horizon_days": 60}},
+        {"name": "tuned-b", "source": "https://github.com/org/b", "tier": "obscure",
+         "freeze_window": {"before": "2021-01-01", "min_history": 30}},
+        {"name": "held-c", "source": "https://github.com/org/c", "tier": "obscure",
+         "held_out": True, "freeze_window": {"before": "2020-06-01", "min_history": 25}},
+        {"name": "held-d", "source": "https://github.com/org/d", "tier": "obscure",
+         "held_out": True, "freeze_window": {"before": "2021-01-01", "rotation_seed": 3}},
     ],
 }
 
@@ -56,7 +58,7 @@ def test_a_ready_set_passes_all_checks():
     result = check_readiness(VALID)
     assert result["passed"] is True
     assert _names(result) == [
-        "valid_config", "min_tuned", "min_held_out", "both_tiers", "no_placeholder_sources",
+        "valid_config", "min_tuned", "min_held_out", "pre_llm_windows", "no_placeholder_sources",
     ]
 
 
@@ -82,12 +84,12 @@ def test_too_few_tuned_repos_fails_min_tuned():
     config = {
         "name": "m",
         "repos": [
-            {"name": "held-recent", "source": "https://github.com/org/c", "tier": "recent",
-             "held_out": True, "freeze_window": {"after": "2025-10-01", "recent_bias": True}},
-            {"name": "held-obscure", "source": "https://github.com/org/d", "tier": "obscure",
-             "held_out": True, "freeze_window": {"rotation_seed": 3}},
-            {"name": "tuned-recent", "source": "https://github.com/org/a", "tier": "recent",
-             "freeze_window": {"after": "2025-09-01", "recent_bias": True}},
+            {"name": "held-c", "source": "https://github.com/org/c", "tier": "obscure",
+             "held_out": True, "freeze_window": {"before": "2021-01-01", "min_history": 25}},
+            {"name": "held-d", "source": "https://github.com/org/d", "tier": "obscure",
+             "held_out": True, "freeze_window": {"before": "2021-01-01", "rotation_seed": 3}},
+            {"name": "tuned-a", "source": "https://github.com/org/a", "tier": "obscure",
+             "freeze_window": {"before": "2021-01-01", "min_history": 30}},
         ],
     }
     result = check_readiness(config, min_tuned=2)
@@ -105,13 +107,24 @@ def test_too_few_held_out_repos_fails_min_held_out():
     assert failed_checks(result) == ["min_held_out"]
 
 
-def test_missing_tier_fails_both_tiers():
+def test_llm_era_window_fails_pre_llm_windows():
+    # A freeze window bounded after the LLM-era cutoff (or unbounded) samples history whose
+    # "next maintainer actions" may themselves be LLM-written — circular ground truth. This
+    # replaced the retired `both_tiers` check (see benchmark/repo_set_readiness.py).
     config = json.loads(json.dumps(VALID))
-    for repo in config["repos"]:
-        repo["tier"] = "recent"
+    config["repos"][0]["freeze_window"] = {"after": "2025-09-01", "recent_bias": True}
     result = check_readiness(config)
     assert result["passed"] is False
-    assert "both_tiers" in failed_checks(result)
+    assert "pre_llm_windows" in failed_checks(result)
+
+
+def test_unbounded_window_fails_pre_llm_windows():
+    # No `before` bound at all -> samples ALL history, including the LLM era.
+    config = json.loads(json.dumps(VALID))
+    config["repos"][1]["freeze_window"] = {"min_history": 30}
+    result = check_readiness(config)
+    assert result["passed"] is False
+    assert "pre_llm_windows" in failed_checks(result)
 
 
 def test_starter_placeholder_fails_no_placeholder_sources():
@@ -153,12 +166,12 @@ def test_thresholds_are_configurable():
     minimal = {
         "name": "m",
         "repos": [
-            {"name": "a", "source": "https://github.com/org/a", "tier": "recent",
-             "freeze_window": {"after": "2025-09-01", "recent_bias": True}},
+            {"name": "a", "source": "https://github.com/org/a", "tier": "obscure",
+             "freeze_window": {"before": "2021-01-01", "min_history": 30}},
             {"name": "b", "source": "https://github.com/org/b", "tier": "obscure",
-             "freeze_window": {"min_history": 20}},
-            {"name": "c", "source": "https://github.com/org/c", "tier": "recent",
-             "held_out": True, "freeze_window": {"after": "2025-10-01", "recent_bias": True}},
+             "freeze_window": {"before": "2021-01-01", "min_history": 20}},
+            {"name": "c", "source": "https://github.com/org/c", "tier": "obscure",
+             "held_out": True, "freeze_window": {"before": "2021-01-01", "min_history": 25}},
         ],
     }
     assert check_readiness(minimal, min_tuned=1, min_held_out=1)["passed"] is True
@@ -258,3 +271,107 @@ def test_cli_passes_for_curated_json():
     )
     assert proc.returncode == 0
     assert "READY" in proc.stderr
+
+
+# --- #1698: load_config reports actionable errors instead of a raw errno / traceback ------
+
+def test_cli_missing_config_reports_clean_error(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(missing)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config not found" in proc.stderr
+    assert str(missing) in proc.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "directory" in proc.stderr or "not readable" in proc.stderr
+
+
+def test_cli_oversized_int_config_reports_clean_error(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal past
+    # CPython's 4300-digit limit; without the ValueError arm this dumped a raw traceback.
+    huge = tmp_path / "huge.json"
+    huge.write_text('{"repos": ' + "9" * 4400 + "}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(huge)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config is not valid JSON" in proc.stderr
+
+
+def test_cli_invalid_json_config_reports_clean_error(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(bad)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config is not valid JSON" in proc.stderr
+
+
+def test_cli_non_object_config_reports_clean_error(tmp_path):
+    arr = tmp_path / "arr.json"
+    arr.write_text("[1, 2, 3]", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(arr)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config must be a JSON object" in proc.stderr
+
+
+def test_load_config_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "config path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_config_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_config_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot read config" in err and "Traceback" not in err

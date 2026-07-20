@@ -1,76 +1,55 @@
 {
   "name": "curated",
-  "description": "Operational leakage-safe repo set for benchmark replay. Each entry is a vetted public repository with freeze-window hints aligned to the recent/obscure tier strategy. Use this config (not example.json) for intentional multi-repo scoring runs.",
-  "strategy": "Mix RECENT repos (freeze windows past a model's training cutoff) with OBSCURE repos (low-traffic, unlikely to be memorized). Reserve held_out entries for generalization scoring only.",
+  "description": "Operational leakage-safe repo set for benchmark replay. PRE-LLM-ERA + RELEASE-CYCLE WINDOWS (2026-07-16). Every freeze window is pinned `before 2021-01-01` so the maintainer ground truth predates widespread LLM-assisted development — predicting what a maintainer did next is only meaningful when those decisions were human. Memorization is defended by OBSCURITY (low-traffic, long-lived repos) rather than recency, so the whole set is the obscure tier. Each repo's revealed window is `horizon_days` = its own median release-cycle length, clamped to [14, 90] days.",
+  "strategy": "All obscure + old (pre-2021 freeze windows). Revealed window = one release cycle per repo — a uniform RULE producing a per-repo period, not a fixed commit count: `horizon=5` means ~24 minutes of work on a repo doing ~290 commits/day and ~46 days on one doing ~40/year, so a commit horizon is uniform only in a dimension that carries no meaning, and over so short a span the ground truth is dominated by which maintainer happened to be at the keyboard. The cycle rule makes the task mean the same thing on every repo ('what lands before the next release?') and takes the release signal from degenerate (~24% of windows contain a release, so a no-op predictor wins) to discriminating (~42-48%). Reserve held_out entries for generalization scoring only.",
   "repos": [
-    {
-      "name": "hatch",
-      "source": "https://github.com/pypa/hatch",
-      "tier": "recent",
-      "held_out": false,
-      "freeze_window": {
-        "after": "2025-09-01",
-        "recent_bias": true,
-        "min_history": 40
-      },
-      "notes": "Active Python packaging tool; recent maintainer cadence with post-cutoff commits."
-    },
-    {
-      "name": "pluggy",
-      "source": "https://github.com/pytest-dev/pluggy",
-      "tier": "recent",
-      "held_out": false,
-      "freeze_window": {
-        "after": "2025-10-01",
-        "recent_bias": true,
-        "rotation_seed": 11
-      },
-      "notes": "Steady pytest infrastructure maintenance; rotate freeze points to avoid answer reuse."
-    },
     {
       "name": "feedparser",
       "source": "https://github.com/kurtmckee/feedparser",
       "tier": "obscure",
       "held_out": false,
-      "freeze_window": {
-        "min_history": 35,
-        "rotation_seed": 5
-      },
-      "notes": "Long-lived niche RSS library; obscurity is the primary leakage defense."
+      "freeze_window": { "before": "2021-01-01", "min_history": 35, "rotation_seed": 5, "horizon_days": 90 },
+      "notes": "Long-lived niche RSS library (2010). Revealed window = one release cycle: median 144d clamped to 90d."
     },
     {
-      "name": "httpx",
-      "source": "https://github.com/encode/httpx",
-      "tier": "recent",
+      "name": "pluggy",
+      "source": "https://github.com/pytest-dev/pluggy",
+      "tier": "obscure",
+      "held_out": false,
+      "freeze_window": { "before": "2021-01-01", "min_history": 30, "rotation_seed": 11, "horizon_days": 81 },
+      "notes": "Re-windowed to pre-2021 (was recent-tier, after 2025-10-01); created 2015, ample pre-2021 history. Revealed window = one release cycle: median 81d."
+    },
+    {
+      "name": "pint",
+      "source": "https://github.com/hgrecco/pint",
+      "tier": "obscure",
+      "held_out": false,
+      "freeze_window": { "before": "2021-01-01", "min_history": 30, "rotation_seed": 13, "horizon_days": 51 },
+      "notes": "Replaces pypa/hatch (relaunched/rewritten 2022 — thin, discontinuous pre-2021 history). Vetted 2026-07-15: 2.7k stars, units library, 15 modules, 302 merged PRs + 67 tags pre-2021. Revealed window = one release cycle: median 51d."
+    },
+    {
+      "name": "jsonpickle",
+      "source": "https://github.com/jsonpickle/jsonpickle",
+      "tier": "obscure",
       "held_out": true,
-      "freeze_window": {
-        "after": "2025-11-01",
-        "before": "2026-05-01",
-        "recent_bias": true
-      },
-      "notes": "Held-out recent repo for generalization scoring (#52)."
+      "freeze_window": { "before": "2021-01-01", "min_history": 25, "rotation_seed": 19, "horizon_days": 90 },
+      "notes": "Replaces encode/httpx (created 2019 — thin pre-2021 history). Vetted 2026-07-15: 1.3k stars, 11 modules, 85 merged PRs + 57 tags pre-2021. Revealed window = one release cycle: median 163d clamped to 90d — the clamp also caps its module denominator near 8, keeping module_recall comparable across the set."
     },
     {
       "name": "hpack",
       "source": "https://github.com/python-hyper/hpack",
       "tier": "obscure",
       "held_out": true,
-      "freeze_window": {
-        "min_history": 30,
-        "rotation_seed": 3
-      },
-      "notes": "Held-out obscure HTTP/2 header library; low-traffic and unlikely to be memorized."
+      "freeze_window": { "before": "2021-01-01", "min_history": 30, "rotation_seed": 3, "horizon_days": 81 },
+      "notes": "Low-traffic HTTP/2 header library (2015). Revealed window = one release cycle: median 81d."
     },
     {
       "name": "h2",
       "source": "https://github.com/python-hyper/h2",
       "tier": "obscure",
       "held_out": true,
-      "freeze_window": {
-        "min_history": 30,
-        "rotation_seed": 7
-      },
-      "notes": "Held-out obscure HTTP/2 protocol implementation; sibling of hpack with distinct maintainer decisions."
+      "freeze_window": { "before": "2021-01-01", "min_history": 30, "rotation_seed": 7, "horizon_days": 14 },
+      "notes": "Low-traffic HTTP/2 protocol implementation (2015); ships often. Revealed window = one release cycle: median 13d raised to the 14d floor."
     }
   ]
 }
