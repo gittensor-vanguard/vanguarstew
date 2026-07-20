@@ -143,6 +143,49 @@ def _judge_lines(artifact: dict) -> list[str]:
     return [f"- Judge W-L-T: {wlt}", f"- Order disagreement rate: {rate}"]
 
 
+def _foresight_dict(artifact: dict) -> dict:
+    """The ``foresight`` breakdown from an artifact, or ``{}`` when absent/malformed.
+
+    Missing on an artifact saved before the M7 foresight breakdown existed -- every axis then
+    renders ``n/a`` in :func:`_foresight_line` rather than raising, like ``_composite_parts_dict``
+    already does for ``composite_parts``.
+    """
+    foresight = artifact.get("foresight")
+    if isinstance(foresight, dict):
+        return foresight
+    if foresight is not None:
+        logger.warning(
+            "report: foresight is %s, not a dict; rendering n/a", type(foresight).__name__,
+        )
+    return {}
+
+
+def _foresight_axis(foresight: dict, rate_key: str, n_key: str) -> str:
+    """One ``rate (n=count)`` fragment for a single foresight axis.
+
+    A sample count is never negative in a real ``foresight_breakdown()``/
+    ``combine_foresight_breakdowns()`` output (both build it from ``len()`` / summed ``len()``
+    values), so a missing, non-numeric, *or negative* ``n`` is equally malformed/absent data and
+    renders as ``n=0`` -- the same degradation the paired rate already gets (``_fmt_rate(None)``
+    -> ``"n/a"``), never a fabricated negative count.
+    """
+    n = foresight.get(n_key)
+    n_txt = str(int(n)) if _is_number(n) and n >= 0 else "0"
+    return f"{_fmt_rate(foresight.get(rate_key))} (n={n_txt})"
+
+
+def _foresight_line(artifact: dict, *, unscored: bool) -> str:
+    """One legible line for the M7 foresight breakdown: did the agent predict the modules, the
+    commit-kinds, and the releases the maintainers actually produced -- the three axes
+    ``objective_mean`` blends together, reported separately with each axis's own sample size.
+    """
+    foresight = {} if unscored else _foresight_dict(artifact)
+    modules = _foresight_axis(foresight, "module_recall_mean", "module_recall_n")
+    kinds = _foresight_axis(foresight, "kind_recall_mean", "kind_recall_n")
+    release = _foresight_axis(foresight, "release_accuracy", "release_accuracy_n")
+    return f"- Foresight — modules: {modules}, kinds: {kinds}, release: {release}"
+
+
 def _composite_lines(artifact: dict) -> list[str]:
     parts = _composite_parts_dict(artifact)
     # scored_repos is only ever set by the aggregate layer (run_multi_replay / generalization
@@ -157,6 +200,7 @@ def _composite_lines(artifact: dict) -> list[str]:
     lines = [f"- Composite mean: {_fmt_score(composite)}"]
     lines.append(f"- Judge mean: {_fmt_score(judge)}")
     lines.append(f"- Objective mean: {_fmt_score(objective)}")
+    lines.append(_foresight_line(artifact, unscored=unscored))
     weights = artifact.get("weights")
     if isinstance(weights, dict):
         lines.append(

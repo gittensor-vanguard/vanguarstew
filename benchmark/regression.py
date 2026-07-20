@@ -20,6 +20,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.acceptance import _partition_error
 from benchmark.judge_gate import _disagreement_rate_from_telemetry, _is_int
@@ -32,7 +33,18 @@ DEFAULT_MAX_DISAGREEMENT_INCREASE = 0.1
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A finite, non-boolean real number — used before ``float()`` / rounding.
+
+    ``math.isfinite`` raises ``OverflowError`` for a Python ``int`` too large to convert to a
+    ``float``; reject non-finite / oversized values the way ``skip_share`` / ``component_floor``
+    do so ``_round`` never crashes the regression gate on a hand-edited composite.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:

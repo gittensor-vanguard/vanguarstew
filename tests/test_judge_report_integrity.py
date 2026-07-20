@@ -171,6 +171,33 @@ def test_report_slices_expands_partition_per_repo():
     assert ("tuned:repo-0", entry) in slices
 
 
+def test_generalization_partition_with_pooled_report_still_expands_per_repo():
+    # run_multi_replay writes a *pooled* judge_report/judge_order_stats alongside per_repo, so a
+    # real --generalization partition carries BOTH. Keying the leaf branch on that telemetry made
+    # the partition short-circuit as a leaf and never expand its rows; an aggregate carries no
+    # top-level tally, so every W-L-T check was then skipped as "no tally to compare" and a
+    # fabricated per-repo count went unverified. Mirrors tally_integrity / objective_integrity,
+    # which discriminate on the leaf-only rows key.
+    stats = _stats()
+    pooled = build_judge_report({"challenger": 2, "baseline": 1, "tie": 0}, stats)
+
+    def partition(entry):
+        return {"scored_repos": 1, "judge_order_stats": stats, "judge_report": pooled,
+                "per_repo": [entry]}
+
+    good = partition(_artifact())
+    report = {"generalization_gap": 0.0, "tuned": good, "held_out": copy.deepcopy(good)}
+    assert [label for label, _ in _report_slices(report)] == ["tuned:repo-0", "held_out:repo-0"]
+    assert check_judge_report_integrity(report)["passed"] is True     # no false positive
+
+    tampered = _artifact()
+    tampered["judge_report"]["wins"] = 999                            # contradicts its own tally
+    result = check_judge_report_integrity(
+        {"generalization_gap": 0.0, "tuned": partition(tampered), "held_out": copy.deepcopy(good)})
+    assert result["passed"] is False
+    assert "tuned:repo-0:wins_match_tally" in failed_checks(result)
+
+
 def test_no_dual_order_tasks_allows_null_rate():
     stats = {"agree": 0, "disagree": 0, "tie": 0, "single": 2, "offline": 0,
              "dual_order_tasks": 0, "disagreement_rate": None}

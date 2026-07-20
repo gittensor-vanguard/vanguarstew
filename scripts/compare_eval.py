@@ -57,11 +57,22 @@ def _effective_composite_parts(artifact: dict) -> dict:
 
 
 def _delta(candidate, baseline) -> float | None:
+    """The candidate-minus-baseline difference, or ``None`` when it is not a finite number.
+
+    ``_numeric`` guards each *operand*, but a difference can leave the finite range its
+    operands sit in: ``1e308 - -1e308`` overflows to ``inf``. The result therefore needs the
+    same check the inputs got — without it a delta that is merely an arithmetic overflow flows
+    on as a real measurement. Nothing downstream re-checks it: ``score_pr_delta._delta`` tests
+    only ``isinstance``, so ``inf`` reaches ``_band_for_delta``, clears every entry in
+    ``BAND_THRESHOLDS`` and reports the top band, and reaches the public leaderboard feed.
+    ``None`` is the value both already treat as "no usable delta".
+    """
     c = _numeric(candidate)
     b = _numeric(baseline)
     if c is None or b is None:
         return None
-    return round(c - b, 3)
+    delta = c - b
+    return round(delta, 3) if math.isfinite(delta) else None
 
 
 def _metric_triplet(baseline: dict, candidate: dict, key: str) -> dict:
@@ -236,11 +247,29 @@ def comparison_headline(diff: dict) -> str:
     )
 
 
+class ArtifactError(Exception):
+    """Raised when an artifact cannot be loaded or is invalid."""
+
+
 def load_artifact(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    """Load a JSON-object artifact, raising ArtifactError on bad input."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        raise ArtifactError(f"artifact not found: {path}") from None
+    except PermissionError:
+        raise ArtifactError(f"artifact is not readable (check file permissions): {path}") from None
+    except IsADirectoryError:
+        raise ArtifactError(f"artifact path is a directory, not a file: {path}") from None
+    except OSError as exc:
+        raise ArtifactError(f"cannot read artifact ({path}): {exc}") from exc
+    except ValueError as exc:
+        # json.load raises JSONDecodeError for malformed JSON and ValueError for an integer
+        # literal beyond the Python int-string-conversion limit.
+        raise ArtifactError(f"artifact is not valid JSON ({path}): {exc}") from exc
     if not isinstance(data, dict):
-        raise ValueError(f"artifact must be a JSON object: {path}")
+        raise ArtifactError(f"artifact must be a JSON object: {path}")
     return data
 
 
@@ -253,7 +282,7 @@ def main() -> None:
     try:
         baseline = load_artifact(args.baseline)
         candidate = load_artifact(args.candidate)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except ArtifactError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
