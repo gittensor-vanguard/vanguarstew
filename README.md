@@ -117,13 +117,22 @@ python -m scripts.leaderboard agent_a=run_a.json agent_b=run_b.json
 `--repo` scores one repo; `--repos` scores several and averages each repo's own
 `composite_mean` into one cross-repo number. Each single-repo `run_replay` result carries the
 composite contract — `composite_mean` plus `composite_parts` (the `judge_mean` and
-`objective_mean` it blends, per the `weights`):
+`objective_mean` it blends, per the `weights`) — and a `foresight` breakdown that un-blends
+`objective_mean` into the three concrete, independently-checkable questions behind it (did the
+agent predict the modules / commit-kinds / releases the maintainers actually produced), each with
+its own sample size (`_n`) so an axis with no applicable tasks reports `null` rather than a
+fabricated 0.0 (M7):
 
 ```jsonc
 // single-repo (--repo) result, composite fields:
 {
   "composite_mean": 0.6,                              // mean blended score in [0, 1]
   "composite_parts": { "judge_mean": 1.0, "objective_mean": 0.0 },  // the two blended means
+  "foresight": {                                      // the objective_mean components, unblended
+    "module_recall_mean": 0.75, "module_recall_n": 4,
+    "kind_recall_mean": 0.5, "kind_recall_n": 4,
+    "release_accuracy": null, "release_accuracy_n": 0  // no release in this run's window
+  },
   "weights": { "judge": 0.6, "objective": 0.4 },     // how the parts are blended
   "rows": [ /* per-task: winner, objective, composite */ ]
 }
@@ -138,6 +147,7 @@ The `--repos` aggregate result shape is:
   "skipped": 0,          // repos too small for the horizon (kept below, excluded from the mean)
   "composite_mean": 0.6, // mean of each scored repo's composite_mean
   "composite_parts": { "judge_mean": 1.0, "objective_mean": 0.0 },  // means of the per-repo parts
+  "foresight": { "module_recall_mean": 0.75, "module_recall_n": 4, /* ... */ },  // same shape, combined across scored repos
   "per_repo": [ /* each repo's full run_replay result, or its {"error": ...} */ ]
 }
 ```

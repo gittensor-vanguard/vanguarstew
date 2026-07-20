@@ -134,6 +134,38 @@ def _since_anchor_fields(since_anchor: dict | None) -> dict | None:
     }
 
 
+_FORESIGHT_RATE_KEYS = ("module_recall_mean", "kind_recall_mean", "release_accuracy")
+_FORESIGHT_N_KEYS = ("module_recall_n", "kind_recall_n", "release_accuracy_n")
+
+
+def _foresight_of(report) -> dict | None:
+    """The M7 foresight breakdown (module/kind/release prediction accuracy, each with its own
+    sample size) a target's ``score_pr_delta()`` report carries -- the candidate agent's CURRENT
+    accuracy, not a delta, so the published figure moves only when a merged PR genuinely changes
+    what the agent gets right (per ROADMAP.md M7's acceptance bar), never by prose quality alone.
+
+    Pure aggregate numbers (three rates + three sample counts, no repo names, no file paths), so
+    publishing it for BOTH the public and private target carries the same privacy profile as the
+    composite deltas already published -- unlike ``per_repo``, it can't identify which repos are
+    in the hidden set.
+
+    Re-validates every field rather than trusting the upstream artifact's shape: each rate is
+    rounded through ``_round`` (non-numeric/oversized -> ``None``), and each sample count is
+    coerced to a non-negative int or ``0`` -- mirrors ``benchmark/report.py``'s
+    ``_foresight_axis()``, which treats a missing/non-numeric/negative ``n`` as equally
+    malformed/absent data, never a fabricated negative count. ``None`` when the report carries no
+    foresight breakdown at all (an artifact scored before M7, or an offline stub).
+    """
+    foresight = _dict(report).get("foresight")
+    if not isinstance(foresight, dict):
+        return None
+    out = {key: _round(foresight.get(key)) for key in _FORESIGHT_RATE_KEYS}
+    for key in _FORESIGHT_N_KEYS:
+        n = foresight.get(key)
+        out[key] = int(n) if isinstance(n, (int, float)) and not isinstance(n, bool) and n >= 0 else 0
+    return out
+
+
 def _composite_delta(report) -> float | None:
     """The banded composite delta for a target's report, for BOTH artifact shapes.
 
@@ -160,7 +192,8 @@ def to_leaderboard_entry(
 
     ``timestamp`` defaults to now (UTC, ISO-8601) -- pass an explicit value only for
     deterministic tests. NEVER includes the private target's per-repo data or diff; only its
-    composite_delta survives into the entry.
+    composite_delta and foresight breakdown (pure aggregate numbers, no repo identity -- see
+    ``_foresight_of``) survive into the entry.
 
     ``since_anchor``, when given, adds a SEPARATE cumulative-progress field: the same PR's
     delta against a fixed, named release (not the per-PR band's shifting base-branch
@@ -179,9 +212,11 @@ def to_leaderboard_entry(
         "public": {
             "composite_delta": _composite_delta(public),
             "per_repo": _safe_per_repo(public),
+            "foresight": _foresight_of(public),
         },
         "private": {
             "composite_delta": _composite_delta(private),
+            "foresight": _foresight_of(private),
         },
     }
     fields = _since_anchor_fields(since_anchor)

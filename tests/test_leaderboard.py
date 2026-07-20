@@ -27,22 +27,29 @@ class _Weird:
     """A custom object that is not a (label, artifact) pair."""
 
 
-def _single(score, judge=None, objective=None):
+def _single(score, judge=None, objective=None, foresight=None):
     art = {"composite_mean": score, "rows": []}
     if judge is not None or objective is not None:
         art["composite_parts"] = {"judge_mean": judge, "objective_mean": objective}
+    if foresight is not None:
+        art["foresight"] = foresight
     return art
 
 
-def _gen(tuned_score, judge=None, objective=None):
+def _gen(tuned_score, judge=None, objective=None, foresight=None):
     tuned = {"composite_mean": tuned_score, "scored_repos": 3}
     if judge is not None or objective is not None:
         tuned["composite_parts"] = {"judge_mean": judge, "objective_mean": objective}
+    if foresight is not None:
+        tuned["foresight"] = foresight
     return {
         "tuned": tuned,
         "held_out": {"composite_mean": 0.5, "scored_repos": 2},
         "generalization_gap": 0.1,
     }
+
+
+_NO_FORESIGHT = {"module_recall_mean": None, "kind_recall_mean": None, "release_accuracy": None}
 
 
 def test_rank_orders_best_first_with_delta_from_best():
@@ -246,20 +253,48 @@ def test_components_are_none_when_parts_missing_or_malformed():
 def test_components_helper_reads_headline_partition_and_guards_non_dict():
     # Directly exercise the helper: it reads the top level, the tuned partition for a
     # generalization artifact, and returns None components for a non-dict.
-    assert _components(_single(0.5, judge=0.7, objective=0.5)) == {"judge_mean": 0.7, "objective_mean": 0.5}
-    assert _components(_gen(0.6, judge=0.8, objective=0.6)) == {"judge_mean": 0.8, "objective_mean": 0.6}
-    assert _components("not-a-dict") == {"judge_mean": None, "objective_mean": None}
-    assert _components({}) == {"judge_mean": None, "objective_mean": None}
+    assert _components(_single(0.5, judge=0.7, objective=0.5)) == {
+        "judge_mean": 0.7, "objective_mean": 0.5, **_NO_FORESIGHT,
+    }
+    assert _components(_gen(0.6, judge=0.8, objective=0.6)) == {
+        "judge_mean": 0.8, "objective_mean": 0.6, **_NO_FORESIGHT,
+    }
+    assert _components("not-a-dict") == {"judge_mean": None, "objective_mean": None, **_NO_FORESIGHT}
+    assert _components({}) == {"judge_mean": None, "objective_mean": None, **_NO_FORESIGHT}
 
 
 @pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf")])
 def test_non_finite_component_mean_is_none_in_row(bad):
     # json round-trips NaN/Infinity verbatim; a non-finite composite_parts mean must degrade to
     # None rather than surfacing as inf/nan in a leaderboard row (mirrors composite_spread #1397).
-    assert _components(_single(0.6, judge=bad, objective=0.5)) == {"judge_mean": None, "objective_mean": 0.5}
-    out = rank([("A", _single(0.6, judge=bad, objective=0.5))])
-    row = out["ranking"][0]
-    assert row["judge_mean"] is None and row["objective_mean"] == 0.5
+    assert _components(_single(0.6, judge=bad, objective=0.5)) == {
+        "judge_mean": None, "objective_mean": 0.5, **_NO_FORESIGHT,
+    }
+
+
+def test_ranking_rows_include_foresight_breakdown():
+    # Each row also surfaces the M7 foresight breakdown behind its objective_mean, from the
+    # headline partition (top level for single-repo, tuned for generalization).
+    foresight = {"module_recall_mean": 0.75, "kind_recall_mean": 1.0, "release_accuracy": 0.5}
+    out = rank([
+        ("A", _single(0.60, judge=0.7, objective=0.5, foresight=foresight)),
+        ("B", _gen(0.72, judge=0.8, objective=0.6, foresight=foresight)),
+    ])
+    for row in out["ranking"]:
+        assert row["module_recall_mean"] == 0.75
+        assert row["kind_recall_mean"] == 1.0
+        assert row["release_accuracy"] == 0.5
+
+
+def test_foresight_components_none_when_absent_or_malformed():
+    out = rank([
+        ("nofs", _single(0.5, judge=0.6, objective=0.4)),                 # no foresight key
+        ("badfs", {"composite_mean": 0.4, "foresight": "oops"}),
+    ])
+    for row in out["ranking"]:
+        assert row["module_recall_mean"] is None
+        assert row["kind_recall_mean"] is None
+        assert row["release_accuracy"] is None
 
 
 def test_rank_does_not_mutate_inputs():

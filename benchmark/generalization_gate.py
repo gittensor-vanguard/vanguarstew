@@ -84,12 +84,25 @@ def _composite(partition: dict):
 
 
 def _scored_repos(partition: dict):
+    """The number of repos that actually scored, preferring the explicit ``scored_repos`` count.
+
+    The ``per_repo`` fallback excludes entries that explicitly carry a numeric ``tasks: 0`` -
+    the same "scored vs skipped" convention ``coverage._repo_counts`` uses - so a held-out repo
+    that was skipped (too small for the horizon, etc.) isn't counted as having scored. An entry
+    with no ``tasks`` field at all is ambiguous and still counted, unchanged from before.
+    """
     partition = _dict(partition)
     value = partition.get("scored_repos")
     if _is_number(value):
         return value
     per_repo = partition.get("per_repo")
-    return len(per_repo) if isinstance(per_repo, list) else None
+    if not isinstance(per_repo, list):
+        return None
+    skipped = sum(
+        1 for entry in per_repo
+        if isinstance(entry, dict) and _is_number(entry.get("tasks")) and entry["tasks"] == 0
+    )
+    return len(per_repo) - skipped
 
 
 def check_generalization(result, max_gap: float = DEFAULT_MAX_GAP,

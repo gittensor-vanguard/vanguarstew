@@ -21,12 +21,18 @@ from agent.planner import (  # noqa: E402
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
+    RELEASE_PRESSURE_GUIDANCE,
     REPO_LAYOUT_GUIDANCE,
     _automation_surface_signal,
+    _calibrate_release_prediction,
     _commit_plan_kind,
+    _commits_since_last_release,
     _config_surface_note,
+    _days_since_last_release,
     _explicit_pr_number,
     _is_automation_subject,
+    _is_planned_release,
+    _is_release_subject,
     _is_review_item,
     _matched_pr,
     _normalize_files,
@@ -41,6 +47,7 @@ from agent.planner import (  # noqa: E402
     _recent_kinds_note,
     _release_cadence_note,
     _release_cadence_signal,
+    _release_timing_state,
     _repo_layout_note,
     _safe_prs,
     _significant_tokens,
@@ -832,13 +839,54 @@ def test_release_cadence_signal_detects_release_subjects():
     assert _release_cadence_signal({}) is False
 
 
-def test_release_cadence_note_only_when_history_signals_cadence():
+def test_release_timing_suppress_right_after_a_cut():
+    # Dated: cut 2 days before freeze → suppress (must NOT over-predict another release).
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "chore(release): 1.4.0", "date": "2020-06-08T12:00:00+00:00"},
+            {"subject": "feat: a", "date": "2020-06-07T12:00:00+00:00"},
+        ],
+    }
+    assert _days_since_last_release(ctx) == 2
+    assert _release_timing_state(ctx) == "suppress"
+    assert _release_cadence_note(ctx) == ""
+
+    # Undated fallback: release among newest commits ≈ just cut.
+    undated = {"recent_commits": [{"subject": "chore(release): 2.0.0"}, {"subject": "feat: a"}]}
+    assert _release_timing_state(undated) == "suppress"
+    assert _release_cadence_note(undated) == ""
+
+
+def test_release_timing_pressure_when_cycle_is_due():
+    # Dated: 40 days since last cut → pressure (cycle due).
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "feat: a", "date": "2020-06-09T12:00:00+00:00"},
+            {"subject": "chore(release): 1.3.0", "date": "2020-05-01T12:00:00+00:00"},
+        ],
+    }
+    assert _days_since_last_release(ctx) == 40
+    assert _release_timing_state(ctx) == "pressure"
+    assert RELEASE_PRESSURE_GUIDANCE in _release_cadence_note(ctx)
+
+    # Undated: ≥20 non-release commits since last visible cut → pressure.
+    many = {"recent_commits": [{"subject": f"feat: {i}"} for i in range(20)]}
+    assert _commits_since_last_release(many) == 20
+    assert _release_timing_state(many) == "pressure"
+
+
+def test_release_cadence_note_only_under_pressure_not_just_because_history_had_a_cut():
+    # Legacy vibe: "a release subject exists somewhere" must NOT re-inject guidance when the
+    # cut is mid-window / just happened — that was the over-predict.
     assert _release_cadence_note({}) == ""
-    note = _release_cadence_note({"recent_commits": [{"subject": "release: 2.0"}]})
-    assert RELEASE_CADENCE_GUIDANCE in note
+    just_cut = {"recent_commits": [{"subject": "release: 2.0"}]}
+    assert RELEASE_CADENCE_GUIDANCE not in _release_cadence_note(just_cut)
+    assert RELEASE_PRESSURE_GUIDANCE not in _release_cadence_note(just_cut)
 
 
-def test_planner_prompt_includes_release_cadence_only_with_history():
+def test_planner_prompt_includes_release_pressure_only_when_timing_says_due():
     captured = {}
 
     class CapturingLLM(LLM):
@@ -848,11 +896,184 @@ def test_planner_prompt_includes_release_cadence_only_with_history():
 
     plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "fix: a"}]},
                       {}, 2, CapturingLLM(api_key="offline"))
+    assert RELEASE_PRESSURE_GUIDANCE not in captured["user"]
     assert RELEASE_CADENCE_GUIDANCE not in captured["user"]
 
+    # Just-cut tip must not solicit another release.
     plan_next_actions({"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.0.0"}]},
                       {}, 2, CapturingLLM(api_key="offline"))
-    assert RELEASE_CADENCE_GUIDANCE in captured["user"]
+    assert RELEASE_PRESSURE_GUIDANCE not in captured["user"]
+
+    pressure = {
+        "open_prs": [],
+        "frozen_at": {"date": "2020-06-10T12:00:00Z"},
+        "recent_commits": [
+            {"subject": "feat: a", "date": "2020-06-09T12:00:00Z"},
+            {"subject": "chore(release): 1.0.0", "date": "2020-04-01T12:00:00Z"},
+        ],
+    }
+    plan_next_actions(pressure, {}, 2, CapturingLLM(api_key="offline"))
+    assert RELEASE_PRESSURE_GUIDANCE in captured["user"]
+
+
+# --- #1561: deterministic backstop against spurious release predictions --------------------
+
+def test_is_release_subject_mirrors_the_anchor():
+    # Full mirror of benchmark/score.py::is_release_subject (agent/ can't import it). Release cuts:
+    for good in ("Cut the 1.0 release", "Ship the v1.0 release", "Release v2.0.0", "Release 1.2.0",
+                 "bump version to 2.0", "version bump", "Update the changelog", "v1.2.0",
+                 "chore(release): 1.4.0", "build(release): 2.0.0", "chore: 2.0.0"):
+        assert _is_release_subject(good) is True, good
+    # NOT cuts — a version under a non-tooling prefix, an incidental version, a revert, plain work:
+    for bad in ("fix: 2.0.0", "ci: 3.0.0", "docs: 1.4.0", "revert: release 1.2.0",
+                "bump lodash to v4.17.21", "fix crash in v1.2.0 parser", "Fix the loader",
+                "test: tighten release assertions", None, 42, "", "   "):
+        assert _is_release_subject(bad) is False, bad
+
+
+def test_is_planned_release_detects_kind_and_title():
+    assert _is_planned_release({"title": "Cut the next version", "kind": "release"}) is True
+    # kind not release, but a release-tooling version-cut title still counts (matches the anchor)
+    assert _is_planned_release({"title": "chore(release): 2.0.0", "kind": "triage"}) is True
+    # #1561 follow-up: the openclaw task2 gap — a plainly release-titled item under a NON-release
+    # kind. The kind-only check missed it; the anchor scored it as a release. Now gated.
+    assert _is_planned_release({"title": "Ship the v1.0 release", "kind": "feature"}) is True
+    assert _is_planned_release({"title": "Release 2.1.0", "kind": "ci"}) is True
+    # ordinary work is not a release prediction
+    assert _is_planned_release({"title": "Fix the loader", "kind": "bugfix"}) is False
+    assert _is_planned_release({"title": "bump lodash to v4.17.21", "kind": "dep"}) is False
+    assert _is_planned_release({"title": "fix: 2.0.0", "kind": "bugfix"}) is False  # non-tooling
+    # malformed items never raise
+    assert _is_planned_release(None) is False
+    assert _is_planned_release({"kind": "release"}) is True
+    assert _is_planned_release({"title": None, "kind": "bugfix"}) is False
+
+
+def test_calibrate_release_drops_title_based_release_without_cadence():
+    # The exact openclaw task2 shape: a release-titled item whose kind isn't "release".
+    plan = [
+        {"title": "Stabilize CI", "kind": "ci"},
+        {"title": "Ship the v1.0 release", "kind": "feature"},
+    ]
+    ctx = {"recent_commits": [{"subject": "fix: a"}, {"subject": "feat: b"}]}  # no cadence
+    out = _calibrate_release_prediction(plan, ctx)
+    assert [i["title"] for i in out] == ["Stabilize CI"]  # the release-titled item is dropped
+
+
+def test_calibrate_release_drops_release_when_no_cadence():
+    plan = [
+        {"title": "Fix loader", "kind": "bugfix"},
+        {"title": "Cut 2.1.0", "kind": "release"},
+        {"title": "Refactor router", "kind": "refactor"},
+    ]
+    ctx = {"recent_commits": [{"subject": "fix: a"}, {"subject": "feat: b"}]}  # no release cut
+    out = _calibrate_release_prediction(plan, ctx)
+    assert [i["kind"] for i in out] == ["bugfix", "refactor"]  # release dropped, order preserved
+
+
+def test_calibrate_release_suppresses_right_after_a_cut_even_with_cadence():
+    # Acceptance: shortly after a release must NOT keep a predicted cut (#1561).
+    plan = [
+        {"title": "Fix loader", "kind": "bugfix"},
+        {"title": "Cut 2.1.0", "kind": "release"},
+    ]
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "chore(release): 2.0.0", "date": "2020-06-09T12:00:00+00:00"},
+        ],
+    }
+    out = _calibrate_release_prediction(plan, ctx)
+    assert [i["kind"] for i in out] == ["bugfix"]
+
+
+def test_calibrate_release_keeps_release_under_pressure():
+    plan = [
+        {"title": "Fix loader", "kind": "bugfix"},
+        {"title": "Cut 2.1.0", "kind": "release"},
+    ]
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "feat: a", "date": "2020-06-09T12:00:00+00:00"},
+            {"subject": "chore(release): 2.0.0", "date": "2020-04-01T12:00:00+00:00"},
+        ],
+    }
+    assert _release_timing_state(ctx) == "pressure"
+    assert _calibrate_release_prediction(plan, ctx) == plan
+
+
+def test_calibrate_release_keeps_release_when_cadence_mid_history():
+    # Mid-window release subject (not tip-just-cut): neutral + cadence → keep.
+    plan = [
+        {"title": "Fix loader", "kind": "bugfix"},
+        {"title": "Cut 2.1.0", "kind": "release"},
+    ]
+    ctx = {"recent_commits": [
+        {"subject": "fix: a"},
+        {"subject": "feat: b"},
+        {"subject": "docs: c"},
+        {"subject": "chore(release): 2.0.0"},
+    ]}
+    assert _release_timing_state(ctx) == "neutral"
+    out = _calibrate_release_prediction(plan, ctx)
+    assert out == plan
+
+
+def test_calibrate_release_leaves_non_release_plans_untouched():
+    plan = [{"title": "Fix loader", "kind": "bugfix"}, {"title": "Docs", "kind": "docs"}]
+    ctx = {"recent_commits": [{"subject": "fix: a"}]}
+    assert _calibrate_release_prediction(plan, ctx) == plan
+
+
+def test_plan_next_actions_drops_spurious_release_without_cadence():
+    # The #1561 repro: the model adds a release item though nothing in recent history evidences a
+    # cut. The backstop removes it so the plan does not predict a release the window won't contain.
+    class ReleaseHappyLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return [
+                {"title": "Stabilize CI matrix", "kind": "ci"},
+                {"title": "Cut the next release", "kind": "release"},
+            ]
+
+    ctx = {"open_prs": [], "recent_commits": [{"subject": "fix: a"}, {"subject": "feat: b"}]}
+    plan = plan_next_actions(ctx, {}, 2, ReleaseHappyLLM(api_key="offline"))
+    assert not any(_is_planned_release(item) for item in plan)
+    assert any(item["kind"] == "ci" for item in plan)
+
+
+def test_plan_next_actions_keeps_release_under_pressure():
+    # When freeze-T timing says a cut is due, an LLM release item must survive calibration.
+    class ReleaseHappyLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return [
+                {"title": "Stabilize CI matrix", "kind": "ci"},
+                {"title": "Cut the next release", "kind": "release"},
+            ]
+
+    ctx = {
+        "open_prs": [],
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "feat: a", "date": "2020-06-09T12:00:00+00:00"},
+            {"subject": "chore(release): 1.9.0", "date": "2020-04-01T12:00:00+00:00"},
+        ],
+    }
+    plan = plan_next_actions(ctx, {}, 2, ReleaseHappyLLM(api_key="offline"))
+    assert any(_is_planned_release(item) for item in plan)
+
+
+def test_plan_next_actions_suppresses_release_just_after_a_cut():
+    class ReleaseHappyLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            return [
+                {"title": "Stabilize CI matrix", "kind": "ci"},
+                {"title": "Cut the next release", "kind": "release"},
+            ]
+
+    ctx = {"open_prs": [], "recent_commits": [{"subject": "chore(release): 1.9.0"}]}
+    plan = plan_next_actions(ctx, {}, 2, ReleaseHappyLLM(api_key="offline"))
+    assert not any(_is_planned_release(item) for item in plan)
 
 
 # --- #1640: config-surface directive gated on real automation evidence ---------------------
