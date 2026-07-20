@@ -189,7 +189,69 @@ def test_cli_happy_path(tmp_artifact, capsys):
 
 def test_cli_missing_file_exits_two(capsys):
     assert cli.run(["missing.json"]) == 2
-    assert "not found" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "artifact not found" in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A real directory raises IsADirectoryError from open(); name it distinctly rather than
+    # letting the generic OSError arm print "[Errno 21] Is a directory".
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err and str(tmp_path) in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root bypasses file-permission bits")
+def test_cli_unreadable_file_exits_two(tmp_path, capsys):
+    # A real chmod-0 file raises PermissionError -> its own message naming the path.
+    path = tmp_path / "locked.json"
+    path.write_text("{}", encoding="utf-8")
+    os.chmod(path, 0)
+    try:
+        rc = cli.run([str(path)])
+    finally:
+        os.chmod(path, 0o644)
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "artifact is not readable" in err and str(path) in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_broken_symlink_exits_two(tmp_path, capsys):
+    # A dangling symlink would otherwise surface as FileNotFoundError ("artifact not found"),
+    # blaming the path instead of the missing link target.
+    link = tmp_path / "link.json"
+    link.symlink_to(tmp_path / "gone.json")
+    assert cli.run([str(link)]) == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err and str(link) in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_symlink_loop_exits_two(tmp_path, capsys):
+    # A self-referential symlink never resolves (os.path.exists is False for it), so it is
+    # reported as a broken link too -- still a clean, actionable message, never an ELOOP dump.
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    assert cli.run([str(loop)]) == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err and str(loop) in err
+    assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_generic_oserror_exits_two(capsys, monkeypatch):
+    # The catch-all OSError arm (a device/IO error) must still exit cleanly naming the path.
+    def _raise(*args, **kwargs):
+        raise OSError(5, "I/O error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run(["flaky.json"]) == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "flaky.json" in err
+    assert "Traceback" not in err
 
 
 def test_cli_invalid_json_exits_two(tmp_path, capsys):
@@ -207,7 +269,11 @@ def test_cli_non_object_json_exits_two(tmp_path, capsys):
 
 
 def test_cli_permission_error_exits_two(capsys):
+    # PermissionError now names the permission problem distinctly instead of falling through
+    # to the generic "cannot read artifact ...: [Errno 13]" arm.
     with patch("builtins.open", mock_open()) as mocked:
         mocked.side_effect = PermissionError("permission denied")
         assert cli.run(["locked.json"]) == 2
-    assert "cannot read artifact" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "artifact is not readable" in err and "locked.json" in err
+    assert "Errno" not in err and "Traceback" not in err
