@@ -19,7 +19,7 @@ import json
 import logging
 
 from agent.context import context_for_agent
-from agent.planner import _release_cadence_signal, _release_timing_state
+from agent.planner import _release_cadence_signal, _release_timing_state, is_planning_request
 from benchmark.score import base_from_releases
 
 logger = logging.getLogger(__name__)
@@ -270,13 +270,12 @@ def _is_planning_request(request: str) -> bool:
     Time-horizon (curated ``horizon_days``): ``plan the maintainer actions for the next N days``.
     The latter does not contain the contiguous substring ``plan the next``, so a naive check
     skipped the reject→plan guard and the version_bump note on every production curated task (#1768).
+
+    Delegates to :func:`agent.planner.is_planning_request` so the decider's guards and the
+    planner's prompt recognize exactly the same templates — inlining the check in both is what
+    let them diverge (this guard was fixed in #1772 while the planner prompt was not).
     """
-    if not isinstance(request, str):
-        return False
-    low = request.lower()
-    if "plan the next" in low:
-        return True
-    return "plan the maintainer actions for the next" in low and "day" in low
+    return is_planning_request(request)
 
 
 def _planning_version_bump_note(context: dict, request: str) -> str:

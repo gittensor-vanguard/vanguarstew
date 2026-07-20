@@ -112,6 +112,52 @@ SYSTEM = (
     "Stay consistent with the philosophy. Respond ONLY with JSON."
 )
 
+# ``run_replay`` asks for a plan with one of two templates: the commit-horizon
+# ``plan the next N maintainer actions``, or the curated time-horizon
+# ``plan the maintainer actions for the next N days`` (#1740). Both the planner prompt and the
+# decider's planning guards have to recognize the same two shapes, so the recognition lives here
+# once and ``decider`` imports it rather than re-deriving it. Inlining it in both is what let
+# them diverge: #1768 reported the decider missing the time-horizon template and #1772 fixed the
+# decider, leaving the planner still count-scoped.
+_TIME_HORIZON_PATTERN = re.compile(
+    r"plan the maintainer actions for the next\s+(\d+)\s+day", re.IGNORECASE)
+
+
+def planning_horizon_days(request):
+    """The planning window in days a runner request asks for, or ``None``.
+
+    Only the time-horizon template carries a window. A non-string request, the commit-horizon
+    template, and a missing or unparseable count all yield ``None``. A zero count is rejected by
+    the ``days > 0`` guard so the prompt never renders a nonsensical "next 0 days"; a negative
+    count never reaches that guard, because ``\\s+(\\d+)`` cannot consume the minus sign.
+    """
+    if not isinstance(request, str):
+        return None
+    match = _TIME_HORIZON_PATTERN.search(request)
+    if not match:
+        return None
+    try:
+        days = int(match.group(1))
+    except (TypeError, ValueError):  # pragma: no cover - \d+ always parses
+        return None
+    return days if days > 0 else None
+
+
+def is_planning_request(request) -> bool:
+    """True for either runner planning template (commit-horizon or time-horizon).
+
+    Kept deliberately looser than :func:`planning_horizon_days`: a time-horizon request whose
+    count is missing or malformed is still a *planning* request, it just carries no usable
+    window. ``decider`` delegates here so the two modules cannot drift apart again (#1768).
+    """
+    if not isinstance(request, str):
+        return False
+    low = request.lower()
+    if "plan the next" in low:
+        return True
+    return "plan the maintainer actions for the next" in low and "day" in low
+
+
 # Prompt fragments for the plan-item schema and objective-anchor guidance. Kept as named
 # constants so tests can lock the contract without parsing full LLM prompts.
 PLAN_ITEM_SCHEMA = (
@@ -998,9 +1044,29 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     return out[:n]
 
 
-def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
+def plan_next_actions(context: dict, philosophy: dict, n: int, llm, request=None) -> list:
+    """Plan the maintainer's next actions.
+
+    ``request`` is the runner's own planning request. When it carries a time horizon
+    (``plan the maintainer actions for the next N days``), the prompt asks for the work that
+    lands in that window rather than for a bare count — the window is what the anchor's revealed
+    commits actually span, so a count-scoped plan answers a different question than the one the
+    run asked. This is the planner-side residual of #1768: #1772 taught the decider both
+    templates, but the planner prompt stayed count-scoped. Omitted or count-scoped requests keep
+    the original phrasing verbatim, so every existing caller is unaffected.
+    """
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
+    horizon_days = planning_horizon_days(request)
+    # Only the *window* is added; the item count and the "actions/PRs" framing are unchanged.
+    # Recall carries no precision penalty (benchmark/score.py::_module_recall matches plan tokens
+    # against the revealed modules), so wording that licenses a shorter plan — "at most N", or a
+    # prioritization hint — can only lose module recall. Keep asking for N.
+    ask = (
+        f"Plan the {n} maintainer actions/PRs most likely to land in the next {horizon_days} days."
+        if horizon_days else
+        f"Plan the next {n} maintainer actions/PRs."
+    )
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
@@ -1009,7 +1075,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"{_release_cadence_note(context)}"
         f"{_config_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
-        f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
+        f"{ask} Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"
         f"{OBJECTIVE_ANCHOR_GUIDANCE}"
     )
