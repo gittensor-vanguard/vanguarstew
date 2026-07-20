@@ -247,11 +247,29 @@ def comparison_headline(diff: dict) -> str:
     )
 
 
+class ArtifactError(Exception):
+    """Raised when an artifact cannot be loaded or is invalid."""
+
+
 def load_artifact(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    """Load a JSON-object artifact, raising ArtifactError on bad input."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        raise ArtifactError(f"artifact not found: {path}") from None
+    except PermissionError:
+        raise ArtifactError(f"artifact is not readable (check file permissions): {path}") from None
+    except IsADirectoryError:
+        raise ArtifactError(f"artifact path is a directory, not a file: {path}") from None
+    except OSError as exc:
+        raise ArtifactError(f"cannot read artifact ({path}): {exc}") from exc
+    except ValueError as exc:
+        # json.load raises JSONDecodeError for malformed JSON and ValueError for an integer
+        # literal beyond the Python int-string-conversion limit.
+        raise ArtifactError(f"artifact is not valid JSON ({path}): {exc}") from exc
     if not isinstance(data, dict):
-        raise ValueError(f"artifact must be a JSON object: {path}")
+        raise ArtifactError(f"artifact must be a JSON object: {path}")
     return data
 
 
@@ -264,7 +282,7 @@ def main() -> None:
     try:
         baseline = load_artifact(args.baseline)
         candidate = load_artifact(args.candidate)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except ArtifactError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
