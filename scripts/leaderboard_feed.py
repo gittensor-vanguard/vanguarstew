@@ -31,20 +31,41 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 
 
 def _round(value):
+    """A published scalar rounded to 4dp, or ``None`` when it is not a finite number.
+
+    ``None`` is this feed's established "unavailable" sentinel — every other unusable value
+    already lands on it — so a value that cannot be published honestly becomes ``null`` rather
+    than something a reader has to interpret.
+
+    Two ways a value fails to be publishable:
+
+    - **Non-finite.** This feed is JSON served to a browser, and ``json.dumps`` emits ``NaN`` /
+      ``Infinity`` *bare* — literals the JSON spec does not define and ``JSON.parse`` rejects —
+      so one poisoned scalar takes the whole leaderboard down rather than blanking one cell.
+      These are not only a hand-edited artifact's problem: a delta is a *difference*, and
+      ``compare_eval._delta`` rounds ``candidate - baseline`` after checking each operand but
+      never re-checks the result, so two finite composites can overflow to ``inf`` and reach
+      here through ``score_pr_delta``, whose own ``_delta`` tests only ``isinstance``.
+    - **Oversized int.** ``json`` parses an arbitrarily long integer literal into a Python
+      ``int``, and ``float()`` raises ``OverflowError`` for one too large to convert (#1599).
+      ``float()`` runs first below, so ``math.isfinite`` can never be handed such an int.
+
+    Guarding both halves is what the sibling readers already do —
+    ``benchmark/leaderboard.py``'s identically-named ``_round`` via its ``_is_number``,
+    ``scripts/compare_eval._numeric``, ``benchmark/gap_outlook._is_number`` — and it matches
+    this module's coerce-or-default, don't-crash policy.
+    """
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
-    # json parses an arbitrarily long integer literal into a Python int, and float() raises
-    # OverflowError for one too large to convert -- so an oversized composite delta/score must
-    # be treated as non-numeric here rather than crashing the feed builder. Mirrors the
-    # oversized-int guards merged across the codebase (repo_task_mean #1571, gap_outlook #1479,
-    # skip_share #1502, acceptance, component_floor).
     try:
-        return round(float(value), 4)
+        number = float(value)
     except OverflowError:
         return None
+    return round(number, 4) if math.isfinite(number) else None
 
 
 def _dict(value) -> dict:
@@ -113,6 +134,38 @@ def _since_anchor_fields(since_anchor: dict | None) -> dict | None:
     }
 
 
+_FORESIGHT_RATE_KEYS = ("module_recall_mean", "kind_recall_mean", "release_accuracy")
+_FORESIGHT_N_KEYS = ("module_recall_n", "kind_recall_n", "release_accuracy_n")
+
+
+def _foresight_of(report) -> dict | None:
+    """The M7 foresight breakdown (module/kind/release prediction accuracy, each with its own
+    sample size) a target's ``score_pr_delta()`` report carries -- the candidate agent's CURRENT
+    accuracy, not a delta, so the published figure moves only when a merged PR genuinely changes
+    what the agent gets right (per ROADMAP.md M7's acceptance bar), never by prose quality alone.
+
+    Pure aggregate numbers (three rates + three sample counts, no repo names, no file paths), so
+    publishing it for BOTH the public and private target carries the same privacy profile as the
+    composite deltas already published -- unlike ``per_repo``, it can't identify which repos are
+    in the hidden set.
+
+    Re-validates every field rather than trusting the upstream artifact's shape: each rate is
+    rounded through ``_round`` (non-numeric/oversized -> ``None``), and each sample count is
+    coerced to a non-negative int or ``0`` -- mirrors ``benchmark/report.py``'s
+    ``_foresight_axis()``, which treats a missing/non-numeric/negative ``n`` as equally
+    malformed/absent data, never a fabricated negative count. ``None`` when the report carries no
+    foresight breakdown at all (an artifact scored before M7, or an offline stub).
+    """
+    foresight = _dict(report).get("foresight")
+    if not isinstance(foresight, dict):
+        return None
+    out = {key: _round(foresight.get(key)) for key in _FORESIGHT_RATE_KEYS}
+    for key in _FORESIGHT_N_KEYS:
+        n = foresight.get(key)
+        out[key] = int(n) if isinstance(n, (int, float)) and not isinstance(n, bool) and n >= 0 else 0
+    return out
+
+
 def _composite_delta(report) -> float | None:
     """The banded composite delta for a target's report, for BOTH artifact shapes.
 
@@ -139,7 +192,8 @@ def to_leaderboard_entry(
 
     ``timestamp`` defaults to now (UTC, ISO-8601) -- pass an explicit value only for
     deterministic tests. NEVER includes the private target's per-repo data or diff; only its
-    composite_delta survives into the entry.
+    composite_delta and foresight breakdown (pure aggregate numbers, no repo identity -- see
+    ``_foresight_of``) survive into the entry.
 
     ``since_anchor``, when given, adds a SEPARATE cumulative-progress field: the same PR's
     delta against a fixed, named release (not the per-PR band's shifting base-branch
@@ -158,9 +212,11 @@ def to_leaderboard_entry(
         "public": {
             "composite_delta": _composite_delta(public),
             "per_repo": _safe_per_repo(public),
+            "foresight": _foresight_of(public),
         },
         "private": {
             "composite_delta": _composite_delta(private),
+            "foresight": _foresight_of(private),
         },
     }
     fields = _since_anchor_fields(since_anchor)

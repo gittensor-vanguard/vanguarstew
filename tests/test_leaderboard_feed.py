@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from scripts.leaderboard_feed import (  # noqa: E402
+    _foresight_of,
     _safe_per_repo,
     _since_anchor_fields,
     append_entry,
@@ -55,7 +56,7 @@ def test_to_leaderboard_entry_never_leaks_private_per_repo_data():
     entry = to_leaderboard_entry(combined, pr_number=1400, timestamp="2026-07-10T00:00:00+00:00")
     assert "per_repo" not in entry["private"]
     assert "diff" not in entry["private"]
-    assert set(entry["private"]) == {"composite_delta"}
+    assert set(entry["private"]) == {"composite_delta", "foresight"}
     assert "hidden-repo" not in json.dumps(entry)
 
 
@@ -77,6 +78,69 @@ def test_to_leaderboard_entry_shape_and_values():
     assert entry["label"] == combined["label"]
     assert entry["public"]["composite_delta"] == combined["public"]["composite_deltas"]["composite_mean"]
     assert entry["private"]["composite_delta"] == combined["private"]["composite_deltas"]["composite_mean"]
+
+
+def test_non_finite_composite_delta_is_unavailable_not_a_bare_nan():
+    """A NaN/Infinity delta must publish as null, never as a bare JSON literal.
+
+    Load-bearing: `_round` guarded OverflowError but not finiteness, so `float("nan")` flowed
+    straight through and `json.dumps` emitted a bare `NaN` -- which the JSON spec has no literal
+    for. Mirrors the finiteness half the sibling readers already carry (`compare_eval._numeric`,
+    `gap_outlook._is_number`).
+    """
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        combined = {
+            "band": "neutral", "label": "neutral",
+            "public": {"composite_deltas": {"composite_mean": bad}},
+            "private": {"composite_deltas": {"composite_mean": 0.0}},
+        }
+        entry = to_leaderboard_entry(combined, pr_number=7, timestamp="2026-07-10T00:00:00+00:00")
+        assert entry["public"]["composite_delta"] is None, bad
+        assert entry["private"]["composite_delta"] == 0.0
+
+
+def test_published_feed_is_parseable_by_a_strict_json_reader():
+    """The real harm: one poisoned scalar took the whole gh-pages feed down.
+
+    `json.dumps` emits bare `NaN`/`Infinity`, which `JSON.parse` rejects -- so the browser fails
+    to load the entire leaderboard rather than blanking one cell. Asserted through a strict
+    reader (`parse_constant`), which is what a non-Python consumer does.
+    """
+    def _reject_constant(name):
+        raise ValueError(f"bare {name} is not valid JSON")
+
+    combined = {
+        "band": "neutral", "label": "neutral",
+        "public": {"composite_deltas": {"composite_mean": float("nan")},
+                   "diff": {"per_repo": [{"repo": "mylib", "composite_mean": {"delta": float("inf")}}]}},
+        "private": {"composite_deltas": {"composite_mean": 0.0}},
+    }
+    entry = to_leaderboard_entry(combined, pr_number=7, timestamp="2026-07-10T00:00:00+00:00")
+    anchor = to_anchor_entry("v0.5.0", {"composite_mean": float("nan")}, {"composite_mean": 0.6},
+                             timestamp="2026-07-10T00:00:00+00:00")
+    for published in (entry, anchor):
+        blob = json.dumps(published)
+        assert "NaN" not in blob and "Infinity" not in blob, blob
+        json.loads(blob, parse_constant=_reject_constant)  # must not raise
+
+
+def test_non_finite_anchor_score_is_unavailable():
+    """`to_anchor_entry` reads `composite_mean` straight off a raw artifact, with no sanitizer
+    between it and the feed -- so it is the shortest path from a degenerate artifact to the
+    published page."""
+    entry = to_anchor_entry("v0.5.0", {"composite_mean": float("nan")},
+                            {"composite_mean": float("inf")}, timestamp="2026-07-10T00:00:00+00:00")
+    assert entry["public_score"] is None
+    assert entry["private_score"] is None
+
+
+def test_finite_scores_are_published_unchanged():
+    """Control: finite values are unaffected, so the nulls above are caused by non-finiteness
+    and not by the guard firing indiscriminately. Passes before and after the change."""
+    entry = to_anchor_entry("v0.5.0", {"composite_mean": 0.6125}, {"composite_mean": -0.25},
+                            timestamp="2026-07-10T00:00:00+00:00")
+    assert entry["public_score"] == 0.6125
+    assert entry["private_score"] == -0.25
 
 
 def test_oversized_int_composite_delta_is_unavailable_not_a_crash():
@@ -153,8 +217,8 @@ def test_to_leaderboard_entry_defaults_timestamp_to_now():
 
 def test_to_leaderboard_entry_tolerates_missing_public_and_private():
     entry = to_leaderboard_entry({}, pr_number=1, timestamp="t")
-    assert entry["public"] == {"composite_delta": None, "per_repo": []}
-    assert entry["private"] == {"composite_delta": None}
+    assert entry["public"] == {"composite_delta": None, "per_repo": [], "foresight": None}
+    assert entry["private"] == {"composite_delta": None, "foresight": None}
     assert entry["band"] is None
 
 
@@ -389,10 +453,10 @@ def test_to_leaderboard_entry_tolerates_non_dict_composite_deltas_and_targets():
         assert entry["public"]["per_repo"] == [], bad
         # public/private themselves non-dict, and a non-dict combined
         entry2 = to_leaderboard_entry({"public": bad, "private": bad}, pr_number=1, timestamp="t")
-        assert entry2["public"] == {"composite_delta": None, "per_repo": []}, bad
-        assert entry2["private"] == {"composite_delta": None}, bad
+        assert entry2["public"] == {"composite_delta": None, "per_repo": [], "foresight": None}, bad
+        assert entry2["private"] == {"composite_delta": None, "foresight": None}, bad
         assert to_leaderboard_entry(bad, pr_number=1, timestamp="t")["public"] == {
-            "composite_delta": None, "per_repo": []}, bad
+            "composite_delta": None, "per_repo": [], "foresight": None}, bad
 
 
 def test_to_leaderboard_entry_since_anchor_non_dict_composite_mean_does_not_raise():
@@ -415,3 +479,68 @@ def test_to_anchor_entry_tolerates_non_dict_artifact():
         entry = to_anchor_entry("v0.5.0", bad, bad, timestamp="t")
         assert entry == {
             "anchor": "v0.5.0", "timestamp": "t", "public_score": None, "private_score": None}, bad
+
+
+# --- M7: foresight breakdown published on the public feed -----------------------------------
+
+def test_foresight_of_rounds_rates_and_coerces_sample_counts():
+    report = {"foresight": {
+        "module_recall_mean": 0.7500001, "module_recall_n": 4,
+        "kind_recall_mean": 0.5, "kind_recall_n": 4.0,
+        "release_accuracy": None, "release_accuracy_n": -3,  # negative -> coerced to 0
+    }}
+    assert _foresight_of(report) == {
+        "module_recall_mean": 0.75, "module_recall_n": 4,
+        "kind_recall_mean": 0.5, "kind_recall_n": 4,
+        "release_accuracy": None, "release_accuracy_n": 0,
+    }
+
+
+def test_foresight_of_bool_sample_count_coerced_to_zero():
+    # bool is technically an int subclass in Python; must not sneak through as 0/1.
+    report = {"foresight": {"module_recall_mean": 0.5, "module_recall_n": True,
+                            "kind_recall_mean": None, "kind_recall_n": False,
+                            "release_accuracy": None, "release_accuracy_n": None}}
+    entry = _foresight_of(report)
+    assert entry["module_recall_n"] == 0 and entry["kind_recall_n"] == 0
+
+
+def test_foresight_of_none_when_report_carries_no_foresight():
+    for bad in ({}, {"foresight": None}, {"foresight": "nope"}, *[{"foresight": b} for b in _NON_DICTS]):
+        assert _foresight_of(bad) is None, bad
+    for bad in _NON_DICTS:
+        assert _foresight_of(bad) is None, bad
+
+
+def test_to_leaderboard_entry_publishes_foresight_for_both_targets():
+    # Pure aggregate rates + sample counts -- no repo names -- so publishing it for the PRIVATE
+    # target too carries the same privacy profile as composite_delta, unlike per_repo.
+    combined = {
+        "band": "perf:s", "label": "perf:s",
+        "public": {"composite_deltas": {"composite_mean": 0.02},
+                   "foresight": {"module_recall_mean": 0.8, "module_recall_n": 5,
+                                 "kind_recall_mean": 0.6, "kind_recall_n": 5,
+                                 "release_accuracy": 1.0, "release_accuracy_n": 1}},
+        "private": {"composite_deltas": {"composite_mean": 0.01},
+                    "foresight": {"module_recall_mean": 0.4, "module_recall_n": 3,
+                                  "kind_recall_mean": 0.3, "kind_recall_n": 3,
+                                  "release_accuracy": None, "release_accuracy_n": 0}},
+    }
+    entry = to_leaderboard_entry(combined, pr_number=42, timestamp="t")
+    assert entry["public"]["foresight"]["module_recall_mean"] == 0.8
+    assert entry["private"]["foresight"]["module_recall_mean"] == 0.4
+    assert "hidden-repo" not in json.dumps(entry)
+
+
+def test_to_leaderboard_entry_foresight_end_to_end_via_score_pr_delta():
+    baseline = _artifact(0.60, 0.55, 0.65)
+    candidate = _artifact(0.65, 0.60, 0.70)
+    candidate["foresight"] = {"module_recall_mean": 0.9, "module_recall_n": 4,
+                              "kind_recall_mean": 0.5, "kind_recall_n": 4,
+                              "release_accuracy": None, "release_accuracy_n": 0}
+    public_report = score_pr_delta(baseline, candidate)
+    private_report = score_pr_delta(baseline, baseline)  # no improvement, no foresight
+    combined = combine_dual_target(public_report, private_report)
+    entry = to_leaderboard_entry(combined, pr_number=9, timestamp="t")
+    assert entry["public"]["foresight"]["module_recall_mean"] == 0.9
+    assert entry["private"]["foresight"] is None  # baseline artifact carries no foresight key

@@ -238,6 +238,64 @@ def test_missing_composite_parts_fails():
     assert "judge_mean_matches_repos" in failed_checks(result)
 
 
+def test_scored_repo_missing_component_parts_fails_explicit_check():
+    """A scored repo that carries no component means must fail, not leave the denominator.
+
+    Load-bearing: `_finite_field_values` drops such a repo and `_mean_rounded` divides by the
+    survivors, so the gate used to report CONSISTENT for a headline computed from a subset —
+    the exact inconsistency it exists to catch. Mirrors `scored_composites_reported`.
+    """
+    art = _multi(_repo(2, 0.6, judge=0.9), _repo(2, 0.5, judge=0.5, name="b"))
+    del art["per_repo"][1]["composite_parts"]
+    art["composite_parts"]["judge_mean"] = 0.9  # the surviving repo's value alone
+    result = check_aggregate_integrity(art)
+    assert result["passed"] is False
+    assert "scored_components_reported" in failed_checks(result)
+
+
+def test_a_repo_cannot_count_for_composite_but_vanish_from_components():
+    """The same artifact must not be checked against two different denominators."""
+    art = _multi(_repo(2, 0.6, judge=0.9), _repo(2, 0.5, judge=0.5, name="b"))
+    art["per_repo"][1]["composite_parts"]["judge_mean"] = float("nan")
+    result = check_aggregate_integrity(art)
+    # repo b still counts toward the composite denominator ...
+    assert "scored_composites_reported" not in failed_checks(result)
+    assert "composite_mean_matches_repos" not in failed_checks(result)
+    # ... so it must count toward the component one too.
+    assert "scored_components_reported" in failed_checks(result)
+
+
+def test_no_per_repo_component_evidence_is_not_a_vacuous_pass():
+    """`_mean_rounded([])` is 0.0, so a headline 0.0 must not verify against a fabricated 0.0."""
+    art = _multi(_repo(2, 0.0, judge=0.0, objective=0.0))
+    del art["per_repo"][0]["composite_parts"]
+    result = check_aggregate_integrity(art)
+    assert result["passed"] is False
+    assert "scored_components_reported" in failed_checks(result)
+
+
+def test_component_completeness_survives_degenerate_per_repo_parts():
+    """Every shape a corrupt `composite_parts` can take fails the check rather than raising."""
+    for parts in (None, "not a dict", 42, [], {"judge_mean": "x"}, {"judge_mean": float("inf")},
+                  {"judge_mean": True}, {"objective_mean": 0.5}):
+        art = _multi(_repo(2, 0.6), _repo(2, 0.5, name="b"))
+        art["per_repo"][1]["composite_parts"] = parts
+        result = check_aggregate_integrity(art)
+        assert "scored_components_reported" in failed_checks(result), parts
+
+
+def test_a_complete_multi_repo_still_passes_every_check():
+    """Control: complete per-repo evidence is unaffected — the new check is caused by absence.
+
+    Passes both before and after the fix, so it proves the failures above come from the missing
+    evidence rather than from the check firing unconditionally.
+    """
+    art = _multi(_repo(2, 0.7, judge=0.9), _repo(2, 0.5, judge=0.5, name="b"))
+    result = check_aggregate_integrity(art)
+    assert result["passed"] is True, failed_checks(result)
+    assert "scored_components_reported" not in failed_checks(result)
+
+
 # --- #790: checks row sanitization for aggregate integrity headlines -----------------
 
 _MALFORMED_CHECKS = [
