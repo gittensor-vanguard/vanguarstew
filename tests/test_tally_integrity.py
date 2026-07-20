@@ -396,6 +396,59 @@ def test_integrity_headline_uses_sanitized_row_count(caplog):
     assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_skips_a_dict_row_missing_or_mistyped_name_or_passed(caplog):
+    # #727: the row guard only skipped non-dict rows, so a dict row missing "name"/"passed" (or
+    # carrying a wrong-typed one) slipped through and made the row["name"]/row["passed"] reads
+    # raise KeyError. Such a row is now skipped with a warning, mirroring the sibling gates.
+    with caplog.at_level(logging.WARNING, logger="benchmark.tally_integrity"):
+        assert _check_rows_list([{"passed": False}]) == []           # missing name
+        assert _check_rows_list([{"name": "tally_present"}]) == []   # missing passed
+        assert _check_rows_list([{"name": 99, "passed": False}]) == []   # non-str name
+        assert _check_rows_list([{"name": "x", "passed": "no"}]) == []   # non-bool passed
+    good = {"name": "tally_present", "passed": False}
+    assert _check_rows_list([good, {"passed": True}]) == [good]      # the valid row survives
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_a_none_name_or_none_passed(caplog):
+    # `None` is the most common malformed value in a deserialized artifact and is neither a `str`
+    # nor a `bool`, so both fields reject it by type and the row is skipped, never reaching the
+    # row["name"]/row["passed"] reads.
+    with caplog.at_level(logging.WARNING, logger="benchmark.tally_integrity"):
+        assert _check_rows_list([{"name": None, "passed": False}]) == []
+        assert _check_rows_list([{"name": "tally_present", "passed": None}]) == []
+        assert _check_rows_list([{"name": None, "passed": None}]) == []
+    assert any("name is NoneType, not str" in r.message for r in caplog.records)
+    assert any("passed is NoneType, not bool" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_a_blank_name(caplog):
+    # A blank/whitespace-only name is a `str`, so the type check alone let it through and it would
+    # surface as an empty entry in failed_checks / the headline's ", "-joined name list. A name
+    # that carries no identity is unusable, so it is skipped like any other malformed row.
+    with caplog.at_level(logging.WARNING, logger="benchmark.tally_integrity"):
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+        assert _check_rows_list([{"name": "   ", "passed": False}]) == []
+        assert _check_rows_list([{"name": "\t\n", "passed": False}]) == []
+    assert any("name is blank" in r.message for r in caplog.records)
+    # and a blank-named failing row never reaches the reported output
+    assert failed_checks({"checks": [{"name": "", "passed": False}]}) == []
+    assert integrity_headline(
+        {"passed": False, "checks": [{"name": "", "passed": False}]}
+    ) == "tally integrity: no checks evaluated"
+
+
+def test_failed_checks_and_headline_survive_a_check_row_missing_name():
+    # #727 end to end: the reporting helpers no longer raise KeyError on a malformed row, and the
+    # malformed row is excluded from both the numerator and denominator of the headline count.
+    result = {"passed": False,
+              "checks": [{"name": "tally_present", "passed": False}, {"passed": False}]}
+    assert failed_checks(result) == ["tally_present"]
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    line = integrity_headline(result)
+    assert line == "tally integrity: INCONSISTENT (1/1 checks failed: tally_present)"
+
+
 def test_failed_checks_logs_warning_for_skipped_rows(caplog):
     checks = [{"name": "tally_present", "passed": False}, 42]
     with caplog.at_level(logging.WARNING, logger="benchmark.tally_integrity"):

@@ -75,6 +75,25 @@ def _regressed(delta: float | None, noise_floor: float) -> bool:
     return delta is not None and delta < -noise_floor
 
 
+def _foresight_of(artifact: dict) -> dict | None:
+    """The M7 foresight breakdown (``module_recall_mean``/``kind_recall_mean``/
+    ``release_accuracy``, each with its own ``_n``) an artifact's agent currently achieves —
+    a snapshot of where prediction accuracy stands, not a diff. Mirrors
+    ``benchmark/leaderboard.py``'s ``_components()`` partition read: the top level for a
+    single/multi-repo artifact, or the ``tuned`` partition for a ``--generalization`` artifact
+    (``tuned``/``held_out`` both present). ``None`` when absent/malformed — an artifact saved
+    before the breakdown existed (or an offline stub) degrades the same way every other
+    optional field here does, rather than fabricating zeros.
+    """
+    if not isinstance(artifact, dict):
+        return None
+    partition = artifact
+    if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
+        partition = artifact["tuned"]
+    foresight = partition.get("foresight")
+    return foresight if isinstance(foresight, dict) else None
+
+
 def _pareto_axes(diff: dict) -> dict:
     """The two components the Pareto floor is measured over: judge_mean, objective_mean.
 
@@ -85,6 +104,26 @@ def _pareto_axes(diff: dict) -> dict:
     """
     parts = diff.get("composite_parts") or {}
     return {axis: parts.get(axis) for axis in ("judge_mean", "objective_mean")}
+
+
+def _generalization_pareto_axes(gen: dict) -> dict:
+    """The Pareto axes for a generalization diff: the WORSE of the two partitions' triplets
+    per axis, mirroring how ``banding_delta`` already uses the worse partition's composite
+    delta — so the floor holds even in whichever partition (tuned or held_out) regressed most.
+
+    An axis missing from both partitions (no ``composite_parts`` reported anywhere) yields
+    ``None`` for that axis, same as the standard (non-generalization) shape.
+    """
+    axes = {}
+    for axis in ("judge_mean", "objective_mean"):
+        worst_triplet, worst_delta = None, None
+        for partition in ("tuned", "held_out"):
+            triplet = (gen.get(partition, {}).get("composite_parts") or {}).get(axis)
+            delta = _delta(triplet)
+            if delta is not None and (worst_delta is None or delta < worst_delta):
+                worst_triplet, worst_delta = triplet, delta
+        axes[axis] = worst_triplet
+    return axes
 
 
 def _band_for_delta(delta: float | None, noise_floor: float) -> str:
@@ -108,6 +147,8 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
     ``composite_mean``) — the Pareto floor and banding are checked on whichever composite
     triplet(s) the artifact shape actually produced (generalization uses the MINIMUM of
     the two partitions' deltas, so a PR can't overfit the tuned set and still band high).
+    The Pareto floor's judge_mean/objective_mean axes are ALSO checked per partition when
+    reported, so a net-positive partition composite can't mask an axis regression (#1821).
 
     ``band`` is one of:
       - ``"blocked"`` — a scored axis regressed past the noise floor. Hard merge block
@@ -125,10 +166,14 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
             part: _delta(gen.get(part, {}).get("composite_mean"))
             for part in ("tuned", "held_out")
         }
-        any_regressed = any(_regressed(d, noise_floor) for d in composite_deltas.values())
+        pareto_axes = _generalization_pareto_axes(gen)
+        axis_deltas = [_delta(v) for v in pareto_axes.values()]
+        any_regressed = (
+            any(_regressed(d, noise_floor) for d in composite_deltas.values())
+            or any(_regressed(d, noise_floor) for d in axis_deltas)
+        )
         present = [d for d in composite_deltas.values() if d is not None]
         banding_delta = min(present) if present else None
-        pareto_axes = {}  # no per-axis (judge/objective) split at the generalization level
     else:
         composite_deltas = {"composite_mean": _delta(diff.get("composite_mean"))}
         pareto_axes = _pareto_axes(diff)
@@ -155,6 +200,7 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
         "noise_floor": noise_floor,
         "composite_deltas": composite_deltas,
         "pareto_axes": pareto_axes,
+        "foresight": _foresight_of(candidate),
         "diff": diff,
     }
 

@@ -15,6 +15,7 @@ from scripts.score_pr_delta import (  # noqa: E402
     BAND_MULTIPLIERS,
     BAND_THRESHOLDS,
     _band_for_delta,
+    _foresight_of,
     _regressed,
     combine_dual_target,
     headline,
@@ -125,7 +126,9 @@ def test_generalization_shaped_artifacts_use_the_minimum_partition_delta():
     }
     report = score_pr_delta(baseline, candidate)
     assert report["band"] == "s"  # gated by the WORSE (held_out) partition, not the better one
-    assert report["pareto_axes"] == {}  # no judge/objective split at this shape
+    # Neither partition reported composite_parts here, so there's no per-axis data to split on
+    # (same "unavailable" shape the non-generalization path reports for the same reason).
+    assert report["pareto_axes"] == {"judge_mean": None, "objective_mean": None}
 
 
 def test_generalization_shaped_artifact_catches_a_held_out_regression():
@@ -144,6 +147,51 @@ def test_generalization_shaped_artifact_catches_a_held_out_regression():
     report = score_pr_delta(baseline, candidate)
     assert report["band"] == "blocked"
     assert report["blocks_merge"] is True
+
+
+def _gen_part(judge_mean, objective_mean, scored_repos=3):
+    return {
+        "scored_repos": scored_repos,
+        "composite_mean": round((judge_mean + objective_mean) / 2, 3),
+        "composite_parts": {"judge_mean": judge_mean, "objective_mean": objective_mean},
+    }
+
+
+def test_generalization_pareto_floor_catches_an_axis_regression_behind_a_net_gain():
+    """#1821: a generalization artifact that games judge_mean up while objective_mean craters
+    must be blocked, even though the net composite_mean move is positive in both partitions —
+    exactly the case the Pareto floor exists to catch, and previously slipped through because
+    the generalization diff never carried composite_parts at all."""
+    baseline = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.55, 0.60), "held_out": _gen_part(0.55, 0.60),
+    }
+    candidate = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(1.0, 0.20), "held_out": _gen_part(1.0, 0.20),
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["composite_deltas"]["tuned"] > 0  # net composite move looks like an improvement
+    assert report["pareto_axes"]["objective_mean"]["delta"] == -0.4
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+
+
+def test_generalization_pareto_axes_report_the_worse_partition_per_axis():
+    """The reported axis triplet is the worse of the two partitions, mirroring how the
+    composite banding already uses the worse partition's delta."""
+    baseline = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.60, 0.60), "held_out": _gen_part(0.60, 0.60),
+    }
+    candidate = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.60, 0.55),       # objective_mean -0.05 (mild)
+        "held_out": _gen_part(0.60, 0.30),    # objective_mean -0.30 (severe) -- must win
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["pareto_axes"]["objective_mean"]["delta"] == -0.3
+    assert report["band"] == "blocked"
 
 
 def test_missing_composite_parts_excludes_pareto_axis_rather_than_failing_open_or_closed():
@@ -295,3 +343,52 @@ def test_cli_end_to_end_writes_a_report(tmp_path):
     assert report["band"] == "xl"
     assert report["label"] == "perf:xl"
     assert "score_pr_delta: perf:xl" in result.stderr
+
+
+# --- M7: foresight breakdown snapshot (module/kind/release prediction accuracy) -------------
+
+def _fs(**overrides):
+    base = {"module_recall_mean": 0.75, "module_recall_n": 4,
+            "kind_recall_mean": 0.5, "kind_recall_n": 4,
+            "release_accuracy": None, "release_accuracy_n": 0}
+    base.update(overrides)
+    return base
+
+
+def test_foresight_of_reads_top_level_for_single_repo_artifact():
+    artifact = {"composite_mean": 0.6, "foresight": _fs()}
+    assert _foresight_of(artifact) == _fs()
+
+
+def test_foresight_of_reads_tuned_partition_for_generalization_artifact():
+    # A --generalization artifact has no top-level foresight; the current, un-diffed accuracy
+    # lives under `tuned` (mirrors benchmark/leaderboard.py's _components() partition read).
+    artifact = {
+        "tuned": {"composite_mean": 0.7, "foresight": _fs(module_recall_mean=0.9)},
+        "held_out": {"composite_mean": 0.6, "foresight": _fs(module_recall_mean=0.4)},
+    }
+    assert _foresight_of(artifact) == _fs(module_recall_mean=0.9)
+
+
+def test_foresight_of_none_when_absent_or_malformed():
+    for bad in ({"composite_mean": 0.6}, {"foresight": "nope"}, {"foresight": None},
+                {}, None, "x", 42, []):
+        assert _foresight_of(bad) is None, bad
+
+
+def test_score_pr_delta_snapshots_the_candidates_foresight_not_a_diff():
+    # foresight is the CANDIDATE's current accuracy -- an absolute snapshot, not a delta between
+    # baseline and candidate, so the published figure reflects "where does accuracy stand now."
+    baseline = {"composite_mean": 0.5, "composite_parts": {"judge_mean": 0.5, "objective_mean": 0.5},
+                "foresight": _fs(module_recall_mean=0.2)}
+    candidate = {"composite_mean": 0.6, "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.6},
+                 "foresight": _fs(module_recall_mean=0.9)}
+    report = score_pr_delta(baseline, candidate)
+    assert report["foresight"] == _fs(module_recall_mean=0.9)
+
+
+def test_score_pr_delta_foresight_none_for_a_pre_m7_or_offline_artifact():
+    baseline = {"composite_mean": 0.5, "composite_parts": {"judge_mean": 0.5, "objective_mean": 0.5}}
+    candidate = {"composite_mean": 0.6, "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.6}}
+    report = score_pr_delta(baseline, candidate)
+    assert report["foresight"] is None
