@@ -18,7 +18,17 @@ def load_artifact(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
+    except FileNotFoundError:
+        print(f"artifact not found: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except PermissionError:
+        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except IsADirectoryError:
+        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
     except OSError as exc:
+        # Any other read failure (e.g. a device/IO error) still gets a clean message.
         print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except ValueError as exc:
