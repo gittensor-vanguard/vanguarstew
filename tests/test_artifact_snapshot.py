@@ -1,5 +1,6 @@
 """Tests for replay artifact snapshot extraction and its CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import sys
@@ -319,3 +320,68 @@ def test_cli_generic_os_error_exits_two(capsys):
         assert cli.run(["flaky.json"]) == 2
     err = capsys.readouterr().err
     assert "cannot read artifact" in err and "I/O error" in err
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError; islink() distinguishes it so the message
+    # blames the missing target, not the (present) link path.
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    # A symlink loop raises OSError(ELOOP); force it so the handler is proven on every platform
+    # (Windows self-symlinks raise EINVAL, not ELOOP).
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_load_artifact_not_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "run.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(20, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "parent component is not a directory" in err and "Traceback" not in err
+
+
+def test_load_artifact_generic_oserror_keeps_message(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "io.json")
+    exc = OSError(5, "Input/output error", path)
+
+    def _raise(*args, **kwargs):
+        raise exc
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"cannot read artifact ({path}): {exc}\n"
