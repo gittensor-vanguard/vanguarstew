@@ -80,6 +80,69 @@ def test_to_leaderboard_entry_shape_and_values():
     assert entry["private"]["composite_delta"] == combined["private"]["composite_deltas"]["composite_mean"]
 
 
+def test_non_finite_composite_delta_is_unavailable_not_a_bare_nan():
+    """A NaN/Infinity delta must publish as null, never as a bare JSON literal.
+
+    Load-bearing: `_round` guarded OverflowError but not finiteness, so `float("nan")` flowed
+    straight through and `json.dumps` emitted a bare `NaN` -- which the JSON spec has no literal
+    for. Mirrors the finiteness half the sibling readers already carry (`compare_eval._numeric`,
+    `gap_outlook._is_number`).
+    """
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        combined = {
+            "band": "neutral", "label": "neutral",
+            "public": {"composite_deltas": {"composite_mean": bad}},
+            "private": {"composite_deltas": {"composite_mean": 0.0}},
+        }
+        entry = to_leaderboard_entry(combined, pr_number=7, timestamp="2026-07-10T00:00:00+00:00")
+        assert entry["public"]["composite_delta"] is None, bad
+        assert entry["private"]["composite_delta"] == 0.0
+
+
+def test_published_feed_is_parseable_by_a_strict_json_reader():
+    """The real harm: one poisoned scalar took the whole gh-pages feed down.
+
+    `json.dumps` emits bare `NaN`/`Infinity`, which `JSON.parse` rejects -- so the browser fails
+    to load the entire leaderboard rather than blanking one cell. Asserted through a strict
+    reader (`parse_constant`), which is what a non-Python consumer does.
+    """
+    def _reject_constant(name):
+        raise ValueError(f"bare {name} is not valid JSON")
+
+    combined = {
+        "band": "neutral", "label": "neutral",
+        "public": {"composite_deltas": {"composite_mean": float("nan")},
+                   "diff": {"per_repo": [{"repo": "mylib", "composite_mean": {"delta": float("inf")}}]}},
+        "private": {"composite_deltas": {"composite_mean": 0.0}},
+    }
+    entry = to_leaderboard_entry(combined, pr_number=7, timestamp="2026-07-10T00:00:00+00:00")
+    anchor = to_anchor_entry("v0.5.0", {"composite_mean": float("nan")}, {"composite_mean": 0.6},
+                             timestamp="2026-07-10T00:00:00+00:00")
+    for published in (entry, anchor):
+        blob = json.dumps(published)
+        assert "NaN" not in blob and "Infinity" not in blob, blob
+        json.loads(blob, parse_constant=_reject_constant)  # must not raise
+
+
+def test_non_finite_anchor_score_is_unavailable():
+    """`to_anchor_entry` reads `composite_mean` straight off a raw artifact, with no sanitizer
+    between it and the feed -- so it is the shortest path from a degenerate artifact to the
+    published page."""
+    entry = to_anchor_entry("v0.5.0", {"composite_mean": float("nan")},
+                            {"composite_mean": float("inf")}, timestamp="2026-07-10T00:00:00+00:00")
+    assert entry["public_score"] is None
+    assert entry["private_score"] is None
+
+
+def test_finite_scores_are_published_unchanged():
+    """Control: finite values are unaffected, so the nulls above are caused by non-finiteness
+    and not by the guard firing indiscriminately. Passes before and after the change."""
+    entry = to_anchor_entry("v0.5.0", {"composite_mean": 0.6125}, {"composite_mean": -0.25},
+                            timestamp="2026-07-10T00:00:00+00:00")
+    assert entry["public_score"] == 0.6125
+    assert entry["private_score"] == -0.25
+
+
 def test_oversized_int_composite_delta_is_unavailable_not_a_crash():
     # json parses an arbitrarily long integer literal into a Python int; float() raises
     # OverflowError for one too large to convert, so an oversized composite delta must degrade to
