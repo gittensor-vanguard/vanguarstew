@@ -21,6 +21,11 @@ overlap. Nothing gates window overlap.
 3. ``windows_independent`` — every pair of freeze indices differs by more than ``horizon`` (so the
    ``[f, f+horizon]`` spans are disjoint). Trivially true for a single task.
 
+A TIME-horizon task set (taskgen's ``horizon_days`` mode) carries ``horizon_days``/``freeze_date``
+per task; there the windows span DAYS, so ``windows_independent`` compares freeze *dates* against
+``horizon_days`` instead — two freezes 6 commits apart clear ``horizon=5`` yet can sit inside the
+same 90-day window. Same invariant, measured in the dimension the window actually spans.
+
 The companion ``scripts/task_independence.py`` exits non-zero when the windows overlap.
 
 Pure evaluation: no I/O, never mutates its input, and a malformed/non-list task set simply fails
@@ -30,6 +35,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +95,17 @@ def _check_rows_list(checks) -> list:
     return rows
 
 
+def _as_dt(value):
+    """Parse a task's ISO ``freeze_date``, or ``None`` when absent/unparseable (fails closed to
+    the commit-index check rather than raising)."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _is_nonneg_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
@@ -121,12 +138,37 @@ def check_task_independence(tasks, horizon: int = DEFAULT_HORIZON) -> dict:
         "every task has a non-negative integer freeze_index" if indices_valid
         else "a task is missing a non-negative integer freeze_index")
 
+    # A TIME-horizon task set (taskgen's `horizon_days` mode) reveals everything landing in the
+    # next N DAYS, so its windows overlap in time, not in commit count: two freeze points 6 commits
+    # apart are independent under horizon=5 but can sit inside the same 90-day window and overlap
+    # badly. Measure the gap in the same dimension the window spans. The invariant is unchanged
+    # (no task's freeze may sit inside an earlier task's revealed future); only its dimension
+    # follows the horizon.
+    spans = [t.get("horizon_days") for t in dict_tasks]
+    dates = [_as_dt(t.get("freeze_date")) for t in dict_tasks]
+    time_mode = (all_dicts and bool(spans)
+                 and all(isinstance(s, int) and not isinstance(s, bool) and s > 0 for s in spans)
+                 and all(d is not None for d in dates))
+
     min_gap = None
-    if indices_valid and len(indices) >= 2:
+    if time_mode and len(dates) >= 2:
+        ordered = sorted(dates)
+        min_gap = min((b - a).total_seconds() / 86400.0 for a, b in zip(ordered, ordered[1:]))
+    elif indices_valid and len(indices) >= 2:
         ordered = sorted(indices)
         min_gap = min(b - a for a, b in zip(ordered, ordered[1:]))
 
-    if not indices_valid:
+    if time_mode:
+        span = max(spans)
+        if min_gap is None:
+            add("windows_independent", True, "fewer than two tasks; trivially independent")
+        else:
+            ok = min_gap > span
+            add("windows_independent", ok,
+                f"smallest freeze-date gap {min_gap:.1f}d > horizon_days {span}" if ok
+                else f"freeze dates only {min_gap:.1f}d apart <= horizon_days {span} "
+                     f"(windows overlap)")
+    elif not indices_valid:
         add("windows_independent", False, "cannot check independence (invalid freeze_index)")
     elif min_gap is None:
         add("windows_independent", True, "fewer than two tasks; trivially independent")

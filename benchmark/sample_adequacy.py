@@ -102,13 +102,17 @@ def _partition_entries(result: dict) -> list:
     `tally_integrity`, `weight_integrity`, ...): a multi-repo run's top-level ``per_repo`` is the
     complete list, so it must not be summed *together with* the ``tuned``/``held_out`` partition
     lists. Counting both shapes on an artifact that carries them would double-count every task.
+
+    Both ``tuned`` and ``held_out`` are always included (via ``.get("per_repo")``, which is
+    ``None`` when the key is absent) rather than filtered on key presence — a partition that
+    never got populated (no ``per_repo``, no ``error``) must fail closed the same way an
+    explicit empty ``per_repo: []`` does, not be silently dropped from consideration.
     """
     if "per_repo" in result:
         return [result.get("per_repo")]
     return [
         part.get("per_repo")
         for part in (_dict(result.get("tuned")), _dict(result.get("held_out")))
-        if "per_repo" in part
     ]
 
 

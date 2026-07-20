@@ -57,11 +57,22 @@ def _effective_composite_parts(artifact: dict) -> dict:
 
 
 def _delta(candidate, baseline) -> float | None:
+    """The candidate-minus-baseline difference, or ``None`` when it is not a finite number.
+
+    ``_numeric`` guards each *operand*, but a difference can leave the finite range its
+    operands sit in: ``1e308 - -1e308`` overflows to ``inf``. The result therefore needs the
+    same check the inputs got — without it a delta that is merely an arithmetic overflow flows
+    on as a real measurement. Nothing downstream re-checks it: ``score_pr_delta._delta`` tests
+    only ``isinstance``, so ``inf`` reaches ``_band_for_delta``, clears every entry in
+    ``BAND_THRESHOLDS`` and reports the top band, and reaches the public leaderboard feed.
+    ``None`` is the value both already treat as "no usable delta".
+    """
     c = _numeric(candidate)
     b = _numeric(baseline)
     if c is None or b is None:
         return None
-    return round(c - b, 3)
+    delta = c - b
+    return round(delta, 3) if math.isfinite(delta) else None
 
 
 def _metric_triplet(baseline: dict, candidate: dict, key: str) -> dict:
