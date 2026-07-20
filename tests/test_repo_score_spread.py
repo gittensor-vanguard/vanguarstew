@@ -112,6 +112,27 @@ def test_generalization_missing_partitions():
     }
 
 
+def test_generalization_failed_partition_is_not_a_phantom_repo():
+    # A partition that fails is recorded as an aggregate with no per_repo and a placeholder
+    # composite_mean of 0.0 (benchmark.runner.run_generalization_report._partition). It scored
+    # zero repos, so it must contribute NO score -- not a phantom repo scoring 0.0 that would
+    # fabricate the "carried by one repo" spread and drag the overall range down to that 0.0.
+    summary = summarize_repo_score_spread({
+        "generalization_gap": 0.0,
+        "tuned": _multi(0.46, 0.69),
+        "held_out": {"error": "no held-out repos configured", "scored_repos": 0,
+                     "composite_mean": 0.0},
+    })
+    assert summary["scored_repos"] == 2                       # only the two tuned repos
+    assert summary["min"] == 0.46 and summary["max"] == 0.69  # NOT dragged to 0.0
+    assert summary["range"] == 0.23
+    assert summary["partitions"]["tuned"] == {"scored_repos": 2, "min": 0.46, "max": 0.69,
+                                              "range": 0.23}
+    assert summary["partitions"]["held_out"] == {
+        "scored_repos": 0, "min": None, "max": None, "range": None,
+    }
+
+
 # --- invalid / unknown kinds ---------------------------------------------------------------------
 
 def test_invalid_and_non_dict_artifacts():
@@ -128,6 +149,15 @@ def test_repo_scores_single_and_non_numeric_top_level():
     assert _repo_scores({"composite_mean": 0.6}) == [0.6]
     assert _repo_scores({"composite_mean": "x"}) == []
     assert _repo_scores(None) == []
+
+
+def test_repo_scores_masks_unscored_aggregate_but_keeps_real_leaf():
+    # scored_repos == 0 marks a placeholder composite_mean (a failed partition) -> no score.
+    assert _repo_scores({"scored_repos": 0, "composite_mean": 0.0}) == []
+    assert _repo_scores({"error": "boom", "scored_repos": 0, "composite_mean": 0.0}) == []
+    # A genuine single-repo leaf has no scored_repos key (or a real count) -> still contributes.
+    assert _repo_scores({"composite_mean": 0.6}) == [0.6]
+    assert _repo_scores({"scored_repos": 1, "composite_mean": 0.6}) == [0.6]
 
 
 def test_spread_helper():

@@ -5,6 +5,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -216,6 +218,33 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
     assert str(missing) in result.stderr
+    assert "artifact not found" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    result = _run_cli(str(good), str(tmp_path))
+    assert result.returncode == 1
+    assert "artifact path is a directory, not a file" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root bypasses file permission bits")
+def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    locked = tmp_path / "locked.json"
+    locked.write_text(json.dumps({"composite_mean": 0.6}), encoding="utf-8")
+    locked.chmod(0o000)
+    try:
+        result = _run_cli(str(good), str(locked))
+    finally:
+        locked.chmod(0o600)
+    assert result.returncode == 1
+    assert "not readable" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
@@ -227,6 +256,7 @@ def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
     assert "must be a JSON object" in result.stderr
+    assert str(bad) in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
@@ -236,6 +266,33 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     invalid.write_text("{not valid json", encoding="utf-8")
     result = _run_cli(str(good), str(invalid))
     assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_an_empty_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    empty = tmp_path / "empty.json"
+    empty.write_text("", encoding="utf-8")
+    result = _run_cli(str(good), str(empty))
+    assert result.returncode == 1
+    assert "not valid JSON" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "symlink"),
+    reason="symlink not supported on this platform",
+)
+def test_cli_reports_a_clean_error_for_a_broken_symlink(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    broken = tmp_path / "broken.json"
+    os.symlink(tmp_path / "nonexistent.json", broken)
+    result = _run_cli(str(good), str(broken))
+    assert result.returncode == 1
+    assert "not found" in result.stderr
     assert "Traceback" not in result.stderr
 
 
@@ -432,3 +489,44 @@ def test_comparison_headline_generalization_marks_unavailable_delta():
     )
     line = comparison_headline(diff)
     assert "tuned n/a" in line and "gap n/a" in line and "held_out +0.100" in line
+
+
+def test_a_delta_that_overflows_is_unavailable_not_infinity():
+    """Finite operands can produce a non-finite difference; the result needs its own guard.
+
+    Load-bearing: `_numeric` checks each operand, so `1e308` and `-1e308` both pass — but their
+    difference overflows to `inf`, and `_delta` returned it as if it were a real measurement.
+    """
+    diff = compare_eval_artifacts({"composite_mean": -1e308}, {"composite_mean": 1e308})
+    triplet = diff["composite_mean"]
+    # The operands are legitimate and reported as-is; only the difference is unusable.
+    assert triplet["baseline"] == -1e308
+    assert triplet["candidate"] == 1e308
+    assert triplet["delta"] is None
+
+
+def test_an_overflowing_delta_cannot_earn_the_top_band():
+    """The real harm: an arithmetic overflow used to clear every BAND_THRESHOLDS entry.
+
+    `score_pr_delta._delta` tests only `isinstance`, so an `inf` delta reached
+    `_band_for_delta`, cleared every floor and reported `xl` — the top multiplier — from two
+    finite composites that never measured anything.
+    """
+    from scripts.score_pr_delta import score_pr_delta
+
+    result = score_pr_delta({"composite_mean": -1e308}, {"composite_mean": 1e308})
+    assert result["composite_deltas"]["composite_mean"] is None
+    assert result["band"] == "none"
+
+
+def test_ordinary_deltas_are_unaffected_by_the_finiteness_guard():
+    """Control: a normal difference still bands exactly as before.
+
+    Passes both before and after the guard, so the `None`s above are caused by the overflow
+    rather than by the check firing indiscriminately.
+    """
+    from scripts.score_pr_delta import score_pr_delta
+
+    result = score_pr_delta({"composite_mean": 0.6}, {"composite_mean": 0.7})
+    assert result["composite_deltas"]["composite_mean"] == 0.1
+    assert result["band"] == "l"

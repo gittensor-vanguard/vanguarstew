@@ -75,6 +75,25 @@ def _regressed(delta: float | None, noise_floor: float) -> bool:
     return delta is not None and delta < -noise_floor
 
 
+def _foresight_of(artifact: dict) -> dict | None:
+    """The M7 foresight breakdown (``module_recall_mean``/``kind_recall_mean``/
+    ``release_accuracy``, each with its own ``_n``) an artifact's agent currently achieves —
+    a snapshot of where prediction accuracy stands, not a diff. Mirrors
+    ``benchmark/leaderboard.py``'s ``_components()`` partition read: the top level for a
+    single/multi-repo artifact, or the ``tuned`` partition for a ``--generalization`` artifact
+    (``tuned``/``held_out`` both present). ``None`` when absent/malformed — an artifact saved
+    before the breakdown existed (or an offline stub) degrades the same way every other
+    optional field here does, rather than fabricating zeros.
+    """
+    if not isinstance(artifact, dict):
+        return None
+    partition = artifact
+    if isinstance(artifact.get("tuned"), dict) and isinstance(artifact.get("held_out"), dict):
+        partition = artifact["tuned"]
+    foresight = partition.get("foresight")
+    return foresight if isinstance(foresight, dict) else None
+
+
 def _pareto_axes(diff: dict) -> dict:
     """The two components the Pareto floor is measured over: judge_mean, objective_mean.
 
@@ -181,6 +200,7 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
         "noise_floor": noise_floor,
         "composite_deltas": composite_deltas,
         "pareto_axes": pareto_axes,
+        "foresight": _foresight_of(candidate),
         "diff": diff,
     }
 
