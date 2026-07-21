@@ -391,6 +391,30 @@ def test_compare_eval_diffs_generalization_partitions_and_gap():
     assert "composite_mean" not in diff
 
 
+def test_generalization_diff_includes_per_partition_composite_parts():
+    # #1821: score_pr_delta's Pareto floor needs judge_mean/objective_mean per partition,
+    # not just the net composite_mean, or an axis regression behind a net gain slips through.
+    baseline = {
+        "repo_set": "foo.json", "generalization_gap": 0.0,
+        "tuned": {"composite_mean": 0.575, "scored_repos": 3,
+                  "composite_parts": {"judge_mean": 0.55, "objective_mean": 0.60}},
+        "held_out": {"composite_mean": 0.575, "scored_repos": 3,
+                     "composite_parts": {"judge_mean": 0.55, "objective_mean": 0.60}},
+    }
+    candidate = {
+        "repo_set": "foo.json", "generalization_gap": 0.0,
+        "tuned": {"composite_mean": 0.6, "scored_repos": 3,
+                  "composite_parts": {"judge_mean": 1.0, "objective_mean": 0.20}},
+        "held_out": {"composite_mean": 0.6, "scored_repos": 3,
+                     "composite_parts": {"judge_mean": 1.0, "objective_mean": 0.20}},
+    }
+    diff = compare_eval_artifacts(baseline, candidate)
+    gen = diff["generalization"]
+    assert gen["tuned"]["composite_parts"]["judge_mean"]["delta"] == 0.45
+    assert gen["tuned"]["composite_parts"]["objective_mean"]["delta"] == -0.4
+    assert gen["held_out"]["composite_parts"]["objective_mean"]["delta"] == -0.4
+
+
 def test_generalization_diff_tolerates_missing_and_none_partition_scores():
     # A partition that only recorded an error (no composite_mean) diffs to None, no crash.
     baseline = {"repo_set": "foo.json",

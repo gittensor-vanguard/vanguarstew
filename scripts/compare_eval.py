@@ -161,13 +161,18 @@ def _is_generalization(artifact: dict) -> bool:
 
 
 def _generalization_diff(baseline: dict, candidate: dict) -> dict:
-    """Diff the composite means of each partition plus the generalization gap.
+    """Diff the composite means and components of each partition plus the generalization gap.
 
     Every value is read through ``_metric_triplet``/``_delta``, which coerce a missing,
     ``None``, or non-numeric field to a ``None`` delta rather than crashing — so a partition
     that only recorded an ``error`` (``scored_repos == 0``) diffs to ``None`` cleanly, and a
-    placeholder ``composite_mean`` of ``0.0`` on an unscored partition is treated as
-    unavailable (mirroring ``benchmark/trend.py`` and ``benchmark/report.py``).
+    placeholder ``composite_mean``/``composite_parts`` of ``0.0`` on an unscored partition is
+    treated as unavailable (mirroring ``benchmark/trend.py`` and ``benchmark/report.py``).
+
+    Each partition's ``judge_mean``/``objective_mean`` (when either side reports one) is
+    included as ``composite_parts``, mirroring the standard (non-generalization) diff shape —
+    ``score_pr_delta``'s Pareto floor needs this per-partition, per-axis data to catch an
+    axis regression a net-positive partition composite would otherwise hide (#1821).
     """
     out = {}
     for partition in ("tuned", "held_out"):
@@ -175,7 +180,16 @@ def _generalization_diff(baseline: dict, candidate: dict) -> dict:
         cand_part = candidate.get(partition)
         base_part = base_part if isinstance(base_part, dict) else {}
         cand_part = cand_part if isinstance(cand_part, dict) else {}
-        out[partition] = {"composite_mean": _metric_triplet(base_part, cand_part, "composite_mean")}
+        entry = {"composite_mean": _metric_triplet(base_part, cand_part, "composite_mean")}
+        base_parts = _effective_composite_parts(base_part)
+        cand_parts = _effective_composite_parts(cand_part)
+        parts = {}
+        for key in ("judge_mean", "objective_mean"):
+            if key in base_parts or key in cand_parts:
+                parts[key] = _metric_triplet(base_parts, cand_parts, key)
+        if parts:
+            entry["composite_parts"] = parts
+        out[partition] = entry
     out["generalization_gap"] = _metric_triplet(baseline, candidate, "generalization_gap")
     return out
 
