@@ -11,7 +11,9 @@ written to stderr for quick CI logging.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import sys
 
 from benchmark.artifact_snapshot import snapshot, snapshot_headline
@@ -94,5 +96,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-import errno
-import os
