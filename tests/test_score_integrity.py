@@ -1,5 +1,6 @@
 """Tests for the composite-score integrity gate (deterministic, offline)."""
 
+import errno
 import json
 import logging
 import os
@@ -577,10 +578,23 @@ def test_cli_missing_artifact_reports_clean_error(tmp_path):
         [sys.executable, "-m", "scripts.score_integrity", str(missing)],
         cwd=ROOT, capture_output=True, text=True,
     )
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
-    assert "artifact not found" in proc.stderr
-    assert str(missing) in proc.stderr
+    assert "Errno" not in proc.stderr
+    assert f"artifact not found: {missing}" in proc.stderr
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    # A dangling symlink raises FileNotFoundError like a missing path; it must be named as a
+    # broken link (its target is gone, the link itself exists), not reported as "not found".
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.score_integrity", str(link)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert proc.stderr == f"artifact is a broken symlink (target does not exist): {link}\n"
 
 
 def test_cli_directory_path_reports_clean_error(tmp_path):
@@ -588,9 +602,21 @@ def test_cli_directory_path_reports_clean_error(tmp_path):
         [sys.executable, "-m", "scripts.score_integrity", str(tmp_path)],
         cwd=ROOT, capture_output=True, text=True,
     )
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
     assert "directory" in proc.stderr or "not readable" in proc.stderr
+
+
+def test_cli_load_error_exit_is_distinct_from_the_strict_gate_exit(tmp_path):
+    # Load errors exit 2 while a failed --strict gate exits 1, so CI can tell them apart.
+    missing = tmp_path / "gone.json"
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.score_integrity", str(missing), "--strict"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert proc.stdout == ""
 
 
 def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
@@ -602,7 +628,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
@@ -616,9 +642,45 @@ def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_artifact_symlink_loop_is_named_not_leaked(monkeypatch, tmp_path, capsys):
+    # A symlink loop raises OSError(ELOOP), which no specific arm catches; it must be named
+    # as a loop, not leaked as a raw errno string.
+    from scripts import score_integrity as cli
+
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_load_artifact_not_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    # A path that routes through a regular file raises NotADirectoryError; it must be named
+    # distinctly instead of falling through as a raw errno string.
+    from scripts import score_integrity as cli
+
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(20, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
 
 
 def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
@@ -630,6 +692,6 @@ def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "cannot read artifact" in err and "Traceback" not in err
