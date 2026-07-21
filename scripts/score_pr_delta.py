@@ -36,9 +36,20 @@ import argparse
 import json
 import sys
 
-from scripts.compare_eval import compare_eval_artifacts
+# ``_numeric`` / ``_effective_composite_parts`` are imported rather than re-implemented so the
+# floor's notion of "a usable reading" cannot drift from the one the diff itself applied — the
+# corrupt-axis check below is only meaningful if it asks exactly the question compare_eval asked.
+from scripts.compare_eval import (
+    _effective_composite_parts,
+    _numeric,
+    compare_eval_artifacts,
+)
 
 DEFAULT_NOISE_FLOOR = 0.01
+
+# The two components the anti-Goodhart Pareto floor is measured over. Single source of truth so
+# the floor, the corrupt-axis check and the reported axes can never cover different sets.
+PARETO_AXES = ("judge_mean", "objective_mean")
 
 # Ordered low-to-high performance bands, keyed by the MINIMUM composite_mean delta
 # required to reach that band (a delta must clear a band's floor to earn it; the highest
@@ -103,7 +114,35 @@ def _pareto_axes(diff: dict) -> dict:
     silently treated as a pass or a fail.
     """
     parts = diff.get("composite_parts") or {}
-    return {axis: parts.get(axis) for axis in ("judge_mean", "objective_mean")}
+    return {axis: parts.get(axis) for axis in PARETO_AXES}
+
+
+def _corrupt_pareto_axes(*artifacts) -> list[str]:
+    """The Pareto axes an artifact REPORTS but whose value is not a usable number.
+
+    ``compare_eval._numeric`` maps ``NaN``/``±Inf`` (and an int literal too large to convert)
+    to ``None``, so the diff renders a corrupt axis exactly like one that was never reported
+    at all — both arrive here as ``delta: None``. The two must not be treated alike:
+
+      - an axis that never reported data can't be judged to have regressed, so it is excluded
+        from the floor (see :func:`_pareto_axes`);
+      - an axis that reported a corrupt value can't be certified NOT to have regressed either,
+        so the floor has to FAIL CLOSED on it — otherwise a Goodhart trade-off hidden behind a
+        ``NaN`` judge_mean rises on the other axis and still mints a ``perf:*`` label (#1867).
+
+    Reads through :func:`compare_eval._effective_composite_parts`, so an unscored run's ``0.0``
+    placeholder parts stay masked: a run that scored nothing is *unavailable*, not corrupt, and
+    keeps its existing non-blocking behaviour. A scored run reporting a non-finite component
+    mean is a contract violation either way — ``benchmark/aggregate_integrity.py`` already
+    asserts every scored repo carries finite ``composite_parts`` means.
+    """
+    corrupt = []
+    for artifact in artifacts:
+        parts = _effective_composite_parts(artifact)
+        for axis in PARETO_AXES:
+            if axis in parts and _numeric(parts[axis]) is None and axis not in corrupt:
+                corrupt.append(axis)
+    return sorted(corrupt)
 
 
 def _generalization_pareto_axes(gen: dict) -> dict:
@@ -115,7 +154,7 @@ def _generalization_pareto_axes(gen: dict) -> dict:
     ``None`` for that axis, same as the standard (non-generalization) shape.
     """
     axes = {}
-    for axis in ("judge_mean", "objective_mean"):
+    for axis in PARETO_AXES:
         worst_triplet, worst_delta = None, None
         for partition in ("tuned", "held_out"):
             triplet = (gen.get(partition, {}).get("composite_parts") or {}).get(axis)
@@ -151,8 +190,9 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
     reported, so a net-positive partition composite can't mask an axis regression (#1821).
 
     ``band`` is one of:
-      - ``"blocked"`` — a scored axis regressed past the noise floor. Hard merge block
-        for ``agent/`` PRs (see REVIEW.md).
+      - ``"blocked"`` — a scored axis regressed past the noise floor, OR a scored axis
+        reported a non-finite value so the floor cannot be certified (``corrupt_axes``,
+        #1867). Hard merge block for ``agent/`` PRs (see REVIEW.md).
       - ``"none"``    — no measurable improvement past the noise floor. Still mergeable,
         earns no ``perf:*`` label / multiplier.
       - ``"xs"``..``"xl"`` — a measured composite improvement, bucketed by magnitude per
@@ -174,16 +214,31 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
         )
         present = [d for d in composite_deltas.values() if d is not None]
         banding_delta = min(present) if present else None
+        # Checked per partition: a corrupt axis in EITHER partition invalidates the floor, the
+        # same way the worse partition already governs banding.
+        corrupt_axes = _corrupt_pareto_axes(
+            *(artifact.get(partition)
+              for artifact in (baseline, candidate)
+              for partition in ("tuned", "held_out"))
+        )
     else:
         composite_deltas = {"composite_mean": _delta(diff.get("composite_mean"))}
         pareto_axes = _pareto_axes(diff)
         axis_deltas = [_delta(v) for v in pareto_axes.values()]
         any_regressed = any(_regressed(d, noise_floor) for d in axis_deltas)
         banding_delta = composite_deltas["composite_mean"]
+        corrupt_axes = _corrupt_pareto_axes(baseline, candidate)
 
     if any_regressed:
         band = "blocked"
         reason = "a scored dimension regressed past the noise floor (Pareto floor)"
+    elif corrupt_axes:
+        # Fail closed: an axis that reported a non-finite value can't be shown to have held.
+        band = "blocked"
+        reason = (
+            "a scored dimension reported a non-finite value, so the Pareto floor cannot be "
+            f"certified ({', '.join(corrupt_axes)})"
+        )
     else:
         band = _band_for_delta(banding_delta, noise_floor)
         reason = (
@@ -200,6 +255,7 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
         "noise_floor": noise_floor,
         "composite_deltas": composite_deltas,
         "pareto_axes": pareto_axes,
+        "corrupt_axes": corrupt_axes,
         "foresight": _foresight_of(candidate),
         "diff": diff,
     }
