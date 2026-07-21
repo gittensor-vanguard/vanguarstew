@@ -1,9 +1,12 @@
 """Tests for agree-order share summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -196,6 +199,41 @@ def test_cli_directory_path_reports_distinct_error(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err
     assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_broken_symlink_exits_two(tmp_path, capsys):
+    # Dangling symlink must not be reported as a plain "not found" (#1842).
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    # Symlink loops raise OSError(ELOOP); name them instead of leaking raw errno (#1842).
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
 
 
 def test_module_main_no_arg_exits_nonzero():
