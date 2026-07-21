@@ -57,11 +57,22 @@ def _effective_composite_parts(artifact: dict) -> dict:
 
 
 def _delta(candidate, baseline) -> float | None:
+    """The candidate-minus-baseline difference, or ``None`` when it is not a finite number.
+
+    ``_numeric`` guards each *operand*, but a difference can leave the finite range its
+    operands sit in: ``1e308 - -1e308`` overflows to ``inf``. The result therefore needs the
+    same check the inputs got — without it a delta that is merely an arithmetic overflow flows
+    on as a real measurement. Nothing downstream re-checks it: ``score_pr_delta._delta`` tests
+    only ``isinstance``, so ``inf`` reaches ``_band_for_delta``, clears every entry in
+    ``BAND_THRESHOLDS`` and reports the top band, and reaches the public leaderboard feed.
+    ``None`` is the value both already treat as "no usable delta".
+    """
     c = _numeric(candidate)
     b = _numeric(baseline)
     if c is None or b is None:
         return None
-    return round(c - b, 3)
+    delta = c - b
+    return round(delta, 3) if math.isfinite(delta) else None
 
 
 def _metric_triplet(baseline: dict, candidate: dict, key: str) -> dict:
@@ -150,13 +161,18 @@ def _is_generalization(artifact: dict) -> bool:
 
 
 def _generalization_diff(baseline: dict, candidate: dict) -> dict:
-    """Diff the composite means of each partition plus the generalization gap.
+    """Diff the composite means and components of each partition plus the generalization gap.
 
     Every value is read through ``_metric_triplet``/``_delta``, which coerce a missing,
     ``None``, or non-numeric field to a ``None`` delta rather than crashing — so a partition
     that only recorded an ``error`` (``scored_repos == 0``) diffs to ``None`` cleanly, and a
-    placeholder ``composite_mean`` of ``0.0`` on an unscored partition is treated as
-    unavailable (mirroring ``benchmark/trend.py`` and ``benchmark/report.py``).
+    placeholder ``composite_mean``/``composite_parts`` of ``0.0`` on an unscored partition is
+    treated as unavailable (mirroring ``benchmark/trend.py`` and ``benchmark/report.py``).
+
+    Each partition's ``judge_mean``/``objective_mean`` (when either side reports one) is
+    included as ``composite_parts``, mirroring the standard (non-generalization) diff shape —
+    ``score_pr_delta``'s Pareto floor needs this per-partition, per-axis data to catch an
+    axis regression a net-positive partition composite would otherwise hide (#1821).
     """
     out = {}
     for partition in ("tuned", "held_out"):
@@ -164,7 +180,16 @@ def _generalization_diff(baseline: dict, candidate: dict) -> dict:
         cand_part = candidate.get(partition)
         base_part = base_part if isinstance(base_part, dict) else {}
         cand_part = cand_part if isinstance(cand_part, dict) else {}
-        out[partition] = {"composite_mean": _metric_triplet(base_part, cand_part, "composite_mean")}
+        entry = {"composite_mean": _metric_triplet(base_part, cand_part, "composite_mean")}
+        base_parts = _effective_composite_parts(base_part)
+        cand_parts = _effective_composite_parts(cand_part)
+        parts = {}
+        for key in ("judge_mean", "objective_mean"):
+            if key in base_parts or key in cand_parts:
+                parts[key] = _metric_triplet(base_parts, cand_parts, key)
+        if parts:
+            entry["composite_parts"] = parts
+        out[partition] = entry
     out["generalization_gap"] = _metric_triplet(baseline, candidate, "generalization_gap")
     return out
 
@@ -236,11 +261,29 @@ def comparison_headline(diff: dict) -> str:
     )
 
 
+class ArtifactError(Exception):
+    """Raised when an artifact cannot be loaded or is invalid."""
+
+
 def load_artifact(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    """Load a JSON-object artifact, raising ArtifactError on bad input."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        raise ArtifactError(f"artifact not found: {path}") from None
+    except PermissionError:
+        raise ArtifactError(f"artifact is not readable (check file permissions): {path}") from None
+    except IsADirectoryError:
+        raise ArtifactError(f"artifact path is a directory, not a file: {path}") from None
+    except OSError as exc:
+        raise ArtifactError(f"cannot read artifact ({path}): {exc}") from exc
+    except ValueError as exc:
+        # json.load raises JSONDecodeError for malformed JSON and ValueError for an integer
+        # literal beyond the Python int-string-conversion limit.
+        raise ArtifactError(f"artifact is not valid JSON ({path}): {exc}") from exc
     if not isinstance(data, dict):
-        raise ValueError(f"artifact must be a JSON object: {path}")
+        raise ArtifactError(f"artifact must be a JSON object: {path}")
     return data
 
 
@@ -253,7 +296,7 @@ def main() -> None:
     try:
         baseline = load_artifact(args.baseline)
         candidate = load_artifact(args.candidate)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except ArtifactError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
