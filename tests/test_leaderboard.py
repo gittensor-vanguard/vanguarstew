@@ -316,7 +316,7 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     good.write_text(json.dumps(_single(0.5)), encoding="utf-8")
     missing = tmp_path / "does-not-exist.json"
     result = _run_cli(f"a={good}", f"b={missing}")
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert f"artifact not found: {missing}" in result.stderr
 
@@ -327,7 +327,7 @@ def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
     result = _run_cli(f"a={good}", f"b={bad}")
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "must be a JSON object" in result.stderr
 
@@ -336,7 +336,7 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "invalid.json"
     path.write_text("{not valid json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "artifact is not valid JSON" in result.stderr
 
@@ -345,7 +345,7 @@ def test_cli_directory_path_reports_clean_error(tmp_path):
     good = tmp_path / "good.json"
     good.write_text(json.dumps(_single(0.5)), encoding="utf-8")
     result = _run_cli(f"a={good}", f"b={tmp_path}")
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "directory" in result.stderr
 
@@ -357,7 +357,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         leaderboard_cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
