@@ -63,7 +63,7 @@ class LLM:
                 f"unexpected chat-completion response envelope: {str(body)[:200]!r}"
             ) from exc
 
-    def chat_json(self, system: str, user: str, stub=None):
+    def chat_json(self, system: str, user: str, stub=None, prefer=dict):
         """Completion parsed as JSON, with `stub` as the fallback.
 
         Returns `stub` verbatim in offline mode. For a live call, returns the parsed JSON —
@@ -72,11 +72,16 @@ class LLM:
         model output does not crash the agent (M4: no agent crashes from malformed LLM
         output). Callers already treat the stub shape as "the model gave us nothing usable".
         Transport errors from `chat` (`URLError`/`HTTPError`/`OSError`) still propagate.
+
+        ``prefer`` declares the container type the caller's contract expects (see
+        :func:`extract_json`): dict-contract callers keep the default; the planner, whose
+        prompt asks for a JSON list, passes ``prefer=list`` so an echoed example object
+        cannot beat the real plan array.
         """
         if self.offline:
             return stub if stub is not None else {}
         try:
-            return extract_json(self.chat(system, user))
+            return extract_json(self.chat(system, user), prefer=prefer)
         except (ValueError, TypeError):
             return stub if stub is not None else {}
 
@@ -127,8 +132,8 @@ def _iter_top_level_spans(text: str):
         i = end + 1
 
 
-def _pick_best_json(candidates):
-    """Prefer object payloads over arrays, then the longest serialization.
+def _pick_best_json(candidates, prefer=dict):
+    """Prefer ``prefer``-typed payloads (objects by default), then the longest serialization.
 
     When two candidates have equal rank (same type, same serialized length),
     the *last* one wins — in an LLM response a schema example or chain-of-thought
@@ -141,20 +146,28 @@ def _pick_best_json(candidates):
 
     def _rank(value):
         serialized = json.dumps(value, separators=(",", ":"))
-        return (isinstance(value, dict), len(serialized))
+        return (isinstance(value, prefer), len(serialized))
 
     return max(reversed(candidates), key=_rank)
 
 
-def extract_json(text: str):
+def extract_json(text: str, prefer=dict):
     """Best-effort JSON extraction from an LLM response.
 
     Tries, in order: a fenced code block, the raw response verbatim, then
     balanced top-level `{...}`/`[...]` spans scanned across the text. Among
-    those spans, object spans are preferred over array spans and, within a
-    type, the longest span wins — this keeps a stray bracket-shaped aside
-    (e.g. a `[1]` citation ahead of the real payload) from being mistaken
-    for the answer while still supporting genuine array responses.
+    those spans, ``prefer``-typed spans win over the other container type and,
+    within a type, the longest span wins.
+
+    ``prefer`` is the container type the *caller's contract* expects. Callers
+    whose prompt asks for an object keep the default (``dict``) — a stray
+    bracket-shaped aside (e.g. a `[1]` citation ahead of the real payload) must
+    not be mistaken for the answer. Callers whose prompt asks for a list pass
+    ``prefer=list`` — otherwise the same guard backfires: an echoed example
+    object anywhere in the prose would beat the real array and silently discard
+    the entire answer. The non-preferred type is still returned when no
+    preferred-type candidate exists (e.g. a ``{"plan": [...]}`` wrapper reply
+    to a list-contract prompt).
     """
     if text is None:
         raise ValueError("empty LLM response")
@@ -165,7 +178,7 @@ def extract_json(text: str):
             fence_candidates.append(json.loads(fence_match.group(1)))
         except (ValueError, TypeError):
             continue
-    best_fence = _pick_best_json(fence_candidates)
+    best_fence = _pick_best_json(fence_candidates, prefer)
     if best_fence is not None:
         return best_fence
 
@@ -183,6 +196,6 @@ def extract_json(text: str):
         spans.append((opener, span, value))
 
     if spans:
-        return _pick_best_json([s[2] for s in spans])
+        return _pick_best_json([s[2] for s in spans], prefer)
 
     raise ValueError(f"could not parse JSON from response: {text[:200]!r}")

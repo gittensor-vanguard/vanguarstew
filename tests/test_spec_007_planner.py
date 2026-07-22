@@ -42,7 +42,7 @@ class _FakeLLM:
     def __init__(self, payload):
         self.payload = payload
 
-    def chat_json(self, system, user, stub=None):
+    def chat_json(self, system, user, stub=None, prefer=None):
         return self.payload
 
 

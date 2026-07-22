@@ -189,3 +189,75 @@ def test_chat_json_returns_parsed_json_from_valid_envelope(monkeypatch):
     llm = _online(monkeypatch)
     with mock.patch("urllib.request.urlopen", return_value=_FakeResp(body)):
         assert llm.chat_json("s", "u") == {"action": "merge"}
+
+
+# ---- caller-declared shape (prefer=) ---------------------------------------
+
+_PLAN_REPLY = (
+    "Here is an example item shape:\n"
+    '{"title": "Fix the loader race", "kind": "bugfix"}\n\n'
+    "And the full plan:\n"
+    '[{"title": "Fix quick-router crash", "kind": "bugfix", "files": ["router.py"]},\n'
+    ' {"title": "Cut v1.4.0", "kind": "release", "files": []},\n'
+    ' {"title": "Refactor plugin loader", "kind": "refactor", "files": ["loader.py"]}]'
+)
+
+
+def test_extract_json_prefer_list_keeps_plan_array_over_echoed_example_object():
+    # A list-contract caller must get the real plan array, not the echoed example
+    # object that precedes it — the default dict-over-array guard would otherwise
+    # discard the entire scored plan.
+    from agent.llm import extract_json
+
+    picked = extract_json(_PLAN_REPLY, prefer=list)
+    assert isinstance(picked, list)
+    assert len(picked) == 3
+    assert picked[0]["title"] == "Fix quick-router crash"
+
+
+def test_extract_json_default_still_prefers_object():
+    # Dict-contract callers are unchanged: the object wins by default.
+    from agent.llm import extract_json
+
+    picked = extract_json(_PLAN_REPLY)
+    assert picked == {"title": "Fix the loader race", "kind": "bugfix"}
+
+
+def test_extract_json_prefer_list_still_returns_object_when_no_array():
+    # A {"plan": [...]} wrapper reply to a list-contract prompt is still surfaced
+    # (the planner unwraps it); prefer= is a preference, not a filter.
+    from agent.llm import extract_json
+
+    text = 'Sure: {"plan": [{"title": "t", "kind": "docs"}]}'
+    assert extract_json(text, prefer=list) == {"plan": [{"title": "t", "kind": "docs"}]}
+
+
+def test_extract_json_prefer_list_in_fenced_blocks():
+    # The same preference applies to fenced candidates, where an example object
+    # fence would otherwise beat the real plan-array fence.
+    from agent.llm import extract_json
+
+    text = (
+        "Example item:\n```json\n"
+        '{"title": "example", "kind": "bugfix"}\n'
+        "```\nFull plan:\n```json\n"
+        '[{"title": "real1", "kind": "docs"}, {"title": "real2", "kind": "test"}]\n'
+        "```"
+    )
+    picked = extract_json(text, prefer=list)
+    assert [i["title"] for i in picked] == ["real1", "real2"]
+
+
+def test_pick_best_json_prefer_list_ranks_array_first():
+    from agent.llm import _pick_best_json
+
+    best = _pick_best_json([{"a": 1}, [1, 2, 3]], prefer=list)
+    assert best == [1, 2, 3]
+
+
+def test_chat_json_threads_prefer_through_to_extraction(monkeypatch):
+    llm = _online(monkeypatch)
+    llm.chat = lambda system, user: _PLAN_REPLY
+    picked = llm.chat_json("s", "u", stub=[], prefer=list)
+    assert isinstance(picked, list)
+    assert len(picked) == 3

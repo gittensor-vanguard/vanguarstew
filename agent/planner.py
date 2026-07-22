@@ -1014,7 +1014,10 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"{OBJECTIVE_ANCHOR_GUIDANCE}"
     )
     stub = _offline_plan_stub(context, n)
-    plan = llm.chat_json(SYSTEM, user, stub=stub)
+    # prefer=list: this prompt's contract is a JSON list. Without it, extract_json's
+    # default object-over-array guard backfires here — one echoed example object in the
+    # reply would beat the real plan array and silently zero the whole scored plan.
+    plan = llm.chat_json(SYSTEM, user, stub=stub, prefer=list)
     if isinstance(plan, dict):  # tolerate {"plan": [...]}
         raw_plan = plan.get("plan")
         # An explicit "plan" key — even an empty list — must be honored and
