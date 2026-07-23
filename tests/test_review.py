@@ -13,10 +13,15 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
+    NON_REDUNDANCY_GUIDANCE,
+    SYSTEM,
     VALUE_LABELS,
     _clip_text,
+    _enforce_non_redundancy,
+    _flags_non_redundancy,
     _normalize_bool,
     _normalize_concerns,
+    _normalize_review,
     _normalize_review_action,
     _normalize_value_label,
     _pr_number,
@@ -275,12 +280,14 @@ class _CaptureUserLLM:
     def __init__(self):
         from agent.llm import LLM
         self._llm = LLM(api_key="offline")
+        self.last_system = None
         self.last_user = None
 
     def __getattr__(self, name):
         return getattr(self._llm, name)
 
     def chat_json(self, system, user, stub=None):
+        self.last_system = system
         self.last_user = user
         return stub
 
@@ -324,3 +331,117 @@ def test_review_pr_prompt_uses_pr_number_not_raw_number_field():
               None, llm)
     assert llm.last_user.startswith("PULL REQUEST #?: Add streaming export")
     assert "#True" not in llm.last_user
+
+
+# --- #1753: review prompt names Non-redundancy as a High REVIEW.md axis --------------------
+
+def test_system_prompt_names_non_redundancy_as_high_rubric_axis():
+    # REVIEW.md priority: correctness, scope fit, Non-redundancy (High), then quality.
+    low = SYSTEM.lower()
+    assert "non-redundancy" in low
+    assert "(3) non-redundancy" in low
+    assert "(4) quality and clarity" in low
+    assert low.index("correctness") < low.index("scope fit") < low.index("non-redundancy") \
+        < low.index("quality and clarity")
+
+
+def test_review_pr_prompt_includes_non_redundancy_guidance():
+    llm = _CaptureUserLLM()
+    review_pr({"number": 1, "title": "Add metric", "files": ["benchmark/new_metric.py"]}, None, llm)
+    assert llm.last_system == SYSTEM
+    assert NON_REDUNDANCY_GUIDANCE in llm.last_user
+    assert "non-redundancy findings" in llm.last_user
+    assert "same data shape" in NON_REDUNDANCY_GUIDANCE
+
+
+# --- #1753 / #1754: enforce Non-redundancy when concerns flag it but action is merge --------
+
+def test_flags_non_redundancy_detects_rubric_markers():
+    assert _flags_non_redundancy(
+        ["Non-redundancy: re-derives an existing helper over the same data shape"],
+        "",
+    )
+    assert _flags_non_redundancy([], "prefer extending existing analysis — same data shape")
+    assert not _flags_non_redundancy(["missing edge-case coverage"], "add a regression test")
+    assert not _flags_non_redundancy(["this test looks redundant"], "ship it")
+    assert not _flags_non_redundancy([], "")
+
+
+def test_enforce_non_redundancy_downgrades_merge_only():
+    blocked = _enforce_non_redundancy({
+        "action": "merge",
+        "concerns": ["re-derives an existing report over the same data shape"],
+        "recommendation": "extend the existing helper instead",
+    })
+    assert blocked["action"] == "request-changes"
+
+    already_reject = _enforce_non_redundancy({
+        "action": "reject",
+        "concerns": ["conceptual duplication of an existing metric"],
+        "recommendation": "close and extend the existing module",
+    })
+    assert already_reject["action"] == "reject"
+
+    clean_merge = _enforce_non_redundancy({
+        "action": "merge",
+        "concerns": ["minor naming nit"],
+        "recommendation": "ship it",
+    })
+    assert clean_merge["action"] == "merge"
+
+
+class _RedundantMergeLLM:
+    """Simulates the #1754 failure mode: flags Non-redundancy in concerns, still says merge."""
+
+    offline = False
+
+    def chat_json(self, system, user, stub=None):
+        return {
+            "action": "merge",
+            "value_label": "mult:contribution",
+            "scope_ok": True,
+            "tests_present": True,
+            "summary": "adds a parallel metric over the same score dict",
+            "concerns": [
+                "Non-redundancy: re-derives an existing helper over the same data shape; "
+                "extend the existing metric instead of a new module"
+            ],
+            "recommendation": "request changes — prefer extending the existing analysis",
+        }
+
+
+def test_review_pr_blocks_merge_when_concerns_flag_non_redundancy():
+    pr = {
+        "number": 99,
+        "title": "Add alternate score report",
+        "author": "x",
+        "files": ["benchmark/new_report.py", "tests/test_new_report.py"],
+        "body": "Fixes #1753",
+        "diff": "",
+    }
+    rev = review_pr(pr, None, _RedundantMergeLLM())
+    assert rev["action"] == "request-changes"
+    assert rev["action"] != "merge"
+    assert any("non-redundancy" in c.lower() or "re-deriv" in c.lower() for c in rev["concerns"])
+
+
+def test_normalize_review_blocks_merge_on_redundancy_concern():
+    stub = {
+        "action": "comment",
+        "value_label": "mult:contribution",
+        "scope_ok": True,
+        "tests_present": True,
+        "summary": "offline stub review",
+        "concerns": [],
+        "recommendation": "offline",
+    }
+    out = _normalize_review({
+        "action": "approve",  # synonym → merge, then enforcement downgrades
+        "value_label": "contribution",
+        "scope_ok": True,
+        "tests_present": True,
+        "summary": "parallel analysis",
+        "concerns": ["duplicates existing analysis over the same data shape"],
+        "recommendation": "extend existing X instead of new module Y",
+    }, stub)
+    assert out["action"] == "request-changes"
