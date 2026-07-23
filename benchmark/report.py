@@ -176,14 +176,17 @@ def _foresight_axis(foresight: dict, rate_key: str, n_key: str) -> str:
 
 def _foresight_line(artifact: dict, *, unscored: bool) -> str:
     """One legible line for the M7 foresight breakdown: did the agent predict the modules, the
-    commit-kinds, and the releases the maintainers actually produced -- the three axes
-    ``objective_mean`` blends together, reported separately with each axis's own sample size.
+    commit-kinds, the releases, and the release's version-bump level the maintainers actually
+    produced -- the four axes ``objective_mean`` blends together, reported separately with each
+    axis's own sample size.
     """
     foresight = {} if unscored else _foresight_dict(artifact)
     modules = _foresight_axis(foresight, "module_recall_mean", "module_recall_n")
     kinds = _foresight_axis(foresight, "kind_recall_mean", "kind_recall_n")
     release = _foresight_axis(foresight, "release_accuracy", "release_accuracy_n")
-    return f"- Foresight — modules: {modules}, kinds: {kinds}, release: {release}"
+    bump = _foresight_axis(foresight, "bump_accuracy", "bump_accuracy_n")
+    return (f"- Foresight — modules: {modules}, kinds: {kinds}, release: {release}, "
+            f"bump level: {bump}")
 
 
 def _composite_lines(artifact: dict) -> list[str]:
