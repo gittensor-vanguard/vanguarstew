@@ -31,6 +31,7 @@ from benchmark.score import (  # noqa: E402
     is_release_subject,
     kind_recall,
     module_recall,
+    objective_component,
     objective_score,
     parse_semver,
     plan_kind,
@@ -1342,6 +1343,36 @@ def test_foresight_breakdown_gates_kind_and_release_like_objective_component():
     assert breakdown["kind_recall_mean"] is None
     assert breakdown["release_accuracy_n"] == 0
     assert breakdown["release_accuracy"] is None
+    assert breakdown["bump_accuracy_n"] == 0
+    assert breakdown["bump_accuracy"] is None
+
+
+def test_foresight_breakdown_mirrors_objective_component_bump_axis():
+    # #1881: objective_component averages a 4th axis (bump-level correctness) whenever a
+    # release actually happened; foresight_breakdown must surface it too, not silently drop it
+    # while claiming to be a "strict un-blending of the same anchor".
+    obj = {
+        "weighted_module_recall": 1.0, "module_recall": 1.0,
+        "kind_recall": 1.0, "actual_kinds": ["fix"],
+        "release_signaled": True, "release_predicted": True,
+        "bump_actual": "major", "bump_predicted": "patch", "bump_match": False,
+    }
+    assert objective_component(obj) == 0.75
+    breakdown = foresight_breakdown([obj])
+    assert breakdown["bump_accuracy_n"] == 1
+    assert breakdown["bump_accuracy"] == 0.0
+    # None of the OTHER reported axes should mask the miss with a false 1.0.
+    assert breakdown["module_recall_mean"] == 1.0
+    assert breakdown["kind_recall_mean"] == 1.0
+    assert breakdown["release_accuracy"] == 1.0
+
+
+def test_foresight_breakdown_bump_axis_not_applicable_without_a_release():
+    # No release at all -> bump_actual is never set -> the axis has zero applicable tasks.
+    obj = {"weighted_module_recall": 0.5}
+    breakdown = foresight_breakdown([obj])
+    assert breakdown["bump_accuracy_n"] == 0
+    assert breakdown["bump_accuracy"] is None
 
 
 def test_foresight_breakdown_empty_and_malformed_input():
@@ -1350,6 +1381,7 @@ def test_foresight_breakdown_empty_and_malformed_input():
         "module_recall_mean": None, "module_recall_n": 0,
         "kind_recall_mean": None, "kind_recall_n": 0,
         "release_accuracy": None, "release_accuracy_n": 0,
+        "bump_accuracy": None, "bump_accuracy_n": 0,
     }
     assert foresight_breakdown(None) == empty
     assert foresight_breakdown("not-a-list") == empty
@@ -1396,6 +1428,7 @@ def test_combine_foresight_breakdowns_empty_and_malformed_input():
         "module_recall_mean": None, "module_recall_n": 0,
         "kind_recall_mean": None, "kind_recall_n": 0,
         "release_accuracy": None, "release_accuracy_n": 0,
+        "bump_accuracy": None, "bump_accuracy_n": 0,
     }
     assert combine_foresight_breakdowns(None) == empty
     assert combine_foresight_breakdowns([None, "junk", 42]) == empty
@@ -1411,12 +1444,13 @@ def test_combine_foresight_breakdowns_ignores_non_finite_rate():
 
 
 # The exact key contract both aggregators must produce -- consumers (runner.py, report.py,
-# leaderboard.py) all read these six keys by name, so a shape drift here would silently break
+# leaderboard.py) all read these eight keys by name, so a shape drift here would silently break
 # every downstream reader without a single test failing at the call site.
 FORESIGHT_KEYS = {
     "module_recall_mean", "module_recall_n",
     "kind_recall_mean", "kind_recall_n",
     "release_accuracy", "release_accuracy_n",
+    "bump_accuracy", "bump_accuracy_n",
 }
 
 

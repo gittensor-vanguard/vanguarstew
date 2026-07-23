@@ -226,6 +226,48 @@ def test_check_rows_list_warns_for_skipped_rows(caplog):
     assert any("checks[0] is int" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_skips_a_dict_row_missing_or_mistyped_name_or_passed(caplog):
+    # #1660: the row guard only skipped non-dict rows, so a dict row missing "name"/"passed" (or
+    # carrying a wrong-typed one) slipped through and made the row["name"]/row["passed"] reads
+    # raise KeyError. Such a row is now skipped with a warning, mirroring the sibling gates.
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert _check_rows_list([{"passed": False}]) == []          # missing name
+        assert _check_rows_list([{"name": "min_tuned"}]) == []      # missing passed
+        assert _check_rows_list([{"name": 99, "passed": False}]) == []   # non-str name
+        assert _check_rows_list([{"name": "x", "passed": "no"}]) == []   # non-bool passed
+    good = {"name": "min_tuned", "passed": False}
+    assert _check_rows_list([good, {"passed": True}]) == [good]     # the valid row survives
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_a_none_or_blank_name(caplog):
+    # `None` (the most common malformed value) is neither str nor bool, so both fields reject it by
+    # type; a blank/whitespace name is a str but carries no identity, so it would surface as an
+    # empty entry in failed_checks / the headline's ", "-joined names. Both are skipped.
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert _check_rows_list([{"name": None, "passed": False}]) == []
+        assert _check_rows_list([{"name": "min_tuned", "passed": None}]) == []
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+        assert _check_rows_list([{"name": "   ", "passed": False}]) == []
+    assert any("name is NoneType, not str" in r.message for r in caplog.records)
+    assert any("passed is NoneType, not bool" in r.message for r in caplog.records)
+    assert any("name is blank" in r.message for r in caplog.records)
+
+
+def test_failed_checks_and_headline_survive_a_check_row_missing_name():
+    # #1660 end to end: the reporting helpers no longer raise KeyError on a malformed row, and the
+    # malformed row is excluded from both the numerator and denominator of the headline count.
+    result = {"passed": False,
+              "checks": [{"name": "min_tuned", "passed": False}, {"passed": False}]}
+    assert failed_checks(result) == ["min_tuned"]
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    line = readiness_headline(result)
+    assert "NOT READY" in line and "min_tuned" in line
+    assert readiness_headline(
+        {"passed": False, "checks": [{"name": "", "passed": False}]}
+    ) == "readiness: no checks evaluated"
+
+
 def test_readiness_headline_survives_non_list_checks():
     for bad in _MALFORMED_CHECKS:
         assert readiness_headline({"checks": bad, "passed": False}) == (
