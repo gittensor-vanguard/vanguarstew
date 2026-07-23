@@ -49,7 +49,10 @@ def _gen(tuned_score, judge=None, objective=None, foresight=None):
     }
 
 
-_NO_FORESIGHT = {"module_recall_mean": None, "kind_recall_mean": None, "release_accuracy": None}
+_NO_FORESIGHT = {
+    "module_recall_mean": None, "kind_recall_mean": None,
+    "release_accuracy": None, "bump_accuracy": None,
+}
 
 
 def test_rank_orders_best_first_with_delta_from_best():

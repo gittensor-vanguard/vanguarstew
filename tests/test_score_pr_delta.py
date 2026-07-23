@@ -14,7 +14,9 @@ if ROOT not in sys.path:
 from scripts.score_pr_delta import (  # noqa: E402
     BAND_MULTIPLIERS,
     BAND_THRESHOLDS,
+    PARETO_AXES,
     _band_for_delta,
+    _corrupt_pareto_axes,
     _foresight_of,
     _regressed,
     combine_dual_target,
@@ -22,6 +24,10 @@ from scripts.score_pr_delta import (  # noqa: E402
     run,
     score_pr_delta,
 )
+
+NAN = float("nan")
+INF = float("inf")
+OVERSIZED_INT = 10 ** 400  # json-parseable, but float() raises OverflowError
 
 
 def _artifact(composite_mean, judge_mean, objective_mean):
@@ -202,6 +208,169 @@ def test_missing_composite_parts_excludes_pareto_axis_rather_than_failing_open_o
     report = score_pr_delta(baseline, candidate)
     assert report["pareto_axes"] == {"judge_mean": None, "objective_mean": None}
     assert report["band"] == "l"  # composite improved into a band, no axis data to block on
+
+
+# --- #1867: a REPORTED but non-finite Pareto axis must fail closed, not read as unavailable ---
+
+def test_pareto_axes_constant_covers_both_scored_components():
+    assert PARETO_AXES == ("judge_mean", "objective_mean")
+
+
+@pytest.mark.parametrize("bad", [NAN, INF, -INF, OVERSIZED_INT, "0.9", None, [], {}])
+def test_corrupt_pareto_axes_flags_a_reported_but_unusable_value(bad):
+    """Every value compare_eval._numeric refuses to convert is corrupt when REPORTED."""
+    assert _corrupt_pareto_axes({"composite_parts": {"judge_mean": bad}}) == ["judge_mean"]
+
+
+@pytest.mark.parametrize("good", [0.0, 0.5, 1, -0.25])
+def test_corrupt_pareto_axes_accepts_a_finite_number(good):
+    assert _corrupt_pareto_axes({"composite_parts": {"judge_mean": good}}) == []
+
+
+def test_corrupt_pareto_axes_ignores_an_axis_that_was_never_reported():
+    """An axis absent from composite_parts is *unavailable*, not corrupt — it stays excluded
+    from the floor rather than blocking (the pre-existing contract)."""
+    assert _corrupt_pareto_axes({"composite_parts": {"judge_mean": 0.5}}) == []
+    assert _corrupt_pareto_axes({"composite_mean": 0.5}) == []
+    assert _corrupt_pareto_axes({}) == []
+
+
+def test_corrupt_pareto_axes_masks_an_unscored_runs_placeholder_parts():
+    """A run that scored nothing reports 0.0 placeholders, which compare_eval already masks.
+    Unavailable is not corrupt: such a run must keep its existing non-blocking behaviour."""
+    unscored = {"composite_parts": {"judge_mean": NAN, "objective_mean": NAN}, "scored_repos": 0}
+    assert _corrupt_pareto_axes(unscored) == []
+
+
+def test_corrupt_pareto_axes_reports_each_axis_once_sorted_across_artifacts():
+    a = {"composite_parts": {"judge_mean": NAN, "objective_mean": INF}}
+    b = {"composite_parts": {"judge_mean": NAN}}
+    assert _corrupt_pareto_axes(a, b) == ["judge_mean", "objective_mean"]
+
+
+def test_corrupt_pareto_axes_tolerates_a_non_dict_artifact_or_parts():
+    assert _corrupt_pareto_axes(None, "nope", 3, {"composite_parts": "nope"}) == []
+
+
+def test_non_finite_judge_mean_blocks_instead_of_minting_a_perf_label():
+    """#1867 headline case: a NaN judge_mean is nulled by compare_eval, so the floor used to
+    read the axis as unavailable — the composite rose on the other axis and still earned
+    perf:xl. It must fail closed instead."""
+    baseline = _artifact(0.5, 0.5, 0.5)
+    candidate = _artifact(0.7, NAN, 0.7)
+    report = score_pr_delta(baseline, candidate)
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+    assert report["label"] is None            # no perf:* label can be minted
+    assert report["multiplier"] is None       # and therefore no gittensor multiplier
+    assert report["corrupt_axes"] == ["judge_mean"]
+    assert "non-finite" in report["reason"] and "judge_mean" in report["reason"]
+    # the composite genuinely rose — this is blocked on the corrupt axis, not on a regression
+    assert report["composite_deltas"]["composite_mean"] > 0
+
+
+@pytest.mark.parametrize("axis", ["judge_mean", "objective_mean"])
+@pytest.mark.parametrize("bad", [NAN, INF, -INF, OVERSIZED_INT])
+def test_either_axis_corrupt_on_either_side_blocks(axis, bad):
+    """Both axes and both sides are guarded: a corrupt baseline reading leaves the delta just
+    as uncertifiable as a corrupt candidate one."""
+    for side in ("baseline", "candidate"):
+        parts = {"judge_mean": 0.5, "objective_mean": 0.5}
+        parts[axis] = bad
+        corrupt, clean = _artifact(0.5, **parts), _artifact(0.7, 0.7, 0.7)
+        report = score_pr_delta(*(corrupt, clean) if side == "baseline" else (clean, corrupt))
+        assert report["band"] == "blocked", (axis, bad, side)
+        assert report["corrupt_axes"] == [axis]
+
+
+def test_an_outright_regression_is_still_reported_as_a_regression():
+    """Precedence: a real measured regression keeps its own reason — the corrupt-axis branch
+    must not swallow the more actionable message."""
+    report = score_pr_delta(_artifact(0.60, 0.55, 0.65), _artifact(0.63, 0.85, 0.30))
+    assert report["band"] == "blocked"
+    assert "regressed" in report["reason"]
+    assert report["corrupt_axes"] == []
+
+
+def test_clean_artifacts_report_no_corrupt_axes_and_keep_their_band():
+    report = score_pr_delta(_artifact(0.5, 0.5, 0.5), _artifact(0.7, 0.7, 0.7))
+    assert report["band"] == "xl"
+    assert report["blocks_merge"] is False
+    assert report["corrupt_axes"] == []
+
+
+def test_an_unscored_candidate_is_not_blocked_as_corrupt():
+    """Guard against over-blocking: an unscored run's masked 0.0 parts produce the SAME
+    ``delta: None`` diff shape as a corrupt axis, but it stays mergeable-with-no-band."""
+    baseline = dict(_artifact(0.5, 0.5, 0.5), scored_repos=3)
+    candidate = dict(_artifact(0.0, 0.0, 0.0), scored_repos=0)
+    report = score_pr_delta(baseline, candidate)
+    assert report["corrupt_axes"] == []
+    assert report["band"] == "none"
+    assert report["blocks_merge"] is False
+
+
+def test_generalization_corrupt_axis_blocks_even_behind_a_healthy_partition():
+    """A corrupt axis in ONE partition used to vanish: _generalization_pareto_axes keeps the
+    worse *usable* delta, so the healthy partition's reading masked it entirely."""
+    baseline = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.5, 0.5), "held_out": _gen_part(0.5, 0.5),
+    }
+    candidate = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.7, 0.7),        # healthy
+        "held_out": _gen_part(NAN, 0.7),     # corrupt judge axis
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+    assert report["label"] is None
+    assert report["corrupt_axes"] == ["judge_mean"]
+
+
+def test_generalization_unscored_partition_is_not_blocked_as_corrupt():
+    baseline = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.5, 0.5), "held_out": _gen_part(0.5, 0.5),
+    }
+    candidate = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.7, 0.7),
+        "held_out": _gen_part(0.0, 0.0, scored_repos=0),
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["corrupt_axes"] == []
+    assert report["blocks_merge"] is False
+
+
+def test_headline_surfaces_the_corrupt_axis_reason():
+    report = score_pr_delta(_artifact(0.5, 0.5, 0.5), _artifact(0.7, NAN, 0.7))
+    line = headline(report)
+    assert "BLOCKED" in line
+    assert "judge_mean" in line
+
+
+def test_corrupt_axis_survives_a_json_round_trip_through_the_cli(tmp_path):
+    """End-to-end: a NaN written by a real eval run reaches the report as a block, not a band.
+    json.dump emits bare NaN and json.load reads it back as float('nan')."""
+    baseline_path = tmp_path / "baseline.json"
+    candidate_path = tmp_path / "candidate.json"
+    out_path = tmp_path / "report.json"
+    baseline_path.write_text(json.dumps(_artifact(0.5, 0.5, 0.5)))
+    candidate_path.write_text(json.dumps(_artifact(0.7, NAN, 0.7)))
+
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.score_pr_delta",
+         str(baseline_path), str(candidate_path), "--out", str(out_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0          # still a reporter, never a gate
+    report = json.loads(out_path.read_text())
+    assert report["band"] == "blocked"
+    assert report["label"] is None
+    assert report["corrupt_axes"] == ["judge_mean"]
+    assert "BLOCKED" in result.stderr
 
 
 def test_custom_noise_floor_is_honored():

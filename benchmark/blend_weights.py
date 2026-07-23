@@ -109,6 +109,11 @@ def summarize_blend_weights(artifact) -> dict:
     j = float(judge) if _is_number(judge) else None
     o = float(objective) if _is_number(objective) else None
     total = round(j + o, 3) if j is not None and o is not None else None
+    # Two individually-finite weights can still overflow to a non-finite sum (e.g. 1e308 + 1e308
+    # -> inf); a non-finite total must degrade to None like the per-field guards above, never
+    # serialize as the invalid-JSON token Infinity/NaN in the reported sum.
+    if total is not None and not _is_number(total):
+        total = None
     return {
         "kind": artifact_kind(artifact),
         "judge": j,
