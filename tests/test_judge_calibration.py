@@ -89,6 +89,14 @@ def test_validate_scenario_rejects_bad_winner():
     assert any("expected_winner" in err for err in validate_scenario(bad))
 
 
+def test_validate_scenario_rejects_unhashable_winner_without_crashing():
+    # A deserialized scenario can carry any JSON type; an unhashable expected_winner (list/dict)
+    # must be reported as a validation error, never raise TypeError on the frozenset membership test.
+    for bad_winner in ([("A",)], {"pick": "A"}, ["A"]):
+        errors = validate_scenario(dict(_VALID, expected_winner=bad_winner))
+        assert any("expected_winner" in err for err in errors)
+
+
 def test_run_scenario_reports_pass_and_fail():
     passed = run_scenario(_VALID)
     assert passed["passed"] is True

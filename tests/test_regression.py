@@ -555,12 +555,15 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
     missing = tmp_path / "does-not-exist.json"
     result = _run_cli(str(good), str(missing))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert f"artifact not found: {missing}" in result.stderr
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root ignores file permissions",
+)
 def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
     # PermissionError is a subclass of OSError, so it is already caught by the existing
     # except clause -- this proves that in practice, not just by inheritance.
@@ -569,11 +572,14 @@ def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
     unreadable = tmp_path / "unreadable.json"
     unreadable.write_text(json.dumps(_run(0.5)), encoding="utf-8")
     unreadable.chmod(0o000)
+    if os.access(str(unreadable), os.R_OK):
+        unreadable.chmod(0o644)
+        pytest.skip("file is readable despite chmod 0 (running as root / Windows?)")
     try:
         result = _run_cli(str(good), str(unreadable))
     finally:
         unreadable.chmod(0o644)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "not readable" in result.stderr
     assert str(unreadable) in result.stderr
@@ -586,7 +592,7 @@ def test_cli_reports_a_clean_error_for_every_non_object_json_shape(tmp_path, pay
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps(payload), encoding="utf-8")
     result = _run_cli(str(good), str(bad))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert f"artifact must be a JSON object: {bad}" in result.stderr
 
@@ -595,7 +601,7 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "invalid.json"
     path.write_text("{not valid json", encoding="utf-8")
     result = _run_cli(str(path), str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "artifact is not valid JSON" in result.stderr
     assert str(path) in result.stderr
@@ -605,7 +611,7 @@ def test_cli_directory_path_reports_clean_error(tmp_path):
     good = tmp_path / "good.json"
     good.write_text(json.dumps(_run(0.6)), encoding="utf-8")
     result = _run_cli(str(good), str(tmp_path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "directory" in result.stderr
 
@@ -617,7 +623,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         regression_cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 

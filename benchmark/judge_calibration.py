@@ -43,7 +43,10 @@ def validate_scenario(data, where: str = "scenario") -> list[str]:
     if missing:
         errors.append(f"{where}: missing required keys {missing}")
     winner = data.get("expected_winner")
-    if winner not in _VALID_WINNERS:
+    # Guard the type before the membership test: every valid winner is a string, and an unhashable
+    # value (a deserialized list/dict) would raise TypeError on `in` against the frozenset rather
+    # than being reported as the validation error it is.
+    if not isinstance(winner, str) or winner not in _VALID_WINNERS:
         errors.append(f"{where}: expected_winner must be one of {sorted(_VALID_WINNERS)}, got {winner!r}")
     for key in ("context", "revealed", "submission_a", "submission_b"):
         if key in data and not isinstance(data.get(key), (dict, list, str, int, float, bool, type(None))):

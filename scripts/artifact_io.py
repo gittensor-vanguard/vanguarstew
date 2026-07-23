@@ -1,31 +1,41 @@
-"""CLI: print agree outcome share from a replay artifact.
+"""Shared JSON-artifact loader for scripts/ CLIs.
 
-  python -m scripts.agree_order_share result.json
-
-Exits 2 when the artifact path cannot be read, the JSON is invalid, or the root is not an object.
+Every artifact-consuming CLI used to ship its own near-copy of ``load_artifact``. The mature
+ones (``decisive_rate``, ``component_mix``, …) implement a full path-error taxonomy with
+exit 2; older gate CLIs still exited 1 on path failure (colliding with ``--strict``) and
+misreported dangling symlinks / symlink loops. This module is the single source of that
+taxonomy — import it instead of pasting another copy.
 """
 
 from __future__ import annotations
 
-import argparse
 import errno
 import json
 import os
 import sys
 
-from benchmark.agree_order_share import agree_order_share_headline, summarize_agree_order_share
-
 
 def load_artifact(path: str) -> dict:
-    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON.
+    """Load a JSON-object artifact from ``path``, exiting 2 with a clean message on failure.
 
-    Path problems get a specific, actionable message instead of a raw traceback / errno string:
-    a broken symlink (dangling target), a symlink loop, ``FileNotFoundError`` (missing),
-    ``PermissionError`` (unreadable — including a directory on Windows), ``IsADirectoryError``
-    (a directory on POSIX), and any other ``OSError``.
+    Distinguishes the specific ``OSError`` subclasses ``open()`` raises for a bad path so the
+    user gets an actionable message rather than a raw traceback / errno string:
+
+    - broken symlink (dangling target) — ``FileNotFoundError`` + ``os.path.islink``
+    - missing file — ``FileNotFoundError``
+    - unreadable (incl. a directory on Windows) — ``PermissionError``
+    - directory — ``IsADirectoryError``
+    - parent component is not a directory — ``NotADirectoryError``
+    - symlink loop — ``OSError(ELOOP)``
+    - any other read failure — ``OSError`` with its underlying text
+    - invalid JSON / non-UTF-8 — ``ValueError`` / ``UnicodeDecodeError``
+    - non-object root — explicit message
 
     Broken-symlink detection runs *after* ``open`` fails (``FileNotFoundError`` + ``islink``),
     so there is no ``exists``/``open`` TOCTOU pre-check that can raise on a symlink loop.
+
+    Exit code is always **2**, distinct from the gating exit **1** used by ``--strict`` /
+    ``--fail-on-regression`` on the consumer CLIs.
     """
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -45,11 +55,23 @@ def load_artifact(path: str) -> dict:
     except IsADirectoryError:
         print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
         raise SystemExit(2) from None
+    except NotADirectoryError:
+        print(
+            f"artifact path is not a file (a parent component is not a directory): {path}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from None
     except OSError as exc:
+        # A symlink loop raises OSError(ELOOP), which none of the arms above catch.
         if getattr(exc, "errno", None) == errno.ELOOP:
             print(f"artifact path is a symlink loop: {path}", file=sys.stderr)
         else:
             print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except UnicodeDecodeError as exc:
+        # Non-UTF-8 mid-read: keep a distinct message (UnicodeDecodeError subclasses
+        # ValueError, so this arm must come first).
+        print(f"artifact is not valid UTF-8 JSON ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except ValueError as exc:
         # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
@@ -60,25 +82,3 @@ def load_artifact(path: str) -> dict:
         print(f"artifact must be a JSON object: {path}", file=sys.stderr)
         raise SystemExit(2)
     return data
-
-
-def run(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Report agree outcome share from judge stats")
-    ap.add_argument("artifact", help="run_eval --out JSON artifact")
-    args = ap.parse_args(argv)
-    try:
-        artifact = load_artifact(args.artifact)
-    except SystemExit as exc:
-        return int(exc.code)
-    summary = summarize_agree_order_share(artifact)
-    print(agree_order_share_headline(summary), file=sys.stderr)
-    print(json.dumps(summary, indent=2))
-    return 0
-
-
-def main() -> None:
-    raise SystemExit(run())
-
-
-if __name__ == "__main__":
-    main()
