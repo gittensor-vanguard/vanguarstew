@@ -121,6 +121,8 @@ def test_freeze_window_validation():
 @pytest.mark.parametrize("bad_fw, match", [
     ({"min_history": 0}, "min_history must be >= 1"),
     ({"min_history": -3}, "min_history must be >= 1"),
+    ({"horizon_days": 0}, "horizon_days must be >= 1"),
+    ({"horizon_days": -5}, "horizon_days must be >= 1"),
     ({"after": ""}, "after must be non-empty"),
     ({"before": "   "}, "before must be non-empty"),
     # Non-empty but unparseable date bounds pass the string check yet crash task generation
