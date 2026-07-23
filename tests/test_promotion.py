@@ -487,6 +487,30 @@ def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
     assert "Traceback" not in result.stderr
 
 
+def test_cli_reports_a_clean_error_for_a_broken_symlink(tmp_path):
+    # A dangling symlink is named as such (via os.path.islink), not mislabeled as merely
+    # missing — the path exists, its target does not (#1837).
+    link = tmp_path / "dangling.json"
+    link.symlink_to(tmp_path / "does-not-exist.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 1
+    assert "broken symlink" in result.stderr
+    assert "artifact not found" not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_symlink_loop(tmp_path):
+    # A self-referential symlink raises OSError(ELOOP); it must report a loop, not escape as a
+    # raw traceback / errno through the generic OSError arm (#1837).
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    result = _run_cli(str(loop))
+    assert result.returncode == 1
+    assert "symlink loop" in result.stderr
+    assert "Errno" not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
                     reason="root bypasses file permission bits")
 def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
