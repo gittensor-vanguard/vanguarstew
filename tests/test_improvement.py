@@ -350,3 +350,40 @@ def test_load_artifact_generic_os_error_exits_two(capsys):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "cannot read artifact" in err and "I/O error" in err
+
+
+def test_load_artifact_broken_symlink_exits_two(tmp_path, capsys):
+    # A real dangling symlink (not a mocked open): the path exists, its target does not, so it
+    # is named as a broken symlink rather than mislabeled "not found" (#1956).
+    link = tmp_path / "dangling.json"
+    link.symlink_to(tmp_path / "does-not-exist.json")
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(link))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err
+    assert "artifact not found" not in err
+
+
+def test_load_artifact_symlink_loop_exits_two(tmp_path, capsys):
+    # A real self-referential symlink drives the actual ELOOP code path (the prior attempt
+    # #1957 mocked open() and so never exercised it). Must report a loop, not leak raw errno.
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(loop))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "symlink loop" in err
+    assert "Errno" not in err
+
+
+def test_load_artifact_islink_probe_failure_falls_back_to_not_found(capsys):
+    # If os.path.islink itself raises (pathological path), the classifier must not crash — it
+    # falls back to the plain "not found" message. Guards the edge the #1957 review flagged.
+    with patch("builtins.open", side_effect=FileNotFoundError()), \
+         patch("os.path.islink", side_effect=OSError("lstat failed")):
+        with pytest.raises(SystemExit) as exc:
+            load_artifact("weird.json")
+    assert exc.value.code == 2
+    assert "artifact not found" in capsys.readouterr().err
