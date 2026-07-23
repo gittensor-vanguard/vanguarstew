@@ -105,6 +105,43 @@ def _normalize_philosophy(out: dict, stub: dict) -> dict:
     }
 
 
+def philosophy_for_prompt(philosophy, cap: int) -> str:
+    """Serialize ``philosophy`` for a prompt, staying valid JSON within ``cap`` chars.
+
+    The prompt sites that embed this used to hard-slice ``json.dumps(...)[:cap]``, which cuts
+    mid-string whenever the serialization outgrows the cap -- the model then reads an
+    unterminated JSON fragment with its tail destroyed. ``evidence`` is the one unbounded field
+    and is always serialized last, so it is exactly what a blind slice corrupts.
+
+    Under the cap, this returns the same rendering as before, byte-identical. Over the cap,
+    whole trailing ``evidence`` entries are dropped -- the largest count that still fits, found
+    by bisection since serialized length grows monotonically with the count -- so the result
+    stays valid JSON and ``summary``/``values``/``merge_bar``/``direction`` survive intact. When
+    even ``evidence: []`` doesn't fit (an oversized non-evidence field, non-dict input, or no
+    ``evidence`` list at all), the original hard slice is the last resort, so no input renders
+    worse than it did before.
+    """
+    text = json.dumps(philosophy, indent=1)
+    if len(text) <= cap:
+        return text
+    if isinstance(philosophy, dict) and isinstance(philosophy.get("evidence"), list):
+        evidence = philosophy["evidence"]
+
+        def _rendered(count: int) -> str:
+            return json.dumps({**philosophy, "evidence": evidence[:count]}, indent=1)
+
+        if len(_rendered(0)) <= cap:
+            lo, hi = 0, len(evidence) - 1
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if len(_rendered(mid)) <= cap:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            return _rendered(lo)
+    return text[:cap]
+
+
 def infer_philosophy(context: dict, llm) -> dict:
     if not isinstance(context, dict):
         return dict(_OFFLINE_STUB)
