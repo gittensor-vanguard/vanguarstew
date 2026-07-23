@@ -75,7 +75,8 @@ def main() -> None:
               f"[judge {_c(row['judge_mean'])}, objective {_c(row['objective_mean'])}] "
               f"[foresight — modules {_c(row['module_recall_mean'])}, "
               f"kinds {_c(row['kind_recall_mean'])}, "
-              f"release {_c(row['release_accuracy'])}]",
+              f"release {_c(row['release_accuracy'])}, "
+              f"bump {_c(row['bump_accuracy'])}]",
               file=sys.stderr)
     for label in summary["unscored"]:
         print(f"  (unscored) {label}", file=sys.stderr)
