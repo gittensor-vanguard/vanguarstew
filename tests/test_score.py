@@ -1464,3 +1464,98 @@ def test_combine_foresight_breakdowns_produces_the_documented_key_shape():
     assert set(combine_foresight_breakdowns([])) == FORESIGHT_KEYS
     one = foresight_breakdown([objective_score([{"title": "x", "kind": "docs"}], REVEALED)])
     assert set(combine_foresight_breakdowns([one])) == FORESIGHT_KEYS
+
+
+def test_is_release_subject_rejects_version_led_prose():
+    # #1655: the tag branch requires the subject to BE the tag. A subject that merely leads
+    # with a version before describing other work is ordinary bugfix/docs/refactor work whose
+    # title happens to open with a version, not a cut.
+    for subj in (
+        "3.11 support added",
+        "3.12 compatibility fixes",
+        "2.0 rewrite kickoff",
+        "1.5 migration guide",
+        "1.2 fixes for parser",
+        "2.0.x maintenance: fix build",
+        "1.4.0 regression in the loader",
+        "v2.1 docs overhaul",
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+    # Versions in the middle or at the end of prose stay non-releases too.
+    for subj in (
+        "fix for 3.12 compatibility",
+        "add support for Python 3.11",
+        "parser now handles config schema 2.0",
+    ):
+        assert not is_release_subject(subj), subj
+
+
+def test_is_release_subject_accepts_tag_with_suffix_trailer_or_date():
+    # The tag branch still accepts everything a real tag subject carries beyond the bare
+    # version: pre-release/build suffixes, bracketed CI trailers, and a cut date.
+    for subj in (
+        "v1.2.0-rc1",
+        "1.2.0+build.5",
+        "chore(release): 1.4.0 [skip ci]",
+        "Release 1.2.0 [skip ci]",
+        "1.2.0 (2026-05-01)",
+        "v2.0.0 - 2026-05-01",
+    ):
+        assert is_release_subject(subj), subj
+
+
+def test_native_revert_is_never_a_release():
+    # Git's default revert subject has no Conventional-Commit prefix, so before the guard it
+    # fell through to the release-keyword branch: `Revert "Release v1.2.0"` scored as a cut —
+    # the exact inversion the CC-form `revert: release 1.2.0` case (#431/#941) already blocks.
+    for subj in (
+        'Revert "Release v1.2.0"',
+        'Revert "chore(release): 1.2.0"',
+        'Revert "bump version to 2.0"',
+        'Revert "update the changelog for the next cut"',
+        'Revert "1.4.0"',
+        'revert "release 2.0.0"',
+        'Revert "Revert "fix: parser crash""',
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
+
+
+def test_native_revert_reads_as_revert_kind():
+    # The native form is as reliable a marker as the CC `revert:` prefix, so kind_recall's
+    # ground truth reads it as a revert instead of "no kind".
+    assert commit_kind('Revert "Release v1.2.0"') == "revert"
+    assert commit_kind('Revert "feat: add plugin loader"') == "revert"
+    # Prose that merely starts with the word revert (no quoted subject) stays unclassified.
+    assert commit_kind("revert the parser change") is None
+
+
+def test_native_revert_release_does_not_credit_the_release_axis():
+    # Downstream twin of test_revert_release_commit_does_not_credit_the_release_axis for the
+    # git-native form: a window whose only release-ish commit REVERTS a release must not score
+    # the release axis or fabricate a bump.
+    revealed = [{"subject": 'Revert "Release v2.0.0"', "files": ["CHANGELOG.md"]}]
+    assert release_signaled(revealed) is False
+    assert released_version(revealed) is None
+    plan = [{"title": "cut the 2.0.0 release", "kind": "release"}]
+    score = objective_score(plan, revealed, base_version="1.9.0")
+    assert score["release_signaled"] is False
+    assert score["bump_actual"] is None
+    assert "release" not in score["actual_kinds"]
+    assert "revert" in score["actual_kinds"]
+
+
+def test_version_led_prose_does_not_fabricate_release_axis():
+    # End-to-end for #1655's repro: a bugfix commit titled with a leading version must not
+    # fabricate a release axis or overwrite the real commit-kind ground truth.
+    revealed = [{"subject": "3.12 compatibility fixes",
+                 "files": ["core/compat.py", "core/compat_util.py"]}]
+    assert release_signaled(revealed) is False
+    assert released_version(revealed) is None
+    plan = [{"title": "fix core.compat for Python 3.12", "kind": "bugfix",
+             "files": ["core/compat.py", "core/compat_util.py"]}]
+    score = objective_score(plan, revealed, base_version="1.9.0")
+    assert score["release_signaled"] is False
+    assert score["bump_actual"] is None
+    assert "release" not in score["actual_kinds"]

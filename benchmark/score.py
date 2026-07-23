@@ -20,12 +20,31 @@ logger = logging.getLogger(__name__)
 
 _TOK = re.compile(r"[a-z0-9]+")
 # Genuine release signal is either explicit release/version-cut wording, or a subject that
-# *is* a version tag (it leads with the version, optionally prefixed by "release"). A semver
-# that merely appears mid-subject — a dependency bump, a doc reference — is NOT a release.
-# The patch component is optional (matching `_SEMVER`/`parse_semver`), so a two-component tag
-# subject like `v2.0` or CalVer `2024.11` still counts as a release.
+# *is* a version tag (optionally prefixed by "release"). A semver that merely appears
+# mid-subject — a dependency bump, a doc reference — is NOT a release, and neither is a
+# subject that merely *leads* with a version before describing other work ("3.11 support
+# added", "2.0 rewrite kickoff"): after the version, only a pre-release/build suffix
+# ("v1.2.0-rc1", "1.2.0+build.5"), bracketed CI trailers ("chore(release): 1.4.0 [skip ci]"),
+# an optional cut date ("1.2.0 (2026-05-01)"), and bare punctuation may follow — any further
+# word content means the subject is about something else. The patch component is optional
+# (matching `_SEMVER`/`parse_semver`), so a two-component tag subject like `v2.0` or CalVer
+# `2024.11` still counts as a release.
 _RELEASE_KW = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
-_RELEASE_TAG_SUBJECT = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
+_RELEASE_TAG_SUBJECT = re.compile(
+    r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?"
+    r"(?:[-+][0-9a-z.+-]+)?"            # optional pre-release/build suffix
+    r"(?:\s*\[[^\]]*\])*"               # optional bracketed trailers ([skip ci])
+    r"(?:\s*[-–—]?\s*\(?\d{4}-\d{2}-\d{2}\)?)?"  # optional cut date
+    r"[\s\W]*$",                        # only punctuation may remain — the subject IS the tag
+    re.I,
+)
+# Git's native revert subject: `Revert "..."` (older gits also nest: `Revert "Revert "..."""`).
+# The Conventional-Commit form (`revert: ...`) is handled prefix-authoritatively in
+# `is_release_subject`/`commit_kind`; this catches the default format `git revert` writes,
+# which carries no CC prefix. A revert is the *opposite* of a cut (#431's rationale), so the
+# quoted subject naming a release (`Revert "Release v1.2.0"`, `Revert "bump version to 2.0"`)
+# must never read as one.
+_NATIVE_REVERT = re.compile(r'^\s*revert\s+"', re.I)
 # A semver core (major.minor[.patch]) with an optional leading v/V and an optional
 # pre-release/build suffix we deliberately ignore (e.g. "v1.2.0-rc1", "1.2.0+build").
 _SEMVER = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
@@ -381,16 +400,24 @@ def is_release_subject(text: str) -> bool:
 
     Everything else is NOT a release, even when a version appears in the text:
     - an incidental version mid-subject (``bump lodash to v4.17.21``, ``fix crash in v1.2.0
-      parser``); and
+      parser``);
+    - a subject that merely *leads* with a version before describing other work
+      (``3.11 support added``, ``2.0 rewrite kickoff``, ``1.5 migration guide``) — the tag
+      branch requires the subject to *be* the tag, not just start with one;
     - a version body under any **non-tooling** CC prefix — ``fix: 2.0.0``, ``ci: 3.0.0``,
       ``docs: 1.4.0``, and especially ``revert: release 1.2.0`` (the *opposite* of a cut).
       Outside chore/build the prefix is authoritative, and neither an incidental
-      ``release``/``changelog`` word (#431) nor a version body makes it a cut.
+      ``release``/``changelog`` word (#431) nor a version body makes it a cut; and
+    - a git-native revert — ``Revert "Release v1.2.0"``, ``Revert "chore(release): 1.2.0"``,
+      ``Revert "bump version to 2.0"`` — the default subject ``git revert`` writes has no CC
+      prefix, but it un-does the quoted work; scoring it as a cut inverts the ground truth.
 
     A non-string value (an LLM may emit a list/dict/number for a plan title) is never a
     release, so it returns False instead of raising inside `re`.
     """
     if not isinstance(text, str):
+        return False
+    if _NATIVE_REVERT.match(text):
         return False
     m = _CC_PREFIX.match(text)
     if m:
@@ -430,12 +457,13 @@ _PLAN_KIND = {
 def commit_kind(subject: str):
     """Normalized maintainer kind for a revealed commit subject, or None.
 
-    Prefers a Conventional-Commit prefix (`feat:`, `fix(scope):`, `docs!:`), then falls
-    back to release subjects (`Release v1.2.0`, `bump version`). A version-cut commit that
-    release tooling authors under a chore/build type (`chore(release): 1.4.0`) reads as a
-    `release`, not its literal CC type, so kind_recall credits release anticipation. Merge
-    commits and prefix-less subjects carry no reliable kind and return None, as does a
-    non-string subject an LLM might emit.
+    Prefers a Conventional-Commit prefix (`feat:`, `fix(scope):`, `docs!:`), then git's
+    native revert subject (`Revert "..."` — as reliable a marker as the CC `revert:` form,
+    and never a release), then falls back to release subjects (`Release v1.2.0`,
+    `bump version`). A version-cut commit that release tooling authors under a chore/build
+    type (`chore(release): 1.4.0`) reads as a `release`, not its literal CC type, so
+    kind_recall credits release anticipation. Merge commits and other prefix-less subjects
+    carry no reliable kind and return None, as does a non-string subject an LLM might emit.
     """
     if not isinstance(subject, str):
         return None
@@ -446,6 +474,8 @@ def commit_kind(subject: str):
             return "release"
         if kind:
             return kind
+    if _NATIVE_REVERT.match(subject):
+        return "revert"
     if is_release_subject(subject):
         return "release"
     return None
