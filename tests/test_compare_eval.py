@@ -13,6 +13,8 @@ if ROOT not in sys.path:
 
 from scripts.compare_eval import (  # noqa: E402
     _is_generalization,
+    _is_scored_unavailable,
+    _per_repo_unavailable,
     _repo_key,
     compare_eval_artifacts,
     comparison_headline,
@@ -164,6 +166,85 @@ def test_compare_eval_artifacts_reports_per_repo_deltas():
     by_repo = {row["repo"]: row for row in diff["per_repo"]}
     assert by_repo["/a"]["composite_mean"]["delta"] == 0.1
     assert by_repo["/b"]["composite_mean"]["delta"] == 0.0
+
+
+def test_per_repo_skipped_repo_tasks_zero_is_not_a_real_score():
+    # A per-repo row for a *skipped* repo is recorded as tasks: 0 with a placeholder
+    # composite_mean of 0.0 (mean of an empty task list). Per-repo rows never carry
+    # scored_repos (#1846), so that 0.0 must be masked as unavailable — comparing a scored
+    # baseline against a skipped candidate must not fabricate a ~-0.7 delta.
+    baseline = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.7,
+                                                     "tasks": 3}]}
+    candidate = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.0,
+                                                      "tasks": 0}]}
+    row = compare_eval_artifacts(baseline, candidate)["per_repo"][0]
+    assert row["composite_mean"] == {"baseline": 0.7, "candidate": None, "delta": None}
+    # symmetric: a skipped baseline against a scored candidate is equally masked
+    row = compare_eval_artifacts(candidate, baseline)["per_repo"][0]
+    assert row["composite_mean"] == {"baseline": None, "candidate": 0.7, "delta": None}
+
+
+def test_per_repo_both_skipped_reports_no_delta():
+    # Two placeholders must not net to a real delta: 0.0 == None here, not delta 0.0.
+    art = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.0,
+                                                "tasks": 0}]}
+    row = compare_eval_artifacts(art, art)["per_repo"][0]
+    assert row["composite_mean"] == {"baseline": None, "candidate": None, "delta": None}
+
+
+def test_per_repo_non_numeric_tasks_is_unavailable():
+    # A row whose tasks count is missing/non-numeric can't attest a real score either.
+    baseline = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.7,
+                                                     "tasks": 3}]}
+    candidate = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.0,
+                                                      "tasks": "n/a"}]}
+    row = compare_eval_artifacts(baseline, candidate)["per_repo"][0]
+    assert row["composite_mean"]["candidate"] is None
+    assert row["composite_mean"]["delta"] is None
+
+
+def test_is_scored_unavailable_separates_the_two_shapes():
+    # Aggregate/partition shape is governed SOLELY by scored_repos ...
+    assert _is_scored_unavailable({"scored_repos": 0, "composite_mean": 0.0}) is True
+    assert _is_scored_unavailable({"scored_repos": 3, "composite_mean": 0.6}) is False
+    # ... and a real aggregate (scored_repos > 0) is never masked by a stray tasks field, so the
+    # two placeholder signals never conflate (the review's #1 concern).
+    assert _is_scored_unavailable({"scored_repos": 3, "tasks": 0, "composite_mean": 0.6}) is False
+    # Per-repo/single-repo shape (no scored_repos) is governed SOLELY by the tasks count.
+    assert _is_scored_unavailable({"tasks": 0, "composite_mean": 0.0}) is True
+    assert _is_scored_unavailable({"tasks": 2, "composite_mean": 0.5}) is False
+    # A non-dict is never "unavailable" (it is simply not scored data here).
+    assert _is_scored_unavailable(None) is False
+    assert _is_scored_unavailable([{"tasks": 0}]) is False
+
+
+def test_per_repo_unavailable_covers_every_tasks_value():
+    # Positive counts (int and float) attest a real score.
+    assert _per_repo_unavailable({"tasks": 1}) is False
+    assert _per_repo_unavailable({"tasks": 2.0}) is False
+    # Zero / negative / non-numeric / bool / nested values cannot.
+    for bad in (0, 0.0, -1, "n/a", None, [], {}, True, False, float("nan")):
+        assert _per_repo_unavailable({"tasks": bad}) is True, bad
+    # A row with NO tasks key is not a task-count placeholder — the helper stays silent (False),
+    # so a legitimately-shaped row without that field is not masked (the review's edge case).
+    assert _per_repo_unavailable({"composite_mean": 0.5}) is False
+
+
+def test_per_repo_row_without_tasks_key_is_not_masked():
+    # End-to-end: a per-repo row carrying a real composite_mean but no tasks field still diffs.
+    baseline = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.4}]}
+    candidate = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.5}]}
+    row = compare_eval_artifacts(baseline, candidate)["per_repo"][0]
+    assert row["composite_mean"] == {"baseline": 0.4, "candidate": 0.5, "delta": 0.1}
+
+
+def test_aggregate_with_zero_tasks_and_scored_repos_is_governed_by_scored_repos():
+    # A top-level aggregate that happens to carry both fields must not be masked by tasks when it
+    # was actually scored (scored_repos > 0) -- no regression for the aggregate code path.
+    scored = {"composite_mean": 0.6, "scored_repos": 2, "tasks": 0}
+    unscored = {"composite_mean": 0.0, "scored_repos": 0, "tasks": 0}
+    diff = compare_eval_artifacts(unscored, scored)
+    assert diff["composite_mean"] == {"baseline": None, "candidate": 0.6, "delta": None}
 
 
 def test_compare_eval_artifacts_tolerates_non_list_per_repo():
