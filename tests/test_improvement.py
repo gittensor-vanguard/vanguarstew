@@ -1,6 +1,7 @@
 """Tests for the candidate-vs-baseline improvement (adoption) gate (deterministic, offline)."""
 
 import copy
+import errno
 import os
 import sys
 from unittest.mock import patch
@@ -321,11 +322,11 @@ def test_check_improvement_does_not_mutate_inputs():
     assert baseline == snap_b and candidate == snap_c
 
 
-# --- CLI loader: directory/unreadable artifact paths exit 2 cleanly (not a raw traceback) -----
-# The CLI (scripts/improvement.py) reads two artifacts via load_artifact; a directory path or an
-# unreadable file must exit 2 with a clear message, mirroring generalization_gate #1446 /
-# objective_integrity #1377. (improvement.main() reads sys.argv directly, so load_artifact — the
-# function that changed — is exercised directly.)
+# --- CLI loader: path failures exit 2 cleanly (not a raw traceback / errno leak) -----
+# The CLI (scripts/improvement.py) reads two artifacts via load_artifact; a directory path, an
+# unreadable file, a dangling symlink, or a symlink loop must exit 2 with a clear message,
+# mirroring decisive_rate #1819 / single_order_share #1780. (improvement.main() reads sys.argv
+# directly, so load_artifact — the function that changed — is exercised directly.)
 
 
 def test_load_artifact_directory_path_exits_two(tmp_path, capsys):
@@ -350,3 +351,33 @@ def test_load_artifact_generic_os_error_exits_two(capsys):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "cannot read artifact" in err and "I/O error" in err
+
+
+def test_load_artifact_broken_symlink_reports_distinct_error(tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError too; naming it "not found" misdiagnoses
+    # the problem (the link exists, only its target is gone). Either baseline or candidate
+    # path can hit this — load_artifact is shared.
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(link))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err
+    assert "not found" not in err
+    assert "Traceback" not in err and "Errno" not in err
+
+
+def test_load_artifact_symlink_loop_exits_two_instead_of_leaking_errno(tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    with patch("builtins.open", side_effect=_raise):
+        with pytest.raises(SystemExit) as exc:
+            load_artifact(path)
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert err == f"artifact path is a symlink loop: {path}\n"
+    assert "Traceback" not in err and "Errno" not in err
