@@ -82,6 +82,21 @@ def test_repo_scores_multi_and_single():
     assert _repo_scores({"composite_mean": 0.6}) == [0.6]
 
 
+def test_repo_scores_skips_an_explicit_zero_task_entry():
+    """Spec: a per_repo entry carrying a numeric ``tasks`` of 0 scored nothing, so its
+    ``composite_mean`` is a ``_mean([])`` placeholder and SHALL be skipped."""
+    assert _repo_scores({"per_repo": [
+        {"tasks": 3, "composite_mean": 0.6},
+        {"tasks": 0, "composite_mean": 0.0},
+    ]}) == [0.6]
+
+
+def test_repo_scores_counts_an_entry_with_no_tasks_field():
+    """Spec: absence of ``tasks`` is ambiguous — only an explicit ``tasks == 0`` marks a repo
+    unscored, so a bare entry still contributes its score."""
+    assert _repo_scores({"per_repo": [{"composite_mean": 0.5}]}) == [0.5]
+
+
 def test_repo_scores_skips_non_numeric():
     assert _repo_scores({
         "per_repo": [

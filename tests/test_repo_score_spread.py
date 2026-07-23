@@ -14,6 +14,7 @@ if ROOT not in sys.path:
 
 from benchmark.repo_score_spread import (  # noqa: E402
     _is_number,
+    _is_unscored_repo,
     _repo_scores,
     _spread,
     repo_score_spread_headline,
@@ -82,6 +83,95 @@ def test_missing_and_non_numeric_scores_skipped():
     summary = summarize_repo_score_spread(artifact)
     assert summary["scored_repos"] == 1
     assert summary["min"] == summary["max"] == 0.5
+
+
+# --- #1628: a skipped (zero-task) repo's placeholder mean is not a score --------------------------
+
+@pytest.mark.parametrize("tasks", [0, 0.0])
+def test_is_unscored_repo_detects_an_explicit_zero_task_entry(tasks):
+    assert _is_unscored_repo({"composite_mean": 0.0, "tasks": tasks}) is True
+
+
+@pytest.mark.parametrize("tasks", [1, 3, 0.5])
+def test_is_unscored_repo_accepts_an_entry_that_produced_tasks(tasks):
+    assert _is_unscored_repo({"composite_mean": 0.6, "tasks": tasks}) is False
+
+
+@pytest.mark.parametrize("tasks", [None, "0", True, False, float("nan"), float("inf"), [], {}])
+def test_is_unscored_repo_only_trusts_an_explicit_numeric_zero(tasks):
+    """Absence (or a non-numeric ``tasks``) is ambiguous, so the entry still counts — only a real
+    numeric 0 marks a repo unscored. ``bool`` is excluded deliberately: ``False == 0`` in Python,
+    and a boolean ``tasks`` is malformed data, not a task count."""
+    assert _is_unscored_repo({"composite_mean": 0.5, "tasks": tasks}) is False
+
+
+def test_is_unscored_repo_counts_an_entry_with_no_tasks_field():
+    assert _is_unscored_repo({"composite_mean": 0.5}) is False
+    assert _is_unscored_repo({}) is False
+
+
+def test_skipped_repo_placeholder_is_not_counted_as_a_real_score():
+    """#1628: a repo too small for the horizon keeps its per_repo row with tasks == 0 and a
+    _mean([]) placeholder of 0.0. Counting it fabricated a phantom min of 0.0 and a maximal
+    range — a false 'carried by one repo' alarm on a run whose only scored repo did fine."""
+    artifact = {
+        "repos": 2, "scored_repos": 1, "skipped": 1, "composite_mean": 0.6,
+        "per_repo": [
+            {"repo": "owner/scored", "tasks": 3, "composite_mean": 0.6},
+            {"repo": "owner/too-small", "tasks": 0, "composite_mean": 0.0},  # placeholder
+        ],
+    }
+    summary = summarize_repo_score_spread(artifact)
+    assert summary["scored_repos"] == 1        # agrees with the artifact's own scored_repos
+    assert summary["min"] == summary["max"] == 0.6
+    assert summary["range"] == 0.0             # one repo scored, so there is no spread
+    assert "range 0.000 across 1 repo(s)" in repo_score_spread_headline(summary)
+
+
+def test_a_zero_task_repo_with_a_nonzero_placeholder_is_still_skipped():
+    """The gate is ``tasks == 0``, not ``composite_mean == 0.0`` — an unscored row is excluded on
+    the strength of its task count, whatever its mean happens to carry."""
+    artifact = {"per_repo": [
+        {"tasks": 4, "composite_mean": 0.8},
+        {"tasks": 0, "composite_mean": 0.4},
+    ]}
+    assert _repo_scores(artifact) == [0.8]
+
+
+def test_all_repos_skipped_yields_no_spread_rather_than_a_phantom_zero():
+    artifact = {"repos": 2, "scored_repos": 0, "per_repo": [
+        {"tasks": 0, "composite_mean": 0.0},
+        {"tasks": 0, "composite_mean": 0.0},
+    ]}
+    summary = summarize_repo_score_spread(artifact)
+    assert summary["scored_repos"] == 0
+    assert summary["min"] is None and summary["max"] is None and summary["range"] is None
+    assert repo_score_spread_headline(summary) == "repo score spread: no scored repos"
+
+
+def test_an_entry_without_a_tasks_field_still_contributes_its_score():
+    """Guard against over-masking: requiring ``tasks > 0`` (rather than excluding an explicit 0)
+    would drop a bare entry and break the Spec 058 contract."""
+    assert _repo_scores({"per_repo": [{"composite_mean": 0.5}]}) == [0.5]
+    assert _repo_scores({"per_repo": [{"composite_mean": 0.4}, {"composite_mean": 0.8}]}) == [0.4, 0.8]
+
+
+def test_generalization_partition_skips_its_zero_task_repos():
+    """The --generalization path inherits the gate per partition, so a skipped repo in one
+    partition no longer skews that partition's spread or the cross-partition min/max."""
+    summary = summarize_repo_score_spread({
+        "generalization_gap": 0.05,
+        "tuned": {"per_repo": [
+            {"tasks": 3, "composite_mean": 0.7},
+            {"tasks": 0, "composite_mean": 0.0},   # skipped -> must not become the min
+        ]},
+        "held_out": {"per_repo": [{"tasks": 3, "composite_mean": 0.5}]},
+    })
+    assert summary["partitions"]["tuned"] == {
+        "scored_repos": 1, "min": 0.7, "max": 0.7, "range": 0.0,
+    }
+    assert summary["min"] == 0.5 and summary["max"] == 0.7   # overall unaffected by the placeholder
+    assert summary["scored_repos"] == 2
 
 
 # --- generalization ------------------------------------------------------------------------------

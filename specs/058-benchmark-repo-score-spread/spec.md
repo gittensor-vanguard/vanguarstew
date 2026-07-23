@@ -43,6 +43,11 @@ a run carried by one repo. A generalization artifact additionally reports per-pa
 
 - WHEN `per_repo` is a `list` THEN each dict entry with a numeric `composite_mean` SHALL contribute
   that score rounded to 3 decimal places; non-dict entries and non-numeric means SHALL be skipped.
+- WHEN a `per_repo` entry carries a numeric `tasks` of `0` THEN it SHALL be skipped: it scored
+  nothing, so its `composite_mean` of `0.0` is a `_mean([])` placeholder rather than a score, and
+  counting it fabricates a phantom `min` of `0.0` and a maximal `range`.
+- WHEN a `per_repo` entry carries **no** `tasks` field THEN it SHALL still contribute its score —
+  absence is ambiguous, so only an explicit `tasks == 0` marks a repo unscored.
 - OTHERWISE WHEN the top-level `composite_mean` is numeric THEN `_repo_scores` SHALL return a
   one-element list (that mean rounded to 3 dp); OTHERWISE `[]`.
 
