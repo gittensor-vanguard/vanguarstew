@@ -13,12 +13,20 @@ inside each repo; nothing verifies the cross-repo headline equals the unweighted
 3. ``skipped_matches`` — ``skipped`` equals total repos minus scored repos;
 4. ``scored_composites_reported`` — every scored repo carries a finite ``composite_mean``;
 5. ``composite_mean_matches_repos`` — headline ``composite_mean`` equals the rounded per-repo mean;
-6. ``judge_mean_matches_repos`` / ``objective_mean_matches_repos`` — ``composite_parts`` means
+6. ``scored_components_reported`` — every scored repo carries finite ``composite_parts`` means,
+   when the slice reports parts;
+7. ``judge_mean_matches_repos`` / ``objective_mean_matches_repos`` — ``composite_parts`` means
    equal the rounded per-repo component means when parts are reported.
 
 **Rounding semantics:** per-repo means use a single ``round(sum(values) / n, 3)`` (matching
 ``run_multi_replay``). Headline values are normalized with ``round(value, 3)`` before comparison.
 ``tolerance`` (default ``0.0``) applies only to the delta between these rounded values.
+
+**Completeness precedes agreement.** A mean is only comparable when every scored repo
+contributed to it, so (4) and (6) report the denominator separately from the deltas in (5) and
+(7). Both mean checks divide by the values actually present; it is the completeness checks that
+fail a slice whose per-repo evidence is incomplete, rather than the deltas silently comparing
+against a subset.
 
 **Numeric semantics:** only finite built-in ``int``/``float`` values count (not ``bool``, ``NaN``,
 ``inf``, or numpy scalars).
@@ -236,6 +244,18 @@ def _check_slice(label: str, slice_: dict, tolerance: float, checks: list) -> No
     objective_values = _finite_field_values(scored, "", parts_key="objective_mean")
 
     if isinstance(parts, dict):
+        # Component means need the same completeness guard `scored_composites_reported` gives
+        # `composite_mean`. Without it a scored repo whose `composite_parts` is missing or
+        # corrupt is dropped by `_finite_field_values` and `_mean_rounded` divides by the
+        # survivors, so the same artifact is checked against two different denominators: the
+        # repo still counts toward `composite_mean_matches_repos` but silently leaves the
+        # component ones. That inverts the gate — it signs off on a headline computed from a
+        # subset, and rejects the value `run_multi_replay` actually produces, which averages
+        # over every scored repo and defaults a missing part to 0.0 (`runner.py`).
+        add("scored_components_reported",
+            len(judge_values) == scored_n and len(objective_values) == scored_n,
+            f"judge {len(judge_values)}/{scored_n}, objective {len(objective_values)}/{scored_n} "
+            "scored repo(s) carry finite composite_parts means")
         if _is_finite_number(judge_mean):
             expected = _round3(_mean_rounded(judge_values))
             reported = _round3(judge_mean)

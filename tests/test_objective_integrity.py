@@ -326,8 +326,27 @@ def test_cli_broken_symlink_exits_two(tmp_path):
     )
     assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
-    # A broken symlink resolves to FileNotFoundError on open()
-    assert "artifact not found" in proc.stderr
+    # A dangling symlink is named as such (via os.path.islink), not mislabeled as merely
+    # missing — the path exists, its target does not (#1839).
+    assert "broken symlink" in proc.stderr
+    assert "artifact not found" not in proc.stderr
+
+
+def test_cli_symlink_loop_exits_two(tmp_path):
+    # A self-referential symlink raises OSError(ELOOP); it must report a loop, not leak the raw
+    # errno through the generic OSError arm (#1839).
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.objective_integrity", str(loop)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2
+    assert "symlink loop" in proc.stderr
+    assert "Errno" not in proc.stderr
+    assert "Traceback" not in proc.stderr
 
 
 def test_cli_invalid_json_exits_two(tmp_path):

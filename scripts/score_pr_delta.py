@@ -106,6 +106,26 @@ def _pareto_axes(diff: dict) -> dict:
     return {axis: parts.get(axis) for axis in ("judge_mean", "objective_mean")}
 
 
+def _generalization_pareto_axes(gen: dict) -> dict:
+    """The Pareto axes for a generalization diff: the WORSE of the two partitions' triplets
+    per axis, mirroring how ``banding_delta`` already uses the worse partition's composite
+    delta — so the floor holds even in whichever partition (tuned or held_out) regressed most.
+
+    An axis missing from both partitions (no ``composite_parts`` reported anywhere) yields
+    ``None`` for that axis, same as the standard (non-generalization) shape.
+    """
+    axes = {}
+    for axis in ("judge_mean", "objective_mean"):
+        worst_triplet, worst_delta = None, None
+        for partition in ("tuned", "held_out"):
+            triplet = (gen.get(partition, {}).get("composite_parts") or {}).get(axis)
+            delta = _delta(triplet)
+            if delta is not None and (worst_delta is None or delta < worst_delta):
+                worst_triplet, worst_delta = triplet, delta
+        axes[axis] = worst_triplet
+    return axes
+
+
 def _band_for_delta(delta: float | None, noise_floor: float) -> str:
     """Bucket a composite_mean delta into a performance band. ``None`` or <= the noise
     floor is "none" (no measurable improvement, still mergeable, no multiplier). Otherwise
@@ -127,6 +147,8 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
     ``composite_mean``) — the Pareto floor and banding are checked on whichever composite
     triplet(s) the artifact shape actually produced (generalization uses the MINIMUM of
     the two partitions' deltas, so a PR can't overfit the tuned set and still band high).
+    The Pareto floor's judge_mean/objective_mean axes are ALSO checked per partition when
+    reported, so a net-positive partition composite can't mask an axis regression (#1821).
 
     ``band`` is one of:
       - ``"blocked"`` — a scored axis regressed past the noise floor. Hard merge block
@@ -144,10 +166,14 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
             part: _delta(gen.get(part, {}).get("composite_mean"))
             for part in ("tuned", "held_out")
         }
-        any_regressed = any(_regressed(d, noise_floor) for d in composite_deltas.values())
+        pareto_axes = _generalization_pareto_axes(gen)
+        axis_deltas = [_delta(v) for v in pareto_axes.values()]
+        any_regressed = (
+            any(_regressed(d, noise_floor) for d in composite_deltas.values())
+            or any(_regressed(d, noise_floor) for d in axis_deltas)
+        )
         present = [d for d in composite_deltas.values() if d is not None]
         banding_delta = min(present) if present else None
-        pareto_axes = {}  # no per-axis (judge/objective) split at the generalization level
     else:
         composite_deltas = {"composite_mean": _delta(diff.get("composite_mean"))}
         pareto_axes = _pareto_axes(diff)
