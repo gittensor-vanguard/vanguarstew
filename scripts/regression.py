@@ -5,6 +5,8 @@
 
 Both are ``run_eval --out`` artifacts (``baseline`` = last accepted run, ``candidate`` = this
 run). With --strict, exits non-zero when the candidate regressed.
+
+Path / JSON failures exit 2 (via ``scripts.artifact_io``), distinct from the gating exit 1.
 """
 
 from __future__ import annotations
@@ -19,33 +21,9 @@ from benchmark.regression import (
     check_regression,
     regression_headline,
 )
+from scripts.artifact_io import load_artifact  # re-exported for tests / callers
 
-
-def load_artifact(path: str) -> dict:
-    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"artifact not found: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except PermissionError:
-        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except IsADirectoryError:
-        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except OSError as exc:
-        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except ValueError as exc:
-        # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
-        # beyond the int-string-conversion limit (py3.11+); JSONDecodeError subclasses it.
-        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
-        raise SystemExit(1) from None
-    if not isinstance(data, dict):
-        raise ValueError(f"artifact must be a JSON object: {path}")
-    return data
+__all__ = ["load_artifact", "main"]
 
 
 def main() -> None:
@@ -61,14 +39,8 @@ def main() -> None:
                     help="exit 1 when the candidate regressed (for CI gating)")
     args = ap.parse_args()
 
-    try:
-        candidate = load_artifact(args.candidate)
-        baseline = load_artifact(args.baseline)
-    except SystemExit as exc:
-        raise SystemExit(exc.code) from None
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        sys.exit(1)
+    candidate = load_artifact(args.candidate)
+    baseline = load_artifact(args.baseline)
 
     result = check_regression(
         candidate, baseline,
