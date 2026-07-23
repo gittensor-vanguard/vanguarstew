@@ -112,6 +112,64 @@ SYSTEM = (
     "Stay consistent with the philosophy. Respond ONLY with JSON."
 )
 
+# ``run_replay`` asks for a plan with one of two templates: the commit-horizon
+# ``plan the next N maintainer actions``, or the curated time-horizon
+# ``plan the maintainer actions for the next N days`` (#1740). Both the planner prompt and the
+# decider's planning guards have to recognize the same two shapes, so the recognition lives here
+# once and ``decider`` imports it rather than re-deriving it. Inlining it in both is what let
+# them diverge: #1768 reported the decider missing the time-horizon template and #1772 fixed the
+# decider, leaving the planner blind to the request entirely.
+_TIME_HORIZON_PATTERN = re.compile(
+    r"plan the maintainer actions for the next\s+(\d+)\s+day", re.IGNORECASE)
+
+
+def planning_horizon_days(request):
+    """The planning window in days a runner request asks for, or ``None``.
+
+    Only the time-horizon template carries a window. A non-string request, the commit-horizon
+    template, and a missing or unparseable count all yield ``None``. A zero count is rejected by
+    the ``days > 0`` guard so the prompt never renders a nonsensical "next 0 days" window; a
+    negative count never reaches that guard, because ``\\s+(\\d+)`` cannot consume the minus sign.
+    """
+    if not isinstance(request, str):
+        return None
+    match = _TIME_HORIZON_PATTERN.search(request)
+    if not match:
+        return None
+    days = int(match.group(1))
+    return days if days > 0 else None
+
+
+def is_planning_request(request) -> bool:
+    """True for either runner planning template (commit-horizon or time-horizon).
+
+    Kept deliberately looser than :func:`planning_horizon_days`: a time-horizon request whose
+    count is missing or malformed is still a *planning* request, it just carries no usable
+    window. ``decider`` delegates here so the two modules cannot drift apart again (#1768).
+    """
+    if not isinstance(request, str):
+        return False
+    low = request.lower()
+    if "plan the next" in low:
+        return True
+    return "plan the maintainer actions for the next" in low and "day" in low
+
+
+def _planning_window_note(request) -> str:
+    """Prompt note stating the planning window the runner's request asked about.
+
+    Purely informational — it adds the one fact the request carries that the prompt otherwise
+    drops (the window), and nothing else. It deliberately does NOT reword the ask line or add
+    any selection instruction ("most likely to land", "fits in the window"): module recall
+    carries no precision penalty, so wording that licenses filtering or shortening the plan can
+    only lose recall. Empty when the request carries no parseable window, so the prompt is
+    rendered byte-for-byte unchanged for every existing caller and template.
+    """
+    days = planning_horizon_days(request)
+    if days is None:
+        return ""
+    return f"\nThe planning window is the next {days} days.\n"
+
 # Prompt fragments for the plan-item schema and objective-anchor guidance. Kept as named
 # constants so tests can lock the contract without parsing full LLM prompts.
 PLAN_ITEM_SCHEMA = (
@@ -998,7 +1056,18 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     return out[:n]
 
 
-def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
+def plan_next_actions(context: dict, philosophy: dict, n: int, llm, request=None) -> list:
+    """Plan the maintainer's next actions.
+
+    ``request`` is the runner's own planning request. When it carries a time horizon
+    (``plan the maintainer actions for the next N days``), the window is surfaced to the LLM as
+    an informational note — the window is what the anchor's revealed commits actually span, and
+    without it the planner answers a different question than the one the run asked. This is the
+    planner-side residual of #1768: #1772 taught the decider both templates, but the planner
+    never saw the request at all. The ask line itself is unchanged for every template, and an
+    omitted or windowless request renders the previous prompt byte-for-byte, so every existing
+    caller is unaffected.
+    """
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
     user = (
@@ -1008,6 +1077,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"{_recent_kinds_note(context)}"
         f"{_release_cadence_note(context)}"
         f"{_config_surface_note(context)}"
+        f"{_planning_window_note(request)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
         f"{PLAN_ITEM_SCHEMA}\n\n"

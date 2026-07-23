@@ -30,7 +30,7 @@ def solve(
     # The maintainer workflow, in order.
     context = load_context(repo_path)            # only what was knowable at time T
     philosophy = infer_philosophy(context, llm)  # 1. ground in the repo's direction
-    plan = plan_next_actions(context, philosophy, n, llm)  # 3a. plan next actions/PRs
+    plan = plan_next_actions(context, philosophy, n, llm, request)  # 3a. plan next actions/PRs
     decision = decide(context, philosophy, request, llm)   # 3b. concrete call
 
     return {
