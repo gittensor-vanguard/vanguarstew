@@ -105,6 +105,7 @@ FORESIGHT_KEYS = {
     "module_recall_mean", "module_recall_n",
     "kind_recall_mean", "kind_recall_n",
     "release_accuracy", "release_accuracy_n",
+    "bump_accuracy", "bump_accuracy_n",
 }
 
 

@@ -92,6 +92,108 @@ def test_item_open_at_gates_by_created_and_closed():
                                  "closed_at": "2023-03-01T00:00:00Z"}, T)
 
 
+def test_item_open_at_false_positive_for_closed_then_reopened_item():
+    # #1883: closed_at is a live snapshot -- it's cleared on reopen, so an item closed before T
+    # and reopened after T (currently open, closed_at=None) reads as open at T from live data
+    # alone, even though it was genuinely closed at T. The timeline-based correction is what
+    # actually fixes this; _item_open_at itself is documented to need that correction.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._item_open_at({"created_at": "2023-01-01T00:00:00Z", "closed_at": None}, T)
+
+
+def test_closed_at_from_timeline_corrects_a_closed_then_reopened_item():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    # closed 2023-03-01, reopened 2023-09-01 (after T) -> was closed at T.
+    events = [
+        {"event": "closed", "created_at": "2023-03-01T00:00:00Z"},
+        {"event": "reopened", "created_at": "2023-09-01T00:00:00Z"},
+    ]
+    assert gc._closed_at_from_timeline(events, T) is True
+
+
+def test_closed_at_from_timeline_no_correction_when_reopened_before_T():
+    T = datetime(2023, 10, 1, tzinfo=timezone.utc)
+    # closed 2023-03-01, reopened 2023-06-01 (before T) -> genuinely open at T.
+    events = [
+        {"event": "closed", "created_at": "2023-03-01T00:00:00Z"},
+        {"event": "reopened", "created_at": "2023-06-01T00:00:00Z"},
+    ]
+    assert gc._closed_at_from_timeline(events, T) is False
+
+
+def test_closed_at_from_timeline_no_events_means_no_correction():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    assert gc._closed_at_from_timeline([], T) is False
+    assert gc._closed_at_from_timeline(None, T) is False
+
+
+def test_reopened_issue_excluded_from_frozen_context_when_closed_at_T(monkeypatch):
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    # Currently open (closed_at=None) so the live check alone would include it -- but the
+    # timeline shows it was closed at T, between the 03-01 close and the 09-01 reopen.
+    issues = [{"number": 1, "title": "flaky", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": []}]
+    timeline = [
+        {"event": "closed", "created_at": "2023-03-01T00:00:00Z"},
+        {"event": "reopened", "created_at": "2023-09-01T00:00:00Z"},
+    ]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return timeline
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    context = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert context["open_issues"] == []
+
+
+def test_reopened_before_T_stays_included_in_frozen_context(monkeypatch):
+    # Control: same shape, but the reopen happened before T -> genuinely open at T, must
+    # still be included (the correction must not exclude every closed/reopened item).
+    T = datetime(2023, 10, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "flaky", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": []}]
+    timeline = [
+        {"event": "closed", "created_at": "2023-03-01T00:00:00Z"},
+        {"event": "reopened", "created_at": "2023-06-01T00:00:00Z"},
+    ]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            return timeline
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    context = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert len(context["open_issues"]) == 1
+    assert context["open_issues"][0]["number"] == 1
+
+
+def test_reopen_correction_skipped_when_timeline_truncated(monkeypatch):
+    # A truncated timeline can't be trusted for the correction either -- the item's existing
+    # (live-snapshot) inclusion stands rather than guessing from partial events.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    issues = [{"number": 1, "title": "flaky", "created_at": "2023-01-01T00:00:00Z",
+               "closed_at": None, "labels": []}]
+
+    def fake_get(url, token, timeout=20):
+        if "/timeline" in url:
+            raise ConnectionError("boom")
+        if "/issues" in url:
+            return issues
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    context = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert len(context["open_issues"]) == 1
+    assert context["open_issues"][0]["labels_as_of_t"] is False
+
+
 def test_milestone_state_is_as_of_T():
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     # Created before T, closed AFTER T -> was open at T (must NOT leak "closed").

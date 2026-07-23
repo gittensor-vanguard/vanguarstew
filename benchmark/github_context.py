@@ -94,7 +94,14 @@ def _parse_dt(value):
 
 
 def _item_open_at(item: dict, until: datetime) -> bool:
-    """True when an issue/PR was open at ``until`` (created on/before T, not closed by T)."""
+    """True when an issue/PR was open at ``until`` (created on/before T, not closed by T).
+
+    ``closed_at`` is a live snapshot: GitHub clears it to ``null`` on reopen and overwrites it
+    on every subsequent close, so it only ever reflects the *most recent* close. This correctly
+    decides membership for an item with at most one close, but for one closed and reopened more
+    than once it can wrongly read as open at a T that actually fell inside an earlier closed
+    window — the caller corrects that from the item's timeline (see ``_closed_at_from_timeline``).
+    """
     created = _parse_dt(item.get("created_at"))
     if created is None or created > until:
         return False
@@ -102,15 +109,46 @@ def _item_open_at(item: dict, until: datetime) -> bool:
     return closed is None or closed > until
 
 
-def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int) -> dict:
-    """Minimal issue/PR fields for the frozen context.
+def _closed_at_from_timeline(events, until: datetime):
+    """True when the timeline's ``closed``/``reopened`` events show the item was actually
+    *closed* at ``until``, overriding a live-snapshot ``_item_open_at`` false positive.
+
+    Replays those events in chronological order up to ``until`` (state starts "open" at
+    creation, toggles on each event) and returns the state's negation. Returns ``False`` — no
+    correction needed — when the timeline carries no such event at all: the item's open/closed
+    state never changed, so ``closed_at`` already reflects the truth, mirroring how
+    ``_title_at`` trusts the live title when there are no rename events.
+    """
+    toggles = []
+    for ev in _timeline_events(events):
+        if not isinstance(ev, dict) or ev.get("event") not in ("closed", "reopened"):
+            continue
+        ts = _parse_dt(ev.get("created_at"))
+        if ts is None or ts > until:
+            continue
+        toggles.append((ts, ev.get("event") == "reopened"))
+    if not toggles:
+        return False
+    toggles.sort(key=lambda pair: pair[0])
+    open_at_t = toggles[-1][1]
+    return not open_at_t
+
+
+def _issue_record_at(base: str, item: dict, until: datetime, token, timeout: int):
+    """Minimal issue/PR fields for the frozen context, or ``None`` when the item's timeline
+    reveals it was actually closed at T (see ``_closed_at_from_timeline``).
 
     ``number``/``created_at`` are immutable. ``labels`` and ``title`` are reconstructed
     as-of ``until`` from the item timeline when it is complete; when the timeline is
     unavailable or truncated they are omitted with ``labels_as_of_t`` / ``title_as_of_t``
-    set to ``False`` rather than copying live values.
+    set to ``False`` rather than copying live values. A truncated timeline can't verify true
+    open/closed membership either, so it is left uncorrected (the caller's live-snapshot
+    decision — already known-open, since only open-at-T candidates reach this function —
+    stands) rather than guessing from partial events.
     """
     events, truncated = _issue_timeline(base, item.get("number"), token, timeout)
+    if not truncated and _closed_at_from_timeline(events, until):
+        return None
     # A truncated timeline can produce a label set that actively contradicts the true as-of-T
     # membership, so fail closed exactly like the timeline-unavailable case: omit labels and
     # report labels_as_of_t=False rather than trusting a partial (possibly wrong) reconstruction.
@@ -358,6 +396,8 @@ def _collect_open_at(base: str, until: datetime, token, timeout: int, max_pages:
             if not _item_open_at(it, until):
                 continue
             rec = _issue_record_at(base, it, until, token, timeout)
+            if rec is None:
+                continue  # timeline showed it was actually closed at T (closed-then-reopened)
             (open_prs if it.get("pull_request") else open_issues).append(rec)
         if len(batch) < 100:
             break                 # exhausted all issues — complete

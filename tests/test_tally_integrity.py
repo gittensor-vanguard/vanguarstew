@@ -1,6 +1,7 @@
 """Tests for the judge tally integrity gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
@@ -496,17 +497,37 @@ def test_cli_strict_exits_nonzero_on_inconsistent(tmp_path):
 
 def test_cli_reports_clean_error_for_missing_file(tmp_path):
     missing = tmp_path / "missing.json"
-    result = _run_cli(str(missing), "--strict")
-    assert result.returncode == 1
+    result = _run_cli(str(missing))
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
-    assert "artifact not found" in result.stderr
+    assert "Errno" not in result.stderr
+    assert f"artifact not found: {missing}" in result.stderr
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    # A dangling symlink raises FileNotFoundError like a missing path; it must be named as a
+    # broken link (its target is gone, the link itself exists), not reported as "not found".
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 2
+    assert result.stderr == f"artifact is a broken symlink (target does not exist): {link}\n"
 
 
 def test_cli_directory_path_reports_clean_error(tmp_path):
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
+    assert "Errno" not in result.stderr
     assert "directory" in result.stderr
+
+
+def test_cli_load_error_exit_is_distinct_from_the_strict_gate_exit(tmp_path):
+    # Load errors exit 2 while a failed --strict gate exits 1, so CI can tell them apart.
+    missing = tmp_path / "gone.json"
+    result = _run_cli(str(missing), "--strict")
+    assert result.returncode == 2
+    assert result.stdout == ""
 
 
 def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
@@ -516,7 +537,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         tally_integrity_cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
@@ -528,16 +549,124 @@ def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         tally_integrity_cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_artifact_symlink_loop_is_named_not_leaked(monkeypatch, tmp_path, capsys):
+    # A symlink loop raises OSError(ELOOP), which no specific arm catches; it must be named
+    # as a loop, not leaked as a raw errno string.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_load_artifact_not_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    # A path that routes through a regular file raises NotADirectoryError; it must be named
+    # distinctly instead of falling through as a raw errno string.
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(20, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
+
+
+def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "Traceback" not in err
+
+
+def test_cli_reports_a_clean_error_for_an_oversized_int_literal(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an integer literal beyond
+    # the int-string-conversion limit; it must land in the same clean invalid-JSON arm.
+    huge = tmp_path / "huge.json"
+    huge.write_text('{"composite_mean": ' + "9" * 5000 + "}", encoding="utf-8")
+    result = _run_cli(str(huge))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "not valid JSON" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_utf8_artifact(tmp_path):
+    # Non-UTF-8 bytes raise UnicodeDecodeError (a ValueError subclass) mid-read; it must land
+    # in the clean invalid-JSON arm, not escape as a traceback.
+    path = tmp_path / "latin1.json"
+    path.write_bytes(b'\xff\xfe{"a": 1}')
+    result = _run_cli(str(path))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "not valid JSON" in result.stderr
+
+
+def test_load_artifact_generic_os_error_prints_the_path_exactly_once(monkeypatch, tmp_path, capsys):
+    # An OSError carrying the filename would print the path twice via str(exc); the fallback
+    # uses strerror so the path appears exactly once, in the message's own prefix.
+    path = str(tmp_path / "run.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err == f"cannot read artifact ({path}): Input/output error\n"
+    assert err.count(path) == 1
+
+
+def test_islink_probe_is_not_reachable_before_open_or_on_a_symlink_loop(monkeypatch, tmp_path, capsys):
+    # The broken-symlink probe must run only after open() fails with FileNotFoundError: never
+    # on a successful open (no pre-open TOCTOU probe) and never on the ELOOP path.
+    calls = []
+    real_islink = os.path.islink
+    monkeypatch.setattr(os.path, "islink", lambda p: (calls.append(p), real_islink(p))[1])
+
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    assert tally_integrity_cli.load_artifact(str(good)) == {"ok": True}
+    assert calls == []
+
+    loop_path = str(tmp_path / "loop.json")
+
+    def _eloop(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", loop_path)
+
+    monkeypatch.setattr("builtins.open", _eloop)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(loop_path)
+    assert excinfo.value.code == 2
+    assert calls == []
+    assert capsys.readouterr().err.endswith(f"artifact path is a symlink loop: {loop_path}\n")
 
 
 def test_cli_reports_clean_error_for_non_object_artifact(tmp_path):
     path = tmp_path / "array.json"
     path.write_text(json.dumps([1, 2]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "must be a JSON object" in result.stderr
 
 
@@ -545,6 +674,6 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "broken.json"
     path.write_text("{not json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "artifact is not valid JSON" in result.stderr
