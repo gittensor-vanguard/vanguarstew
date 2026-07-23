@@ -348,6 +348,28 @@ def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_falls_back_to_git_on_oversized_int_literal(caplog):
+    # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal beyond
+    # CPython's int-string-conversion limit (#1494). Valid JSON, unusable payload: the loader
+    # must degrade to the git rebuild like every other unreadable-context arm, not crash
+    # solve() -- previously this ValueError escaped the (JSONDecodeError, ...) catch.
+    import logging
+    repo = _repo_with_commit()
+    try:
+        with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+            f.write('{"open_issues": [], "count": ' + "9" * 4400 + "}")
+        with caplog.at_level(logging.WARNING, logger="agent.context"):
+            ctx = load_context(repo)  # no exception
+        assert ctx["_source"] == "git"
+        assert ctx["frozen_at"]["commit"]
+        assert any(
+            "unreadable" in r.message and "ValueError" in r.message for r in caplog.records
+        )
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 @pytest.mark.skipif(
     not hasattr(os, "geteuid") or os.geteuid() == 0,
     reason="root bypasses file permissions",
