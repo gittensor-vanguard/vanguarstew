@@ -135,18 +135,35 @@ def _iter_top_level_spans(text: str):
 def _pick_best_json(candidates, prefer=dict):
     """Prefer ``prefer``-typed payloads (objects by default), then the longest serialization.
 
-    When two candidates have equal rank (same type, same serialized length),
+    When two candidates have equal rank (same tier, same serialized length),
     the *last* one wins — in an LLM response a schema example or chain-of-thought
     aside typically appears before the real answer, so the later candidate is the
     more reliable signal.  ``max`` returns the first equal-rank element, so we
     reverse the list to pick the last.
+
+    ``prefer=list`` does NOT rank every array above every object: a list-contract
+    prompt in this codebase asks for a list of *objects* (plan items), so only a
+    non-empty list of dicts outranks a dict. A scalar or mixed list — a ``[1]``
+    citation aside, a stray bracket span in prose — still loses to a
+    ``{"plan": [...]}`` wrapper object. Ranking any list above any dict would
+    just mirror the original bug: the aside would silently replace the real
+    wrapper-dict answer, collapsing the scored plan the other way around.
     """
     if not candidates:
         return None
 
     def _rank(value):
         serialized = json.dumps(value, separators=(",", ":"))
-        return (isinstance(value, prefer), len(serialized))
+        if prefer is list:
+            if isinstance(value, list) and value and all(isinstance(i, dict) for i in value):
+                tier = 2      # the contract shape: a list of plan-item objects
+            elif isinstance(value, dict):
+                tier = 1      # possibly a {"plan": [...]} wrapper — caller unwraps
+            else:
+                tier = 0      # scalar/mixed list: an aside, never the answer
+        else:
+            tier = int(isinstance(value, prefer))
+        return (tier, len(serialized))
 
     return max(reversed(candidates), key=_rank)
 
@@ -165,9 +182,11 @@ def extract_json(text: str, prefer=dict):
     not be mistaken for the answer. Callers whose prompt asks for a list pass
     ``prefer=list`` — otherwise the same guard backfires: an echoed example
     object anywhere in the prose would beat the real array and silently discard
-    the entire answer. The non-preferred type is still returned when no
-    preferred-type candidate exists (e.g. a ``{"plan": [...]}`` wrapper reply
-    to a list-contract prompt).
+    the entire answer. ``prefer=list`` elevates only lists of objects (the
+    actual contract shape); scalar/mixed lists still rank below dicts, so a
+    ``[1]`` aside cannot displace a ``{"plan": [...]}`` wrapper — which is
+    still returned when no object-list candidate exists (the planner unwraps
+    it).
     """
     if text is None:
         raise ValueError("empty LLM response")

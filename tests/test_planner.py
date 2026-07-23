@@ -1377,3 +1377,25 @@ def test_plan_next_actions_recovers_plan_array_next_to_echoed_example_object(mon
         "Refactor plugin loader",
         "Document the router config",
     ]
+
+
+def test_plan_next_actions_survives_citation_aside_before_wrapper_plan(monkeypatch):
+    # Live-regression guard for the prefer=list extraction: a scalar bracket aside
+    # ahead of a {"plan": [...]} wrapper must still yield the wrapped plan, not let
+    # the aside win extraction and collapse the plan to [].
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+    assert llm.offline is False
+    llm.chat = lambda system, user: (
+        "[1] Given the repo state, here is my plan:\n"
+        '{"plan": [{"title": "Fix parser crash", "kind": "bugfix", "files": ["parser.py"],'
+        ' "rationale": "r", "theme": "stability"},\n'
+        ' {"title": "Document the config surface", "kind": "docs", "files": ["docs/config.md"],'
+        ' "rationale": "r", "theme": "docs"}]}'
+    )
+
+    plan = plan_next_actions({"open_prs": []}, {}, 2, llm)
+    assert [p["title"] for p in plan] == [
+        "Fix parser crash",
+        "Document the config surface",
+    ]

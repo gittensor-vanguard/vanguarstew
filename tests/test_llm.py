@@ -248,11 +248,11 @@ def test_extract_json_prefer_list_in_fenced_blocks():
     assert [i["title"] for i in picked] == ["real1", "real2"]
 
 
-def test_pick_best_json_prefer_list_ranks_array_first():
+def test_pick_best_json_prefer_list_ranks_object_list_first():
     from agent.llm import _pick_best_json
 
-    best = _pick_best_json([{"a": 1}, [1, 2, 3]], prefer=list)
-    assert best == [1, 2, 3]
+    best = _pick_best_json([{"a": 1}, [{"title": "t", "kind": "docs"}]], prefer=list)
+    assert best == [{"title": "t", "kind": "docs"}]
 
 
 def test_chat_json_threads_prefer_through_to_extraction(monkeypatch):
@@ -261,3 +261,39 @@ def test_chat_json_threads_prefer_through_to_extraction(monkeypatch):
     picked = llm.chat_json("s", "u", stub=[], prefer=list)
     assert isinstance(picked, list)
     assert len(picked) == 3
+
+
+def test_extract_json_prefer_list_citation_aside_does_not_displace_wrapper_object():
+    # Live-regression guard: prefer=list must not mirror the original bug. A scalar
+    # bracket aside ahead of a {"plan": [...]} wrapper object must yield the wrapper
+    # (the planner unwraps it) — ranking any list above any dict here collapsed the
+    # scored plan to [] whenever the live model wrote a citation-style aside.
+    from agent.llm import extract_json
+
+    text = (
+        "[1] Given the repo state, here is my plan:\n"
+        '{"plan": [{"title": "Fix parser crash", "kind": "bugfix"},'
+        ' {"title": "Docs pass", "kind": "docs"}]}'
+    )
+    assert extract_json(text, prefer=list) == {
+        "plan": [{"title": "Fix parser crash", "kind": "bugfix"},
+                 {"title": "Docs pass", "kind": "docs"}],
+    }
+
+
+def test_extract_json_prefer_list_scalar_list_never_beats_object_list():
+    from agent.llm import extract_json
+
+    text = '[1, 2, 3] and the actual items: [{"title": "a", "kind": "docs"}]'
+    assert extract_json(text, prefer=list) == [{"title": "a", "kind": "docs"}]
+
+
+def test_pick_best_json_prefer_list_tiers_object_list_dict_then_scalar_list():
+    from agent.llm import _pick_best_json
+
+    object_list = [{"title": "a", "kind": "docs"}]
+    wrapper = {"plan": [{"title": "b", "kind": "test"}]}
+    aside = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert _pick_best_json([aside, wrapper], prefer=list) == wrapper
+    assert _pick_best_json([wrapper, object_list], prefer=list) == object_list
+    assert _pick_best_json([aside, wrapper, object_list], prefer=list) == object_list
