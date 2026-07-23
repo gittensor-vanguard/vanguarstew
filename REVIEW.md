@@ -92,6 +92,17 @@ A regression on either the judge or the objective component (past the noise floo
 other (sounding better to the judge while the objective anchor quietly drops) counts as a
 regression. The author must revise until it clears, or the PR is closed.
 
+The floor also **fails closed on a corrupt axis**. A component mean that is *reported* but
+non-finite (`NaN`/`±Inf`, or an integer too large to convert) can't be shown to have held,
+so it blocks exactly like a measured regression: `band: "blocked"`, no `perf:*` label. The
+report names the offending components in a `corrupt_axes` field (e.g.
+`["judge_mean"]`) and says so in its `reason`. Without this, a candidate carrying a
+non-finite `judge_mean` could rise on the other axis and still mint a `perf:xl` — the
+Goodhart trade-off the floor exists to catch. A component the run never reported at all is
+*unavailable*, not corrupt: it stays excluded from the floor, and so do the placeholder
+`0.0` parts of a run that scored nothing (`scored_repos: 0`), which remains mergeable with
+no band rather than blocked.
+
 Before a band is finalized, the maintainer bot runs an **anti-cheating pass** over the
 diff — looking for benchmark-detection branching, hardcoded outputs that match a known
 repo/task, disabled assertions, or anything that would make the measured delta not
