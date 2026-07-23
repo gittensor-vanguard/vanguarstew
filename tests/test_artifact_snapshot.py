@@ -1,5 +1,6 @@
 """Tests for replay artifact snapshot extraction and its CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import sys
@@ -319,3 +320,41 @@ def test_cli_generic_os_error_exits_two(capsys):
         assert cli.run(["flaky.json"]) == 2
     err = capsys.readouterr().err
     assert "cannot read artifact" in err and "I/O error" in err
+
+
+def test_cli_broken_symlink_reports_the_dangling_target(tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError just like a missing path, so it used to report
+    # "not found" -- misdiagnosing it, since the link exists and only its target is gone. islink()
+    # separates the two.
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_cli_symlink_loop_exits_two_instead_of_crashing(monkeypatch, tmp_path, capsys):
+    # A symlink loop raises OSError(ELOOP), which none of the named subclass arms catch -- it
+    # used to escape load_artifact as a raw traceback instead of a clean exit 2.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_cli_not_a_directory_path_exits_two(tmp_path, capsys):
+    # A path component that is a regular file (not a directory) raises NotADirectoryError.
+    not_a_dir = tmp_path / "not_a_dir_file"
+    not_a_dir.write_text("{}", encoding="utf-8")
+    bad_path = not_a_dir / "child.json"
+    assert cli.run([str(bad_path)]) == 2
+    assert "not a directory" in capsys.readouterr().err
