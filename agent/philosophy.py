@@ -105,6 +105,52 @@ def _normalize_philosophy(out: dict, stub: dict) -> dict:
     }
 
 
+def philosophy_for_prompt(philosophy, cap: int) -> str:
+    """Serialize ``philosophy`` for a downstream prompt, valid JSON within ``cap`` chars.
+
+    The planner and both decider sites that embed the philosophy used to hard-slice the
+    serialization (``json.dumps(...)[:cap]``), which cuts mid-string whenever the philosophy
+    outgrows the cap — the model then reads an unterminated JSON fragment with the tail
+    destroyed. Real inferred philosophies exceed these caps: ``evidence`` is an unbounded
+    list and is serialized last, so it is precisely the field the slice corrupts.
+
+    Bounding is field-aware instead:
+
+    - Under the cap, the serialization is returned **byte-identical** to the old rendering,
+      so every prompt that fit before is unchanged.
+    - Over the cap, whole trailing ``evidence`` entries are dropped (largest count that
+      fits, found by bisection — the serialized length grows monotonically with the count)
+      so the result stays valid JSON and ``summary``/``values``/``merge_bar``/``direction``
+      survive intact. The remaining entries are real, untouched signals; no marker text is
+      injected into ``evidence`` — fabricating a synthetic entry inside an *evidence* field
+      would be worse than a shorter list of genuine ones.
+    - When even ``evidence: []`` cannot fit (an oversized non-evidence field, or a caller
+      passing a shape without an evidence list), the pre-existing hard slice is the last
+      resort — those shapes render exactly as they always did, never worse.
+
+    ``cap`` is each call site's existing budget; this function never changes the budgets.
+    """
+    text = json.dumps(philosophy, indent=1)
+    if len(text) <= cap:
+        return text
+    if isinstance(philosophy, dict) and isinstance(philosophy.get("evidence"), list):
+        evidence = philosophy["evidence"]
+
+        def _rendered(count: int) -> str:
+            return json.dumps({**philosophy, "evidence": evidence[:count]}, indent=1)
+
+        if len(_rendered(0)) <= cap:
+            lo, hi = 0, len(evidence) - 1  # full list is known not to fit
+            while lo < hi:  # largest count whose rendering fits
+                mid = (lo + hi + 1) // 2
+                if len(_rendered(mid)) <= cap:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            return _rendered(lo)
+    return text[:cap]
+
+
 def infer_philosophy(context: dict, llm) -> dict:
     if not isinstance(context, dict):
         return dict(_OFFLINE_STUB)

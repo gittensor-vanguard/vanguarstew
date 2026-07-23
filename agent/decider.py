@@ -19,6 +19,7 @@ import json
 import logging
 
 from agent.context import context_for_agent
+from agent.philosophy import philosophy_for_prompt
 from agent.planner import _release_cadence_signal, _release_timing_state
 from benchmark.score import base_from_releases
 
@@ -186,7 +187,7 @@ def _run_lens(name: str, context: dict, philosophy: dict, request: str, llm) -> 
     system = _LENS_SYSTEMS[name]
     if name == "direction":
         user = (
-            f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:3000]}\n\n"
+            f"Repository philosophy:\n{philosophy_for_prompt(philosophy, 3000)}\n\n"
             f"Decision request: {request}\n\n"
             'Return JSON: {"verdict": "one short sentence", "reasoning": "why"}'
         )
@@ -210,7 +211,7 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
         for name, verdict in lenses.items()
     )
     user = (
-        f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:3000]}\n\n"
+        f"Repository philosophy:\n{philosophy_for_prompt(philosophy, 3000)}\n\n"
         f"Repository state:\n{_render(context)}\n"
         f"{_release_context_note(context)}"
         f"{_planning_version_bump_note(context, request)}"
