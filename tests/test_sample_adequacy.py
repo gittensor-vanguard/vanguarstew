@@ -360,6 +360,59 @@ def test_check_rows_list_warns_for_skipped_rows(caplog):
     assert not any("no usable rows" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_skips_a_dict_row_missing_or_mistyped_name_or_passed(caplog):
+    # The row guard only skipped non-dict rows, so a dict row missing "name"/"passed" (or with a
+    # wrong-typed one) slipped through and made the row["name"]/row["passed"] reads raise
+    # KeyError. Such a row is now skipped with a warning, mirroring the sibling gates.
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _check_rows_list([{"passed": False}]) == []            # missing name
+        assert _check_rows_list([{"name": "run_scored"}]) == []       # missing passed
+        assert _check_rows_list([{"name": 99, "passed": False}]) == []    # non-str name
+        assert _check_rows_list([{"name": "x", "passed": "no"}]) == []    # non-bool passed
+    good = {"name": "run_scored", "passed": False}
+    assert _check_rows_list([good, {"passed": True}]) == [good]       # the valid row survives
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_a_none_name_or_none_passed(caplog):
+    # `None` is the most common malformed value in a deserialized artifact and is neither a `str`
+    # nor a `bool`, so both fields reject it by type and the row is skipped, never reaching the
+    # row["name"]/row["passed"] reads.
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _check_rows_list([{"name": None, "passed": False}]) == []
+        assert _check_rows_list([{"name": "run_scored", "passed": None}]) == []
+        assert _check_rows_list([{"name": None, "passed": None}]) == []
+    assert any("name is NoneType, not str" in r.message for r in caplog.records)
+    assert any("passed is NoneType, not bool" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_a_blank_name(caplog):
+    # A blank/whitespace-only name is a `str`, so the type check alone let it through and it would
+    # surface as an empty entry in failed_checks / the headline's ", "-joined name list. A name
+    # that carries no identity is unusable, so it is skipped like any other malformed row.
+    with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+        assert _check_rows_list([{"name": "   ", "passed": False}]) == []
+        assert _check_rows_list([{"name": "\t\n", "passed": False}]) == []
+    assert any("name is blank" in r.message for r in caplog.records)
+    # and a blank-named failing row never reaches the reported output
+    assert failed_checks({"checks": [{"name": "", "passed": False}]}) == []
+    assert sample_adequacy_headline(
+        {"passed": False, "tasks": 3, "checks": [{"name": "", "passed": False}]}
+    ) == "sample adequacy: no checks evaluated"
+
+
+def test_failed_checks_and_headline_survive_a_check_row_missing_name():
+    # End to end: the reporting helpers no longer raise KeyError on a malformed row, and the
+    # malformed row is excluded from both the numerator and denominator of the headline count.
+    result = {"passed": False, "tasks": 3,
+              "checks": [{"name": "run_scored", "passed": False}, {"passed": False}]}
+    assert failed_checks(result) == ["run_scored"]
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    line = sample_adequacy_headline(result)
+    assert line == "sample adequacy: INADEQUATE (1/1 checks failed: run_scored)"
+
+
 def test_check_rows_list_warns_when_every_entry_is_unusable(caplog):
     junk = [42, "bad", None]
     with caplog.at_level(logging.WARNING, logger="benchmark.sample_adequacy"):
