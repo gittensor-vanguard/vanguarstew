@@ -757,23 +757,27 @@ def _mean_or_none(values):
 
 
 def foresight_breakdown(objectives) -> dict:
-    """Aggregate per-task `objective_score()` results into the three legible foresight rates
-    M7 asks for: did the agent predict the *modules*, the *commit-kinds*, and the *releases*
-    the maintainers actually produced — reported separately instead of only as the single
-    blended `objective_component` scalar.
+    """Aggregate per-task `objective_score()` results into the four legible foresight rates
+    M7 asks for: did the agent predict the *modules*, the *commit-kinds*, the *releases*, and
+    (when a release actually happened) the *version-bump level* the maintainers actually
+    produced — reported separately instead of only as the single blended `objective_component`
+    scalar.
 
-    Applicability mirrors `objective_component` exactly, so the three rates are a strict
+    Applicability mirrors `objective_component` exactly, so the four rates are a strict
     un-blending of the same anchor rather than a different metric: module recall counts every
     task (using the file-weighted recall when present, like `objective_component`); kind recall
     counts only tasks whose revealed window carried a recognizable maintainer kind; release
-    accuracy counts only tasks that actually had a release to get right. Each rate carries its
-    own `_n` (how many tasks it was averaged over) so a run with few/no releases states its own
-    coverage instead of implying a full-run figure. A non-list input, or a non-dict entry within
-    it, is skipped rather than raising — malformed rows degrade the sample size, not a crash.
+    accuracy counts only tasks that actually had a release to get right; bump accuracy counts
+    only tasks whose release carried a bump level to get right (`bump_actual` is not None) —
+    the same fourth term `objective_component` adds to its average in that case. Each rate
+    carries its own `_n` (how many tasks it was averaged over) so a run with few/no releases
+    states its own coverage instead of implying a full-run figure. A non-list input, or a
+    non-dict entry within it, is skipped rather than raising — malformed rows degrade the
+    sample size, not a crash.
 
     Returns `None` for a rate with no applicable tasks (`_n == 0`), never a fabricated 0.0.
     """
-    module_vals, kind_vals, release_vals = [], [], []
+    module_vals, kind_vals, release_vals, bump_vals = [], [], [], []
     for obj in objectives if isinstance(objectives, list) else []:
         if not isinstance(obj, dict):
             continue
@@ -784,6 +788,8 @@ def foresight_breakdown(objectives) -> dict:
                 kind_vals.append(float(kind))
         if obj.get("release_signaled"):
             release_vals.append(1.0 if obj.get("release_predicted") else 0.0)
+        if obj.get("bump_actual") is not None:
+            bump_vals.append(1.0 if obj.get("bump_match") else 0.0)
     return {
         "module_recall_mean": _mean_or_none(module_vals),
         "module_recall_n": len(module_vals),
@@ -791,6 +797,8 @@ def foresight_breakdown(objectives) -> dict:
         "kind_recall_n": len(kind_vals),
         "release_accuracy": _mean_or_none(release_vals),
         "release_accuracy_n": len(release_vals),
+        "bump_accuracy": _mean_or_none(bump_vals),
+        "bump_accuracy_n": len(bump_vals),
     }
 
 
@@ -798,6 +806,7 @@ _FORESIGHT_AXES = (
     ("module_recall_mean", "module_recall_n"),
     ("kind_recall_mean", "kind_recall_n"),
     ("release_accuracy", "release_accuracy_n"),
+    ("bump_accuracy", "bump_accuracy_n"),
 )
 
 
