@@ -1,6 +1,7 @@
 """Tests for the M3/M4 generalization acceptance gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
@@ -456,3 +457,31 @@ def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
     assert "not readable" in err and "Traceback" not in err
+
+
+def test_cli_broken_symlink_reports_the_dangling_target(tmp_path):
+    # A dangling symlink raises FileNotFoundError just like a missing path, so it used to report
+    # "not found" -- misdiagnosing it, since the link exists and only its target is gone.
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr == f"artifact is a broken symlink (target does not exist): {link}\n"
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    # A symlink loop raises OSError(ELOOP), which none of the named arms catch -- it used to
+    # escape load_artifact as a raw errno-string traceback instead of a clean exit.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        acceptance_cli.load_artifact(path)
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err == f"artifact path is a symlink loop: {path}\n"
