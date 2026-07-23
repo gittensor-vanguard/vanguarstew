@@ -126,7 +126,9 @@ def test_generalization_shaped_artifacts_use_the_minimum_partition_delta():
     }
     report = score_pr_delta(baseline, candidate)
     assert report["band"] == "s"  # gated by the WORSE (held_out) partition, not the better one
-    assert report["pareto_axes"] == {}  # no judge/objective split at this shape
+    # Neither partition reported composite_parts here, so there's no per-axis data to split on
+    # (same "unavailable" shape the non-generalization path reports for the same reason).
+    assert report["pareto_axes"] == {"judge_mean": None, "objective_mean": None}
 
 
 def test_generalization_shaped_artifact_catches_a_held_out_regression():
@@ -145,6 +147,51 @@ def test_generalization_shaped_artifact_catches_a_held_out_regression():
     report = score_pr_delta(baseline, candidate)
     assert report["band"] == "blocked"
     assert report["blocks_merge"] is True
+
+
+def _gen_part(judge_mean, objective_mean, scored_repos=3):
+    return {
+        "scored_repos": scored_repos,
+        "composite_mean": round((judge_mean + objective_mean) / 2, 3),
+        "composite_parts": {"judge_mean": judge_mean, "objective_mean": objective_mean},
+    }
+
+
+def test_generalization_pareto_floor_catches_an_axis_regression_behind_a_net_gain():
+    """#1821: a generalization artifact that games judge_mean up while objective_mean craters
+    must be blocked, even though the net composite_mean move is positive in both partitions —
+    exactly the case the Pareto floor exists to catch, and previously slipped through because
+    the generalization diff never carried composite_parts at all."""
+    baseline = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.55, 0.60), "held_out": _gen_part(0.55, 0.60),
+    }
+    candidate = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(1.0, 0.20), "held_out": _gen_part(1.0, 0.20),
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["composite_deltas"]["tuned"] > 0  # net composite move looks like an improvement
+    assert report["pareto_axes"]["objective_mean"]["delta"] == -0.4
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+
+
+def test_generalization_pareto_axes_report_the_worse_partition_per_axis():
+    """The reported axis triplet is the worse of the two partitions, mirroring how the
+    composite banding already uses the worse partition's delta."""
+    baseline = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.60, 0.60), "held_out": _gen_part(0.60, 0.60),
+    }
+    candidate = {
+        "repo_set": "curated", "generalization_gap": 0.0,
+        "tuned": _gen_part(0.60, 0.55),       # objective_mean -0.05 (mild)
+        "held_out": _gen_part(0.60, 0.30),    # objective_mean -0.30 (severe) -- must win
+    }
+    report = score_pr_delta(baseline, candidate)
+    assert report["pareto_axes"]["objective_mean"]["delta"] == -0.3
+    assert report["band"] == "blocked"
 
 
 def test_missing_composite_parts_excludes_pareto_axis_rather_than_failing_open_or_closed():

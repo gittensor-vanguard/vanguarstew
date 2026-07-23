@@ -27,12 +27,44 @@ def _numeric(value) -> float | None:
     return None
 
 
+def _per_repo_unavailable(artifact: dict) -> bool:
+    """The per-repo / single-repo placeholder signal: ``tasks`` present and not a positive count.
+
+    A *skipped* repo is recorded as ``tasks: 0`` with a ``_mean([])`` placeholder
+    ``composite_mean`` of ``0.0``; a missing-target / non-numeric / ``<= 0`` count likewise can't
+    attest a real score. Mirrors the ``tasks > 0`` gate already used by
+    ``weight_integrity._scored_repo``, ``aggregate_integrity``, and ``repo_task_mean``.
+
+    A row with *no* ``tasks`` key is not a per-repo placeholder (it is some other shape) and is
+    left to the caller — this helper only speaks to the task-count signal.
+    """
+    if "tasks" not in artifact:
+        return False
+    tasks = _numeric(artifact.get("tasks"))
+    return tasks is None or tasks <= 0
+
+
 def _is_scored_unavailable(artifact: dict) -> bool:
-    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder."""
+    """True when the artifact's ``composite_mean`` is a placeholder rather than a real score.
+
+    The two placeholder signals key off *disjoint* fields, so the two artifact shapes are never
+    conflated:
+
+    * an aggregate / partition is governed **solely** by ``scored_repos`` (#557) — present and
+      zero means nothing was scored, so the reported ``composite_mean`` is ``_mean([])`` == ``0.0``.
+      When ``scored_repos`` is a real number it decides the result outright, so a genuine aggregate
+      (``scored_repos > 0``) is never masked by a stray ``tasks`` field;
+    * a per-repo / single-repo result — which never carries ``scored_repos`` (#1846) — is governed
+      **solely** by its ``tasks`` count (see :func:`_per_repo_unavailable`). Without this gate a
+      skipped repo's placeholder ``0.0`` is compared as a real score and fabricates a per-repo
+      delta.
+    """
     if not isinstance(artifact, dict):
         return False
     scored = artifact.get("scored_repos")
-    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
+    if isinstance(scored, (int, float)) and not isinstance(scored, bool):
+        return not scored
+    return _per_repo_unavailable(artifact)
 
 
 def _effective_composite_mean(artifact: dict):
@@ -161,13 +193,18 @@ def _is_generalization(artifact: dict) -> bool:
 
 
 def _generalization_diff(baseline: dict, candidate: dict) -> dict:
-    """Diff the composite means of each partition plus the generalization gap.
+    """Diff the composite means and components of each partition plus the generalization gap.
 
     Every value is read through ``_metric_triplet``/``_delta``, which coerce a missing,
     ``None``, or non-numeric field to a ``None`` delta rather than crashing — so a partition
     that only recorded an ``error`` (``scored_repos == 0``) diffs to ``None`` cleanly, and a
-    placeholder ``composite_mean`` of ``0.0`` on an unscored partition is treated as
-    unavailable (mirroring ``benchmark/trend.py`` and ``benchmark/report.py``).
+    placeholder ``composite_mean``/``composite_parts`` of ``0.0`` on an unscored partition is
+    treated as unavailable (mirroring ``benchmark/trend.py`` and ``benchmark/report.py``).
+
+    Each partition's ``judge_mean``/``objective_mean`` (when either side reports one) is
+    included as ``composite_parts``, mirroring the standard (non-generalization) diff shape —
+    ``score_pr_delta``'s Pareto floor needs this per-partition, per-axis data to catch an
+    axis regression a net-positive partition composite would otherwise hide (#1821).
     """
     out = {}
     for partition in ("tuned", "held_out"):
@@ -175,7 +212,16 @@ def _generalization_diff(baseline: dict, candidate: dict) -> dict:
         cand_part = candidate.get(partition)
         base_part = base_part if isinstance(base_part, dict) else {}
         cand_part = cand_part if isinstance(cand_part, dict) else {}
-        out[partition] = {"composite_mean": _metric_triplet(base_part, cand_part, "composite_mean")}
+        entry = {"composite_mean": _metric_triplet(base_part, cand_part, "composite_mean")}
+        base_parts = _effective_composite_parts(base_part)
+        cand_parts = _effective_composite_parts(cand_part)
+        parts = {}
+        for key in ("judge_mean", "objective_mean"):
+            if key in base_parts or key in cand_parts:
+                parts[key] = _metric_triplet(base_parts, cand_parts, key)
+        if parts:
+            entry["composite_parts"] = parts
+        out[partition] = entry
     out["generalization_gap"] = _metric_triplet(baseline, candidate, "generalization_gap")
     return out
 
