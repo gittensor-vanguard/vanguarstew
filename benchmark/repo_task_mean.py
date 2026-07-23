@@ -11,6 +11,7 @@ skipped rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.comparability import artifact_kind
 
@@ -37,6 +38,22 @@ def _is_task_count(value) -> bool:
     except OverflowError:
         return False
     return True
+
+
+def _is_number(value) -> bool:
+    """True only for a finite, non-boolean int/float.
+
+    ``mean_tasks_per_repo`` is a float, so ``_is_task_count`` (int-only) can't guard it. A non-finite
+    mean (``NaN``/``Infinity`` round-trips through json) renders as ``mean nan``/``mean inf`` and an
+    oversized int crashes ``f"{mean:.3f}"`` with ``OverflowError``. Mirrors the canonical guard in
+    ``benchmark/trend.py`` / ``benchmark/gap_integrity``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _safe_mean(total: int, scored: int):
@@ -139,6 +156,6 @@ def repo_task_mean_headline(summary: dict) -> str:
     summary = _dict(summary)
     kind = summary.get("kind") or "unknown"
     mean = summary.get("mean_tasks_per_repo")
-    mean_txt = f"{mean:.3f}" if isinstance(mean, (int, float)) and not isinstance(mean, bool) else "n/a"
+    mean_txt = f"{mean:.3f}" if _is_number(mean) else "n/a"
     scored = summary.get("scored_repos")
     return f"repo task mean: {kind} {scored} scored repo(s), mean {mean_txt} tasks/repo"

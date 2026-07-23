@@ -70,6 +70,19 @@ def test_headline():
     assert "mean 3.000" in repo_task_mean_headline(out)
 
 
+def test_headline_tolerates_a_non_finite_or_oversized_mean():
+    # A hand-built/deserialized summary can carry a mean_tasks_per_repo that json round-trips
+    # (NaN/Infinity) or an oversized int; `f"{mean:.3f}"` renders `mean nan`/`mean inf` or raises
+    # OverflowError. A non-finite/oversized mean is not a real value, so the headline shows
+    # `mean n/a` instead of crashing; a finite mean is still formatted (behavior unchanged).
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        line = repo_task_mean_headline(
+            {"kind": "multi", "scored_repos": 3, "mean_tasks_per_repo": bad})
+        assert "mean n/a tasks/repo" in line, bad
+    assert "mean 4.000" in repo_task_mean_headline(
+        {"kind": "multi", "scored_repos": 3, "mean_tasks_per_repo": 4.0})
+
+
 def test_single_repo_oversized_task_count_is_skipped():
     # json.load yields a Python int for an oversized literal; it must be treated as malformed
     # (skipped) rather than crashing float(tasks) with OverflowError.
