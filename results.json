@@ -574,5 +574,61 @@
       }
     },
     "merged": false
+  },
+  {
+    "timestamp": "2026-07-23T10:10:03.595912+00:00",
+    "pr_number": 1966,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.021,
+      "per_repo": [
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.187
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.114
+        },
+        {
+          "repo": "https://github.com/hgrecco/pint",
+          "composite_delta": 0.01
+        }
+      ],
+      "foresight": {
+        "module_recall_mean": 0.745,
+        "kind_recall_mean": 1.0,
+        "release_accuracy": 1.0,
+        "module_recall_n": 6,
+        "kind_recall_n": 2,
+        "release_accuracy_n": 2
+      }
+    },
+    "private": {
+      "composite_delta": -0.017,
+      "foresight": {
+        "module_recall_mean": 0.734,
+        "kind_recall_mean": 1.0,
+        "release_accuracy": 1.0,
+        "module_recall_n": 6,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "since_anchor": {
+      "anchor": "v0.7.0",
+      "public": {
+        "composite_delta": 0.151,
+        "composite_score": 0.826,
+        "anchor_score": 0.675
+      },
+      "private": {
+        "composite_delta": 0.274,
+        "composite_score": 0.875,
+        "anchor_score": 0.601
+      }
+    },
+    "merged": false
   }
 ]
