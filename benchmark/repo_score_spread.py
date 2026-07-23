@@ -45,13 +45,30 @@ def _is_number(value) -> bool:
         return False
 
 
+def _is_unscored_slice(slice_) -> bool:
+    """True when the slice explicitly scored zero repos, so its top-level ``composite_mean`` is a
+    ``_mean([])`` placeholder (``0.0``) rather than a real single-repo leaf score.
+
+    A generalization partition that fails is recorded as
+    ``{"error": ..., "scored_repos": 0, "composite_mean": 0.0}`` — an aggregate with no ``per_repo``
+    list (see :func:`benchmark.runner.run_generalization_report`). Without this guard the fallback
+    below would count that infrastructure failure as one phantom repo scoring ``0.0``, inflating the
+    partition (and overall) spread out of a run that scored nothing. A genuine single-repo leaf
+    carries no ``scored_repos`` key, so it is unaffected. Mirrors the placeholder masking in
+    ``scripts.compare_eval._is_scored_unavailable``.
+    """
+    scored = slice_.get("scored_repos")
+    return _is_int(scored) and scored == 0
+
+
 def _repo_scores(slice_) -> list[float]:
     """The per-repo ``composite_mean`` values of one slice, each rounded to 3 dp.
 
     A multi-repo slice contributes one score per scored ``per_repo`` entry that carries a numeric
     ``composite_mean``; a single-repo slice contributes its own top-level ``composite_mean``. Empty
     ``per_repo``, non-dict entries, and entries missing/with a non-numeric ``composite_mean`` are
-    skipped.
+    skipped, and an unscored aggregate (a failed partition, ``scored_repos == 0``) contributes no
+    score rather than a phantom ``0.0``.
     """
     slice_ = _dict(slice_)
     per_repo = slice_.get("per_repo")
@@ -61,6 +78,8 @@ def _repo_scores(slice_) -> list[float]:
             if isinstance(entry, dict) and _is_number(entry.get("composite_mean")):
                 scores.append(round(float(entry["composite_mean"]), 3))
         return scores
+    if _is_unscored_slice(slice_):
+        return []
     top = slice_.get("composite_mean")
     return [round(float(top), 3)] if _is_number(top) else []
 
