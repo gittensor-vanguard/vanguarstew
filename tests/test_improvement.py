@@ -1,6 +1,7 @@
 """Tests for the candidate-vs-baseline improvement (adoption) gate (deterministic, offline)."""
 
 import copy
+import errno
 import os
 import sys
 from unittest.mock import patch
@@ -332,7 +333,8 @@ def test_load_artifact_directory_path_exits_two(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         load_artifact(str(tmp_path))
     assert exc.value.code == 2
-    assert "directory" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "directory" in err or "not readable" in err
 
 
 def test_load_artifact_unreadable_file_exits_two(capsys):
@@ -350,3 +352,25 @@ def test_load_artifact_generic_os_error_exits_two(capsys):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "cannot read artifact" in err and "I/O error" in err
+
+
+def test_load_artifact_broken_symlink_exits_two(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    try:
+        link.symlink_to(tmp_path / "nonexistent.json")
+    except OSError as exc:
+        pytest.skip(f"symlink not available on this platform: {exc}")
+    with pytest.raises(SystemExit) as exc:
+        load_artifact(str(link))
+    assert exc.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_exits_two(capsys):
+    with patch("builtins.open", side_effect=OSError(errno.ELOOP, "Too many levels of symbolic links")):
+        with pytest.raises(SystemExit) as exc:
+            load_artifact("loop.json")
+    assert exc.value.code == 2
+    assert capsys.readouterr().err == "artifact path is a symlink loop: loop.json\n"

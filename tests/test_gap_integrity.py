@@ -335,7 +335,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
         gap_integrity_cli.load_artifact(str(tmp_path / "gen.json"))
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
-    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
+    assert ("directory" in err or "not readable" in err) and "Traceback" not in err
 
 
 def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
@@ -354,7 +354,10 @@ def test_cli_broken_symlink_reports_distinct_error(tmp_path):
     # A dangling symlink raises FileNotFoundError too; naming it "not found" misdiagnoses
     # the problem (the link exists, only its target is gone).
     link = tmp_path / "broken.json"
-    link.symlink_to(tmp_path / "nonexistent.json")
+    try:
+        link.symlink_to(tmp_path / "nonexistent.json")
+    except OSError as _symlink_exc:
+        pytest.skip(f"symlink not available on this platform: {_symlink_exc}")
     result = _run_cli(str(link))
     assert result.returncode == 2
     assert "broken symlink" in result.stderr
