@@ -150,16 +150,18 @@ Because the reference is public GitHub history, the benchmark actively resists l
     false` means "label history unavailable", not "this item had no labels at T". The
     agent-facing prompt view follows that contract by omitting `labels` on such items.
   - *Intentionally omitted* (not reconstructable from a cheap as-of-T source): the repo-wide
-    label catalog and milestone `due_on` are dropped from the enriched context rather than
-    copied live. Issue/PR titles are still the live values, so consumers must not treat them
-    as historically exact; timeline-based reconstruction can be extended to more fields later.
+    label catalog, milestone `due_on` and `title`, and the release display `name` are dropped
+    from the enriched context rather than copied live — milestones and releases expose no edit
+    stream to replay, so a post-T retitle would leak future direction (only the immutable
+    milestone `number` and release `tag`/`published_at` are kept).
 - **Forward-reference scrubbing** (`benchmark/leakage.py`) — even within knowable-at-T text,
   issue/PR back-references (`#N`), GitHub issue/PR/commit links, and raw SHAs are masked, so a
   commit subject or README can't cross-reference the future.
 - **As-of-T field guards** (`benchmark/github_context.py`) — mutable API fields such as
   milestone `state` are derived from timestamps (`closed_at` vs. T), not copied from the live
   response. Fields the REST API cannot time-filter (the repo label catalog, milestone
-  `due_on`) are omitted from the frozen context rather than carried as present-day snapshots.
+  `due_on`/`title`, release `name`) are omitted from the frozen context rather than carried
+  as present-day snapshots.
 - **Recent-window + rotation** freeze-point selection (`benchmark/taskgen.py`) — prefer recent
   points (past a model's training cutoff) and rotate deterministically so answers aren't reused.
 - **Judge-order telemetry** (`benchmark/judge.py`, `benchmark/runner.py`) — replay artifacts

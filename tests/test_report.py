@@ -555,7 +555,7 @@ def _run_cli(*args):
 def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     missing = tmp_path / "does-not-exist.json"
     result = _run_cli(str(missing))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert str(missing) in result.stderr
 
@@ -564,7 +564,7 @@ def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "must be a JSON object" in result.stderr
 
@@ -573,17 +573,17 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "invalid.json"
     path.write_text("{not valid json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_oversized_int_literal(tmp_path):
     # json.load raises a plain ValueError (not JSONDecodeError) for an oversized int
-    # literal (py3.11+); the CLI must exit 1 with a clean message (#1692).
+    # literal (py3.11+); the CLI must exit 2 with a clean message (#1692 / #1937).
     path = tmp_path / "huge.json"
     path.write_text('{"composite_mean": ' + "9" * 5000 + "}", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "not valid JSON" in result.stderr
     assert "UTF-8" not in result.stderr
@@ -596,7 +596,7 @@ def test_cli_reports_a_clean_error_for_non_utf8_file(tmp_path):
     path = tmp_path / "latin1.json"
     path.write_bytes(b'{"composite_mean": 0.5, "x": \xff}')
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "not valid UTF-8 JSON" in result.stderr
     assert str(path) in result.stderr
@@ -607,7 +607,7 @@ def test_cli_directory_path_reports_clean_error(tmp_path):
     # the CLI must report it cleanly, not dump a raw traceback (#612). Uses a real
     # directory rather than patching open(), so no global builtins side effects.
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "directory" in result.stderr
 
@@ -622,11 +622,14 @@ def test_cli_unreadable_file_reports_clean_error(tmp_path):
     path = tmp_path / "artifact.json"
     path.write_text("{}", encoding="utf-8")
     os.chmod(path, 0)
+    if os.access(str(path), os.R_OK):
+        os.chmod(path, 0o644)
+        pytest.skip("file is readable despite chmod 0 (running as root / Windows?)")
     try:
         result = _run_cli(str(path))
     finally:
         os.chmod(path, 0o644)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "not readable" in result.stderr
 

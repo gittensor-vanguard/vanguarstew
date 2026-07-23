@@ -61,8 +61,9 @@ def test_open_at_T_filtering(monkeypatch):
             return issues
         if "/milestones" in url:
             return [
-                {"title": "v1", "created_at": "2023-01-01T00:00:00Z", "due_on": None, "state": "open"},
-                {"title": "future", "created_at": "2023-12-01T00:00:00Z"},
+                {"number": 1, "title": "v1", "created_at": "2023-01-01T00:00:00Z",
+                 "due_on": None, "state": "open"},
+                {"number": 2, "title": "future", "created_at": "2023-12-01T00:00:00Z"},
             ]
         if "/releases" in url:
             return [
@@ -76,7 +77,7 @@ def test_open_at_T_filtering(monkeypatch):
 
     assert {i["number"] for i in ctx["open_issues"]} == {1, 4}
     assert [p["number"] for p in ctx["open_prs"]] == [5]
-    assert [m["title"] for m in ctx["milestones"]] == ["v1"]
+    assert [m["number"] for m in ctx["milestones"]] == [1]
     assert [r["tag"] for r in ctx["releases"]] == ["v0.1"]
     assert ctx["_source"] == "github-api"
 
@@ -219,14 +220,14 @@ def test_fetch_context_milestone_state_not_leaked(monkeypatch):
         if "/milestones" in url:
             return [
                 # live state is "closed", but it was closed after T -> open at T
-                {"title": "v1", "created_at": "2023-01-01T00:00:00Z",
+                {"number": 7, "title": "v1", "created_at": "2023-01-01T00:00:00Z",
                  "closed_at": "2023-08-01T00:00:00Z", "state": "closed", "due_on": None},
             ]
         return []
 
     monkeypatch.setattr(gc, "_get", fake_get)
     ctx = gc.fetch_context_at("foo", "bar", T, token=None)
-    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
+    assert ctx["milestones"] == [{"number": 7, "state": "open"}]
 
 
 def test_fetch_context_omits_unsupported_live_only_fields(monkeypatch):
@@ -237,6 +238,7 @@ def test_fetch_context_omits_unsupported_live_only_fields(monkeypatch):
             raise AssertionError("repo label catalog should be omitted, not fetched live")
         if "/milestones" in url:
             return [{
+                "number": 3,
                 "title": "v1",
                 "created_at": "2023-01-01T00:00:00Z",
                 "closed_at": None,
@@ -248,7 +250,41 @@ def test_fetch_context_omits_unsupported_live_only_fields(monkeypatch):
     monkeypatch.setattr(gc, "_get", fake_get)
     ctx = gc.fetch_context_at("foo", "bar", T, token=None)
     assert "labels" not in ctx
-    assert ctx["milestones"] == [{"title": "v1", "state": "open"}]
+    assert ctx["milestones"] == [{"number": 3, "state": "open"}]
+
+
+def test_milestone_title_is_not_copied_live():
+    # The REST snapshot carries today's editable title. A milestone retitled after T
+    # (e.g. "Next release" -> "v3.0 — async engine rewrite") would leak the future roadmap,
+    # and milestones have no timeline endpoint to replay edits from — so the title is
+    # dropped (fail-closed), like `due_on`; only the immutable `number` identifies it.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    retitled_after_T = {"number": 9, "title": "v3.0 — async engine rewrite",
+                        "created_at": "2023-01-01T00:00:00Z", "closed_at": None,
+                        "state": "open", "due_on": None}
+    rec = gc._milestone_at(retitled_after_T, T)
+    assert rec == {"number": 9, "state": "open"}
+    assert "title" not in rec
+
+
+def test_release_name_is_not_copied_live(monkeypatch):
+    # The release display name is freely editable after publication with no edit stream to
+    # reconstruct it as-of-T; a post-T retitle (e.g. "v2.0 — the async rewrite") would leak
+    # future direction, and `base_from_releases` consults `name` as a semver fallback, so a
+    # live-edited name could corrupt the frozen base version. Only the immutable
+    # `tag`/`published_at` are kept — the same shape the git-only context builds.
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+
+    def fake_get(url, token, timeout=20):
+        if "/releases" in url:
+            return [{"tag_name": "v1.0", "name": "v2.0 — the async rewrite (renamed after T)",
+                     "published_at": "2023-03-01T00:00:00Z"}]
+        return []
+
+    monkeypatch.setattr(gc, "_get", fake_get)
+    ctx = gc.fetch_context_at("foo", "bar", T, token=None)
+    assert ctx["releases"] == [{"tag": "v1.0", "published_at": "2023-03-01T00:00:00Z"}]
+    assert all("name" not in r for r in ctx["releases"])
 
 
 def test_labels_at_reconstructs_membership_as_of_T():
@@ -738,14 +774,15 @@ def test_item_open_at_missing_created_at_is_not_open():
 def test_milestone_boundary_closed_at_T_and_omits_due_on():
     T = datetime(2023, 6, 1, tzinfo=timezone.utc)
     at_T = "2023-06-01T00:00:00Z"
-    # Closed exactly at T -> already closed by T; note: no due_on in the frozen record.
+    # Closed exactly at T -> already closed by T; note: no due_on/title in the frozen record.
     closed = gc._milestone_at(
-        {"title": "m", "created_at": "2023-01-01T00:00:00Z", "closed_at": at_T,
+        {"number": 1, "title": "m", "created_at": "2023-01-01T00:00:00Z", "closed_at": at_T,
          "due_on": "2023-12-31T00:00:00Z"}, T)
-    assert closed == {"title": "m", "state": "closed"}
+    assert closed == {"number": 1, "state": "closed"}
     # Created exactly at T -> knowable (not None), open since never closed.
-    created_at_T = gc._milestone_at({"title": "m2", "created_at": at_T, "closed_at": None}, T)
-    assert created_at_T == {"title": "m2", "state": "open"}
+    created_at_T = gc._milestone_at(
+        {"number": 2, "title": "m2", "created_at": at_T, "closed_at": None}, T)
+    assert created_at_T == {"number": 2, "state": "open"}
 
 
 def test_releases_filtered_by_published_at_including_boundary_and_drafts(monkeypatch):
@@ -825,8 +862,8 @@ def test_milestones_and_releases_paginate_beyond_first_page(monkeypatch):
     T = datetime(2024, 1, 1, tzinfo=timezone.utc)
     fake = _list_pager({
         "/milestones": {
-            1: [{"title": f"m{i}", "created_at": "2023-01-01T00:00:00Z"} for i in range(100)],
-            2: [{"title": "old-open", "created_at": "2023-02-01T00:00:00Z"}],
+            1: [{"number": i, "created_at": "2023-01-01T00:00:00Z"} for i in range(100)],
+            2: [{"number": 999, "created_at": "2023-02-01T00:00:00Z"}],
         },
         "/releases": {
             1: [{"tag_name": f"v{i}", "published_at": "2023-01-01T00:00:00Z"} for i in range(100)],
@@ -836,7 +873,7 @@ def test_milestones_and_releases_paginate_beyond_first_page(monkeypatch):
     monkeypatch.setattr(gc, "_get", fake)
     ctx = gc.fetch_context_at("foo", "bar", T, token=None)
     # the second page is reached, not silently dropped after the first 100
-    assert any(m["title"] == "old-open" for m in ctx["milestones"])
+    assert any(m["number"] == 999 for m in ctx["milestones"])
     assert any(r["tag"] == "v-old" for r in ctx["releases"])
 
 
