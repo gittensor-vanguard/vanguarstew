@@ -185,8 +185,43 @@ def _composite_delta(report) -> float | None:
     return _round(min(present)) if present else None
 
 
+# The evidence fields safe to publish. Deliberately an EXPLICIT allowlist rather than an import of
+# ``benchmark.attestation._INPUT_FIELDS``: this module is the one place that decides what leaves the
+# machine, and a field added upstream must never start being published just because it appeared.
+# Anything not listed here is dropped, so widening the published surface stays a decision made here.
+_EVIDENCE_INPUT_FIELDS = ("repo_set", "repo_set_partition", "seed", "rotation_seed", "model",
+                          "agent_commit", "eval_image", "transcript_digest")
+
+
+def _safe_evidence(evidence) -> dict | None:
+    """The public-safe subset of a ``benchmark.attestation.build_evidence()`` bundle.
+
+    This is what makes a published score checkable rather than asserted: with the artifact digest
+    and the ``report_data`` in hand, anyone can confirm the score they are reading is the one an
+    attested run produced (``scripts/verify_attestation.py``), without trusting whoever ran it.
+
+    Publishing it carries the same privacy profile as the composite deltas already published --
+    every field is a scalar, a hash, or a set *name*; none of it is a repo identity, path, or diff.
+    The held-out set's ``repo_set`` name is safe for the same reason its existence already is: the
+    mechanism is public, the membership is not.
+
+    ``None`` when no evidence was supplied (the pre-attestation path), so old and new feed entries
+    are both valid without every reader having to handle a null.
+    """
+    evidence = _dict(evidence)
+    if not evidence:
+        return None
+    inputs = _dict(evidence.get("inputs"))
+    return {
+        "inputs": {field: inputs.get(field) for field in _EVIDENCE_INPUT_FIELDS},
+        "artifact_digest": evidence.get("artifact_digest"),
+        "report_data": evidence.get("report_data"),
+    }
+
+
 def to_leaderboard_entry(
     combined: dict, pr_number: int, timestamp: str | None = None, since_anchor: dict | None = None,
+    evidence: dict | None = None,
 ) -> dict:
     """Build one public leaderboard-feed entry from a combine_dual_target() result.
 
@@ -200,6 +235,10 @@ def to_leaderboard_entry(
     baseline) -- see _since_anchor_fields(). Omitted from the entry entirely when not given,
     rather than a null placeholder, so old feed entries (scored before an anchor existed)
     and new ones are both valid without every reader needing to handle a null case.
+
+    ``evidence``, when given, publishes the attestation binding for this score (artifact digest +
+    ``report_data``) so a reader can verify the number rather than trust it -- see
+    _safe_evidence(). Omitted when absent, same convention as ``since_anchor``.
     """
     combined = _dict(combined)
     public = _dict(combined.get("public"))
@@ -222,6 +261,9 @@ def to_leaderboard_entry(
     fields = _since_anchor_fields(since_anchor)
     if fields is not None:
         entry["since_anchor"] = fields
+    bundle = _safe_evidence(evidence)
+    if bundle is not None:
+        entry["evidence"] = bundle
     return entry
 
 

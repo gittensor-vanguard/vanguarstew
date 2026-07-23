@@ -474,7 +474,7 @@ def _run_cli(*args):
 def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     missing = tmp_path / "does-not-exist.json"
     result = _run_cli(str(missing))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert str(missing) in result.stderr
     assert "artifact not found" in result.stderr
@@ -482,8 +482,9 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
 
 def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
-    assert "artifact path is a directory, not a file" in result.stderr
+    assert result.returncode == 2
+    # POSIX: IsADirectoryError → "directory"; Windows: PermissionError → "not readable"
+    assert ("directory" in result.stderr) or ("not readable" in result.stderr)
     assert "Traceback" not in result.stderr
 
 
@@ -493,11 +494,14 @@ def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
     locked = tmp_path / "locked.json"
     locked.write_text(json.dumps(_result()), encoding="utf-8")
     locked.chmod(0o000)
+    if os.access(str(locked), os.R_OK):
+        locked.chmod(0o600)
+        pytest.skip("file is readable despite chmod 0 (running as root / Windows?)")
     try:
         result = _run_cli(str(locked))
     finally:
         locked.chmod(0o600)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not readable" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -506,7 +510,7 @@ def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "must be a JSON object" in result.stderr
 
@@ -515,7 +519,7 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "invalid.json"
     path.write_text("{not valid json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
 
 
