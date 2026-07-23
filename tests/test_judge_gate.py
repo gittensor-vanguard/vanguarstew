@@ -1,11 +1,13 @@
 """Tests for the pairwise-judge robustness gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
 import subprocess
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -545,7 +547,7 @@ def test_check_judge_does_not_mutate_the_result():
     assert run == snapshot
 
 
-# --- CLI entry point: clean errors instead of tracebacks (#922) ---------------------------
+# --- CLI entry point: clean, named path errors with exit 2 (#922, #1904) ------------------
 
 
 def _run_cli(*args):
@@ -560,31 +562,45 @@ def _write(path, payload):
     return str(path)
 
 
-def _run_main_in_process(monkeypatch, argv):
-    import scripts.judge_gate as judge_gate_cli
-
-    monkeypatch.setattr(sys, "argv", ["scripts.judge_gate", *argv])
-    with pytest.raises(SystemExit) as excinfo:
-        judge_gate_cli.main()
-    return excinfo.value.code
-
-
 def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     missing = tmp_path / "does-not-exist.json"
     result = _run_cli(str(missing))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
-    # the FileNotFoundError message itself, naming the offending path
-    assert "No such file or directory" in result.stderr
-    assert str(missing) in result.stderr
+    assert "Errno" not in result.stderr
+    assert f"artifact not found: {missing}" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_broken_symlink(tmp_path):
+    # A dangling symlink raises FileNotFoundError like a missing path; it must be named as a
+    # broken link (its target is gone, the link itself exists), not reported as "not found".
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 2
+    assert result.stderr == f"artifact is a broken symlink (target does not exist): {link}\n"
+
+
+def test_cli_reports_a_clean_error_for_a_symlink_loop(capsys):
+    # A symlink loop raises OSError(ELOOP), which none of the specific arms catch; it must be
+    # named as a loop, not leaked as a raw errno string.
+    import scripts.judge_gate as judge_gate_cli
+
+    path = "loop.json"
+    with patch(
+        "builtins.open",
+        side_effect=OSError(errno.ELOOP, "Too many levels of symbolic links", path),
+    ):
+        assert judge_gate_cli.run([path]) == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
 
 
 def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
     bad = _write(tmp_path / "bad.json", [1, 2, 3])
     result = _run_cli(bad)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
-    # load_artifact's ValueError message, naming the offending path
+    # load_artifact's message, naming the offending path
     assert "must be a JSON object" in result.stderr
     assert bad in result.stderr
 
@@ -593,42 +609,79 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     invalid = tmp_path / "invalid.json"
     invalid.write_text("{not valid json", encoding="utf-8")
     result = _run_cli(str(invalid))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
-    # the JSONDecodeError message with its parse position
+    assert "not valid JSON" in result.stderr
+    # the JSONDecodeError detail with its parse position survives inside the clean message
     assert "Expecting property name enclosed in double quotes" in result.stderr
     assert "line 1" in result.stderr
 
 
+def test_cli_reports_a_clean_error_for_an_oversized_int_literal(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an integer literal beyond
+    # the int-string-conversion limit; it must land in the same clean invalid-JSON arm.
+    huge = tmp_path / "huge.json"
+    huge.write_text('{"composite_mean": ' + "9" * 5000 + "}", encoding="utf-8")
+    result = _run_cli(str(huge))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "not valid JSON" in result.stderr
+    assert str(huge) in result.stderr
+
+
 def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
-    # IsADirectoryError is an OSError; end-to-end proof the guard covers the family even
-    # when the suite runs as root (a chmod-000 fixture would be readable to root).
+    # POSIX: IsADirectoryError → "directory … not a file".
+    # Windows: PermissionError → "not readable" (directory permission error).
     unreadable = tmp_path / "a-directory"
     unreadable.mkdir()
     result = _run_cli(str(unreadable))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
-    assert "Is a directory" in result.stderr
-    assert str(unreadable) in result.stderr
+    assert "Errno" not in result.stderr
+    if os.name == "nt":
+        assert result.stderr == (
+            f"artifact is not readable (check file permissions): {unreadable}\n"
+        )
+    else:
+        assert result.stderr == f"artifact path is a directory, not a file: {unreadable}\n"
 
 
-def test_cli_reports_a_clean_error_for_a_permission_denied_file(tmp_path, monkeypatch, capsys):
+def test_cli_reports_a_clean_error_for_a_permission_denied_file(capsys):
     # In-process, so it holds under any uid (root reads chmod-000 files, so a filesystem
     # fixture cannot force EACCES deterministically): PermissionError must surface as the
-    # one-line OSError message and a clean exit 1, never a traceback.
+    # named not-readable message and a clean exit 2, never a traceback.
     import scripts.judge_gate as judge_gate_cli
 
-    denied = str(tmp_path / "denied.json")
-
-    def _deny(path):
-        raise PermissionError(13, "Permission denied", denied)
-
-    monkeypatch.setattr(judge_gate_cli, "load_artifact", _deny)
-    code = _run_main_in_process(monkeypatch, [denied])
-    assert code == 1
+    denied = "denied.json"
+    with patch("builtins.open", side_effect=PermissionError(13, "Permission denied", denied)):
+        assert judge_gate_cli.run([denied]) == 2
     err = capsys.readouterr().err
-    assert "Permission denied" in err
-    assert denied in err
+    assert err == f"artifact is not readable (check file permissions): {denied}\n"
+
+
+def test_cli_reports_a_clean_error_for_a_file_component_in_the_path(capsys):
+    # A path that routes through a regular file raises NotADirectoryError; it must be named
+    # distinctly instead of falling through as a raw errno string.
+    import scripts.judge_gate as judge_gate_cli
+
+    path = "result.json/child.json"
+    with patch("builtins.open", side_effect=NotADirectoryError(20, "Not a directory", path)):
+        assert judge_gate_cli.run([path]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
+
+
+def test_cli_reports_a_clean_error_for_a_generic_os_error(capsys):
+    # Any other OSError (e.g. an I/O error) is reported cleanly with its message, not a traceback.
+    import scripts.judge_gate as judge_gate_cli
+
+    with patch("builtins.open", side_effect=OSError("I/O error")):
+        assert judge_gate_cli.run(["flaky.json"]) == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "I/O error" in err
+    assert "Traceback" not in err
+    assert "Errno" not in err
 
 
 def test_cli_reports_a_clean_error_when_the_gate_check_itself_fails(tmp_path, monkeypatch, capsys):
@@ -642,8 +695,7 @@ def test_cli_reports_a_clean_error_when_the_gate_check_itself_fails(tmp_path, mo
         raise TypeError("unhashable artifact content")
 
     monkeypatch.setattr(judge_gate_cli, "check_judge", _boom)
-    code = _run_main_in_process(monkeypatch, [good])
-    assert code == 1
+    assert judge_gate_cli.run([good]) == 1
     err = capsys.readouterr().err
     assert "cannot evaluate artifact" in err
     assert "unhashable artifact content" in err
