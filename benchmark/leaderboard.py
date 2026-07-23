@@ -52,6 +52,7 @@ _EMPTY_COMPONENTS = {
     "module_recall_mean": None,
     "kind_recall_mean": None,
     "release_accuracy": None,
+    "bump_accuracy": None,
 }
 
 
@@ -79,6 +80,7 @@ def _components(artifact) -> dict:
         "module_recall_mean": _round(foresight.get("module_recall_mean")),
         "kind_recall_mean": _round(foresight.get("kind_recall_mean")),
         "release_accuracy": _round(foresight.get("release_accuracy")),
+        "bump_accuracy": _round(foresight.get("bump_accuracy")),
     }
 
 
@@ -124,12 +126,12 @@ def rank(entries) -> dict:
     Returns a stable summary:
 
     - ``ranking``: ``{rank, label, composite_mean, delta_from_best, judge_mean, objective_mean,
-      module_recall_mean, kind_recall_mean, release_accuracy}`` for every *scored* entry, highest
-      score first. ``rank`` is competition-ranked (ties share a rank); ``delta_from_best`` is
-      ``composite_mean - best`` (``0.0`` for the leader, negative for the rest). Ties keep the
-      input order. The last three fields are the M7 foresight breakdown (see ``_components``) —
-      the legible, independently-checkable axes behind ``objective_mean``, ``None`` when an axis
-      had no applicable tasks or the artifact predates the breakdown.
+      module_recall_mean, kind_recall_mean, release_accuracy, bump_accuracy}`` for every
+      *scored* entry, highest score first. ``rank`` is competition-ranked (ties share a rank);
+      ``delta_from_best`` is ``composite_mean - best`` (``0.0`` for the leader, negative for the
+      rest). Ties keep the input order. The last four fields are the M7 foresight breakdown (see
+      ``_components``) — the legible, independently-checkable axes behind ``objective_mean``,
+      ``None`` when an axis had no applicable tasks or the artifact predates the breakdown.
     - ``best``: ``{label, composite_mean}`` of the top entry, or ``None`` if nothing scored.
     - ``unscored``: labels of entries with no usable score (never ranked).
     - ``scored`` / ``total``: how many entries carried a usable score, and how many were given.
@@ -169,6 +171,7 @@ def rank(entries) -> dict:
             "module_recall_mean": components["module_recall_mean"],
             "kind_recall_mean": components["kind_recall_mean"],
             "release_accuracy": components["release_accuracy"],
+            "bump_accuracy": components["bump_accuracy"],
         })
 
     return {

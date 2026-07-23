@@ -148,14 +148,16 @@ def test_foresight_axis_accepts_a_float_n():
     assert _foresight_axis(foresight, "module_recall_mean", "module_recall_n") == "100.0% (n=4)"
 
 
-def test_foresight_line_combines_all_three_axes():
+def test_foresight_line_combines_all_four_axes():
     foresight = {
         "module_recall_mean": 1.0, "module_recall_n": 2,
         "kind_recall_mean": None, "kind_recall_n": 0,
         "release_accuracy": 0.5, "release_accuracy_n": 1,
+        "bump_accuracy": 0.0, "bump_accuracy_n": 1,
     }
     line = _foresight_line({"foresight": foresight}, unscored=False)
-    assert line == "- Foresight — modules: 100.0% (n=2), kinds: n/a (n=0), release: 50.0% (n=1)"
+    assert line == ("- Foresight — modules: 100.0% (n=2), kinds: n/a (n=0), "
+                     "release: 50.0% (n=1), bump level: 0.0% (n=1)")
 
 
 def test_foresight_line_forces_na_when_unscored_even_if_foresight_present():
@@ -164,7 +166,8 @@ def test_foresight_line_forces_na_when_unscored_even_if_foresight_present():
     # that, not leak a real-looking breakdown alongside a fabricated composite.
     foresight = {"module_recall_mean": 1.0, "module_recall_n": 2}
     line = _foresight_line({"foresight": foresight}, unscored=True)
-    assert line == "- Foresight — modules: n/a (n=0), kinds: n/a (n=0), release: n/a (n=0)"
+    assert line == ("- Foresight — modules: n/a (n=0), kinds: n/a (n=0), "
+                     "release: n/a (n=0), bump level: n/a (n=0)")
 
 
 def test_render_single_repo_includes_foresight_breakdown():
