@@ -11,13 +11,17 @@
 # whole eval runs on the Python standard library, so there is no dependency resolution to pin, and
 # no wheel-build nondeterminism to chase. Base image + git + this source tree is the entire TCB.
 #
-# For production attestation, tighten two things beyond this file:
-#   - pin the base image by digest (FROM python:3.12-slim@sha256:...), not by tag, so the
-#     measurement cannot shift under you when the tag is re-pushed;
-#   - pin the apt package versions, or drop to a distroless base with git vendored in.
-# Both are deliberately left as tags here so the spike stays buildable as-is.
+# The base is pinned BY DIGEST, not by tag: `python:3.12-slim` is re-pushed regularly, and a tag
+# that moves underneath you silently changes the image measurement an attestation quote commits to
+# -- the one thing that must not drift. Refresh deliberately (docker pull, re-read RepoDigests)
+# rather than letting upstream do it for you.
+#
+# Still to tighten for production attestation: pin the apt package versions, or move to a
+# distroless base with git vendored in, so `apt-get install` cannot pull a different git between
+# builds. Left as-is here because it does not affect reproducibility of a single built image --
+# the digest of THIS image is what gets attested.
 
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
 # git is a genuine runtime dependency: the benchmark materializes and freezes real repositories.
 RUN apt-get update \
