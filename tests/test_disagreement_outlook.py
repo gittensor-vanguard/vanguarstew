@@ -12,6 +12,7 @@ if ROOT not in sys.path:
 
 from benchmark.disagreement_outlook import (  # noqa: E402
     DEFAULT_STABLE_THRESHOLD,
+    _slice_summary,
     disagreement_outlook_headline,
     summarize_disagreement_outlook,
 )
@@ -203,6 +204,37 @@ def test_incoherent_disagree_exceeds_dual_yields_none_slice():
         {"judge_order_stats": {"dual_order_tasks": 5, "disagree": 10, "disagreement_rate": 0.5}})
     assert out["disagreement_rate"] is None
     assert out["verdict"] is None
+
+
+def test_zero_dual_order_with_stored_rate_yields_empty_slice():
+    # #1981 / spec 026: a zero-dual-order block cannot yield a derivable rate no matter what a
+    # stored disagreement_rate field claims -- the slice must be the documented empty one, not a
+    # fabricated "0 disagreements out of 0" that looks like real, informative data.
+    telemetry = {"agree": 0, "disagree": 0, "tie": 0,
+                 "dual_order_tasks": 0, "disagreement_rate": 0.0}
+    assert _slice_summary({"judge_order_stats": telemetry}) == {
+        "dual_order_tasks": None, "disagreements": None, "disagreement_rate": None,
+    }
+
+
+def test_zero_dual_order_partition_does_not_pool_into_generalization_overall():
+    # A non-informative zero-dual partition must not sum into _combined alongside a real
+    # partition -- per spec 026's all-or-nothing contract, the overall becomes unavailable.
+    art = {
+        "generalization_gap": 0.1,
+        "tuned": {"judge_order_stats": {"agree": 0, "disagree": 0, "tie": 0,
+                                        "dual_order_tasks": 0, "disagreement_rate": 0.0}},
+        "held_out": {"judge_order_stats": {"agree": 3, "disagree": 2, "tie": 0,
+                                           "dual_order_tasks": 5, "disagreement_rate": 0.4}},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["dual_order_tasks"] is None
+    assert out["disagreements"] is None
+    assert out["disagreement_rate"] is None
+    assert out["verdict"] is None
+    # The individual held_out partition summary still reports its own real numbers.
+    assert out["partitions"]["held_out"]["disagreement_rate"] == 0.4
+    assert out["partitions"]["tuned"]["disagreement_rate"] is None
 
 
 def test_generalization_headline_includes_partition_rates():
