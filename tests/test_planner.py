@@ -973,9 +973,10 @@ def test_calibrate_release_drops_release_when_no_cadence():
 
 def test_calibrate_release_suppresses_right_after_a_cut_even_with_cadence():
     # Acceptance: shortly after a release must NOT keep a predicted cut (#1561).
+    # #1871/#1872: demote in place (keep files for module recall) rather than delete.
     plan = [
         {"title": "Fix loader", "kind": "bugfix"},
-        {"title": "Cut 2.1.0", "kind": "release"},
+        {"title": "Cut 2.1.0", "kind": "release", "files": ["src/pkg/__init__.py"]},
     ]
     ctx = {
         "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
@@ -984,7 +985,11 @@ def test_calibrate_release_suppresses_right_after_a_cut_even_with_cadence():
         ],
     }
     out = _calibrate_release_prediction(plan, ctx)
-    assert [i["kind"] for i in out] == ["bugfix"]
+    assert len(out) == 2
+    assert out[0] == plan[0]
+    assert not _is_planned_release(out[1])
+    assert out[1]["files"] == ["src/pkg/__init__.py"]
+    assert out[1]["kind"] != "release"
 
 
 def test_calibrate_release_keeps_release_under_pressure():
@@ -1293,12 +1298,116 @@ def test_commit_plan_kind_release_tooling_cut_reads_as_release_not_dep_or_build(
 
 
 def test_commit_plan_kind_drops_unknown_subjects():
-    # Merge commits, prefix-less subjects, and non-strings carry no kind.
+    # Merge commits, prefix-less subjects, and non-strings carry no kind -- unless the subject
+    # reads as a release cut on its own wording, which the anchor scores and which is covered
+    # by test_commit_plan_kind_reads_a_prefix_less_release_cut below. None of these do.
     assert _commit_plan_kind("Merge pull request from fork/branch") is None
     assert _commit_plan_kind("Add streaming export") is None
     assert _commit_plan_kind("cleanup: tidy") is None   # not a Conventional-Commit type
     assert _commit_plan_kind(None) is None
     assert _commit_plan_kind(123) is None
+
+
+def test_commit_plan_kind_reads_a_prefix_less_release_cut():
+    # A repo predating Conventional Commits authors nearly every cut without a prefix, and the
+    # anchor scores those as `release`. Returning None here made the planner blind to the very
+    # history the freeze-T gate exists to time (#1871). Real subjects from the curated set.
+    for subject in (
+        "Bump version numbers to 5.1.3",
+        "Bump version",
+        "Preparing release 5.2.0",
+        "(daniel, holger) prepare pluggy-0.4.0 release",
+        "Minor version bump for development",
+        "Merge branch 'release-6.0.0b1' into develop",
+        "Release v1.2.0",
+        "v2.0.0",
+    ):
+        assert _commit_plan_kind(subject) == "release", subject
+    # An unrecognized CC type is not authoritative: the anchor drops through to the same release
+    # check rather than stopping at the unmapped type, so the planner must too.
+    assert _commit_plan_kind("wip: prepare release 1.2.0") == "release"
+    assert _commit_plan_kind("wip: something else") is None
+
+
+def test_commit_plan_kind_release_fallback_does_not_swallow_non_release_subjects():
+    # The fallback must not turn every subject that merely *contains* a version into a cut --
+    # that would flood _recent_kind_counts and jam the timing gate at "just cut". The CC prefix
+    # stays authoritative for a recognized non-tooling type.
+    for subject in (
+        "bump lodash to v4.17.21",          # incidental version mid-subject
+        "fix crash in v1.2.0 parser",
+        "Merge pull request #180 from foo/bar",
+        "Initial commit",
+    ):
+        assert _commit_plan_kind(subject) is None, subject
+    for subject, expected in (
+        ("fix: 2.0.0", "bugfix"),
+        ("ci: 3.0.0", "ci"),
+        ("docs: 1.4.0", "docs"),
+        ("revert: release 1.2.0", "revert"),   # the opposite of a cut
+    ):
+        assert _commit_plan_kind(subject) == expected, subject
+
+
+def test_commit_plan_kind_matches_the_anchor_on_prefix_less_subjects():
+    # The drift guard. The existing parity invariant asserts
+    # `plan_kind(_commit_plan_kind(s)) == commit_kind(s)` but only over CC-PREFIXED subjects --
+    # which is exactly why this divergence survived CI. Extend it across the prefix-less arm,
+    # including the near-misses where the anchor deliberately says "not a release".
+    for subject in (
+        "Bump version numbers to 5.1.3", "Preparing release 5.2.0", "Release v1.2.0", "v2.0.0",
+        "Update the changelog", "Merge branch 'release-6.0.0b1' into develop",
+        "wip: prepare release 1.2.0", "wip: something else",
+        "bump lodash to v4.17.21", "fix crash in v1.2.0 parser",
+        "Merge pull request #180 from foo/bar", "Initial commit", "Add streaming export",
+    ):
+        planned = _commit_plan_kind(subject)
+        assert plan_kind(planned) == commit_kind(subject), (
+            f"{subject!r}: plan says {planned!r} -> {plan_kind(planned)!r}, "
+            f"anchor reads {commit_kind(subject)!r}"
+        )
+
+
+def test_release_timing_gate_reads_a_prefix_less_release_history():
+    # The payoff, at the gate the classifier feeds. With a cut 2 days before T authored without
+    # a CC prefix, the gate must say "suppress" -- before the fix _commits_since_last_release
+    # found no release, fell through to the window length, and every window read "pressure",
+    # so RELEASE_PRESSURE_GUIDANCE was injected even immediately after a cut.
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T00:00:00Z"},
+        "recent_commits": [
+            {"subject": "Add streaming export", "date": "2020-06-09T00:00:00Z"},
+            {"subject": "Bump version numbers to 5.1.3", "date": "2020-06-08T00:00:00Z"},
+            {"subject": "Fix a crash in the parser", "date": "2020-06-01T00:00:00Z"},
+        ],
+    }
+    assert _commits_since_last_release(ctx) == 1
+    assert _release_timing_state(ctx) == "suppress"
+    assert _release_cadence_signal(ctx) is True
+    assert RELEASE_PRESSURE_GUIDANCE not in _release_cadence_note(ctx)
+    # And the kind note can now report the release history it previously could not see.
+    assert "release" in _recent_kinds_note(ctx)
+
+
+def test_calibrate_release_suppress_keeps_files_for_module_recall():
+    # #1872 regression guard: suppress must clear release_predicted without discarding files.
+    plan = [{
+        "title": "Bump version to 5.2.0",
+        "kind": "release",
+        "files": ["pluggy/__init__.py", "CHANGELOG.rst"],
+    }]
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "(daniel, holger) prepare pluggy-0.4.0 release",
+             "date": "2020-06-09T12:00:00+00:00"},
+        ],
+    }
+    assert _release_timing_state(ctx) == "suppress"
+    out = _calibrate_release_prediction(plan, ctx)
+    assert len(out) == 1
+    assert not _is_planned_release(out[0])
+    assert out[0]["files"] == ["pluggy/__init__.py", "CHANGELOG.rst"]
 
 
 def test_recent_kinds_note_orders_by_frequency_then_name():
