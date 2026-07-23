@@ -1,6 +1,7 @@
 """Tests for the judge report integrity gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
@@ -330,14 +331,14 @@ def _run_cli(*args):
 
 def test_cli_missing_file_reports_clean_error(tmp_path):
     proc = _run_cli(str(tmp_path / "does-not-exist.json"))
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "artifact not found" in proc.stderr
     assert "Traceback" not in proc.stderr
 
 
 def test_cli_directory_path_reports_clean_error(tmp_path):
     proc = _run_cli(str(tmp_path))
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "artifact path is a directory, not a file" in proc.stderr
     assert "Traceback" not in proc.stderr
 
@@ -352,7 +353,7 @@ def test_cli_unreadable_file_reports_clean_error(tmp_path):
         proc = _run_cli(str(locked))
     finally:
         locked.chmod(0o600)
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "not readable" in proc.stderr
     assert "Traceback" not in proc.stderr
 
@@ -361,7 +362,7 @@ def test_cli_invalid_json_reports_clean_error(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
     proc = _run_cli(str(path))
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "not valid JSON" in proc.stderr
     assert "Traceback" not in proc.stderr
 
@@ -370,9 +371,108 @@ def test_cli_non_object_json_reports_clean_error(tmp_path):
     path = tmp_path / "list.json"
     path.write_text("[1, 2]", encoding="utf-8")
     proc = _run_cli(str(path))
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "must be a JSON object" in proc.stderr
     assert "Traceback" not in proc.stderr
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    # A dangling symlink raises FileNotFoundError like a missing path; it must be named as a
+    # broken link (its target is gone, the link itself exists), not reported as "not found".
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    proc = _run_cli(str(link))
+    assert proc.returncode == 2
+    assert proc.stderr == f"artifact is a broken symlink (target does not exist): {link}\n"
+
+
+def test_cli_load_error_exit_is_distinct_from_the_strict_gate_exit(tmp_path):
+    # A load error exits 2 while a failed --strict gate exits 1, so CI can tell them apart.
+    proc = _run_cli(str(tmp_path / "gone.json"), "--strict")
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+
+
+def test_load_artifact_symlink_loop_is_named_not_leaked(tmp_path, capsys, monkeypatch):
+    # A symlink loop raises OSError(ELOOP), which no specific arm catches; it must be named
+    # as a loop, not leaked as a raw errno string.
+    from scripts import judge_report_integrity as cli
+
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_load_artifact_not_a_directory_error_is_named(tmp_path, capsys, monkeypatch):
+    # A path routed through a regular file raises NotADirectoryError; name it distinctly
+    # instead of leaking a raw errno through the generic arm.
+    from scripts import judge_report_integrity as cli
+
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
+
+
+def test_load_artifact_generic_oserror_prints_the_path_exactly_once(tmp_path, capsys, monkeypatch):
+    # An OSError carrying the filename would print the path twice via str(exc); the fallback
+    # uses strerror so the path appears exactly once, in the message's own prefix.
+    from scripts import judge_report_integrity as cli
+
+    path = str(tmp_path / "x.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err == f"cannot read artifact ({path}): Input/output error\n"
+    assert err.count(path) == 1
+
+
+def test_islink_probe_is_not_reachable_before_open_or_on_a_symlink_loop(tmp_path, capsys, monkeypatch):
+    # The broken-symlink probe must run only after open() fails with FileNotFoundError: never
+    # on a successful open (no pre-open TOCTOU probe) and never on the ELOOP path.
+    from scripts import judge_report_integrity as cli
+
+    calls = []
+    real_islink = os.path.islink
+    monkeypatch.setattr(os.path, "islink", lambda p: (calls.append(p), real_islink(p))[1])
+
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    assert cli.load_artifact(str(good)) == {"ok": True}
+    assert calls == []
+
+    loop_path = str(tmp_path / "loop.json")
+
+    def _eloop(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", loop_path)
+
+    monkeypatch.setattr("builtins.open", _eloop)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(loop_path)
+    assert excinfo.value.code == 2
+    assert calls == []
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {loop_path}\n"
 
 
 # --- #783: checks row sanitization for judge report integrity headlines -----------------
