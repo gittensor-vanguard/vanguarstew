@@ -225,6 +225,19 @@ def test_headline_reports_stable_unstable_and_inconclusive():
     assert DEFAULT_MAX_CV == 0.05
 
 
+def test_headline_tolerates_a_non_finite_or_oversized_cv():
+    # #1683: a hand-built/deserialized result can carry a cv that json round-trips (NaN/Infinity)
+    # or an oversized int; `f"{cv:.1%}"` renders `nan%`/`inf%` or raises OverflowError. A non-finite
+    # or oversized cv is not a real value, so the headline shows `cv n/a` instead of crashing.
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        line = repeatability_headline(
+            {"runs": 2, "min_runs": 2, "stable": False, "mean": 0.5, "cv": bad})
+        assert line.endswith("cv n/a)"), bad
+    # a finite cv is still formatted as a percentage (behavior unchanged)
+    assert "cv 2.0%" in repeatability_headline(
+        {"runs": 2, "min_runs": 2, "stable": True, "mean": 0.5, "cv": 0.02})
+
+
 def test_cv_uses_sample_standard_deviation():
     # The CV of a sample of repeated runs uses the sample (Bessel-corrected) standard deviation,
     # so run-to-run spread is not underestimated. Population stddev (pstdev) would give sd=0.04,
