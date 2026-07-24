@@ -292,7 +292,10 @@ def _check_slice(label: str, slice_: dict, checks: list) -> None:
     if "decisive_margin" in slice_:
         if tally is not None and _is_number(margin):
             expected = tally["challenger"] - tally["baseline"]
-            add("decisive_margin_matches", int(margin) == expected,
+            # Compare the exact value, not a truncated one: int(1.999) == 1 would false-pass a
+            # corrupted margin that merely truncates to the right integer (also int(-1.9) == -1
+            # for a negative margin, since int() truncates toward zero, not floor).
+            add("decisive_margin_matches", margin == expected,
                 f"decisive_margin {margin} vs challenger-baseline {expected}")
         else:
             add("decisive_margin_matches", False,

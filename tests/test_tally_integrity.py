@@ -92,6 +92,27 @@ def test_decisive_margin_mismatch_fails():
     assert "decisive_margin_matches" in failed_checks(result)
 
 
+def test_decisive_margin_near_miss_that_truncates_correctly_still_fails():
+    # #1975: a corrupted margin that merely truncates to the right integer (int(1.999) == 1)
+    # must not false-pass as "matches" -- the check compares the exact value, not a truncated
+    # one. Same for a negative margin, since int() truncates toward zero, not floor.
+    art = _artifact(tasks=9, challenger=5, baseline=4, margin=1.999)
+    result = check_tally_integrity(art)
+    assert "decisive_margin_matches" in failed_checks(result)
+
+    art_negative = _artifact(tasks=7, challenger=3, baseline=4, margin=-1.9)
+    result_negative = check_tally_integrity(art_negative)
+    assert "decisive_margin_matches" in failed_checks(result_negative)
+
+
+def test_decisive_margin_exact_float_equal_to_int_still_matches():
+    # Control: a float that is genuinely equal to the expected int (not merely truncating to
+    # it) must still pass -- the fix must not become stricter than exact-value equality.
+    art = _artifact(tasks=9, challenger=5, baseline=4, margin=1.0)
+    result = check_tally_integrity(art)
+    assert "decisive_margin_matches" not in failed_checks(result)
+
+
 def test_missing_tally_fails_tally_present():
     art = _artifact()
     del art["tally"]
