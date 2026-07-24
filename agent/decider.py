@@ -19,7 +19,7 @@ import json
 import logging
 
 from agent.context import context_for_agent
-from agent.planner import _release_cadence_signal, _release_timing_state
+from agent.planner import _release_cadence_signal, _release_timing_state, is_planning_request
 from benchmark.score import base_from_releases
 
 logger = logging.getLogger(__name__)
@@ -248,7 +248,7 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     # identical request returned "plan" on entrius/gittensor). Coerce that back to "plan":
     # the requested plan already exists in the `plan` field; the decision is not a merge/close
     # verdict on a contribution.
-    if _is_planning_request(request) and out["action"] == "reject":
+    if is_planning_request(request) and out["action"] == "reject":
         logger.debug("decide: a planning request cannot be rejected as out-of-scope; using 'plan'")
         out["action"] = "plan"
     out["labels"] = _normalize_labels(out.get("labels"))
@@ -263,25 +263,9 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     return out
 
 
-def _is_planning_request(request: str) -> bool:
-    """True for either runner planning template (commit-horizon or time-horizon).
-
-    Commit-horizon: ``plan the next N maintainer actions``.
-    Time-horizon (curated ``horizon_days``): ``plan the maintainer actions for the next N days``.
-    The latter does not contain the contiguous substring ``plan the next``, so a naive check
-    skipped the reject→plan guard and the version_bump note on every production curated task (#1768).
-    """
-    if not isinstance(request, str):
-        return False
-    low = request.lower()
-    if "plan the next" in low:
-        return True
-    return "plan the maintainer actions for the next" in low and "day" in low
-
-
 def _planning_version_bump_note(context: dict, request: str) -> str:
     """Ask for version_bump on planning requests when freeze-T timing says a cut is due."""
-    if not _is_planning_request(request):
+    if not is_planning_request(request):
         return ""
     state = _release_timing_state(context)
     # Just-cut: do not solicit a bump — clearing happens post-LLM in decide() as well.
