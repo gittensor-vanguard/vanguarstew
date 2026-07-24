@@ -295,3 +295,13 @@ def test_cli_end_to_end_writes_a_report(tmp_path):
     assert report["band"] == "xl"
     assert report["label"] == "perf:xl"
     assert "score_pr_delta: perf:xl" in result.stderr
+
+
+def test_non_finite_pareto_axis_blocks_merge():
+    """A present-but-NaN judge/objective mean must fail closed, not mint perf:* (#1867)."""
+    baseline = _artifact(0.5, 0.5, 0.5)
+    candidate = _artifact(0.7, float("nan"), 0.7)
+    report = score_pr_delta(baseline, candidate)
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+    assert report["label"] is None

@@ -36,7 +36,7 @@ import argparse
 import json
 import sys
 
-from scripts.compare_eval import compare_eval_artifacts
+from scripts.compare_eval import _numeric, compare_eval_artifacts
 
 DEFAULT_NOISE_FLOOR = 0.01
 
@@ -85,6 +85,25 @@ def _pareto_axes(diff: dict) -> dict:
     """
     parts = diff.get("composite_parts") or {}
     return {axis: parts.get(axis) for axis in ("judge_mean", "objective_mean")}
+
+
+def _pareto_axis_corrupt(baseline: dict, candidate: dict) -> bool:
+    """True when a Pareto axis key is present on either artifact but not safely numeric.
+
+    ``compare_eval`` maps NaN/Inf through ``_numeric`` to ``None``, which looks identical
+    to a missing axis. A *present* but non-finite mean must fail closed (#1867), while a
+    truly absent key remains unavailable and is excluded from the floor.
+    """
+    for art in (baseline, candidate):
+        if not isinstance(art, dict):
+            continue
+        parts = art.get("composite_parts")
+        if not isinstance(parts, dict):
+            continue
+        for axis in ("judge_mean", "objective_mean"):
+            if axis in parts and _numeric(parts.get(axis)) is None:
+                return True
+    return False
 
 
 def _band_for_delta(delta: float | None, noise_floor: float) -> str:
@@ -136,9 +155,13 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
         any_regressed = any(_regressed(d, noise_floor) for d in axis_deltas)
         banding_delta = composite_deltas["composite_mean"]
 
-    if any_regressed:
+    if any_regressed or _pareto_axis_corrupt(baseline, candidate):
         band = "blocked"
-        reason = "a scored dimension regressed past the noise floor (Pareto floor)"
+        reason = (
+            "a scored dimension was present but non-finite (Pareto floor fail-closed)"
+            if (not any_regressed and _pareto_axis_corrupt(baseline, candidate))
+            else "a scored dimension regressed past the noise floor (Pareto floor)"
+        )
     else:
         band = _band_for_delta(banding_delta, noise_floor)
         reason = (
