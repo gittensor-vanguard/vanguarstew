@@ -1,5 +1,6 @@
 """Tests for composite spread summary and CLI (deterministic, offline)."""
 
+import copy
 import errno
 import json
 import os
@@ -12,6 +13,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmark.composite_spread import (  # noqa: E402
+    _is_unscored_slice,
     composite_spread_headline,
     summarize_composite_spread,
 )
@@ -181,3 +183,120 @@ def test_load_artifact_other_oserror_keeps_the_generic_message(monkeypatch, tmp_
         cli.load_artifact(path)
     assert excinfo.value.code == 2
     assert capsys.readouterr().err.startswith(f"cannot read artifact ({path}):")
+
+
+# --- #1673: an unscored run's placeholder means are not real component scores -----------------
+
+def _unscored(**extra):
+    """A multi-repo run where every repo was skipped/errored: scored_repos == 0 with _mean([])
+    placeholder parts of 0.0 (what run_multi_replay actually emits)."""
+    artifact = {
+        "repos": 2, "scored_repos": 0, "skipped": 2, "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        "per_repo": [
+            {"repo": "o/a", "tasks": 0, "composite_mean": 0.0},
+            {"repo": "o/b", "tasks": 0, "composite_mean": 0.0},
+        ],
+    }
+    artifact.update(extra)
+    return artifact
+
+
+@pytest.mark.parametrize("scored", [0, 0.0])
+def test_is_unscored_slice_detects_an_explicit_zero(scored):
+    assert _is_unscored_slice({"scored_repos": scored}) is True
+
+
+@pytest.mark.parametrize("scored", [1, 2, 0.5])
+def test_is_unscored_slice_accepts_a_scored_slice(scored):
+    assert _is_unscored_slice({"scored_repos": scored}) is False
+
+
+@pytest.mark.parametrize("scored", [None, "0", True, False, float("nan"), float("inf"), [], {}])
+def test_is_unscored_slice_only_trusts_an_explicit_numeric_zero(scored):
+    """A non-numeric scored_repos is malformed, not a zero-repo signal. bool is excluded
+    deliberately: False == 0 in Python, but a boolean repo count is malformed data."""
+    assert _is_unscored_slice({"scored_repos": scored}) is False
+
+
+def test_is_unscored_slice_ignores_a_slice_with_no_scored_repos_key():
+    assert _is_unscored_slice({}) is False
+    assert _is_unscored_slice({"composite_parts": {"judge_mean": 0.0}}) is False
+    assert _is_unscored_slice(None) is False
+
+
+def test_unscored_run_masks_both_means_and_the_spread():
+    """The headline bug: a run that measured nothing reported a perfectly balanced
+    'judge 0.0 vs objective 0.0 (delta +0.000)' — a healthy-looking datapoint for no data."""
+    out = summarize_composite_spread(_unscored())
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None      # BOTH axes, not just judge
+    assert out["spread"] is None
+    assert "delta n/a" in composite_spread_headline(out)
+    assert "+0.000" not in composite_spread_headline(out)
+
+
+def test_unscored_run_masks_a_nonzero_placeholder_too():
+    """The gate is scored_repos == 0, not 'the means happen to be 0.0' — whatever an unscored
+    run reports as parts, it did not measure them."""
+    out = summarize_composite_spread(
+        _unscored(composite_parts={"judge_mean": 0.4, "objective_mean": 0.2})
+    )
+    assert out["judge_mean"] is None and out["objective_mean"] is None
+    assert out["spread"] is None
+
+
+def test_a_genuine_single_repo_zero_keeps_its_real_means():
+    """Guard against over-masking: a real single-repo run carries no scored_repos key, so a
+    legitimate 0.0 must survive and still report a real 0.0 spread."""
+    out = summarize_composite_spread(
+        {"composite_mean": 0.0, "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}}
+    )
+    assert out["judge_mean"] == 0.0
+    assert out["objective_mean"] == 0.0
+    assert out["spread"] == 0.0
+    assert "delta +0.000" in composite_spread_headline(out)
+
+
+def test_a_scored_run_is_unchanged():
+    out = summarize_composite_spread(
+        {"scored_repos": 2, "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5}}
+    )
+    assert out["judge_mean"] == 0.7 and out["objective_mean"] == 0.5
+    assert out["spread"] == 0.2
+
+
+def test_generalization_masks_both_means_when_the_tuned_partition_scored_nothing():
+    """The headline partition of a generalization artifact is `tuned`, so an unscored tuned
+    partition must mask BOTH axes even though held_out scored normally."""
+    out = summarize_composite_spread({
+        "generalization_gap": 0.1,
+        "tuned": {"scored_repos": 0, "composite_mean": 0.0,
+                  "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}},
+        "held_out": {"scored_repos": 2, "composite_mean": 0.5,
+                     "composite_parts": {"judge_mean": 0.5, "objective_mean": 0.5}},
+    })
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+    assert out["spread"] is None
+
+
+def test_generalization_with_a_scored_tuned_partition_is_unchanged():
+    """A scored tuned partition still reports its real means even when held_out scored nothing —
+    only the headline (tuned) partition governs."""
+    out = summarize_composite_spread({
+        "generalization_gap": 0.1,
+        "tuned": {"scored_repos": 3, "composite_mean": 0.7,
+                  "composite_parts": {"judge_mean": 0.8, "objective_mean": 0.6}},
+        "held_out": {"scored_repos": 0, "composite_mean": 0.0,
+                     "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0}},
+    })
+    assert out["judge_mean"] == 0.8 and out["objective_mean"] == 0.6
+    assert out["spread"] == 0.2
+
+
+def test_summarize_does_not_mutate_an_unscored_artifact():
+    artifact = _unscored()
+    snapshot = copy.deepcopy(artifact)
+    summarize_composite_spread(artifact)
+    assert artifact == snapshot

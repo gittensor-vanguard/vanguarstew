@@ -47,8 +47,30 @@ def _headline_partition(artifact: dict) -> dict:
     return artifact
 
 
+def _is_unscored_slice(slice_) -> bool:
+    """True when the slice explicitly scored zero repos, so its ``composite_parts`` means are
+    ``_mean([])`` placeholders (``0.0``) rather than real component scores.
+
+    ``run_multi_replay`` emits ``scored_repos == 0`` for a run where every repo was skipped or
+    errored — an infra/transient outcome, not the agent scoring zero. Reading those placeholders
+    as real means publishes ``judge 0.0 vs objective 0.0 (delta +0.000)`` next to
+    ``scored_repos: 0``: a self-contradictory row that reads as a *healthy, perfectly balanced*
+    datapoint for a run that measured nothing (#1673).
+
+    Only an **explicit numeric** ``scored_repos`` of ``0`` counts. A genuine single-repo run
+    carries no ``scored_repos`` key at all and keeps its real means — including a legitimate
+    ``0.0``. Mirrors ``component_floor._scored_metric``, ``promotion._scored_composite`` and
+    ``repo_score_spread._is_unscored_slice``, which mask the same placeholder the same way.
+    """
+    scored = _dict(slice_).get("scored_repos")
+    return _is_number(scored) and not scored
+
+
 def _headline_parts(artifact: dict) -> dict:
-    parts = _headline_partition(artifact).get("composite_parts")
+    partition = _headline_partition(artifact)
+    if _is_unscored_slice(partition):
+        return {"judge_mean": None, "objective_mean": None}
+    parts = partition.get("composite_parts")
     if not isinstance(parts, dict):
         if parts is not None:
             logger.warning(

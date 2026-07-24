@@ -52,6 +52,13 @@ objective means as a single number for trending. `summarize_composite_spread` re
 - SHALL read `judge_mean` and `objective_mean` from `composite_parts` when that value is a `dict`.
 - WHEN `composite_parts` is missing or not a `dict` THEN both means SHALL be `None` (with a warning
   when non-`None` and non-dict).
+- WHEN the headline partition carries a numeric `scored_repos` of `0` THEN **both** means SHALL be
+  `None` (and therefore `spread` too): the run scored no repos, so its `composite_parts` are
+  `_mean([])` placeholders of `0.0` rather than real component scores, and reporting them
+  publishes a fabricated `judge 0.0 vs objective 0.0 (delta +0.000)` for a run that measured
+  nothing.
+- WHEN the artifact carries **no** `scored_repos` key THEN the means SHALL be read normally — a
+  genuine single-repo run keeps its real values, including a legitimate `0.0`.
 
 ### Composite spread summary (`summarize_composite_spread`)
 
