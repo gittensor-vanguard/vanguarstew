@@ -36,6 +36,24 @@ from benchmark.acceptance import _partition_error
 
 logger = logging.getLogger(__name__)
 
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
+def _is_passed(value) -> bool:
+    """True for a real bool, including numpy scalar bools."""
+    if isinstance(value, bool):
+        return True
+    return type(value).__name__ in ("bool_", "bool8", "bool")
+
+
+def _check_row_field(key: str, value) -> bool:
+    if key == "name":
+        return isinstance(value, str) and bool(value.strip())
+    if key == "passed":
+        return _is_passed(value)
+    return False
+
+
 DEFAULT_MIN_TASKS = 3
 
 
@@ -67,6 +85,8 @@ def _check_rows_list(checks) -> list[dict]:
 
     ``None`` means the key is absent. An empty list means zero checks. Both are silent.
     Tuples and other non-list iterables are warned and treated as empty (never coerced).
+    Dict rows missing ``name``/``passed``, or with the wrong types, are skipped with a
+    warning so ``failed_checks`` / ``sample_adequacy_headline`` never KeyError (#1876).
     """
     if checks is None:
         return []
@@ -83,6 +103,27 @@ def _check_rows_list(checks) -> list[dict]:
                 "sample_adequacy: checks[%s] is %s, not an object; skipping",
                 idx,
                 type(row).__name__,
+            )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "sample_adequacy: checks[%s] missing required key(s) %s; skipping",
+                idx,
+                missing,
+            )
+            continue
+        bad_key = None
+        for key in _CHECK_ROW_KEYS:
+            if not _check_row_field(key, row[key]):
+                bad_key = key
+                break
+        if bad_key is not None:
+            logger.warning(
+                "sample_adequacy: checks[%s] %s has unusable type %s; skipping",
+                idx,
+                bad_key,
+                type(row[bad_key]).__name__,
             )
             continue
         rows.append(row)

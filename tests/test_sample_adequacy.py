@@ -467,3 +467,15 @@ def test_load_artifact_still_reports_bad_json_and_non_object(tmp_path, capsys):
     with pytest.raises(SystemExit):
         cli.load_artifact(str(lst))
     assert "JSON object" in capsys.readouterr().err
+
+
+def test_failed_checks_skips_rows_missing_name():
+    from benchmark.sample_adequacy import failed_checks, sample_adequacy_headline
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    headline = sample_adequacy_headline({
+        "passed": False,
+        "tasks": 3,
+        "checks": [{"name": "run_scored", "passed": False}, {"passed": False}],
+    })
+    assert "run_scored" in headline
+    assert "KeyError" not in headline
