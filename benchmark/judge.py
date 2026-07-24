@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 _WINNER = re.compile(r'"?winner"?\s*[:=]\s*"?(A|B|tie)\b', re.I)
 
+# Max characters of a rendered submission in the judge prompt. Reduction must stay structural
+# (never a mid-document ``[:N]`` slice) so the judge always receives valid JSON (#1706).
+_RENDER_BUDGET = 4500
+_CLIP_MARKER = "…"
+
 SYSTEM = (
     "You are judging two maintainers' submissions for the same repository, frozen at a point "
     "in time. Each submission has an inferred 'maintainer philosophy', a plan of the next "
@@ -55,14 +60,124 @@ def _parse_winner(text: str) -> str:
     return value if value in ("A", "B") else "tie"
 
 
+def _clip_str(value: str, cap: int) -> str:
+    """Clip a string leaf so ``_CLIP_MARKER`` fits *inside* ``cap`` (never appends past it)."""
+    if len(value) <= cap:
+        return value
+    if cap <= len(_CLIP_MARKER):
+        return _CLIP_MARKER[:cap]
+    return value[: cap - len(_CLIP_MARKER)] + _CLIP_MARKER
+
+
 def _render(submission: dict) -> str:
+    """Serialize a submission for the judge prompt as valid JSON within ``_RENDER_BUDGET``.
+
+    A bare ``json.dumps(...)[:4500]`` slice lands mid-token, handing the judge unterminated
+    JSON and letting an oversized ``philosophy`` silently evict the ``plan`` (the trajectory
+    axis). This path keeps the same budget but abridges structurally: trim list entries and
+    clip free-text leaves (marker inside the cap), preferring to shrink philosophy before
+    dropping plan items. Elision is recorded under ``_abridged`` so the judge sees an openly
+    abridged submission rather than a silently partial one.
+    """
     if not isinstance(submission, dict):
         return json.dumps({"error": "non-dict submission"})
-    return json.dumps({
-        "philosophy": submission.get("philosophy"),
-        "plan": submission.get("plan"),
-        "rationale": submission.get("rationale"),
-    }, indent=1)[:4500]
+
+    notes: list = []
+    philosophy = submission.get("philosophy")
+    plan_raw = submission.get("plan")
+    rationale = submission.get("rationale")
+
+    if plan_raw is None:
+        plan = None
+    elif isinstance(plan_raw, list):
+        plan = list(plan_raw)
+    else:
+        # Fail closed with an explicit note — do not silently present "no plan" (#1711 review).
+        notes.append(f"plan was {type(plan_raw).__name__}, not a list")
+        plan = []
+
+    def _dump() -> str:
+        body = {"philosophy": philosophy, "plan": plan, "rationale": rationale}
+        if notes:
+            body["_abridged"] = list(notes)
+        return json.dumps(body, indent=1)
+
+    text = _dump()
+    if len(text) <= _RENDER_BUDGET:
+        return text
+
+    # 1) Prefer trimming philosophy before touching the plan (trajectory axis).
+    if isinstance(philosophy, dict):
+        philosophy = dict(philosophy)
+        evidence = philosophy.get("evidence")
+        if isinstance(evidence, list) and evidence:
+            evidence = list(evidence)
+            dropped = 0
+            while len(text) > _RENDER_BUDGET and evidence:
+                evidence.pop()
+                dropped += 1
+                philosophy["evidence"] = evidence
+                text = _dump()
+            if dropped:
+                notes.append(
+                    f"dropped {dropped} philosophy evidence "
+                    f"entr{'y' if dropped == 1 else 'ies'}"
+                )
+                text = _dump()
+
+        for key in ("summary", "merge_bar", "direction"):
+            if len(text) <= _RENDER_BUDGET:
+                break
+            val = philosophy.get(key)
+            if not isinstance(val, str) or len(val) <= 40:
+                continue
+            while len(text) > _RENDER_BUDGET and len(val) > 40:
+                val = _clip_str(val, max(40, len(val) // 2))
+                philosophy[key] = val
+                text = _dump()
+            if len(text) > _RENDER_BUDGET:
+                philosophy[key] = _clip_str(val, 40)
+                text = _dump()
+
+    # 2) Clip the top-level rationale leaf.
+    if isinstance(rationale, str) and len(text) > _RENDER_BUDGET:
+        while len(text) > _RENDER_BUDGET and len(rationale) > 40:
+            rationale = _clip_str(rationale, max(40, len(rationale) // 2))
+            text = _dump()
+        if len(text) > _RENDER_BUDGET:
+            rationale = _clip_str(rationale, 40)
+            text = _dump()
+
+    # 3) Last resort: drop trailing plan items, recording how many were shed.
+    if isinstance(plan, list) and len(text) > _RENDER_BUDGET:
+        kept = list(plan)
+        dropped = 0
+        while len(text) > _RENDER_BUDGET and kept:
+            kept.pop()
+            dropped += 1
+            plan = kept
+            text = _dump()
+        if dropped:
+            notes.append(
+                f"dropped {dropped} trailing plan item{'' if dropped == 1 else 's'}"
+            )
+            text = _dump()
+
+    # 4) Pathological residual: omit the philosophy body rather than slice mid-JSON.
+    if len(text) > _RENDER_BUDGET and philosophy is not None:
+        philosophy = {"summary": "(philosophy omitted to fit budget)"}
+        notes.append("omitted philosophy body to fit budget")
+        text = _dump()
+
+    if len(text) > _RENDER_BUDGET:
+        # Guaranteed parseable floor — never return a mid-token slice.
+        text = json.dumps({
+            "philosophy": None,
+            "plan": [],
+            "rationale": None,
+            "_abridged": notes + ["submission exceeded render budget"],
+        }, indent=1)
+    return text
 
 
 # Generic, content-free titles/themes that pad a plan without proposing real work.

@@ -17,6 +17,9 @@ os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
 from agent.llm import LLM  # noqa: E402
 from benchmark.judge import (  # noqa: E402
+    _CLIP_MARKER,
+    _RENDER_BUDGET,
+    _clip_str,
     _item_substance,
     _offline_rank,
     _order_categories_list,
@@ -443,6 +446,107 @@ def test_render_handles_non_dict_submission():
     """_render must not crash on non-dict submissions."""
     assert "error" in _render(None)
     assert "error" in _render("not a dict")
+
+
+def test_clip_str_keeps_marker_inside_cap():
+    # Marker must fit inside the cap — never append past it (#1711 review).
+    assert _clip_str("hello", 10) == "hello"
+    assert len(_clip_str("x" * 100, 80)) == 80
+    assert _clip_str("x" * 100, 80).endswith(_CLIP_MARKER)
+    assert len(_clip_str("x" * 100, len(_CLIP_MARKER))) == len(_CLIP_MARKER)
+    assert len(_clip_str("x" * 100, 1)) == 1
+
+
+def test_render_budget_is_named_and_stable():
+    assert _RENDER_BUDGET == 4500
+
+
+def test_render_small_submission_is_unchanged_valid_json():
+    import json
+    sub = {
+        "philosophy": {"summary": "stable library", "values": ["conservative"]},
+        "plan": [{"title": "Fix loader race", "kind": "bugfix"}],
+        "rationale": "queue first",
+    }
+    out = _render(sub)
+    assert len(out) <= _RENDER_BUDGET
+    parsed = json.loads(out)
+    assert parsed["plan"][0]["title"] == "Fix loader race"
+    assert "_abridged" not in parsed
+
+
+def test_render_oversized_philosophy_stays_valid_json_and_keeps_plan():
+    """#1706: a huge philosophy must not mid-slice the document or starve the plan."""
+    import json
+    plan = [
+        {"title": f"Action {i}: implement streaming export path", "kind": "feature"}
+        for i in range(5)
+    ]
+    sub = {
+        "philosophy": {
+            "summary": "S" * 5000,
+            "merge_bar": "M" * 500,
+            "direction": "D" * 500,
+            "evidence": [f"signal-{i}: " + ("e" * 200) for i in range(20)],
+        },
+        "plan": plan,
+        "rationale": "r",
+    }
+    out = _render(sub)
+    assert len(out) <= _RENDER_BUDGET
+    parsed = json.loads(out)  # must not raise
+    assert isinstance(parsed.get("plan"), list)
+    assert len(parsed["plan"]) >= 1
+    titles = [item.get("title") for item in parsed["plan"] if isinstance(item, dict)]
+    assert any(isinstance(t, str) and t.startswith("Action") for t in titles)
+
+
+def test_render_prefers_trimming_philosophy_before_dropping_plan_items():
+    import json
+    plan = [{"title": f"Keep me {i}", "kind": "feature"} for i in range(3)]
+    sub = {
+        "philosophy": {
+            "summary": "short",
+            "evidence": [f"ev-{i}-" + ("x" * 300) for i in range(30)],
+        },
+        "plan": plan,
+        "rationale": "because",
+    }
+    parsed = json.loads(_render(sub))
+    assert len(parsed["plan"]) == 3
+    assert all(item["title"].startswith("Keep me") for item in parsed["plan"])
+    evidence = (parsed.get("philosophy") or {}).get("evidence")
+    assert evidence is None or len(evidence) < 30
+
+
+def test_render_non_list_plan_is_explicitly_noted_not_silently_empty():
+    import json
+    sub = {
+        "philosophy": {"summary": "ok"},
+        "plan": {"title": "not a list"},
+        "rationale": "r",
+    }
+    parsed = json.loads(_render(sub))
+    assert parsed["plan"] == []
+    assert any("not a list" in note for note in parsed.get("_abridged", []))
+
+
+def test_render_records_abridgement_when_content_is_shed():
+    import json
+    sub = {
+        "philosophy": {
+            "summary": "S" * 8000,
+            "evidence": [f"e{i}" for i in range(50)],
+        },
+        "plan": [{"title": f"P{i}", "kind": "feature"} for i in range(10)],
+        "rationale": "R" * 2000,
+    }
+    out = _render(sub)
+    parsed = json.loads(out)
+    assert len(out) <= _RENDER_BUDGET
+    assert "_abridged" in parsed
+    assert parsed["_abridged"]
+
 
 def test_judge_order_handles_non_dict_context():
     from agent.llm import LLM
