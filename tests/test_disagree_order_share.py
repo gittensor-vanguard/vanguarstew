@@ -1,5 +1,6 @@
 """Tests for disagree-order share summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import subprocess
@@ -178,6 +179,87 @@ def test_cli_directory_path_reports_distinct_error(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err
     assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_broken_symlink_reports_distinct_error(tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError like a missing path; it must be named as a
+    # broken link (its target is gone, the link itself exists), not reported as "not found".
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_cli_symlink_loop_is_named_not_leaked(tmp_path, capsys, monkeypatch):
+    # A symlink loop raises OSError(ELOOP), which no specific arm catches; it must be named
+    # as a loop, not leaked as a raw errno string.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_cli_not_a_directory_path_component_is_named(tmp_path, capsys, monkeypatch):
+    # A path routed through a regular file raises NotADirectoryError; name it distinctly
+    # instead of leaking a raw errno through the generic arm.
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
+
+
+def test_cli_generic_oserror_prints_the_path_exactly_once(tmp_path, capsys, monkeypatch):
+    # An OSError carrying the filename would print the path twice via str(exc); the fallback
+    # uses strerror so the path appears once, in the message's own prefix.
+    path = str(tmp_path / "x.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
+    err = capsys.readouterr().err
+    assert err == f"cannot read artifact ({path}): Input/output error\n"
+    assert err.count(path) == 1
+    assert "Traceback" not in err
+
+
+def test_islink_probe_is_not_reachable_before_open_or_on_a_symlink_loop(tmp_path, capsys, monkeypatch):
+    # The broken-symlink probe must run only after open() fails with FileNotFoundError: never
+    # on a successful open (no pre-open TOCTOU probe) and never on the ELOOP path.
+    calls = []
+    real_islink = os.path.islink
+    monkeypatch.setattr(os.path, "islink", lambda p: (calls.append(p), real_islink(p))[1])
+
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    assert cli.load_artifact(str(good)) == {"ok": True}
+    assert calls == []
+
+    loop_path = str(tmp_path / "loop.json")
+
+    def _eloop(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", loop_path)
+
+    monkeypatch.setattr("builtins.open", _eloop)
+    import pytest
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(loop_path)
+    assert excinfo.value.code == 2
+    assert calls == []
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {loop_path}\n"
 
 
 def test_module_main_no_arg_exits_nonzero():

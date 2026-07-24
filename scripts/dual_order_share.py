@@ -8,7 +8,9 @@ Exits 2 when the artifact path cannot be read, the JSON is invalid, or the root 
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import sys
 
 from benchmark.dual_order_share import dual_order_share_headline, summarize_dual_order_share
@@ -19,7 +21,14 @@ def load_artifact(path: str) -> dict:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except FileNotFoundError:
-        print(f"artifact not found: {path}", file=sys.stderr)
+        # open() already failed; classify dangling symlink vs missing path without a prior
+        # exists() probe (which can raise on a symlink loop and races with open). The islink
+        # lstat cannot raise here and only refines the message, so the post-failure window
+        # cannot change behavior.
+        if os.path.islink(path):
+            print(f"artifact is a broken symlink (target does not exist): {path}", file=sys.stderr)
+        else:
+            print(f"artifact not found: {path}", file=sys.stderr)
         raise SystemExit(2) from None
     except PermissionError:
         print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
@@ -27,9 +36,19 @@ def load_artifact(path: str) -> dict:
     except IsADirectoryError:
         print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
         raise SystemExit(2) from None
+    except NotADirectoryError:
+        print(f"artifact path is not a file (a parent component is not a directory): {path}",
+              file=sys.stderr)
+        raise SystemExit(2) from None
     except OSError as exc:
-        # Any other read failure (e.g. a device/IO error) still gets a clean message.
-        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+        # A symlink loop raises OSError(ELOOP), which none of the arms above catch. Name it
+        # distinctly; any other read failure keeps its strerror (or full text when there is
+        # none) so the offending path is printed exactly once, with a clean exit.
+        if getattr(exc, "errno", None) == errno.ELOOP:
+            print(f"artifact path is a symlink loop: {path}", file=sys.stderr)
+        else:
+            print(f"cannot read artifact ({path}): {getattr(exc, 'strerror', None) or exc}",
+                  file=sys.stderr)
         raise SystemExit(2) from None
     except ValueError as exc:
         # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
