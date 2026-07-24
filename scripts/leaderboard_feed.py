@@ -292,8 +292,8 @@ def to_anchor_entry(
     scored against it.
 
     Unlike a leaderboard entry (which only exists once a real PR has been scored),
-    this is published once -- whenever the anchor is (re)generated, see
-    codex-dev/anchor_baseline.sh -- so the leaderboard's base bar has a real value to show
+    this is published once whenever the anchor is (re)generated, so the leaderboard's base
+    bar has a real value to show
     from the moment the anchor exists, not only after the first PR lands. Inputs are raw
     ``run_eval --out`` artifacts (NOT a score_pr_delta result -- there's nothing to diff the
     anchor against, it IS the reference point), so this reads ``composite_mean`` directly off
