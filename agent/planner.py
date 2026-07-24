@@ -98,10 +98,10 @@ _CC_TYPE_TO_PLAN_KIND = {
 # the anchor classifies them. The body regex matches benchmark/score.py `_RELEASE_TAG_SUBJECT`.
 _RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
 _RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
-# Explicit release wording anywhere in a subject. Mirrors benchmark/score.py `_RELEASE_KW` so the
-# release backstop recognizes a release-titled plan item (`Cut the 1.0 release`, `bump version`)
-# the same way the objective anchor's `is_release_subject` does — a title-shaped release the
-# `_commit_plan_kind` (Conventional-Commit-prefix only) check alone would miss (#1561 follow-up).
+# Explicit release wording anywhere in a subject. Mirrors benchmark/score.py `_RELEASE_KW` so
+# `_is_release_subject` / `_commit_plan_kind` recognize a release cut the same way the objective
+# anchor's `is_release_subject` does — including prefix-less subjects and release-titled plan
+# items (#1561 follow-up, #1871).
 _RELEASE_KW_RE = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
 
 SYSTEM = (
@@ -249,21 +249,30 @@ def _commit_plan_kind(subject):
     """The plan-vocabulary kind a recent-commit subject evidences, or None.
 
     Reads the Conventional-Commit prefix; a version-cut subject under a release-tooling type
-    ("chore(release): 1.4.0") reads as ``release`` rather than ``dep``. Merge commits and
-    prefix-less subjects carry no reliable kind, and a non-string subject (malformed frozen
-    context) is ignored rather than raising inside ``re``.
+    ("chore(release): 1.4.0") reads as ``release`` rather than ``dep``. Failing that, a subject
+    that reads as a release cut on its own wording is a ``release`` — the anchor's ``commit_kind``
+    ends with exactly that arm (``if is_release_subject(subject): return "release"``), and a repo
+    predating Conventional Commits authors nearly every cut that way ("Bump version numbers to
+    5.1.3", "prepare pluggy-0.4.0 release"). Without it this classifier is blind to the release
+    history the anchor scores, which leaves the freeze-T timing gate unable to time anything
+    (#1871). Everything else prefix-less carries no reliable kind, and a non-string subject
+    (malformed frozen context) is ignored rather than raising inside ``re``.
     """
     if not isinstance(subject, str):
         return None
     m = _CC_PREFIX_RE.match(subject)
-    if not m:
-        return None
-    cc_type = m.group(1).lower()
-    if cc_type in _RELEASE_TOOLING_TYPES:
-        body = subject[m.end():].lstrip(" :\t")
-        if _RELEASE_CUT_BODY_RE.match(body):
-            return "release"
-    return _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+    if m:
+        cc_type = m.group(1).lower()
+        if cc_type in _RELEASE_TOOLING_TYPES:
+            body = subject[m.end():].lstrip(" :\t")
+            if _RELEASE_CUT_BODY_RE.match(body):
+                return "release"
+        mapped = _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+        if mapped:
+            return mapped
+        # An unrecognized CC type is not authoritative: the anchor drops to the release check
+        # below rather than returning None here ("wip: prepare release 1.2.0").
+    return "release" if _is_release_subject(subject) else None
 
 
 def _recent_commits(context: dict) -> list:
@@ -501,11 +510,31 @@ def _is_planned_release(item) -> bool:
     return _is_release_subject(item.get("title"))
 
 
+def _demote_release_prediction(item: dict) -> dict:
+    """Clear a release prediction while keeping the item (and its ``files``) (#1871).
+
+    On suppress, deleting the item was correct for ``release_predicted`` but also dropped its
+    ``files`` / title tokens from module recall — a live-score regression once prefix-less
+    release history made ``suppress`` reachable (#1872). Demote instead: stop counting as a
+    release cut, preserve path tokens the objective anchor scores.
+    """
+    out = dict(item)
+    kind = out.get("kind")
+    if isinstance(kind, str) and kind.strip().lower() == "release":
+        out["kind"] = "triage"
+    # Title alone still trips release_predicted; replace with wording that is not a cut.
+    # Avoid "release" / "changelog" / "bump version" so _is_release_subject stays False.
+    if _is_release_subject(out.get("title")):
+        out["title"] = "Continue maintenance work"
+    return out
+
+
 def _calibrate_release_prediction(plan: list, context: dict) -> list:
     """Gate release predictions on freeze-T timing rather than cadence vibe (#1561).
 
-    - **suppress** (just cut): drop release-kind / release-titled items — another cut in the
-      revealed window is unlikely, and a false positive costs as much as a miss.
+    - **suppress** (just cut): demote release-kind / release-titled items in place — another cut
+      in the revealed window is unlikely, but deleting the item would also strip ``files`` from
+      module recall (#1871 / #1872). Demotion clears ``release_predicted`` while keeping paths.
     - **pressure** (cycle due): leave the plan unchanged; the prompt's pressure note asks for
       a release item, and stripping would undo that foresight.
     - **neutral**: keep the #1758 backstop — drop unsupported release items when recent history
@@ -516,7 +545,10 @@ def _calibrate_release_prediction(plan: list, context: dict) -> list:
     """
     state = _release_timing_state(context)
     if state == "suppress":
-        return [item for item in plan if not _is_planned_release(item)]
+        return [
+            _demote_release_prediction(item) if _is_planned_release(item) else item
+            for item in plan
+        ]
     if state == "pressure":
         return plan
     if _release_cadence_signal(context):
