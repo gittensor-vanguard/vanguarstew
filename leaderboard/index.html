@@ -338,8 +338,8 @@
       return Math.min(a, b);
     }
 
-    // anchor.json is fetched independently of results.json -- it's published once whenever
-    // the anchor is (re)generated (see codex-dev/anchor_baseline.sh), so the base bar has a
+    // anchor.json is fetched independently of results.json -- it is published whenever
+    // the anchor is (re)generated, so the base bar has a
     // real score from the moment the anchor exists, not only once a PR has been scored
     // against it. Its absence (not yet generated, or the fetch fails) is tolerated: the
     // journey chart then falls back to the empty state if no PR carries since_anchor either.
