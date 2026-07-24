@@ -475,7 +475,7 @@ def test_matched_pr_ignores_open_pr_with_non_string_title():
 class _MalformedPlanLLM:
     offline = False
 
-    def chat_json(self, system, user, stub=None):
+    def chat_json(self, system, user, stub=None, prefer=None):
         return [
             {"title": 42, "kind": "BUGFIX", "rationale": None, "theme": "stability"},
             {"title": "", "kind": "docs"},
@@ -702,11 +702,11 @@ def test_plan_next_actions_warns_for_dict_wrapped_non_list_plan(caplog):
     from agent.llm import LLM
 
     class BadPlanLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             return {"plan": 42}
 
     class BadActionsLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             return {"actions": 42}
 
     with caplog.at_level(logging.WARNING, logger="agent.planner"):
@@ -723,7 +723,7 @@ def test_plan_next_actions_honors_explicit_empty_plan():
     from agent.llm import LLM
 
     class EmptyPlanLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             return {"plan": [], "actions": [{"title": "stale", "kind": "bugfix",
                     "rationale": "x", "theme": "y"}]}
 
@@ -759,7 +759,7 @@ class _PromptCaptureLLM:
         self.payload = payload
         self.last_user = ""
 
-    def chat_json(self, system, user, stub=None):
+    def chat_json(self, system, user, stub=None, prefer=None):
         self.last_user = user
         return self.payload
 
@@ -890,7 +890,7 @@ def test_planner_prompt_includes_release_pressure_only_when_timing_says_due():
     captured = {}
 
     class CapturingLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             captured["user"] = user
             return [{"title": "Fix loader", "kind": "bugfix"}]
 
@@ -1030,7 +1030,7 @@ def test_plan_next_actions_drops_spurious_release_without_cadence():
     # The #1561 repro: the model adds a release item though nothing in recent history evidences a
     # cut. The backstop removes it so the plan does not predict a release the window won't contain.
     class ReleaseHappyLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             return [
                 {"title": "Stabilize CI matrix", "kind": "ci"},
                 {"title": "Cut the next release", "kind": "release"},
@@ -1045,7 +1045,7 @@ def test_plan_next_actions_drops_spurious_release_without_cadence():
 def test_plan_next_actions_keeps_release_under_pressure():
     # When freeze-T timing says a cut is due, an LLM release item must survive calibration.
     class ReleaseHappyLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             return [
                 {"title": "Stabilize CI matrix", "kind": "ci"},
                 {"title": "Cut the next release", "kind": "release"},
@@ -1065,7 +1065,7 @@ def test_plan_next_actions_keeps_release_under_pressure():
 
 def test_plan_next_actions_suppresses_release_just_after_a_cut():
     class ReleaseHappyLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             return [
                 {"title": "Stabilize CI matrix", "kind": "ci"},
                 {"title": "Cut the next release", "kind": "release"},
@@ -1171,7 +1171,7 @@ def test_planner_prompt_includes_config_surface_only_with_automation():
     captured = {}
 
     class CapturingLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             captured["user"] = user
             return [{"title": "Fix loader", "kind": "bugfix"}]
 
@@ -1324,7 +1324,7 @@ def test_planner_prompt_surfaces_recent_kind_mix():
     captured = {}
 
     class CapturingLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             captured["user"] = user
             return [{"title": "Fix the loader race", "kind": "bugfix",
                      "rationale": "recent history is fix-heavy", "theme": "stability"}]
@@ -1342,10 +1342,60 @@ def test_planner_prompt_omits_kind_note_without_conventional_commits():
     captured = {}
 
     class CapturingLLM(LLM):
-        def chat_json(self, system, user, stub=None):
+        def chat_json(self, system, user, stub=None, prefer=None):
             captured["user"] = user
             return [{"title": "Write user documentation", "kind": "docs"}]
 
     ctx = {"open_prs": [], "recent_commits": [{"subject": "Add streaming export"}]}
     plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
     assert "Recent maintainer activity by kind" not in captured["user"]
+
+
+def test_plan_next_actions_recovers_plan_array_next_to_echoed_example_object(monkeypatch):
+    # End-to-end through the real chat_json/extract_json path: a live reply that echoes an
+    # example item object before the actual JSON-list plan must yield the 3-item plan, not
+    # an empty one — the default object-over-array extraction guard used to pick the echoed
+    # example dict, find no "plan"/"actions" key, and silently zero the whole scored plan.
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+    assert llm.offline is False
+    llm.chat = lambda system, user: (
+        "Here is an example item shape:\n"
+        '{"title": "Fix the loader race", "kind": "bugfix"}\n\n'
+        "And the full plan:\n"
+        '[{"title": "Fix quick-router crash", "kind": "bugfix", "files": ["router.py"],'
+        ' "rationale": "r", "theme": "stability"},\n'
+        ' {"title": "Refactor plugin loader", "kind": "refactor", "files": ["loader.py"],'
+        ' "rationale": "r", "theme": "cleanup"},\n'
+        ' {"title": "Document the router config", "kind": "docs", "files": ["docs/router.md"],'
+        ' "rationale": "r", "theme": "docs"}]'
+    )
+
+    plan = plan_next_actions({"open_prs": []}, {}, 3, llm)
+    assert [p["title"] for p in plan] == [
+        "Fix quick-router crash",
+        "Refactor plugin loader",
+        "Document the router config",
+    ]
+
+
+def test_plan_next_actions_survives_citation_aside_before_wrapper_plan(monkeypatch):
+    # Live-regression guard for the prefer=list extraction: a scalar bracket aside
+    # ahead of a {"plan": [...]} wrapper must still yield the wrapped plan, not let
+    # the aside win extraction and collapse the plan to [].
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(model="m", api_base="https://api.example.com", api_key="secret")
+    assert llm.offline is False
+    llm.chat = lambda system, user: (
+        "[1] Given the repo state, here is my plan:\n"
+        '{"plan": [{"title": "Fix parser crash", "kind": "bugfix", "files": ["parser.py"],'
+        ' "rationale": "r", "theme": "stability"},\n'
+        ' {"title": "Document the config surface", "kind": "docs", "files": ["docs/config.md"],'
+        ' "rationale": "r", "theme": "docs"}]}'
+    )
+
+    plan = plan_next_actions({"open_prs": []}, {}, 2, llm)
+    assert [p["title"] for p in plan] == [
+        "Fix parser crash",
+        "Document the config surface",
+    ]
