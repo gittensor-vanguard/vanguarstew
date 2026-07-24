@@ -169,6 +169,8 @@ def _validate_freeze_window(fw, where):
                      f"{where}: freeze_window.{key} must be an integer")
             if key == "min_history":
                 _require(value >= 1, f"{where}: freeze_window.min_history must be >= 1")
+            elif key == "horizon_days":
+                _require(value >= 1, f"{where}: freeze_window.horizon_days must be >= 1")
     # Cross-field: a window whose `after` is later than its `before` can never contain a
     # commit, so taskgen silently yields zero tasks and the repo is quietly dropped from the
     # (leakage-safe, curated) benchmark with no error — a config typo that erodes the set
