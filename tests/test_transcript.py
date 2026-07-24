@@ -223,3 +223,58 @@ def test_replay_proxy_rejects_an_uncovered_request_rather_than_inventing_one():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_build_server_binds_the_exact_store_even_when_empty():
+    """Regression: an empty TranscriptStore is falsy (defines __len__), so `store or ...` in
+    build_server bound a throwaway store while the caller saved the original -- record mode, which
+    always starts empty, then recorded into one object and persisted another (recorded nothing).
+    build_server must bind the *exact* store it was handed."""
+    from scripts.transcript_proxy import build_server
+    empty = TranscriptStore()
+    assert len(empty) == 0 and not empty  # empty store really is falsy -- that's the trap
+    server = build_server("record", 0, upstream="http://unused", store=empty)
+    try:
+        assert server.RequestHandlerClass.store is empty
+    finally:
+        server.server_close()
+
+
+def test_record_mode_actually_records_through_a_fake_upstream():
+    """End-to-end record path (missing from the earlier replay-only tests): a call THROUGH the
+    proxy in record mode must land in the transcript the caller saves."""
+    import urllib.request
+
+    from scripts.transcript_proxy import build_server
+
+    # a stand-in upstream that returns a canned completion
+    upstream_store = TranscriptStore()
+    upstream_store.record(
+        {"model": "m", "temperature": 0, "messages": [{"role": "user", "content": "hi"}]},
+        "upstream-answer")
+    upstream = build_server("replay", 0, store=upstream_store)
+    up_port = upstream.server_address[1]
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+
+    store = TranscriptStore()  # empty, as record mode always is
+    recorder = build_server("record", 0, upstream=f"http://127.0.0.1:{up_port}", store=store)
+    rec_port = recorder.server_address[1]
+    threading.Thread(target=recorder.serve_forever, daemon=True).start()
+    try:
+        body = json.dumps({"model": "m", "temperature": 0,
+                           "messages": [{"role": "user", "content": "hi"}]}).encode()
+        req = urllib.request.Request(f"http://127.0.0.1:{rec_port}/v1/chat/completions",
+                                     data=body, headers={"Content-Type": "application/json"},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            got = json.loads(resp.read())
+        assert got["choices"][0]["message"]["content"] == "upstream-answer"
+        # the recording landed in the SAME store object the caller holds
+        assert len(store) == 1
+        assert store.replay({"model": "m", "temperature": 0,
+                             "messages": [{"role": "user", "content": "hi"}]}) == "upstream-answer"
+    finally:
+        recorder.shutdown()
+        recorder.server_close()
+        upstream.shutdown()
+        upstream.server_close()
