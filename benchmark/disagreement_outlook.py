@@ -95,6 +95,14 @@ def _slice_summary(slice_) -> dict:
         if counts is None or rate is None:
             continue
         disagreements, dual = counts
+        if dual == 0:
+            # A zero-dual-order block has no real data to derive a rate from, no matter what a
+            # stored `disagreement_rate` field claims (spec 026) -- `_disagreement_rate_from_
+            # telemetry` only recomputes from counts when dual > 0, so for dual == 0 it falls
+            # through to trusting that stored field. Treat it the same as no usable rate, so
+            # this slice is the documented empty one and (via `_combined`) can't sum a
+            # non-informative partition into an overall outlook alongside a real one.
+            continue
         return {
             "dual_order_tasks": dual,
             "disagreements": disagreements,
