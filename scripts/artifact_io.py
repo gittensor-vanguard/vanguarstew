@@ -66,7 +66,12 @@ def load_artifact(path: str) -> dict:
         if getattr(exc, "errno", None) == errno.ELOOP:
             print(f"artifact path is a symlink loop: {path}", file=sys.stderr)
         else:
-            print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
+            # Prefer strerror so an OSError that already carries ``filename`` does not print the
+            # path twice (once in the prefix, once inside ``str(exc)``).
+            print(
+                f"cannot read artifact ({path}): {getattr(exc, 'strerror', None) or exc}",
+                file=sys.stderr,
+            )
         raise SystemExit(2) from None
     except UnicodeDecodeError as exc:
         # Non-UTF-8 mid-read: keep a distinct message (UnicodeDecodeError subclasses

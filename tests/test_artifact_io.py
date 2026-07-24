@@ -112,8 +112,10 @@ def test_other_oserror_reports_cleanly(monkeypatch, tmp_path, capsys):
         load_artifact(path)
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
-    assert "Traceback" not in err
     assert err.startswith(f"cannot read artifact ({path}):")
+    assert "Input/output error" in err
+    assert err.count(path) == 1
+    assert "Traceback" not in err
 
 
 def test_invalid_json_exits_two(tmp_path, capsys):
@@ -145,8 +147,50 @@ def test_non_utf8_exits_two(tmp_path, capsys):
 
 
 def test_migrated_clis_reexport_shared_loader():
-    from scripts import acceptance, leaderboard, promotion, regression, repeatability, report
+    from scripts import (
+        acceptance,
+        aggregate_integrity,
+        blend_weights,
+        component_floor,
+        gap_integrity,
+        improvement,
+        judge_gate,
+        judge_report_integrity,
+        leaderboard,
+        objective_integrity,
+        promotion,
+        regression,
+        repeatability,
+        repo_coverage,
+        report,
+        row_integrity,
+        score_integrity,
+        tally_integrity,
+        trend,
+        weight_integrity,
+    )
     from scripts.artifact_io import load_artifact as shared
 
-    for mod in (acceptance, promotion, regression, repeatability, leaderboard, report):
-        assert mod.load_artifact is shared
+    for mod in (
+        acceptance,
+        promotion,
+        regression,
+        repeatability,
+        leaderboard,
+        report,
+        aggregate_integrity,
+        improvement,
+        blend_weights,
+        weight_integrity,
+        repo_coverage,
+        component_floor,
+        judge_gate,
+        trend,
+        row_integrity,
+        score_integrity,
+        tally_integrity,
+        judge_report_integrity,
+        gap_integrity,
+        objective_integrity,
+    ):
+        assert mod.load_artifact is shared, mod.__name__

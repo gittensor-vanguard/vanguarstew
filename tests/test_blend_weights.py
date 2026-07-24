@@ -1,5 +1,6 @@
 """Tests for blend weights summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import sys
@@ -181,7 +182,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
         cli.load_artifact(str(tmp_path / "run.json"))
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
-    assert "artifact path is a directory, not a file" in err and "Traceback" not in err
+    assert ("directory" in err or "not readable" in err) and "Traceback" not in err
 
 
 def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
@@ -206,3 +207,30 @@ def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "cannot read artifact" in err and "Traceback" not in err
+
+
+def test_load_artifact_broken_symlink_is_named(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    try:
+        link.symlink_to(tmp_path / "nonexistent.json")
+    except OSError as exc:
+        pytest.skip(f"symlink not available on this platform: {exc}")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_named(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"

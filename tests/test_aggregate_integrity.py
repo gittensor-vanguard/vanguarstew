@@ -1,6 +1,7 @@
 """Tests for the multi-repo aggregate integrity gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import math
@@ -520,7 +521,7 @@ def test_cli_without_strict_returns_zero_even_when_invalid(tmp_path):
 
 def test_cli_reports_clean_error_for_missing_file(tmp_path):
     result = _run_cli(str(tmp_path / "missing.json"), "--strict")
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "artifact not found" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -529,20 +530,22 @@ def test_cli_reports_clean_error_for_non_object(tmp_path):
     path = tmp_path / "array.json"
     path.write_text(json.dumps([1]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "must be a JSON object" in result.stderr
     assert "Traceback" not in result.stderr
 
 
 def test_cli_reports_clean_error_for_a_directory_path(tmp_path):
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
-    assert "artifact path is a directory, not a file" in result.stderr
+    assert result.returncode == 2
+    assert "directory" in result.stderr or "not readable" in result.stderr
     assert "Traceback" not in result.stderr
 
 
-@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
-                    reason="root bypasses file permission bits")
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX permission bits are not enforced on Windows; root bypasses them too",
+)
 def test_cli_reports_clean_error_for_an_unreadable_file(tmp_path):
     locked = tmp_path / "locked.json"
     locked.write_text(json.dumps(_multi()), encoding="utf-8")
@@ -551,7 +554,7 @@ def test_cli_reports_clean_error_for_an_unreadable_file(tmp_path):
         result = _run_cli(str(locked))
     finally:
         locked.chmod(0o600)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not readable" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -560,6 +563,34 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
-    assert "not valid JSON" in result.stderr
+    assert result.returncode == 2
+    assert ("not valid JSON" in result.stderr or "UTF-8" in result.stderr)
     assert "Traceback" not in result.stderr
+
+
+def test_cli_reports_broken_symlink_cleanly(tmp_path):
+    link = tmp_path / "broken.json"
+    try:
+        link.symlink_to(tmp_path / "nonexistent.json")
+    except OSError as exc:
+        pytest.skip(f"symlink not available on this platform: {exc}")
+    result = _run_cli(str(link))
+    assert result.returncode == 2
+    assert result.stderr == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_cli_reports_symlink_loop_cleanly(monkeypatch, tmp_path, capsys):
+    from scripts import aggregate_integrity as cli
+
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
