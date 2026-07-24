@@ -61,12 +61,31 @@ def _is_unscored_slice(slice_) -> bool:
     return _is_int(scored) and scored == 0
 
 
+def _is_unscored_repo(entry: dict) -> bool:
+    """True when a ``per_repo`` entry explicitly reports that it scored no tasks.
+
+    A repo too small for the horizon still gets a ``per_repo`` row, but its ``composite_mean`` is
+    the ``_mean([])`` default of ``0.0`` — a **placeholder, not a score**. ``run_multi_replay``
+    keeps the row while deliberately excluding it from the aggregate (``if res.get("tasks", 0) >
+    0``), so counting it here fabricates a phantom ``min`` of ``0.0`` and a maximal ``range``:
+    the exact "carried by one repo" false alarm this module exists to detect (#1628).
+
+    Only an **explicit numeric** ``tasks == 0`` is treated as unscored. An entry carrying no
+    ``tasks`` field at all is ambiguous — a hand-written or pre-``tasks`` artifact — and is still
+    counted, unchanged from before. That asymmetry is deliberate and mirrors
+    ``generalization_gate._scored_repos``, which draws the same line for the same reason; it also
+    keeps the Spec 058 rule that a bare ``{"composite_mean": 0.5}`` entry contributes its score.
+    """
+    return _is_number(entry.get("tasks")) and entry["tasks"] == 0
+
+
 def _repo_scores(slice_) -> list[float]:
     """The per-repo ``composite_mean`` values of one slice, each rounded to 3 dp.
 
     A multi-repo slice contributes one score per scored ``per_repo`` entry that carries a numeric
     ``composite_mean``; a single-repo slice contributes its own top-level ``composite_mean``. Empty
-    ``per_repo``, non-dict entries, and entries missing/with a non-numeric ``composite_mean`` are
+    ``per_repo``, non-dict entries, entries that explicitly scored zero tasks (see
+    :func:`_is_unscored_repo`), and entries missing/with a non-numeric ``composite_mean`` are
     skipped, and an unscored aggregate (a failed partition, ``scored_repos == 0``) contributes no
     score rather than a phantom ``0.0``.
     """
@@ -75,7 +94,8 @@ def _repo_scores(slice_) -> list[float]:
     if isinstance(per_repo, list):
         scores = []
         for entry in per_repo:
-            if isinstance(entry, dict) and _is_number(entry.get("composite_mean")):
+            if (isinstance(entry, dict) and not _is_unscored_repo(entry)
+                    and _is_number(entry.get("composite_mean"))):
                 scores.append(round(float(entry["composite_mean"]), 3))
         return scores
     if _is_unscored_slice(slice_):
