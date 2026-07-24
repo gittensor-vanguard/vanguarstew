@@ -20,6 +20,7 @@ from benchmark.polaris import (  # noqa: E402
     PolarisReceipt,
     build_stdout_envelope,
     expected_report_data,
+    mounted_files_sha256,
     verify_attested_envelope,
     verify_receipt,
 )
@@ -30,13 +31,28 @@ IMAGE_HEX = "12" * 32
 IMAGE = f"ghcr.io/gittensor-vanguard/vanguarstew-eval@sha256:{IMAGE_HEX}"
 RESOLVED = f"sha256:{IMAGE_HEX}"
 ARTIFACT = {"composite_mean": 0.62, "composite_parts": {"judge_mean": 0.6}}
+FILES_SHA = "34" * 32
+EGRESS_SHA = "56" * 32
 
 
 def _quote(
-    stdout: str, nonce: str = NONCE, pubkey: str = PUBKEY, image_digest: str = RESOLVED
+    stdout: str,
+    nonce: str = NONCE,
+    pubkey: str = PUBKEY,
+    image_digest: str = RESOLVED,
+    *,
+    files_sha256: str = "",
+    egress_log_sha256: str = "",
 ) -> str:
     raw = bytearray(632)
-    raw[568:632] = expected_report_data(nonce, pubkey, image_digest, stdout)
+    raw[568:632] = expected_report_data(
+        nonce,
+        pubkey,
+        image_digest,
+        stdout,
+        files_sha256=files_sha256,
+        egress_log_sha256=egress_log_sha256,
+    )
     return base64.b64encode(raw).decode()
 
 
@@ -78,6 +94,34 @@ def test_report_data_uses_the_documented_two_half_recipe():
     assert report_data[32:] == hashlib.sha256((RESOLVED + stdout_hex).encode()).digest()
 
 
+def test_report_data_v2_appends_egress_then_files_digests():
+    stdout = "canonical output"
+    report_data = expected_report_data(
+        NONCE,
+        PUBKEY,
+        RESOLVED,
+        stdout,
+        egress_log_sha256=EGRESS_SHA,
+        files_sha256=FILES_SHA,
+    )
+    stdout_hex = hashlib.sha256(stdout.encode()).hexdigest()
+    assert report_data[32:] == hashlib.sha256(
+        (RESOLVED + stdout_hex + EGRESS_SHA + FILES_SHA).encode()
+    ).digest()
+
+
+def test_mounted_files_digest_uses_sorted_tab_separated_rows_with_final_newline():
+    files = {
+        "/submission/zeta.txt": b"vanguarstew-polaris-v2-zeta\n",
+        "/submission/alpha.txt": b"vanguarstew-polaris-v2-alpha\n",
+    }
+    assert mounted_files_sha256(files) == (
+        "7267c7a68e4f2df42b749881792ddfb6ff900fd46d871afeaa17ad93dec2b955"
+    )
+    assert mounted_files_sha256(dict(reversed(list(files.items())))) == mounted_files_sha256(files)
+    assert mounted_files_sha256(None) == ""
+
+
 def test_valid_live_receipt_is_polaris_verified_but_not_independently_verified():
     report = verify_receipt(_receipt(), nonce=NONCE, e2e_pubkey_b64=PUBKEY, expected_image=IMAGE)
     assert report["ok"] is True
@@ -94,7 +138,8 @@ def test_current_service_response_fields_are_preserved():
                 "quote_b64": _quote("result"),
                 "bound_digest": RESOLVED,
                 "collateral_b64": "Y29sbGF0ZXJhbA==",
-                "binding_version": 1,
+                "binding_version": 2,
+                "files_sha256": FILES_SHA,
             },
             "verification": {"intel_verified": True},
             "stdout": "result",
@@ -102,7 +147,84 @@ def test_current_service_response_fields_are_preserved():
     )
     assert receipt.image_digest == RESOLVED
     assert receipt.collateral == "Y29sbGF0ZXJhbA=="
-    assert receipt.binding_version == 1
+    assert receipt.binding_version == 2
+    assert receipt.files_sha256 == FILES_SHA
+    assert receipt.egress_log_sha256 == ""
+
+
+def test_binding_v2_requires_and_checks_an_independent_files_digest():
+    receipt = _receipt(
+        quote_b64=_quote("result", files_sha256=FILES_SHA),
+        binding_version=2,
+        files_sha256=FILES_SHA,
+    )
+    missing = verify_receipt(
+        receipt, nonce=NONCE, e2e_pubkey_b64=PUBKEY, expected_image=IMAGE
+    )
+    assert missing["ok"] is False
+    assert missing["checks"]["result_binding"] is True
+    assert missing["checks"]["expected_files_digest"] is False
+
+    wrong = verify_receipt(
+        receipt,
+        nonce=NONCE,
+        e2e_pubkey_b64=PUBKEY,
+        expected_image=IMAGE,
+        expected_files_sha256="78" * 32,
+    )
+    assert wrong["ok"] is False
+    assert wrong["checks"]["expected_files_digest"] is False
+
+    valid = verify_receipt(
+        receipt,
+        nonce=NONCE,
+        e2e_pubkey_b64=PUBKEY,
+        expected_image=IMAGE,
+        expected_files_sha256=FILES_SHA,
+    )
+    assert valid["ok"] is True
+    assert valid["checks"]["binding_version"] is True
+    assert valid["checks"]["expected_files_digest"] is True
+
+    malformed = verify_receipt(
+        receipt,
+        nonce=NONCE,
+        e2e_pubkey_b64=PUBKEY,
+        expected_image=IMAGE,
+        expected_files_sha256=123,
+    )
+    assert malformed["ok"] is False
+    assert malformed["checks"]["expected_files_digest"] is False
+
+
+@pytest.mark.parametrize("field", ["files_sha256", "egress_log_sha256"])
+def test_receipt_rejects_non_string_binding_digests(field):
+    receipt = _receipt()
+    receipt[field] = None
+    with pytest.raises(PolarisError, match="malformed binding digests"):
+        PolarisReceipt.from_dict(receipt)
+
+
+def test_unexpected_recorded_egress_fails_closed():
+    receipt = _receipt(
+        quote_b64=_quote("result", egress_log_sha256=EGRESS_SHA),
+        binding_version=2,
+        egress_log_sha256=EGRESS_SHA,
+    )
+    denied = verify_receipt(
+        receipt, nonce=NONCE, e2e_pubkey_b64=PUBKEY, expected_image=IMAGE
+    )
+    assert denied["ok"] is False
+    assert denied["checks"]["expected_egress_digest"] is False
+
+    accepted = verify_receipt(
+        receipt,
+        nonce=NONCE,
+        e2e_pubkey_b64=PUBKEY,
+        expected_image=IMAGE,
+        expected_egress_log_sha256=EGRESS_SHA,
+    )
+    assert accepted["ok"] is True
 
 
 @pytest.mark.parametrize(
@@ -325,6 +447,65 @@ def test_live_client_posts_only_to_attest_and_preserves_the_quote():
     }
 
 
+def test_live_client_base64_encodes_bounded_submission_mounts():
+    stdout = "result"
+    payload = {
+        "tee_attestation": {
+            "quote_b64": _quote(stdout, files_sha256=FILES_SHA),
+            "binding_version": 2,
+            "files_sha256": FILES_SHA,
+        },
+        "verification": {"intel_verified": True},
+        "image_digest": RESOLVED,
+        "stdout": stdout,
+    }
+    seen = {}
+
+    def opener(request, timeout):
+        seen.update(json.loads(request.data))
+        return _Response(payload)
+
+    client = PolarisClient(base_url="https://polaris.example", api_key="secret", opener=opener)
+    receipt = client.attest(
+        nonce=NONCE,
+        e2e_pubkey_b64=PUBKEY,
+        image=IMAGE,
+        workload="run",
+        files={"/submission/input.part00": b"public-input"},
+    )
+    assert seen["files"] == {
+        "/submission/input.part00": base64.b64encode(b"public-input").decode()
+    }
+    assert receipt.binding_version == 2
+    assert receipt.files_sha256 == FILES_SHA
+
+
+@pytest.mark.parametrize(
+    "files,error",
+    [
+        ({f"/submission/{index}": b"x" for index in range(9)}, "at most"),
+        ({"relative": b"x"}, "normalized"),
+        ({"/submission/../escape": b"x"}, "normalized"),
+        ({"/submission/input": "not-bytes"}, "must be bytes"),
+        ({"/submission/input": b"x" * (256 * 1024 + 1)}, "must not exceed"),
+    ],
+)
+def test_live_client_rejects_invalid_mounts_before_request(files, error):
+    client = PolarisClient(
+        base_url="https://polaris.example",
+        api_key="secret",
+        opener=lambda *args, **kwargs: pytest.fail("request must not be sent"),
+    )
+    with pytest.raises(PolarisError, match=error):
+        client.attest(
+            nonce=NONCE,
+            e2e_pubkey_b64=PUBKEY,
+            image=IMAGE,
+            workload="run",
+            files=files,
+        )
+
+
 def test_client_refuses_implicit_insecure_or_mutable_live_calls():
     with pytest.raises(PolarisError, match="https"):
         PolarisClient(base_url="http://polaris.example", api_key="secret")
@@ -391,7 +572,7 @@ def test_key_check_is_a_non_attesting_get_request():
     }
 
 
-def test_binding_v2_fails_until_file_and_egress_hashes_are_verified():
+def test_binding_version_cannot_claim_v2_without_v2_extra_digests():
     receipt = _receipt(binding_version=2)
     report = verify_receipt(receipt, nonce=NONCE, e2e_pubkey_b64=PUBKEY, expected_image=IMAGE)
     assert report["ok"] is False

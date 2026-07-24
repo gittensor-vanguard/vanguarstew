@@ -49,6 +49,16 @@ def run(argv=None) -> int:
         "--image", required=True, help="expected OCI image pinned as name@sha256:<64hex>"
     )
     parser.add_argument(
+        "--files-sha256",
+        default=None,
+        help="independently expected mounted-input digest (required for a files-bound v2 receipt)",
+    )
+    parser.add_argument(
+        "--egress-log-sha256",
+        default="",
+        help="expected recorded-egress digest; omit to require no recorded egress",
+    )
+    parser.add_argument(
         "--allow-stub",
         action="store_true",
         help="verify stub bindings for development (never hardware attestation)",
@@ -117,6 +127,8 @@ def run(argv=None) -> int:
         nonce=args.nonce,
         e2e_pubkey_b64=args.e2e_pubkey,
         expected_image=args.image,
+        expected_files_sha256=args.files_sha256,
+        expected_egress_log_sha256=args.egress_log_sha256,
         require_live=not args.allow_stub,
         intel_verifier=intel_verifier,
     )

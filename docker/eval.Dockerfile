@@ -32,8 +32,8 @@ RUN apt-get update \
 # container user and git's "dubious ownership" guard aborts every rev-list. That guard protects a
 # multi-user machine from a hostile repo owner; neither condition holds in a single-purpose eval
 # sandbox that only ever reads repositories it was explicitly handed, and inside an enclave the
-# input set is fixed by the attested measurement anyway. Use system scope because the workload runs
-# as an unprivileged user below.
+# input set is fixed by the quote-bound mounted-files digest. Use system scope because the workload
+# runs as an unprivileged user below.
 RUN git config --system --add safe.directory '*' \
     && useradd --uid 10001 --create-home --home-dir /home/eval eval
 
@@ -58,6 +58,7 @@ USER eval
 # No ENTRYPOINT on purpose -- the same image serves the four roles the TEE path needs:
 #   replay a run:  python -m scripts.transcript_proxy --mode replay --transcript t.json
 #   score a run:   python -m scripts.run_eval --repo ... --api-base http://127.0.0.1:8712/v1
-#   attest a run:  python -m scripts.run_attested_eval --repo ... --transcript t.json ...
+#   prepare mounts: python -m scripts.prepare_attested_inputs --part ...
+#   attest a run:   python -m scripts.run_attested_eval --repo ... --transcript t.json ...
 #   verify a run:  python -m scripts.verify_attestation --artifact a.json --evidence e.json
 CMD ["python", "-m", "scripts.run_attested_eval", "--help"]
