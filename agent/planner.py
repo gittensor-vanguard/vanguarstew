@@ -998,7 +998,36 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     return out[:n]
 
 
-def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
+
+def is_planning_request(request: str) -> bool:
+    """True for either runner planning template (commit-horizon or time-horizon).
+
+    Commit-horizon: ``plan the next N maintainer actions``.
+    Time-horizon (curated ``horizon_days``): ``plan the maintainer actions for the next N days``.
+    Shared with ``agent.decider`` so the two cannot drift apart (#1891 / #1768).
+    """
+    if not isinstance(request, str):
+        return False
+    low = request.lower()
+    if "plan the next" in low:
+        return True
+    return "plan the maintainer actions for the next" in low and "day" in low
+
+
+def _plan_prompt_lead(request: str | None, n: int) -> str:
+    """Scope the plan prompt to the runner's request (time-horizon vs commit-horizon)."""
+    if isinstance(request, str) and is_planning_request(request):
+        m = re.search(r"for the next\s+(\d+)\s+days", request.lower())
+        if m:
+            days = m.group(1)
+            return (
+                f"Plan the maintainer actions for the next {days} days "
+                f"(return about {n} items). Return a JSON list; each item:\n"
+            )
+    return f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
+
+
+def plan_next_actions(context: dict, philosophy: dict, n: int, llm, request: str | None = None) -> list:
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
     user = (
@@ -1009,7 +1038,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"{_release_cadence_note(context)}"
         f"{_config_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
-        f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
+        f"{_plan_prompt_lead(request, n)}"
         f"{PLAN_ITEM_SCHEMA}\n\n"
         f"{OBJECTIVE_ANCHOR_GUIDANCE}"
     )
