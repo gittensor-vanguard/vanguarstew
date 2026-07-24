@@ -408,3 +408,16 @@ def test_comparison_headline_generalization_marks_unavailable_delta():
     )
     line = comparison_headline(diff)
     assert "tuned n/a" in line and "gap n/a" in line and "held_out +0.100" in line
+
+
+def test_per_repo_tasks_zero_placeholder_is_unavailable():
+    """A per-repo row with tasks:0 must not fabricate a composite delta (#1846)."""
+    from scripts.compare_eval import _per_repo_deltas
+    base = {"per_repo": [{"repo": "b", "tasks": 3, "composite_mean": 0.7}]}
+    cand = {"per_repo": [{"repo": "b", "tasks": 0, "composite_mean": 0.0}]}
+    rows = _per_repo_deltas(base, cand)
+    assert len(rows) == 1
+    cm = rows[0]["composite_mean"]
+    assert cm["baseline"] == 0.7
+    assert cm["candidate"] is None
+    assert cm["delta"] is None

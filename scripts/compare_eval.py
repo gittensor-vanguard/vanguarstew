@@ -28,11 +28,23 @@ def _numeric(value) -> float | None:
 
 
 def _is_scored_unavailable(artifact: dict) -> bool:
-    """True when ``scored_repos`` is present and zero — ``composite_mean`` is a placeholder."""
+    """True when ``composite_mean`` is a placeholder rather than a real score.
+
+    Multi-repo aggregates advertise this via ``scored_repos: 0``. Per-repo rows never
+    carry ``scored_repos`` — a skipped repo is recorded as ``tasks: 0`` with a
+    placeholder mean of ``0.0`` from averaging an empty task list (#1846). Sibling
+    gates already treat ``tasks > 0`` as the scored-repo signal.
+    """
     if not isinstance(artifact, dict):
         return False
     scored = artifact.get("scored_repos")
-    return isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored
+    if isinstance(scored, (int, float)) and not isinstance(scored, bool) and not scored:
+        return True
+    if "scored_repos" not in artifact:
+        tasks = artifact.get("tasks")
+        if isinstance(tasks, (int, float)) and not isinstance(tasks, bool) and not tasks:
+            return True
+    return False
 
 
 def _effective_composite_mean(artifact: dict):
