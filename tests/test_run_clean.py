@@ -1,8 +1,10 @@
 """Tests for run-clean gate and CLI (deterministic, offline)."""
 
+import errno
 import json
 import logging
 import os
+import subprocess
 import sys
 
 import pytest
@@ -126,6 +128,153 @@ def test_cli_directory_path_exits_two(tmp_path, capsys):
     # exit 2, not dump a raw traceback (mirrors generalization_gate #1446 / objective_integrity #1377).
     assert cli.run([str(tmp_path)]) == 2
     assert "directory" in capsys.readouterr().err
+
+
+def test_cli_broken_symlink_named_not_reported_as_missing(tmp_path):
+    # A dangling symlink raises FileNotFoundError, but must be named as a broken symlink -- not
+    # blamed as a plain missing file, which hides that the link exists and only its target is gone.
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.run_clean", str(link)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert "broken symlink" in proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
+
+
+def test_cli_symlink_loop_is_named_not_leaked_as_errno(tmp_path):
+    # A symlink loop reaches open() as OSError(ELOOP); it must be named as a symlink loop, never
+    # leak the raw "[Errno 40] Too many levels of symbolic links" errno string.
+    link = tmp_path / "loop.json"
+    link.symlink_to(link)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.run_clean", str(link)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert "symlink loop" in proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
+
+
+def test_cli_symlink_to_directory_exits_two(tmp_path):
+    # A symlink whose target is a directory must still fail closed with an actionable message
+    # (IsADirectoryError on POSIX, PermissionError on Windows) -- not a raw errno.
+    target = tmp_path / "dir_target"
+    target.mkdir()
+    link = tmp_path / "link-to-dir.json"
+    link.symlink_to(target)
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.run_clean", str(link)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "Errno" not in proc.stderr
+    assert "directory" in proc.stderr or "not readable" in proc.stderr
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact is a broken symlink (target does not exist)" in err
+    assert str(link) in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_symlink_loop_is_named(tmp_path, capsys):
+    link = tmp_path / "loop.json"
+    link.symlink_to(link)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a symlink loop" in err
+    assert "Errno" not in err
+
+
+def test_load_artifact_islink_probe_loop_is_named_not_missing(monkeypatch, tmp_path, capsys):
+    # If islink() itself hits a symlink loop while classifying a FileNotFoundError, it must be
+    # named as a loop, never degraded to the plain "not found" message.
+    def _open(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory")
+
+    def _islink(_path):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links")
+
+    monkeypatch.setattr("builtins.open", _open)
+    monkeypatch.setattr("os.path.islink", _islink)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a symlink loop" in err
+    assert "not found" not in err
+
+
+def test_load_artifact_not_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(20, "Not a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "not a file (a parent component is not a directory)" in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err == f"artifact is not readable (check file permissions): {tmp_path / 'run.json'}\n"
+
+
+def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err
+    assert "Input/output error" in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_oversized_int_literal_exits_two(tmp_path, capsys):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an oversized int literal.
+    path = tmp_path / "huge.json"
+    path.write_text('{"tasks": ' + "9" * 5000 + "}", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(path))
+    assert excinfo.value.code == 2
+    assert "not valid JSON" in capsys.readouterr().err
+
+
+def test_load_artifact_non_object_exits_two(tmp_path, capsys):
+    path = tmp_path / "list.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(path))
+    assert excinfo.value.code == 2
+    assert "artifact must be a JSON object" in capsys.readouterr().err
 
 
 def test_failed_checks_helper_is_robust():
