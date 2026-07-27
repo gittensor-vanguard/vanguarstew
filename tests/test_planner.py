@@ -54,7 +54,7 @@ from agent.planner import (  # noqa: E402
     plan_next_actions,
     reconcile_plan_with_queue,
 )
-from benchmark.score import commit_kind, plan_kind  # noqa: E402
+from benchmark.score import commit_kind, kind_recall, plan_kind  # noqa: E402
 
 CTX = {"open_prs": [{"number": 7, "title": "Add streaming export"}]}
 
@@ -1260,6 +1260,30 @@ def test_normalize_keeps_the_kinds_the_anchor_scores_instead_of_coercing_to_tria
     # An unrecognized kind is still coerced to triage rather than passed through.
     assert _normalize_plan_item({"title": "x", "kind": "wat"})["kind"] == "triage"
     assert _normalize_plan_item({"title": "x", "kind": 7})["kind"] == "triage"
+
+
+def test_normalize_maps_conventional_commit_aliases_instead_of_coercing_to_triage():
+    # The model routinely tags plan items with CC *types* (feat/fix/chore/…) because the
+    # prompt talks in commit types. Those aliases sit outside _PLAN_KINDS, so without the
+    # _CC_TYPE_TO_PLAN_KIND remap they were rewritten to triage and kind_recall missed them
+    # (#1834).
+    for alias, canonical in (
+        ("feat", "feature"),
+        ("fix", "bugfix"),
+        ("bug", "bugfix"),
+        ("chore", "dep"),
+        ("doc", "docs"),
+        ("tests", "test"),
+    ):
+        item = _normalize_plan_item({"title": "Add streaming API", "kind": alias})
+        assert item["kind"] == canonical, f"{alias!r} mapped to {item['kind']!r}, want {canonical!r}"
+        assert plan_kind(item["kind"]) is not None
+
+    # End-to-end: a plan tagged with the CC type that matches the revealed subject must
+    # score kind_recall, not land at 0.0 because the alias was rewritten to triage.
+    revealed = [{"subject": "feat: add streaming API", "files": ["x.py"]}]
+    plan = [_normalize_plan_item({"title": "Add streaming API", "kind": "feat"})]
+    assert kind_recall(plan, revealed)["kind_recall"] == 1.0
 
 
 def test_recent_kinds_note_surfaces_the_kinds_the_anchor_scores():

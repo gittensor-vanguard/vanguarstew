@@ -893,7 +893,12 @@ def _normalize_plan_item(item) -> dict | None:
     else:
         kind = ""
     if kind not in _PLAN_KINDS:
-        kind = "triage"
+        # The model routinely tags items with Conventional-Commit *types* (feat/fix/chore/…)
+        # because the prompt talks in commit types. Map those aliases onto the planner's
+        # long-form vocabulary before falling back to triage — otherwise a correctly
+        # anticipated kind is rewritten to triage, ``plan_kind("triage")`` is None, and
+        # kind_recall misses it (#1834).
+        kind = _CC_TYPE_TO_PLAN_KIND.get(kind, "triage")
     normalized = {
         "title": title,
         "kind": kind,
