@@ -29,6 +29,7 @@ from pathlib import Path
 
 POLARIS_SANDBOX_API_URL = "https://api.polaris.computer"
 POLARIS_SANDBOX_CREATE_PATH = "/api/v2/sandbox"
+POLARIS_SANDBOX_RECEIPT_PATH = "/api/v2/compute/instances/{sandbox_id}/receipt"
 POLARIS_SANDBOX_SIZE = "Sealed CPU Small"
 POLARIS_SANDBOX_MIN_SPEND_USD = 1.0
 POLARIS_SANDBOX_MAX_SPEND_USD = 10_000.0
@@ -39,10 +40,27 @@ _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 _NAME_RE = re.compile(r"sealed-worker-[1-9][0-9]{0,5}")
 _ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_HEX_64_RE = re.compile(r"[0-9a-fA-F]{64}")
+_HEX_128_RE = re.compile(r"[0-9a-fA-F]{128}")
+_CONNECTION_FIELD_RE = re.compile(
+    r"(?:^|_)(?:connection|email|endpoint|host|hostname|inbox|ip|ssh)(?:_|$)", re.I
+)
 
 
 class PolarisSandboxError(RuntimeError):
     """A sandbox plan, request, or response failed validation."""
+
+
+def _decode_base64(value, *, label: str, max_bytes: int = _MAX_RESPONSE_BYTES) -> bytes:
+    if not isinstance(value, str) or not value:
+        raise PolarisSandboxError(f"{label} must be non-empty base64 text")
+    try:
+        decoded = base64.b64decode(value.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, ValueError, binascii.Error) as exc:
+        raise PolarisSandboxError(f"{label} is not valid base64") from exc
+    if not decoded or len(decoded) > max_bytes:
+        raise PolarisSandboxError(f"{label} is outside the size limit")
+    return decoded
 
 
 def _canonical_json(value) -> str:
@@ -76,6 +94,177 @@ def normalize_ssh_public_key(value: str) -> str:
     if key_type != b"ssh-ed25519" or len(key_bytes) != 32 or offset != len(decoded):
         raise PolarisSandboxError("SSH public key is not a canonical Ed25519 key")
     return f"ssh-ed25519 {parts[1]}"
+
+
+def verify_boot_receipt(receipt, *, expected_ssh_public_key: str) -> dict:
+    """Verify a sandbox boot receipt without rendering any receipt identifier or key material.
+
+    Polaris's boot receipt binds the normalized customer SSH public key into TDX report data.  This
+    function recomputes that binding locally.  The Intel-chain booleans remain a Polaris claim;
+    unlike :mod:`benchmark.polaris`, this receipt does not include collateral for local DCAP/QVL
+    verification, so ``hardware_attested`` intentionally stays false.
+    """
+    checks = {
+        "receipt_shape": isinstance(receipt, dict),
+        "receipt_kind": False,
+        "receipt_ready": False,
+        "quote_present": False,
+        "report_data_shape": False,
+        "customer_key_encoding": False,
+        "customer_key_report_binding": False,
+        "polaris_binding_verified": False,
+        "polaris_intel_verified": False,
+        "polaris_verified": False,
+    }
+    if not isinstance(receipt, dict):
+        return {
+            "ok": False,
+            "checks": checks,
+            "verification_level": "unverified",
+            "hardware_attested": False,
+            "hardware_attestation_claimed": False,
+            "detail": "boot receipt is not an object",
+        }
+
+    try:
+        normalized_key = normalize_ssh_public_key(expected_ssh_public_key)
+    except PolarisSandboxError:
+        normalized_key = ""
+    expected_key_b64 = (
+        base64.b64encode(normalized_key.encode("utf-8")).decode("ascii") if normalized_key else ""
+    )
+    nonce = receipt.get("nonce")
+    report_data = receipt.get("report_data")
+    receipt_key_b64 = receipt.get("pubkey_b64")
+
+    checks["receipt_kind"] = receipt.get("kind") == "tdx-1.5"
+    checks["receipt_ready"] = receipt.get("receipt_status") == "ready"
+    try:
+        _decode_base64(receipt.get("quote_b64"), label="quote_b64")
+        checks["quote_present"] = True
+    except PolarisSandboxError:
+        pass
+    checks["report_data_shape"] = isinstance(report_data, str) and bool(
+        _HEX_128_RE.fullmatch(report_data)
+    )
+    try:
+        decoded_receipt_key = _decode_base64(
+            receipt_key_b64,
+            label="pubkey_b64",
+            max_bytes=1024,
+        )
+    except PolarisSandboxError:
+        decoded_receipt_key = b""
+    checks["customer_key_encoding"] = bool(normalized_key) and hmac.compare_digest(
+        decoded_receipt_key,
+        normalized_key.encode("utf-8"),
+    )
+    if (
+        checks["report_data_shape"]
+        and isinstance(nonce, str)
+        and _HEX_64_RE.fullmatch(nonce)
+        and isinstance(receipt_key_b64, str)
+        and checks["customer_key_encoding"]
+    ):
+        expected_prefix = hashlib.sha256(f"{nonce}{expected_key_b64}".encode("utf-8")).hexdigest()
+        checks["customer_key_report_binding"] = hmac.compare_digest(
+            report_data[:64].lower(), expected_prefix
+        )
+    checks["polaris_binding_verified"] = receipt.get("binding_verified") is True
+    checks["polaris_intel_verified"] = (
+        receipt.get("intel_verified") is True and receipt.get("intel_status") == "verified"
+    )
+    checks["polaris_verified"] = receipt.get("verified") is True
+
+    ok = all(checks.values())
+    failed = [name for name, passed in checks.items() if not passed]
+    return {
+        "ok": ok,
+        "checks": checks,
+        "verification_level": "polaris-verified" if ok else "unverified",
+        "hardware_attested": False,
+        "hardware_attestation_claimed": checks["polaris_intel_verified"],
+        "detail": "all boot-receipt checks passed" if ok else "; ".join(failed),
+    }
+
+
+def inspect_boot_receipt_privacy(
+    receipt,
+    *,
+    expected_ssh_public_key: str,
+    forbidden_terms=(),
+) -> dict:
+    """Scan receipt text and reversible base64 fields without returning matched values.
+
+    The customer SSH public key is deliberately present in a public boot receipt as base64.  The
+    report therefore exposes that fact and requires a unique per-sandbox key, but does not call the
+    expected key binding a privacy failure.  Caller-supplied identifiers and connection fields do
+    fail the gate.
+    """
+    if not isinstance(receipt, dict):
+        return {
+            "passed": False,
+            "forbidden_identifier_count": 0,
+            "connection_metadata_field_count": 0,
+            "customer_ssh_key_published": False,
+            "unique_sandbox_key_required": True,
+            "receipt_was_json_object": False,
+        }
+    normalized_terms = []
+    for term in forbidden_terms:
+        if not isinstance(term, str) or not 4 <= len(term) <= 128:
+            raise PolarisSandboxError("forbidden receipt terms must be 4-128 character strings")
+        encoded = term.casefold().encode("utf-8")
+        if encoded not in normalized_terms:
+            normalized_terms.append(encoded)
+
+    searchable: list[bytes] = []
+    connection_fields = []
+
+    def visit(value, path=""):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                child = f"{path}.{key}" if path else str(key)
+                meaningful = item not in (None, "", False, [], {})
+                if meaningful and _CONNECTION_FIELD_RE.search(str(key)):
+                    connection_fields.append(child)
+                searchable.append(str(key).casefold().encode("utf-8", errors="ignore"))
+                visit(item, child)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, f"{path}[{index}]")
+        elif isinstance(value, str):
+            searchable.append(value.casefold().encode("utf-8", errors="ignore"))
+            try:
+                decoded = base64.b64decode(value.encode("ascii"), validate=True)
+            except (UnicodeEncodeError, ValueError, binascii.Error):
+                return
+            if len(decoded) <= _MAX_RESPONSE_BYTES:
+                searchable.append(decoded.lower())
+
+    visit(receipt)
+    forbidden_hits = sum(
+        1 for term in normalized_terms if any(term in candidate for candidate in searchable)
+    )
+    try:
+        normalized_key = normalize_ssh_public_key(expected_ssh_public_key)
+        published_key = _decode_base64(
+            receipt.get("pubkey_b64"), label="pubkey_b64", max_bytes=1024
+        )
+        customer_key_published = hmac.compare_digest(
+            published_key,
+            normalized_key.encode("utf-8"),
+        )
+    except PolarisSandboxError:
+        customer_key_published = False
+    return {
+        "passed": forbidden_hits == 0 and not connection_fields and customer_key_published,
+        "forbidden_identifier_count": forbidden_hits,
+        "connection_metadata_field_count": len(connection_fields),
+        "customer_ssh_key_published": customer_key_published,
+        "unique_sandbox_key_required": True,
+        "receipt_was_json_object": True,
+    }
 
 
 def _validate_name(value: str) -> str:
@@ -274,6 +463,18 @@ class PolarisSandboxClient:
         if not isinstance(sandbox_id, str) or not _ID_RE.fullmatch(sandbox_id):
             raise PolarisSandboxError("sandbox id is malformed")
         return self._request_json("GET", f"{POLARIS_SANDBOX_CREATE_PATH}/{sandbox_id}")
+
+    def boot_receipt(self, sandbox_id: str) -> dict:
+        """Read JSON from the exact documented public boot-receipt route.
+
+        Receipt IDs and API-supplied receipt URLs are intentionally not accepted as substitutes for
+        the compute-instance route.  This prevents an opaque ID from being treated as a relative
+        URL and an HTML app response from being mistaken for a receipt.
+        """
+        if not isinstance(sandbox_id, str) or not _ID_RE.fullmatch(sandbox_id):
+            raise PolarisSandboxError("sandbox id is malformed")
+        path = POLARIS_SANDBOX_RECEIPT_PATH.format(sandbox_id=sandbox_id)
+        return self._request_json("GET", path)
 
     def stop_approved(self, sandbox_id: str, *, approved_sandbox_id: str) -> dict:
         """Stop exactly the sandbox id approved by the operator."""

@@ -1,6 +1,7 @@
 """Privacy and transport tests for the persistent Polaris TDX sandbox adapter."""
 
 import base64
+import hashlib
 import io
 import json
 import os
@@ -18,6 +19,8 @@ from benchmark.polaris_sandbox import (  # noqa: E402
     PolarisSandboxClient,
     PolarisSandboxError,
     PolarisSandboxPlan,
+    inspect_boot_receipt_privacy,
+    verify_boot_receipt,
 )
 from scripts.plan_polaris_sandbox import build_plan  # noqa: E402
 
@@ -40,6 +43,29 @@ def _plan(**overrides):
     }
     values.update(overrides)
     return PolarisSandboxPlan(**values)
+
+
+def _boot_receipt(public_key=None, **overrides):
+    normalized = " ".join((public_key or _ssh_key()).split()[:2])
+    nonce = "ab" * 32
+    public_key_b64 = base64.b64encode(normalized.encode()).decode()
+    binding = hashlib.sha256(f"{nonce}{public_key_b64}".encode()).hexdigest()
+    receipt = {
+        "kind": "tdx-1.5",
+        "receipt_status": "ready",
+        "nonce": nonce,
+        "pubkey_b64": public_key_b64,
+        "quote_b64": base64.b64encode(b"synthetic-quote").decode(),
+        "report_data": binding + "00" * 32,
+        "binding_verified": True,
+        "intel_verified": True,
+        "intel_status": "verified",
+        "verified": True,
+        "receipt_id": "opaque",
+        "receipt_url": "/opaque",
+    }
+    receipt.update(overrides)
+    return receipt
 
 
 class _Response:
@@ -188,13 +214,98 @@ def test_detail_is_get_only_and_stop_requires_the_exact_approved_id():
 
     client = PolarisSandboxClient(base_url=POLARIS_SANDBOX_API_URL, api_key="secret", opener=opener)
     assert client.detail("sandbox_123")["status"] == "running"
+    assert client.boot_receipt("sandbox_123")["status"] == "running"
     with pytest.raises(PolarisSandboxError, match="approved"):
         client.stop_approved("sandbox_123", approved_sandbox_id="sandbox_other")
     client.stop_approved("sandbox_123", approved_sandbox_id="sandbox_123")
     assert seen == [
         ("GET", "https://api.polaris.computer/api/v2/sandbox/sandbox_123", None),
+        (
+            "GET",
+            "https://api.polaris.computer/api/v2/compute/instances/sandbox_123/receipt",
+            None,
+        ),
         ("DELETE", "https://api.polaris.computer/api/v2/sandbox/sandbox_123", None),
     ]
+
+
+def test_boot_receipt_independently_checks_customer_key_report_binding():
+    result = verify_boot_receipt(_boot_receipt(), expected_ssh_public_key=_ssh_key())
+    assert result["ok"] is True
+    assert all(result["checks"].values())
+    assert result["verification_level"] == "polaris-verified"
+    assert result["hardware_attestation_claimed"] is True
+    assert result["hardware_attested"] is False
+    assert "opaque" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"kind": "unknown"},
+        {"receipt_status": "pending"},
+        {"quote_b64": "not-base64"},
+        {"report_data": "00" * 64},
+        {"binding_verified": False},
+        {"intel_verified": False},
+        {"verified": False},
+    ],
+)
+def test_boot_receipt_verification_fails_closed(change):
+    result = verify_boot_receipt(
+        _boot_receipt(**change),
+        expected_ssh_public_key=_ssh_key(),
+    )
+    assert result["ok"] is False
+    assert result["verification_level"] == "unverified"
+    assert result["hardware_attested"] is False
+
+
+def test_boot_receipt_rejects_a_different_customer_key():
+    key_type = b"ssh-ed25519"
+    key_bytes = bytes(reversed(range(32)))
+    wire = (
+        struct.pack(">I", len(key_type)) + key_type + struct.pack(">I", len(key_bytes)) + key_bytes
+    )
+    other_key = f"ssh-ed25519 {base64.b64encode(wire).decode()}"
+    result = verify_boot_receipt(_boot_receipt(), expected_ssh_public_key=other_key)
+    assert result["ok"] is False
+    assert result["checks"]["customer_key_encoding"] is False
+
+
+def test_receipt_privacy_scan_checks_reversible_base64_without_returning_terms():
+    receipt = _boot_receipt(
+        opaque=base64.b64encode(b"forbidden-identity-marker").decode(),
+    )
+    result = inspect_boot_receipt_privacy(
+        receipt,
+        expected_ssh_public_key=_ssh_key(),
+        forbidden_terms=["forbidden-identity-marker"],
+    )
+    assert result == {
+        "passed": False,
+        "forbidden_identifier_count": 1,
+        "connection_metadata_field_count": 0,
+        "customer_ssh_key_published": True,
+        "unique_sandbox_key_required": True,
+        "receipt_was_json_object": True,
+    }
+    assert "forbidden-identity-marker" not in json.dumps(result)
+
+
+def test_receipt_privacy_scan_rejects_connection_fields_but_accepts_expected_key_binding():
+    clean = inspect_boot_receipt_privacy(
+        _boot_receipt(),
+        expected_ssh_public_key=_ssh_key(),
+    )
+    assert clean["passed"] is True
+    assert clean["customer_ssh_key_published"] is True
+    exposed = inspect_boot_receipt_privacy(
+        _boot_receipt(ssh_host="example.invalid"),
+        expected_ssh_public_key=_ssh_key(),
+    )
+    assert exposed["passed"] is False
+    assert exposed["connection_metadata_field_count"] == 1
 
 
 def test_malformed_sandbox_id_is_rejected_before_network():
