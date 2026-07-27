@@ -103,7 +103,78 @@ python -m scripts.plan_sealed_ssh \
 
 The plan intentionally omits the local path, SSH coordinates, identity path, and known-hosts path.
 Staging changes remote state and must receive explicit approval for the exact `request_sha256`.
-Extraction and execution remain separate, unimplemented operations requiring their own review.
+Extraction and execution use a separate plan and approval digest described below.
+
+## Deterministic sealed bundle
+
+`benchmark.sealed_bundle` packages a mode-`0700` source directory into a deterministic uncompressed
+tar archive. The source must contain an executable `run` file; the archive always renames that fixed
+entrypoint to `payload/run`. Every source directory and file must be inaccessible to group/others.
+Links, devices, sockets, empty/oversized inputs, output paths inside the source tree, and more than
+1,024 files are rejected.
+
+The first archive member is a canonical `manifest.json`; all remaining members are sorted regular
+files below `payload/`. The manifest binds each path, byte length, normalized mode, and SHA-256, plus
+the aggregate result contract. Archive timestamps, owners, group names, links, and extension fields
+are forbidden. Extraction validates the complete archive and writes each file with exclusive,
+no-follow operations; it never calls `tarfile.extract`.
+
+```bash
+python -m scripts.package_sealed_bundle \
+  --source /path/to/mode-0700-source \
+  --output /path/to/new-mode-0600-bundle.tar
+```
+
+The command refuses to overwrite an existing output. Its JSON response contains only the bundle
+digest, bounded sizes, and file count; it does not print source paths or member names.
+
+## Approval-bound extraction and execution
+
+First render a network-free plan from the exact staged bundle and a fresh result challenge:
+
+```bash
+python -m scripts.plan_sealed_execution \
+  --bundle /path/to/staged-bundle.tar \
+  --challenge <fresh-64-lowercase-hex> \
+  --timeout-seconds 900 \
+  --max-output-bytes 8388608 \
+  --max-memory-bytes 1073741824
+```
+
+The plan binds the bundle digest and size, challenge, timeout, output and memory limits, namespace
+policy, filesystem limitation, and aggregate contract into a new `request_sha256`. It omits the
+bundle's local path and member names. Execution is a separate external-state action and requires
+explicit approval for that exact digest:
+
+```bash
+python -m scripts.run_sealed_bundle \
+  --bundle /path/to/staged-bundle.tar \
+  --challenge <same-64-lowercase-hex> \
+  --timeout-seconds 900 \
+  --max-output-bytes 8388608 \
+  --max-memory-bytes 1073741824 \
+  --approved-request-sha256 <approved-plan-digest>
+```
+
+The executor refuses host-root operation. It revalidates the approved bundle, extracts into a new
+mode-`0700` temporary workspace, and launches `payload/run` through the system `unshare` binary in
+fresh user, network, IPC, UTS, mount, and PID namespaces. The child verifies that only loopback is
+visible before execution. User-provided stdin, inherited environment variables, credentials, agent
+forwarding, and network interfaces are absent. Runtime, address space, output file size, open file
+descriptors, and core dumps are bounded. Workload stderr is discarded; its stdout goes to a
+mode-`0600` bounded file and is never forwarded directly.
+
+After a successful exit, the parent parses the captured artifact and constructs the aggregate-only
+envelope. Any failure emits one constant diagnostic. The extracted workspace, captured artifact,
+temporary home, and scratch directory are removed on both success and failure; the content-addressed
+staged bundle remains for separately approved cleanup.
+
+This protocol minimizes egress and output for trusted application code; it is not an adversarial
+filesystem sandbox. The new mount namespace initially sees the host mounts, and a deliberately
+malicious payload could read or write files its SSH account can access or encode data into allowed
+aggregate scalars. Keep the sealed account free of unrelated files and credentials. The Polaris
+boot receipt still does not bind the uploaded bundle, command, or output, so this must not be called
+end-to-end workload attestation.
 
 ## Aggregate-only result contract
 
