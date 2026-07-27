@@ -270,3 +270,7 @@ python -m scripts.emit_sealed_aggregate --challenge <fresh-64-lowercase-hex> < r
 This aggregate envelope limits what leaves the workload; it does not make the SSH result attested.
 End-to-end workload proof requires a future protocol that binds uploaded code, inputs, and canonical
 output into a fresh quote.
+
+For completed dual-target benchmark reports that fit Polaris's mounted-file limits, the one-shot
+[benchmark receipt seal](polaris-benchmark-seal.md) provides that narrower proof boundary without
+claiming that an SSH-uploaded sandbox workload was quote-bound.
