@@ -7,7 +7,8 @@ receipt pipeline before a higher-cost GPU pilot is attempted.
 The claim is intentionally narrow. A passing receipt binds the committed shell code, mounted input,
 stdout, no-egress policy, and requester challenge to the TDX quote. It does not claim workload
 confidentiality or GPU provenance. Polaris's hybrid GPU flow is the next phase because it also
-requires a GPU host and a `gpu_provenance` receipt.
+requires a GPU host and a `gpu_provenance` receipt. That phase is documented in
+[Polaris managed GPU pilot](polaris-managed-gpu-pilot.md).
 
 ## 1. Plan without network access
 
