@@ -47,6 +47,27 @@ POLARIS_ENVELOPE_VERSION = 1
 POLARIS_INPUT_PACKAGE_VERSION = 1
 POLARIS_MAX_MOUNTED_FILES = 8
 POLARIS_MAX_MOUNTED_FILE_BYTES = 256 * 1024
+POLARIS_ATTEST_BASE_URL = "https://polaris.computer"
+PUBLIC_TEE_PILOT_CONTRACT = "vanguarstew-public-tee-pilot-v1"
+PUBLIC_TEE_PILOT_INPUT_PATH = "/submission/pilot-input.json"
+PUBLIC_TEE_PILOT_INPUT = (
+    b'{"contract":"vanguarstew-public-tee-pilot-v1","values":[2,3,5,7]}\n'
+)
+PUBLIC_TEE_PILOT_INPUT_SHA256 = hashlib.sha256(PUBLIC_TEE_PILOT_INPUT).hexdigest()
+PUBLIC_TEE_PILOT_STDOUT = (
+    '{"contract":"vanguarstew-public-tee-pilot-v1",'
+    f'"input_sha256":"{PUBLIC_TEE_PILOT_INPUT_SHA256}","status":"ok"}}\n'
+)
+PUBLIC_TEE_PILOT_WORKLOAD = "\n".join(
+    (
+        "set -eu",
+        f'expected="{PUBLIC_TEE_PILOT_INPUT_SHA256}"',
+        f'actual="$(sha256sum {PUBLIC_TEE_PILOT_INPUT_PATH})"',
+        'actual="${actual%% *}"',
+        'test "$actual" = "$expected"',
+        f"printf '%s\\n' '{PUBLIC_TEE_PILOT_STDOUT.rstrip()}'",
+    )
+)
 TDX_REPORT_DATA_OFFSET = 568
 TDX_REPORT_DATA_SIZE = 64
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -168,6 +189,80 @@ def mounted_files_sha256(files: dict[str, bytes] | None) -> str:
     return hashlib.sha256(manifest.encode("utf-8")).hexdigest()
 
 
+def workload_bound_digest(workload: str) -> str:
+    """Return Polaris's documented bound digest for a shell-mode workload."""
+    if not isinstance(workload, str) or not workload:
+        raise PolarisError("Polaris workload must be non-empty")
+    if len(workload.encode("utf-8")) > 16 * 1024:
+        raise PolarisError("Polaris workload exceeds the size limit")
+    return "sha256:" + hashlib.sha256(workload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class PublicTeePilotPlan:
+    """Exact public, non-secret shell workload used for the first TEE receipt pilot.
+
+    Only the freshness challenge and requester key vary.  Code, input, output, egress policy, and
+    API route are fixed, so an operator can review one canonical request digest before a live call.
+    """
+
+    nonce: str
+    e2e_pubkey_b64: str
+
+    def __post_init__(self):
+        expected_report_data(
+            self.nonce,
+            self.e2e_pubkey_b64,
+            workload_bound_digest(PUBLIC_TEE_PILOT_WORKLOAD),
+            PUBLIC_TEE_PILOT_STDOUT,
+            files_sha256=self.files_sha256(),
+        )
+
+    def request_body(self) -> dict:
+        return {
+            "nonce": self.nonce,
+            "e2e_pubkey_b64": self.e2e_pubkey_b64,
+            "workload": PUBLIC_TEE_PILOT_WORKLOAD,
+            "egress": "none",
+            "files": _encode_mounted_files(
+                {PUBLIC_TEE_PILOT_INPUT_PATH: PUBLIC_TEE_PILOT_INPUT}
+            ),
+        }
+
+    def files_sha256(self) -> str:
+        return mounted_files_sha256(
+            {PUBLIC_TEE_PILOT_INPUT_PATH: PUBLIC_TEE_PILOT_INPUT}
+        )
+
+    def request_sha256(self) -> str:
+        return hashlib.sha256(canonical_json(self.request_body()).encode("utf-8")).hexdigest()
+
+    def approval_summary(self) -> dict:
+        """Render the complete public request and receipt contract without network access."""
+        return {
+            "network_request_made": False,
+            "method": "POST",
+            "endpoint": POLARIS_ATTEST_BASE_URL + "/v1/attest",
+            "request": self.request_body(),
+            "request_sha256": self.request_sha256(),
+            "receipt_contract": {
+                "contract": PUBLIC_TEE_PILOT_CONTRACT,
+                "workload_sha256": workload_bound_digest(PUBLIC_TEE_PILOT_WORKLOAD),
+                "input_sha256": PUBLIC_TEE_PILOT_INPUT_SHA256,
+                "files_sha256": self.files_sha256(),
+                "expected_stdout_sha256": hashlib.sha256(
+                    PUBLIC_TEE_PILOT_STDOUT.encode("utf-8")
+                ).hexdigest(),
+                "egress": "none",
+            },
+            "claim_boundary": {
+                "execution_integrity": True,
+                "workload_confidentiality": False,
+                "gpu_provenance": False,
+            },
+        }
+
+
 @dataclass(frozen=True)
 class PolarisReceipt:
     """The protocol fields needed to verify one Polaris response.
@@ -188,6 +283,11 @@ class PolarisReceipt:
     files_sha256: str = ""
     egress_log_sha256: str = ""
 
+    @property
+    def bound_digest(self) -> str:
+        """Return the provider's image or shell-workload commitment."""
+        return self.image_digest
+
     @classmethod
     def from_response(cls, response) -> "PolarisReceipt":
         if not isinstance(response, dict):
@@ -200,7 +300,7 @@ class PolarisReceipt:
         image_digest = response.get("image_digest") or tee.get("bound_digest")
         stdout = response.get("stdout")
         if not isinstance(quote_b64, str) or not isinstance(image_digest, str):
-            raise PolarisError("Polaris response has malformed quote or image digest")
+            raise PolarisError("Polaris response has malformed quote or bound digest")
         if not isinstance(stdout, str):
             raise PolarisError("Polaris response has malformed stdout")
         raw_cost = response.get("cost_usd")
@@ -433,7 +533,10 @@ class PolarisClient:
         }
         if encoded_files:
             request_body["files"] = encoded_files
-        body = json.dumps(request_body, separators=(",", ":")).encode("utf-8")
+        return PolarisReceipt.from_response(self._post_attest(request_body))
+
+    def _post_attest(self, request_body: dict) -> dict:
+        body = canonical_json(request_body).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + "/v1/attest",
             method="POST",
@@ -445,7 +548,26 @@ class PolarisClient:
                 "User-Agent": "vanguarstew-polaris/1",
             },
         )
-        return PolarisReceipt.from_response(self._request_json(request))
+        return self._request_json(request)
+
+    def attest_public_pilot_approved(
+        self,
+        plan: PublicTeePilotPlan,
+        *,
+        approved_request_sha256: str,
+    ) -> dict:
+        """Run exactly one reviewed public pilot request and preserve the full receipt response."""
+        if not isinstance(plan, PublicTeePilotPlan):
+            raise PolarisError("an exact PublicTeePilotPlan is required")
+        if self.base_url != POLARIS_ATTEST_BASE_URL:
+            raise PolarisError("public TEE pilot must use the documented Polaris attestation host")
+        if not _SHA256_RE.fullmatch(approved_request_sha256 or "") or not hmac.compare_digest(
+            plan.request_sha256(), approved_request_sha256
+        ):
+            raise PolarisError("approved request digest does not match the public TEE pilot")
+        payload = self._post_attest(plan.request_body())
+        PolarisReceipt.from_response(payload)
+        return payload
 
 
 def verify_receipt(
@@ -453,7 +575,8 @@ def verify_receipt(
     *,
     nonce: str,
     e2e_pubkey_b64: str,
-    expected_image: str,
+    expected_image: str | None = None,
+    expected_workload: str | None = None,
     expected_files_sha256: str | None = None,
     expected_egress_log_sha256: str = "",
     require_live: bool = True,
@@ -464,7 +587,22 @@ def verify_receipt(
     ``ok`` means every requested check passed.  With no ``intel_verifier``, a successful live
     result is labeled ``polaris-verified`` rather than independently verified.
     """
+    image_mode = isinstance(expected_image, str)
+    workload_mode = isinstance(expected_workload, str)
+    if image_mode == workload_mode:
+        return {
+            "ok": False,
+            "checks": {"expected_execution_mode": False},
+            "verification_level": "unverified",
+            "hardware_attested": False,
+            "hardware_attestation_claimed": False,
+            "independent_intel_verified": None,
+            "detail": "provide exactly one expected image or expected workload",
+        }
     try:
+        expected_bound = (
+            expected_image if image_mode else workload_bound_digest(expected_workload or "")
+        )
         parsed = (
             receipt if isinstance(receipt, PolarisReceipt) else PolarisReceipt.from_dict(receipt)
         )
@@ -489,7 +627,7 @@ def verify_receipt(
         }
 
     report_data = quote[TDX_REPORT_DATA_OFFSET : TDX_REPORT_DATA_OFFSET + TDX_REPORT_DATA_SIZE]
-    expected_hex = _content_digest(expected_image)
+    expected_hex = _content_digest(expected_bound)
     resolved_hex = _content_digest(parsed.image_digest)
     has_v2_extras = bool(parsed.files_sha256 or parsed.egress_log_sha256)
     expected_version = 2 if has_v2_extras else 1
@@ -509,9 +647,9 @@ def verify_receipt(
         and hmac.compare_digest(report_data[:32], expected[:32]),
         "result_binding": len(report_data) == TDX_REPORT_DATA_SIZE
         and hmac.compare_digest(report_data[32:], expected[32:]),
-        "expected_image_pinned": bool(expected_hex),
-        "resolved_image_pinned": bool(resolved_hex),
-        "image_digest": bool(expected_hex) and expected_hex == resolved_hex,
+        "expected_bound_digest": bool(expected_hex),
+        "receipt_bound_digest": bool(resolved_hex),
+        "bound_digest": bool(expected_hex) and expected_hex == resolved_hex,
         "polaris_intel_verified": parsed.intel_verified,
         "binding_version": parsed.binding_version == expected_version,
         # A v2 quote proves the provider bound *a* files digest.  To prove it is the digest the
@@ -529,6 +667,16 @@ def verify_receipt(
         "expected_egress_digest": expected_egress_valid
         and hmac.compare_digest(parsed.egress_log_sha256, expected_egress_log_sha256),
     }
+    if image_mode:
+        checks.update(
+            {
+                "expected_image_pinned": bool(expected_hex),
+                "resolved_image_pinned": bool(resolved_hex),
+                "image_digest": bool(expected_hex) and expected_hex == resolved_hex,
+            }
+        )
+    else:
+        checks["workload_digest"] = bool(expected_hex) and expected_hex == resolved_hex
     polaris_verified = all(checks.values())
 
     independent = None
@@ -611,6 +759,60 @@ def build_stdout_envelope(artifact, evidence) -> str:
             "evidence": evidence,
         }
     )
+
+
+def verify_public_tee_pilot(
+    receipt,
+    *,
+    plan: PublicTeePilotPlan,
+    require_live: bool = True,
+    intel_verifier: IntelVerifier | None = None,
+) -> dict:
+    """Verify the fixed public pilot's code, input, output, freshness, and TDX receipt binding."""
+    if not isinstance(plan, PublicTeePilotPlan):
+        return {
+            "ok": False,
+            "outer": {"ok": False, "verification_level": "unverified"},
+            "checks": {"pilot_plan": False},
+            "detail": "an exact PublicTeePilotPlan is required",
+        }
+    try:
+        parsed = (
+            receipt if isinstance(receipt, PolarisReceipt) else PolarisReceipt.from_dict(receipt)
+        )
+    except PolarisError as exc:
+        return {
+            "ok": False,
+            "outer": {"ok": False, "verification_level": "unverified"},
+            "checks": {"receipt_shape": False},
+            "detail": str(exc),
+        }
+    outer = verify_receipt(
+        parsed,
+        nonce=plan.nonce,
+        e2e_pubkey_b64=plan.e2e_pubkey_b64,
+        expected_workload=PUBLIC_TEE_PILOT_WORKLOAD,
+        expected_files_sha256=plan.files_sha256(),
+        expected_egress_log_sha256="",
+        require_live=require_live,
+        intel_verifier=intel_verifier,
+    )
+    checks = {
+        "receipt_contract": parsed.stdout == PUBLIC_TEE_PILOT_STDOUT,
+        "request_commitment": bool(_SHA256_RE.fullmatch(plan.request_sha256())),
+        "public_non_secret_workload": True,
+        "no_egress": parsed.egress_log_sha256 == "",
+    }
+    ok = outer.get("ok") is True and all(checks.values())
+    failures = [] if outer.get("ok") else [outer.get("detail", "outer receipt failed")]
+    failures += [f"{name} FAILED" for name, passed in checks.items() if not passed]
+    return {
+        "ok": ok,
+        "outer": outer,
+        "checks": checks,
+        "commitments": plan.approval_summary()["receipt_contract"],
+        "detail": "public TEE pilot verified" if ok else "; ".join(failures),
+    }
 
 
 def verify_attested_envelope(
