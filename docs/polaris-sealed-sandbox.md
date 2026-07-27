@@ -176,6 +176,77 @@ aggregate scalars. Keep the sealed account free of unrelated files and credentia
 boot receipt still does not bind the uploaded bundle, command, or output, so this must not be called
 end-to-end workload attestation.
 
+## Target-bound remote invocation
+
+The bare sandbox does not inherit the local checkout that contains the executor. Build a
+deterministic, mode-`0600` Python zipapp containing only the fixed public executor modules and its
+network-namespace helper:
+
+```bash
+python -m scripts.package_sealed_runtime \
+  --output /path/to/new-mode-0600-runtime.pyz
+```
+
+The packager requires a clean, tracked executor allowlist and binds the exact public Git revision.
+It uses a canonical manifest, stored ZIP members, normalized metadata, and exclusive output
+creation. Inspection requires the archive to byte-match the executor source in that checkout;
+adding or changing a module fails planning. The runtime verifies its own approved digest before it
+extracts the fixed helper into a temporary private directory.
+
+Remote execution assumes the payload was already staged with `SealedSSHTransport` at its
+content-addressed path. Save the owner-scoped sandbox detail response in a mode-`0600` file and
+render a network-free plan:
+
+```bash
+python -m scripts.plan_sealed_remote \
+  --owner-detail-file /path/to/mode-0600-owner-detail.json \
+  --known-hosts-file /path/to/mode-0600-known-hosts \
+  --runtime /path/to/mode-0600-runtime.pyz \
+  --bundle /path/to/mode-0600-payload.tar \
+  --challenge <fresh-64-lowercase-hex> \
+  --timeout-seconds 900 \
+  --max-output-bytes 8388608 \
+  --max-memory-bytes 1073741824
+```
+
+The plan hashes the sandbox ID, documented SSH target fields, and exact pinned `known_hosts` contents
+into an opaque target binding. Raw connection metadata, the ID, host key, local paths, and runtime
+member names are omitted. Keep the plan and target-binding digest private because they identify one
+operational approval. The request binds the target, runtime, payload, execution limits, challenge,
+inner execution digest, aggregate contract, and exact cleanup policy into a new `request_sha256`.
+
+After explicit approval for that exact request, invoke it through the already pinned SSH channel:
+
+```bash
+python -m scripts.run_sealed_remote \
+  --owner-detail-file /path/to/mode-0600-owner-detail.json \
+  --identity-file /path/to/mode-0600-identity \
+  --known-hosts-file /path/to/mode-0600-known-hosts \
+  --runtime /path/to/mode-0600-runtime.pyz \
+  --bundle /path/to/mode-0600-payload.tar \
+  --challenge <same-64-lowercase-hex> \
+  --timeout-seconds 900 \
+  --max-output-bytes 8388608 \
+  --max-memory-bytes 1073741824 \
+  --approved-request-sha256 <approved-remote-plan-digest>
+```
+
+The transport first checks that the target and connection match the approved binding. It verifies
+the already-staged payload hash and private mode, uploads only the content-addressed public runtime,
+hash-checks it remotely, and invokes it with a minimal environment and the separately bound inner
+execution approval. SSH stderr is discarded and stdout is capped at 4 KiB before the aggregate
+schema and challenge are verified locally. Success returns only the canonical aggregate envelope.
+Failure returns one constant diagnostic.
+
+The final SSH command removes only the exact content-addressed runtime, payload, and upload paths;
+cleanup is attempted after both success and failure, and a cleanup failure suppresses the result.
+Connection loss can still prevent cleanup, so sandbox stop remains the final lifecycle boundary.
+
+Polaris documents on-demand re-attestation with a fresh nonce, but does not document a generic
+binding from arbitrary SSH-uploaded files, commands, or stdout into that quote. The opaque target
+binding is an operator approval control, not a hardware claim. The boot receipt and any later quote
+must not be described as binding this runtime, payload, command, or aggregate.
+
 ## Aggregate-only result contract
 
 Never copy a full multi-repository replay artifact across the sealed boundary: it can contain repo
