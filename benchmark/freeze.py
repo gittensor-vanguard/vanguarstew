@@ -204,6 +204,12 @@ def write_frozen(repo: str, commit: str, dest: str, lookback: int = 50, scrub: b
     ctx = build_context(repo, commit, lookback)
     if scrub:
         ctx = scrub_context(ctx)
-    with open(os.path.join(dest, CONTEXT_FILE), "w", encoding="utf-8") as f:
+    context_path = os.path.join(dest, CONTEXT_FILE)
+    with open(context_path, "w", encoding="utf-8") as f:
         json.dump(ctx, f, indent=1)
+    # The context is part of the frozen checkout consumed by the unprivileged evaluator.
+    # Normalize its mode after creation so a restrictive caller umask cannot make the otherwise
+    # readable deterministic tree unusable. The checkout's private parent remains the host-side
+    # disclosure boundary; execution mounts this tree read-only.
+    os.chmod(context_path, 0o644)
     return ctx
