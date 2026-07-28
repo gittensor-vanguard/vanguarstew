@@ -1,9 +1,9 @@
-"""Receipt-bound Polaris TDX seal for a completed dual-target benchmark report.
+"""Receipt-bound Polaris TDX validation for a completed dual-target benchmark report.
 
-The live model calls happen before this boundary.  This module validates the complete report and
-its transcript evidence locally, mounts its canonical bytes into a no-egress one-shot TDX job, and
-requires the measured workload to hash those exact bytes before emitting a fixed, aggregate-only
-decision.  The resulting receipt binds the workload, mounted report, freshness values, and stdout.
+The live model calls happen before this boundary.  This module mounts the complete report and all
+four raw benchmark artifacts into a no-egress one-shot TDX job.  A deterministic, receipt-bound
+validator reruns the integrity gates and recomputes both target reports and the conservative final
+decision before emitting aggregate-only stdout.
 
 This is an integrity seal for the benchmark artifact, not proof that hosted model inference ran in
 the TEE.  Complete reports and receipts can contain sensitive operational evidence and are never
@@ -31,11 +31,17 @@ from benchmark.polaris import (
     mounted_files_sha256,
     verify_receipt,
 )
+from benchmark.tee_benchmark_validator import (
+    TEE_BENCHMARK_CONTRACT,
+    build_input_bundle,
+    validate_input_bundle,
+)
+from benchmark.tee_validator_archive import VALIDATOR_ARCHIVE_PATH, build_validator_archive
 from benchmark.transcript import canonical_json
 from scripts.score_pr_delta import combine_dual_target
 
-POLARIS_BENCHMARK_SEAL_CONTRACT = "vanguarstew-benchmark-seal-v1"
-POLARIS_BENCHMARK_REPORT_PREFIX = "/submission/report.part"
+POLARIS_BENCHMARK_SEAL_CONTRACT = TEE_BENCHMARK_CONTRACT
+POLARIS_BENCHMARK_REPORT_PREFIX = "/submission/inputs.part"
 POLARIS_BENCHMARK_MAX_REPORT_BYTES = (
     POLARIS_MAX_MOUNTED_FILES * POLARIS_MAX_MOUNTED_FILE_BYTES
 )
@@ -151,9 +157,10 @@ def validate_benchmark_report(report) -> dict:
 
 
 class PolarisBenchmarkSealPlan:
-    """Exact no-egress TDX request for one canonical benchmark report."""
+    """Exact no-egress TDX request for one report and its four raw artifacts."""
 
-    def __init__(self, *, report, nonce: str, e2e_pubkey_b64: str):
+    def __init__(self, *, report, artifacts, nonce: str, e2e_pubkey_b64: str,
+                 validator_archive: bytes | None = None):
         if not isinstance(nonce, str) or not _NONCE_RE.fullmatch(nonce):
             raise PolarisBenchmarkError("nonce must be 32 random bytes encoded as lowercase hex")
         self.nonce = nonce
@@ -161,17 +168,19 @@ class PolarisBenchmarkSealPlan:
         self._decision = validate_benchmark_report(report)
         self._report = _canonical_report(report)
         self.report_sha256 = hashlib.sha256(self._report).hexdigest()
-        self.files = self._split_report(self._report)
+        try:
+            self._inputs = build_input_bundle(report, artifacts)
+            self.stdout = validate_input_bundle(self._inputs, challenge=self.nonce)
+            validator = validator_archive or build_validator_archive()
+        except (OSError, TypeError, ValueError, RuntimeError) as exc:
+            raise PolarisBenchmarkError("benchmark TEE inputs do not validate") from exc
+        if not isinstance(validator, bytes) or not validator:
+            raise PolarisBenchmarkError("benchmark validator archive is malformed")
+        self.validator_sha256 = hashlib.sha256(validator).hexdigest()
+        self.inputs_sha256 = hashlib.sha256(self._inputs).hexdigest()
+        self.files = {VALIDATOR_ARCHIVE_PATH: validator}
+        self.files.update(self._split_report(self._inputs))
         self.files_sha256 = mounted_files_sha256(self.files)
-        self.stdout = canonical_json(
-            {
-                "band": self._decision["band"],
-                "challenge": self.nonce,
-                "contract": POLARIS_BENCHMARK_SEAL_CONTRACT,
-                "evidence_report_data": self._decision["evidence_report_data"],
-                "report_sha256": self.report_sha256,
-            }
-        )
         self.workload = self._workload()
         try:
             expected_report_data(
@@ -186,7 +195,7 @@ class PolarisBenchmarkSealPlan:
 
     def __repr__(self) -> str:
         return (
-            f"{type(self).__name__}(report=<redacted>, nonce=<redacted>, "
+            f"{type(self).__name__}(report=<redacted>, artifacts=<redacted>, nonce=<redacted>, "
             "e2e_pubkey_b64=<redacted>)"
         )
 
@@ -199,17 +208,17 @@ class PolarisBenchmarkSealPlan:
             files[f"{POLARIS_BENCHMARK_REPORT_PREFIX}{index:02d}"] = report[
                 offset : offset + POLARIS_MAX_MOUNTED_FILE_BYTES
             ]
-        if not 1 <= len(files) <= POLARIS_MAX_MOUNTED_FILES:
+        if not 1 <= len(files) <= POLARIS_MAX_MOUNTED_FILES - 1:
             raise PolarisBenchmarkError("benchmark report part count is outside the limit")
         return files
 
     def _workload(self) -> str:
-        paths = " ".join(sorted(self.files))
+        paths = " ".join(
+            path for path in sorted(self.files) if path != VALIDATOR_ARCHIVE_PATH
+        )
         return (
             "set -eu\n"
-            f"actual=\"$(cat {paths} | sha256sum | awk '{{print $1}}')\"\n"
-            f"test \"$actual\" = \"{self.report_sha256}\"\n"
-            f"printf '%s' '{self.stdout}'\n"
+            f"python3 {VALIDATOR_ARCHIVE_PATH} --challenge {self.nonce} {paths}\n"
         )
 
     def request_body(self) -> dict:
@@ -235,8 +244,11 @@ class PolarisBenchmarkSealPlan:
             "request_sha256": self.request_sha256(),
             "report": {
                 "bytes": len(self._report),
-                "parts": len(self.files),
+                "input_bundle_bytes": len(self._inputs),
+                "parts": len(self.files) - 1,
                 "sha256": self.report_sha256,
+                "inputs_sha256": self.inputs_sha256,
+                "validator_sha256": self.validator_sha256,
                 "files_sha256": self.files_sha256,
             },
             "result": json.loads(self.stdout),
@@ -248,7 +260,8 @@ class PolarisBenchmarkSealPlan:
                 "missing_or_invalid_receipt_fails_closed": True,
             },
             "claim_boundary": {
-                "benchmark_artifact_integrity": True,
+                "raw_artifact_integrity_recomputed_in_tee": True,
+                "benchmark_decision_recomputed_in_tee": True,
                 "hosted_model_inference_inside_tee": False,
                 "workload_confidentiality": False,
             },
@@ -300,7 +313,7 @@ def verify_benchmark_seal(receipt, *, plan: PolarisBenchmarkSealPlan) -> dict:
         "outer": outer,
         "stdout_exact": stdout_exact,
         "detail": (
-            "benchmark report and decision are receipt-bound"
+            "benchmark raw artifacts were validated and the decision recomputed by the receipt-bound workload"
             if outer.get("ok") is True and stdout_exact
             else "benchmark seal verification failed"
         ),

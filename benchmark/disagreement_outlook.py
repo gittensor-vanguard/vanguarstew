@@ -95,6 +95,8 @@ def _slice_summary(slice_) -> dict:
         if counts is None or rate is None:
             continue
         disagreements, dual = counts
+        if dual == 0:
+            continue
         return {
             "dual_order_tasks": dual,
             "disagreements": disagreements,

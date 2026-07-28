@@ -14,7 +14,7 @@ from benchmark.polaris_benchmark import (
     PolarisBenchmarkSealPlan,
     verify_benchmark_seal,
 )
-from scripts.plan_polaris_benchmark import load_private_report
+from scripts.plan_polaris_benchmark import load_private_artifacts, load_private_report
 
 
 def _reserve_private_output(path: str) -> tuple[Path, int]:
@@ -42,6 +42,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--env-file", required=True, help="mode-0600 dotenv with Polaris key")
     parser.add_argument("--report", required=True, help="mode-0600 combined benchmark report")
+    parser.add_argument("--baseline-public", required=True, help="mode-0600 raw artifact")
+    parser.add_argument("--candidate-public", required=True, help="mode-0600 raw artifact")
+    parser.add_argument("--baseline-private", required=True, help="mode-0600 raw artifact")
+    parser.add_argument("--candidate-private", required=True, help="mode-0600 raw artifact")
     parser.add_argument("--nonce", required=True)
     parser.add_argument("--e2e-pubkey", required=True)
     parser.add_argument("--approved-request-sha256", required=True)
@@ -56,6 +60,7 @@ def run(argv=None, *, client_factory=PolarisBenchmarkClient.from_env_file) -> in
     try:
         plan = PolarisBenchmarkSealPlan(
             report=load_private_report(args.report),
+            artifacts=load_private_artifacts(args),
             nonce=args.nonce,
             e2e_pubkey_b64=args.e2e_pubkey,
         )

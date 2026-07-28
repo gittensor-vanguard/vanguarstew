@@ -14,6 +14,7 @@ silently clamped or defaulted.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.comparability import artifact_kind
 
@@ -32,7 +33,12 @@ def _is_int(value) -> bool:
 
 def _is_ratio(value) -> bool:
     """A plain 0..1-style float/int for headline formatting (bools excluded)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and 0 <= value <= 1
+    except OverflowError:
+        return False
 
 
 def _dual_order_tasks(slice_: dict) -> int | None:

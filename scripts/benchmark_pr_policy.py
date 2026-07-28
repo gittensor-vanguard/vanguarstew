@@ -16,12 +16,18 @@ GUARDRAIL_PREFIXES = ("benchmark/",)
 GUARDRAIL_FILES = frozenset(
     {
         ".github/workflows/benchmark-change-policy.yml",
+        ".github/workflows/pr-integrity.yml",
         "CONTRIBUTING.md",
         "REVIEW.md",
+        "docs/polaris-benchmark-seal.md",
         "scripts/benchmark_pr_policy.py",
         "scripts/compare_eval.py",
         "scripts/leaderboard_feed.py",
+        "scripts/plan_polaris_benchmark.py",
+        "scripts/run_polaris_benchmark.py",
+        "scripts/sandbox_candidate_entry.py",
         "scripts/score_pr_delta.py",
+        "scripts/verify_polaris_benchmark.py",
     }
 )
 COMMENT_MARKER = "<!-- vanguarstew:benchmark-change-policy -->"
