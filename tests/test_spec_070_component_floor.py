@@ -80,6 +80,12 @@ def test_floor_check_pass_fail_and_missing():
         "detail": "value missing or non-numeric (None)"}
 
 
+def test_floor_check_boundary_equality_passes():
+    # value == floor clears the gate (">=", not ">") -- not just value > floor.
+    assert _floor_check("objective_floor", 0.4, 0.4) == {
+        "name": "objective_floor", "passed": True, "detail": "0.4 >= 0.4"}
+
+
 def test_scored_metric_masks_placeholder_and_reads_nested():
     # top-level key
     assert _scored_metric({"composite_mean": 0.6}, "composite_mean") == 0.6
@@ -125,6 +131,16 @@ def test_all_floors_pass():
     assert [c["name"] for c in result["checks"]] == [
         "run_completed", "composite_floor", "judge_floor", "objective_floor"]
     assert _named(result["checks"])["run_completed"]["detail"] == "run produced a scored composite"
+
+
+def test_all_floors_pass_at_exact_boundary():
+    # Every component sitting exactly on its floor still passes (">=", not ">").
+    result = check_component_floors(_artifact(0.5, 0.4, 0.4))
+    assert result["passed"] is True
+    checks = _named(result["checks"])
+    assert checks["composite_floor"]["detail"] == "0.5 >= 0.5"
+    assert checks["judge_floor"]["detail"] == "0.4 >= 0.4"
+    assert checks["objective_floor"]["detail"] == "0.4 >= 0.4"
 
 
 def test_a_component_below_floor_fails():

@@ -49,7 +49,8 @@ for a generalization) partition, and only when the run actually completed and sc
 - `_dict(value)` SHALL return `value` when it is a `dict`, otherwise `{}`.
 - `_floor_check(name, value, floor)` SHALL return `{"name", "passed", "detail"}` where `passed` is
   `_is_number(value) and value >= floor`, `detail` is `"{value} >= {floor}"` when `_is_number(value)`
-  else `"value missing or non-numeric ({value!r})"`.
+  else `"value missing or non-numeric ({value!r})"`. A `value` exactly equal to `floor` SHALL pass
+  (the comparison is `>=`, not `>`).
 - `_scored_metric(result, key, nested_key=None)` SHALL read `result[key]` when `nested_key` is
   `None`, else `_dict(result[nested_key])[key]`; it SHALL return `None` when that value is not
   `_is_number`, `None` when `result["scored_repos"]` is `_is_number` and falsy (an unscored
@@ -75,7 +76,8 @@ for a generalization) partition, and only when the run actually completed and sc
   `"no scored composite (error={error!r}, composite={composite!r})"`.
 - `composite_floor`/`judge_floor`/`objective_floor` SHALL each be `_floor_check` of the
   corresponding metric against its floor (so a `None` metric fails with the "missing or non-numeric"
-  detail).
+  detail). A run whose composite/judge/objective means sit exactly on their floors SHALL pass every
+  floor check (the boundary is inclusive).
 
 ### Checks-row sanitation (`_check_rows_list`)
 
@@ -112,5 +114,6 @@ for a generalization) partition, and only when the run actually completed and sc
 
 - `tests/test_spec_070_component_floor.py` exercises each EARS block above, pinning **literal**
   expected check names, `passed` values and detail strings, using decimal literals whose `repr` is
-  stable across platforms (e.g. `0.6`, `0.5`, `0.3`).
+  stable across platforms (e.g. `0.6`, `0.5`, `0.3`), including the floor-boundary equality case
+  (a value exactly equal to its floor).
 - Broader coverage (including the CLI) remains in `tests/test_component_floor.py`.
