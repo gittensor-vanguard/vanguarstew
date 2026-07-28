@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from benchmark.docker_solve_adapter import SANDBOX_IMAGE, DockerSolveAdapter
-from benchmark.unix_model_broker import UnixModelBroker
+from benchmark.unix_model_broker import ModelBrokerError, UnixModelBroker
 
 
 def _socket(path):
@@ -116,3 +116,20 @@ def test_unix_broker_forces_fixed_https_upstream_model_and_hides_key(tmp_path):
     assert seen["authorization"] == "Bearer host-only-key"
     assert seen["body"]["model"] == "fixed-model"
     assert not socket_path.exists()
+
+
+def test_broker_allows_local_transcript_proxy_but_rejects_plaintext_remote(tmp_path):
+    broker = UnixModelBroker(
+        socket_path=tmp_path / "unused.sock",
+        api_base="http://127.0.0.1:18081/v1",
+        api_key="host-only-key",
+        model="fixed-model",
+    )
+    assert broker.api_base == "http://127.0.0.1:18081/v1"
+    with pytest.raises(ModelBrokerError, match="HTTPS or trusted loopback"):
+        UnixModelBroker(
+            socket_path=tmp_path / "other.sock",
+            api_base="http://api.example/v1",
+            api_key="host-only-key",
+            model="fixed-model",
+        )

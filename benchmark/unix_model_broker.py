@@ -8,6 +8,7 @@ import os
 import socketserver
 import threading
 import urllib.request
+from urllib.parse import urlsplit
 
 MAX_BROKER_REQUEST_BYTES = 1024 * 1024
 MAX_BROKER_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -29,8 +30,21 @@ class UnixModelBroker:
         self.socket_path = os.path.realpath(os.fspath(socket_path))
         if os.path.lexists(self.socket_path):
             raise ModelBrokerError("broker socket path already exists")
-        if not isinstance(api_base, str) or not api_base.startswith("https://"):
-            raise ModelBrokerError("broker upstream must use HTTPS")
+        parsed = urlsplit(api_base) if isinstance(api_base, str) else None
+        valid_https = parsed is not None and parsed.scheme == "https" and bool(parsed.hostname)
+        valid_loopback = (
+            parsed is not None
+            and parsed.scheme == "http"
+            and parsed.hostname in {"127.0.0.1", "::1"}
+        )
+        if (
+            not (valid_https or valid_loopback)
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ModelBrokerError("broker upstream must use HTTPS or trusted loopback HTTP")
         if not all(isinstance(value, str) and value for value in (api_key, model)):
             raise ModelBrokerError("broker key and model are required")
         self.api_base = api_base.rstrip("/")
