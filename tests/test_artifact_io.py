@@ -147,6 +147,7 @@ def test_non_utf8_exits_two(tmp_path, capsys):
 def test_migrated_clis_reexport_shared_loader():
     from scripts import (
         acceptance,
+        blend_weights,
         disagreement_outlook,
         leaderboard,
         promotion,
@@ -158,6 +159,7 @@ def test_migrated_clis_reexport_shared_loader():
 
     for mod in (
         acceptance,
+        blend_weights,
         disagreement_outlook,
         promotion,
         regression,
