@@ -90,6 +90,12 @@ def _safe_extractall(tf: tarfile.TarFile, dest: str) -> None:
       runtimes and umasks.
     """
     os.makedirs(dest, exist_ok=True)
+    # ``dest`` is the root of the frozen checkout and is not necessarily represented by a
+    # member in ``git archive``.  Normalize it explicitly, just like every directory member
+    # below.  Otherwise a caller running under a restrictive umask can leave the root at
+    # 0700 even though all of its children are 0755, which makes the read-only checkout
+    # unusable by a deliberately unprivileged evaluator process.
+    os.chmod(dest, 0o755)
     # Iterate the archive in a single forward pass so this works on non-seekable
     # streams (``git archive | tarfile.open(mode="r|")``): each member's payload is
     # read via ``extractfile`` before advancing to the next member.
