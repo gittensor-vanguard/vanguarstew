@@ -199,6 +199,10 @@ def test_headline_tolerates_missing_and_wrong_typed_keys():
     assert dual_order_coverage_headline({}) == "dual-order coverage: n/a"
     assert dual_order_coverage_headline(
         {"coverage": {}, "dual_order_tasks": [], "tasks": "x"}) == "dual-order coverage: n/a"
+    for bad in (float("nan"), float("inf"), float("-inf"), -0.1, 1.1):
+        assert dual_order_coverage_headline(
+            {"coverage": bad, "dual_order_tasks": 1, "tasks": 1}
+        ).startswith("dual-order coverage: n/a")
 
 
 # --- helpers -------------------------------------------------------------------------------------

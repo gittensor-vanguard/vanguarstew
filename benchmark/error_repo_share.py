@@ -14,6 +14,8 @@ top-level ``error`` is ignored, so an error is never double-counted.
 
 from __future__ import annotations
 
+import math
+
 from benchmark.comparability import artifact_kind
 
 
@@ -26,7 +28,12 @@ def _is_int(value) -> bool:
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _has_error(entry) -> bool:
