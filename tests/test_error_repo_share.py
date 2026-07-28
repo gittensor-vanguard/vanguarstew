@@ -151,6 +151,10 @@ def test_headline_variants():
     assert error_repo_share_headline("nope") == "error repo share: no repos"
     # Defensive: a positive repo count with a non-numeric share renders n/a, not a crash.
     assert "n/a" in error_repo_share_headline({"repos": 2, "error_repos": 0, "error_share": None})
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        assert "n/a" in error_repo_share_headline(
+            {"repos": 2, "error_repos": 0, "error_share": bad}
+        )
 
 
 # --- CLI: success + every error path -------------------------------------------------------------

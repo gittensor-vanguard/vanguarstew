@@ -9,7 +9,7 @@ import stat
 import sys
 
 from benchmark.polaris_benchmark import PolarisBenchmarkSealPlan, verify_benchmark_seal
-from scripts.plan_polaris_benchmark import load_private_report
+from scripts.plan_polaris_benchmark import load_private_artifacts, load_private_report
 
 _MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 
@@ -46,6 +46,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--receipt", required=True, help="mode-0600 complete receipt")
     parser.add_argument("--report", required=True, help="mode-0600 combined benchmark report")
+    parser.add_argument("--baseline-public", required=True, help="mode-0600 raw artifact")
+    parser.add_argument("--candidate-public", required=True, help="mode-0600 raw artifact")
+    parser.add_argument("--baseline-private", required=True, help="mode-0600 raw artifact")
+    parser.add_argument("--candidate-private", required=True, help="mode-0600 raw artifact")
     parser.add_argument("--nonce", required=True)
     parser.add_argument("--e2e-pubkey", required=True)
     return parser
@@ -56,6 +60,7 @@ def run(argv=None) -> int:
     try:
         plan = PolarisBenchmarkSealPlan(
             report=load_private_report(args.report),
+            artifacts=load_private_artifacts(args),
             nonce=args.nonce,
             e2e_pubkey_b64=args.e2e_pubkey,
         )

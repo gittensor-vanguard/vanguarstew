@@ -14,9 +14,15 @@ on:
       - "scripts/score_pr_delta.py"
       - "scripts/compare_eval.py"
       - "scripts/leaderboard_feed.py"
+      - "scripts/plan_polaris_benchmark.py"
+      - "scripts/run_polaris_benchmark.py"
+      - "scripts/sandbox_candidate_entry.py"
       - "scripts/benchmark_pr_policy.py"
+      - "scripts/verify_polaris_benchmark.py"
       - ".github/workflows/benchmark-change-policy.yml"
+      - ".github/workflows/pr-integrity.yml"
       - "CONTRIBUTING.md"
+      - "docs/polaris-benchmark-seal.md"
       - "REVIEW.md"
 
 permissions:

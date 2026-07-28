@@ -75,7 +75,11 @@ def _repo_scores(slice_) -> list[float]:
     if isinstance(per_repo, list):
         scores = []
         for entry in per_repo:
-            if isinstance(entry, dict) and _is_number(entry.get("composite_mean")):
+            if (
+                isinstance(entry, dict)
+                and not _is_unscored_slice(entry)
+                and _is_number(entry.get("composite_mean"))
+            ):
                 scores.append(round(float(entry["composite_mean"]), 3))
         return scores
     if _is_unscored_slice(slice_):
