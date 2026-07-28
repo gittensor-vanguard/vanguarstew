@@ -71,6 +71,24 @@ CI must be green before a PR can merge. See [REVIEW.md](REVIEW.md) for exactly h
 contributions are gated, reviewed, and scored — the process is designed to be predictable and
 reproducible.
 
+## Benchmark integrity changes
+
+The benchmark and contribution-integrity surface is maintainer-directed because changing the
+measurement can change how every contributor is evaluated. This includes `benchmark/`,
+`scripts/score_pr_delta.py`, `scripts/compare_eval.py`, `scripts/leaderboard_feed.py`, the scoring
+contract in `REVIEW.md`, and the CI policy that protects these paths.
+
+Contributor PRs touching this surface are automatically closed unless they were discussed and
+approved before the PR was opened:
+
+1. Open an issue describing the proposed change, its trust impact, and how it will be tested.
+2. Wait for a maintainer to apply the `benchmark-change-approved` label to that **open** issue.
+3. Reference it explicitly in the PR body with `Refs #<number>` and target `test`.
+
+An approval is scoped to its linked issue; a closed issue, a PR number, or an unrelated issue does
+not satisfy the gate. Maintainer-authored changes are exempt from automatic closure, but all
+benchmark-integrity changes still require normal CI and manual review before merge.
+
 ## Branches
 
 **Open every PR against `test`, never `main`.** This is a strong rule (see #221).
