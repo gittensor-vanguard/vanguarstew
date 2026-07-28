@@ -29,12 +29,15 @@ from benchmark.intel_dcap import (
 from benchmark.polaris import PolarisError, PolarisReceipt, verify_attested_envelope
 
 
-def _load(path: str):
+def _load(path: str, what: str = "receipt"):
     try:
         with open(path, "r", encoding="utf-8") as handle:
             return json.load(handle)
     except (OSError, ValueError) as exc:
-        print(f"verify_polaris: cannot read receipt ({path}): {exc}", file=sys.stderr)
+        # Name the input that actually failed: this loader serves the receipt AND the optional
+        # --dcap-policy / --dcap-collateral files, so a hardcoded "receipt" misdiagnoses a bad
+        # policy/collateral path for the skeptic running this check.
+        print(f"verify_polaris: cannot read {what} ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
 
@@ -80,7 +83,7 @@ def run(argv=None) -> int:
     parser.add_argument("--strict", action="store_true", help="exit 1 when any check fails")
     args = parser.parse_args(argv)
 
-    loaded_receipt = _load(args.receipt)
+    loaded_receipt = _load(args.receipt, "receipt")
     receipt_value = (
         loaded_receipt.get("receipt")
         if isinstance(loaded_receipt, dict) and isinstance(loaded_receipt.get("receipt"), dict)
@@ -95,7 +98,7 @@ def run(argv=None) -> int:
     intel_verifier = None
     if args.dcap_policy:
         try:
-            loaded_policy = _load(args.dcap_policy)
+            loaded_policy = _load(args.dcap_policy, "DCAP policy")
             policy_value = loaded_policy
             if (
                 isinstance(loaded_policy, dict)
@@ -113,7 +116,7 @@ def run(argv=None) -> int:
         if intel_verifier is None:
             print("verify_polaris: --dcap-collateral requires --dcap-policy", file=sys.stderr)
             return 2
-        loaded_collateral = _load(args.dcap_collateral)
+        loaded_collateral = _load(args.dcap_collateral, "DCAP collateral")
         collateral = (
             loaded_collateral.get("collateral")
             if isinstance(loaded_collateral, dict)
