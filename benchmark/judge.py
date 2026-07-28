@@ -58,11 +58,42 @@ def _parse_winner(text: str) -> str:
 def _render(submission: dict) -> str:
     if not isinstance(submission, dict):
         return json.dumps({"error": "non-dict submission"})
-    return json.dumps({
-        "philosophy": submission.get("philosophy"),
-        "plan": submission.get("plan"),
-        "rationale": submission.get("rationale"),
-    }, indent=1)[:4500]
+    fields = ("philosophy", "plan", "rationale")
+    rendered = {field: submission.get(field) for field in fields}
+    full = json.dumps(rendered, indent=1)
+    if len(full) <= 4500:
+        return full
+
+    # Preserve every judged axis under overload and keep the outer document valid JSON.  A raw
+    # string slice can end in the middle of the first field, yielding invalid JSON and completely
+    # hiding the plan/rationale from the judge.  Give each field an equal serialized budget and
+    # make any structural truncation explicit as data rather than corrupting the prompt syntax.
+    budget = 1400
+    abridged = {}
+    for field in fields:
+        value = rendered[field]
+        encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+        if len(encoded) <= budget:
+            abridged[field] = value
+        else:
+            abridged[field] = {
+                "truncated": True,
+                "json_prefix": encoded[: budget - 80],
+            }
+    output = json.dumps(abridged, indent=1)
+    while len(output) > 4500:
+        changed = False
+        for field in fields:
+            value = abridged[field]
+            if isinstance(value, dict) and isinstance(value.get("json_prefix"), str):
+                prefix = value["json_prefix"]
+                if len(prefix) > 100:
+                    value["json_prefix"] = prefix[: max(100, len(prefix) - 100)]
+                    changed = True
+        if not changed:
+            break
+        output = json.dumps(abridged, indent=1)
+    return output
 
 
 # Generic, content-free titles/themes that pad a plan without proposing real work.

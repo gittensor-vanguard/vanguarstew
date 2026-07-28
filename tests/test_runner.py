@@ -65,6 +65,37 @@ def test_run_replay_returns_expected_keys():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_replay_uses_trusted_solve_adapter_without_importing_agent(monkeypatch):
+    import benchmark.runner as runner
+
+    d = _tiny_repo(tempfile.mkdtemp())
+    calls = []
+
+    def isolated_adapter(**kwargs):
+        calls.append(kwargs)
+        return {"philosophy": {}, "plan": [], "rationale": ""}
+
+    def unsafe_import_was_called(*args, **kwargs):
+        raise AssertionError("candidate agent must not be imported by trusted evaluator")
+
+    monkeypatch.setattr(runner, "load_solve", unsafe_import_was_called)
+    try:
+        result = runner.run_replay(
+            d, agent_file="untrusted/agent.py", solve_fn=isolated_adapter,
+            n_tasks=1, horizon=3, seed=0,
+        )
+        assert result["tasks"] == 1
+        assert len(calls) == 1
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_run_replay_rejects_non_callable_solve_adapter():
+    with pytest.raises(TypeError, match="solve_fn must be callable"):
+        run_replay("unused", solve_fn="not callable")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_run_replay_composite_mean_in_range():
     d = _tiny_repo(tempfile.mkdtemp())
     try:
