@@ -9,6 +9,7 @@ import socket
 import socketserver
 import sys
 import threading
+from pathlib import Path
 
 _RESULT_MARKER = "VANGUARSTEW_SANDBOX_RESULT="
 _SOCKET_PATH = "/broker/model.sock"
@@ -38,8 +39,11 @@ class _Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
-def _load_solve():
-    spec = importlib.util.spec_from_file_location("candidate_entry", "/candidate/agent.py")
+def _load_solve(candidate_root="/candidate"):
+    root = str(Path(candidate_root).resolve())
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    spec = importlib.util.spec_from_file_location("candidate_entry", str(Path(root) / "agent.py"))
     if spec is None or spec.loader is None:
         raise RuntimeError("candidate entrypoint is unavailable")
     module = importlib.util.module_from_spec(spec)
