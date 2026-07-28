@@ -1,0 +1,56 @@
+name: Validate attested eval image
+
+on:
+  pull_request:
+    branches: [test]
+    paths:
+      - ".dockerignore"
+      - ".github/workflows/publish-eval-image.yml"
+      - "agent.py"
+      - "agent/**"
+      - "benchmark/**"
+      - "docker/eval.Dockerfile"
+      - "pyproject.toml"
+      - "scripts/__init__.py"
+      - "scripts/prepare_attested_inputs.py"
+      - "scripts/run_attested_eval.py"
+      - "scripts/transcript_proxy.py"
+      - "vanguarstew_agent_files.json"
+concurrency:
+  group: validate-eval-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/gittensor-vanguard/vanguarstew-eval
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the proposed image source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build the exact single-platform image locally
+        run: |
+          docker buildx build \
+            --file docker/eval.Dockerfile \
+            --platform linux/amd64 \
+            --provenance=false \
+            --sbom=false \
+            --pull=false \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${IMAGE_NAME}:pr-${GITHUB_SHA}" \
+            --load \
+            .
+
+      - name: Audit the measured runtime surface
+        run: |
+          docker run --rm --network none --read-only "${IMAGE_NAME}:pr-${GITHUB_SHA}" \
+            python -c 'import json, os; from pathlib import Path; required=["/eval/scripts/prepare_attested_inputs.py", "/eval/scripts/run_attested_eval.py"]; forbidden=["/eval/.git", "/eval/.env", "/eval/receipts", "/eval/tests", "/eval/blog", "/eval/scripts/package_attested_inputs.py"]; result={"uid": os.getuid(), "required_present": all(Path(path).exists() for path in required), "forbidden_absent": all(not Path(path).exists() for path in forbidden)}; print(json.dumps(result, sort_keys=True)); raise SystemExit(0 if result == {"uid": 10001, "required_present": True, "forbidden_absent": True} else 1)'
+          docker run --rm --network none --read-only "${IMAGE_NAME}:pr-${GITHUB_SHA}" \
+            python -m scripts.run_attested_eval --help >/dev/null
