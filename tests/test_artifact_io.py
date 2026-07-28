@@ -145,8 +145,24 @@ def test_non_utf8_exits_two(tmp_path, capsys):
 
 
 def test_migrated_clis_reexport_shared_loader():
-    from scripts import acceptance, leaderboard, promotion, regression, repeatability, report
+    from scripts import (
+        acceptance,
+        disagreement_outlook,
+        leaderboard,
+        promotion,
+        regression,
+        repeatability,
+        report,
+    )
     from scripts.artifact_io import load_artifact as shared
 
-    for mod in (acceptance, promotion, regression, repeatability, leaderboard, report):
+    for mod in (
+        acceptance,
+        disagreement_outlook,
+        promotion,
+        regression,
+        repeatability,
+        leaderboard,
+        report,
+    ):
         assert mod.load_artifact is shared
