@@ -18,8 +18,20 @@ logger = logging.getLogger(__name__)
 SYSTEM = (
     "You are an experienced repository maintainer reviewing a pull request. Assess it on the "
     "project's rubric, in priority order: (1) correctness and tests, (2) scope fit — does it "
-    "address a referenced issue without unrelated churn, (3) quality and clarity. Be specific, "
-    "and decisive about the action. Respond ONLY with JSON."
+    "address a referenced issue without unrelated churn, (3) non-redundancy — does it duplicate "
+    "existing analysis over the same data shape rather than extending what is already there, "
+    "(4) quality and clarity. Be specific, and decisive about the action. Respond ONLY with JSON."
+)
+
+# Prompt fragment for the High Non-redundancy rubric axis (REVIEW.md, #1753). Kept as a named
+# constant so tests can lock the language without parsing the full LLM user message.
+NON_REDUNDANCY_GUIDANCE = (
+    "Non-redundancy is a High rubric axis: a PR that re-derives a helper, metric, or report "
+    "that already exists over the same data shape is redundant even when its diff is original "
+    "and its tests pass — conceptual duplication is rejected the same as literal duplication. "
+    "Prefer extending or parametrizing the existing code over a parallel module. When the diff "
+    "looks like parallel analysis over the same shape, name the existing module it should "
+    "extend instead in concerns and recommendation."
 )
 
 ACTIONS = ["merge", "request-changes", "reject", "comment"]
@@ -190,6 +202,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + f"description:\n{_clip_text(pr.get('body'), 1500)}\n\n"
         + f"changed files: {', '.join(files[:30])}\n\n"
         + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n\n"
+        + f"{NON_REDUNDANCY_GUIDANCE}\n\n"
         + "Return JSON with keys:\n"
         + f'  "action": one of {ACTIONS},\n'
         + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
@@ -198,7 +211,8 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
         + '  "tests_present": boolean — does it add or update tests,\n'
         + '  "summary": one sentence on what the PR does,\n'
-        + '  "concerns": list of specific, actionable concerns (empty list if none),\n'
+        + '  "concerns": list of specific, actionable concerns (empty list if none) — include '
+        + "a non-redundancy finding when the PR re-derives existing analysis,\n"
         + '  "recommendation": one or two sentences of advice to the maintainer.'
     )
     stub = {
