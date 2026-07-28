@@ -63,9 +63,15 @@ def run(argv=None) -> int:
         claimed = (evidence.get("inputs") or {}).get("transcript_digest")
         report["checks"]["transcript_digest"] = recorded == claimed
         report["ok"] = all(report["checks"].values())
-        if recorded != claimed:
-            report["detail"] = f"transcript_digest FAILED (recorded {recorded[:12]}, "
-            report["detail"] += f"bound {str(claimed)[:12]})"
+        # Rebuild detail from every failing check, not just this one -- overwriting it wholesale
+        # (the prior behaviour) hid any artifact_digest/report_data/quote_binding failure that
+        # verify_evidence() had already reported, e.g. a tampered artifact PLUS a mismatched
+        # transcript would show only "transcript_digest FAILED", masking the artifact tampering.
+        if not report["ok"]:
+            report["detail"] = "; ".join(
+                f"{name} FAILED" for name, passed in report["checks"].items() if not passed)
+        else:
+            report["detail"] = "all checks passed"
 
     print(json.dumps(report, indent=2, sort_keys=True))
     for name, passed in sorted(report["checks"].items()):
