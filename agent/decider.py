@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from agent.context import context_for_agent
 from agent.planner import _release_cadence_signal, _release_timing_state
-from benchmark.score import base_from_releases
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,98 @@ _ACTION_SYNONYMS = {
 
 _BUMP_LEVELS = frozenset({"major", "minor", "patch"})
 _NULL_BUMPS = frozenset({"null", "none", "n/a"})
+
+# A semver core (major.minor[.patch]) with an optional leading v; any pre-release/build suffix
+# is ignored. Mirrors `benchmark/score.py::_SEMVER` — ``agent/`` must not import ``benchmark/``
+# (a miner-only split is planned; agent/context.py and agent/planner.py state the same rule),
+# so the version shapes the anchor parses are mirrored here and locked by an equivalence test.
+_SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
+
+# Tie order for the modal historical bump class: mature repos cut far more patches than
+# majors, so an even split reads as the smaller bump.
+_BUMP_TIE_ORDER = ("patch", "minor", "major")
+
+
+def _parse_semver(text) -> tuple | None:
+    """First semver core in ``text`` -> (major, minor, patch), or None.
+
+    Mirrors ``benchmark/score.py::parse_semver``: tolerant of a leading ``v`` and a missing
+    patch (``1.2`` -> (1, 2, 0)); non-string input carries no version.
+    """
+    if not isinstance(text, str):
+        return None
+    m = _SEMVER_RE.search(text)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+
+
+def _base_from_releases(releases) -> str | None:
+    """The current version at freeze T: the highest tag among frozen releases.
+
+    Mirrors ``benchmark/score.py::base_from_releases``, which the objective anchor feeds as
+    ``base_version``: each release resolves to a single representative version (``tag``
+    authoritative, display ``name`` only a fallback) *before* comparing across releases, and
+    malformed rows contribute nothing rather than corrupting the base.
+    """
+    best_tag, best_ver = None, None
+    rows = releases if isinstance(releases, list) else []
+    for rel in rows:
+        if not isinstance(rel, dict):
+            continue
+        raw, ver = None, None
+        for candidate in (rel.get("tag"), rel.get("name")):
+            if not candidate:
+                continue
+            parsed = _parse_semver(str(candidate))
+            if parsed is not None:
+                raw, ver = candidate, parsed
+                break
+        if ver is not None and (best_ver is None or ver > best_ver):
+            best_tag, best_ver = raw, ver
+    return best_tag
+
+
+def _historical_bump_class(context: dict) -> str | None:
+    """The modal bump class across the repo's frozen release history, else None.
+
+    A bump prediction is only ever compared against a window that actually contains a cut,
+    where no prediction can never match — abstaining forfeits that comparison with certainty
+    while a wrong class scores no worse. The modal class is the repo's own cadence read back
+    to it: each frozen release contributes one version (``tag`` over ``name``, as the anchor
+    resolves it), the distinct versions are ordered, and each consecutive pair classifies by
+    its highest differing component. Ties prefer the smaller bump (``_BUMP_TIE_ORDER``); a
+    lone versioned release falls back to "patch"; no versioned releases at all means no basis
+    to predict, so None.
+    """
+    ctx = context_for_agent(context) if isinstance(context, dict) else {}
+    releases = ctx.get("releases")
+    rows = releases if isinstance(releases, list) else []
+    versions = []
+    for rel in rows:
+        if not isinstance(rel, dict):
+            continue
+        for candidate in (rel.get("tag"), rel.get("name")):
+            if not candidate:
+                continue
+            ver = _parse_semver(str(candidate))
+            if ver is not None:
+                versions.append(ver)
+                break
+    if not versions:
+        return None
+    ordered = sorted(set(versions))
+    counts = {"major": 0, "minor": 0, "patch": 0}
+    for old, new in zip(ordered, ordered[1:]):
+        if new[0] != old[0]:
+            counts["major"] += 1
+        elif new[1] != old[1]:
+            counts["minor"] += 1
+        elif new[2] != old[2]:
+            counts["patch"] += 1
+    if not any(counts.values()):
+        return "patch"
+    return max(_BUMP_TIE_ORDER, key=lambda level: counts[level])
 
 
 def _normalize_action(action) -> str:
@@ -256,6 +348,17 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out["rationale"] = _normalize_rationale(out.get("rationale"))
     out["patch"] = _normalize_patch(out.get("patch"))
     out["version_bump"] = _normalize_version_bump(out.get("version_bump"))
+    # A planning request that leaves version_bump null forfeits the bump comparison outright
+    # whenever the revealed window does contain a cut, while a wrong class scores no worse —
+    # so the repo's own modal cadence class weakly dominates abstaining. Backfill only fills
+    # a hole: an explicit prediction from the LLM always stands, and just after a cut
+    # (suppress) no bump is coming, so none is invented.
+    if (
+        out["version_bump"] is None
+        and _is_planning_request(request)
+        and _release_timing_state(context) != "suppress"
+    ):
+        out["version_bump"] = _historical_bump_class(context)
     # Just after a cut, a version_bump prediction matches nothing (bump_actual is None when the
     # revealed window has no release) — clear it the same way the planner suppresses release items.
     if _release_timing_state(context) == "suppress":
@@ -303,7 +406,8 @@ def _release_context_note(context: dict) -> str:
     Frozen ``releases`` may be oldest-first (git builders) or newest-first (GitHub API),
     so a positional slice labeled "newest first" is wrong for one of the two producers and
     can point ``version_bump`` at a stale base. Report the highest parsed version instead —
-    the same tag ``benchmark.score.base_from_releases`` feeds the objective anchor.
+    the same tag the objective anchor's ``base_from_releases`` feeds bump scoring (mirrored
+    locally as ``_base_from_releases``; ``agent/`` must not import ``benchmark/``).
     """
     if not isinstance(context, dict):
         return ""
@@ -311,7 +415,7 @@ def _release_context_note(context: dict) -> str:
     releases = ctx.get("releases")
     if not isinstance(releases, list) or not releases:
         return ""
-    base = base_from_releases(releases)
+    base = _base_from_releases(releases)
     if not base:
         return ""
     return (
