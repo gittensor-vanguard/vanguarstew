@@ -4,6 +4,7 @@ Covers the M2 addition: the judge weighs the decision process (philosophy + reas
 not just plan direction — so when plans are equal, sounder reasoning breaks the tie.
 """
 
+import json
 import logging
 import os
 import random
@@ -62,6 +63,18 @@ def test_parse_winner_tolerant():
     assert _parse_winner("winner = tie") == "tie"
     assert _parse_winner("no verdict here") == "tie"
     assert _parse_winner("") == "tie"
+
+
+def test_render_truncation_preserves_valid_json_and_all_judged_fields():
+    rendered = _render({
+        "philosophy": {"summary": "p" * 8000},
+        "plan": [{"title": "x" * 8000}],
+        "rationale": "r" * 8000,
+    })
+    decoded = json.loads(rendered)
+    assert len(rendered) <= 4500
+    assert set(decoded) == {"philosophy", "plan", "rationale"}
+    assert all(value.get("truncated") is True for value in decoded.values())
 
 
 def test_parse_winner_tolerates_non_string_input():
