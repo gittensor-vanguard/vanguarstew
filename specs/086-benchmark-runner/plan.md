@@ -1,4 +1,4 @@
-# Plan 078 — replay orchestrator
+# Plan 086 — replay orchestrator
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1996
@@ -7,7 +7,7 @@ Maps the [spec](./spec.md) onto `benchmark/runner.py` as-built. No product code.
 
 ## EARS → test mapping
 
-| Spec section | Test group in `test_spec_078_runner.py` |
+| Spec section | Test group in `test_spec_086_runner.py` |
 | ------------- | ---------------------------------------- |
 | Agent entrypoint loading | `test_load_solve_missing_file_message`, `test_load_solve_directory_message`, `test_load_solve_exec_error_wraps_original`, `test_load_solve_missing_entrypoint_message`, `test_load_solve_inserts_agent_dir_into_sys_path_once` |
 | Judged-submission projection | `test_submission_projects_exactly_three_keys`, `test_submission_non_dict_returns_none_triple` |

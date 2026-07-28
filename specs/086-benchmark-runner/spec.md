@@ -1,4 +1,4 @@
-# Spec 078 — replay orchestrator
+# Spec 086 — replay orchestrator
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** benchmark
@@ -233,7 +233,7 @@ re-deriving intent from the diff.
 
 ## Verification
 
-- `tests/test_spec_078_runner.py` exercises each EARS block above against in-memory fakes and tiny
+- `tests/test_spec_086_runner.py` exercises each EARS block above against in-memory fakes and tiny
   throwaway git repos (no network, no real repo clones): the three distinct `load_solve` failure
   messages plus its one-time `sys.path` insertion; `_submission`'s key projection and non-dict
   fallback; `_materialize_repo_source`'s placeholder/local/missing-root/clone branches and the dead

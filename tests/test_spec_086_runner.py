@@ -1,6 +1,6 @@
-"""Spec 078 contract tests for benchmark/runner.py (replay orchestrator).
+"""Spec 086 contract tests for benchmark/runner.py (replay orchestrator).
 
-Pins the as-built behavior described in specs/078-benchmark-runner/spec.md with literal expected
+Pins the as-built behavior described in specs/086-benchmark-runner/spec.md with literal expected
 keys, messages, and merge/gating outcomes -- including the as-built gaps (the dead `cleanup` flag,
 `weight_sweep`'s asymmetric skip, the zero-sum blend fallback, `run_generalization_report`'s catch
 narrowed to RepoSetError). Runs offline against in-memory fakes and tiny throwaway git repos; no
