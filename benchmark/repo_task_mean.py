@@ -11,6 +11,7 @@ skipped rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.comparability import artifact_kind
 
@@ -19,6 +20,15 @@ logger = logging.getLogger(__name__)
 
 def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _is_task_count(value) -> bool:
@@ -139,6 +149,6 @@ def repo_task_mean_headline(summary: dict) -> str:
     summary = _dict(summary)
     kind = summary.get("kind") or "unknown"
     mean = summary.get("mean_tasks_per_repo")
-    mean_txt = f"{mean:.3f}" if isinstance(mean, (int, float)) and not isinstance(mean, bool) else "n/a"
+    mean_txt = f"{mean:.3f}" if _is_number(mean) else "n/a"
     scored = summary.get("scored_repos")
     return f"repo task mean: {kind} {scored} scored repo(s), mean {mean_txt} tasks/repo"

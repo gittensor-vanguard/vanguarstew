@@ -292,7 +292,7 @@ def _check_slice(label: str, slice_: dict, checks: list) -> None:
     if "decisive_margin" in slice_:
         if tally is not None and _is_number(margin):
             expected = tally["challenger"] - tally["baseline"]
-            add("decisive_margin_matches", int(margin) == expected,
+            add("decisive_margin_matches", margin == expected,
                 f"decisive_margin {margin} vs challenger-baseline {expected}")
         else:
             add("decisive_margin_matches", False,

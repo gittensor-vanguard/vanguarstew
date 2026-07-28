@@ -17,6 +17,10 @@ The core question it answers is not *"did the agent write good code?"* but *"doe
 
 See [ROADMAP.md](ROADMAP.md) for milestones and [docs/architecture.md](docs/architecture.md) for the architecture (module layout, agent contract, topology, leakage defenses).
 
+The first verifiable-compute milestone is a fixed, public, non-secret
+[Polaris TEE receipt pilot](docs/polaris-public-tee-pilot.md). It validates execution-integrity
+receipts without claiming workload confidentiality or GPU provenance.
+
 ## Why this matters
 
 Software development is bottlenecked less by writing code than by **maintaining** it —

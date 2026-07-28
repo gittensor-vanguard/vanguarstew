@@ -32,14 +32,17 @@ RUN apt-get update \
 # container user and git's "dubious ownership" guard aborts every rev-list. That guard protects a
 # multi-user machine from a hostile repo owner; neither condition holds in a single-purpose eval
 # sandbox that only ever reads repositories it was explicitly handed, and inside an enclave the
-# input set is fixed by the attested measurement anyway.
-RUN git config --global --add safe.directory '*'
+# input set is fixed by the quote-bound mounted-files digest. Use system scope because the workload
+# runs as an unprivileged user below.
+RUN git config --system --add safe.directory '*' \
+    && useradd --uid 10001 --create-home --home-dir /home/eval eval
 
 # Deterministic interpreter behaviour: no .pyc writes, unbuffered output, and a fixed hash seed so
 # any incidental set/dict iteration in the pipeline cannot vary between runs of the same image.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONHASHSEED=0
+    PYTHONHASHSEED=0 \
+    HOME=/home/eval
 
 WORKDIR /eval
 COPY . /eval
@@ -48,8 +51,14 @@ COPY . /eval
 # calls. A record-mode run overrides this and points --api-base at the proxy instead.
 ENV VANGUARSTEW_OFFLINE=1
 
-# No ENTRYPOINT on purpose -- the same image serves the three roles the spike needs:
+# The replay only needs read access to the image and mounted inputs; frozen checkouts are created
+# under /tmp. Root privileges are not part of the measured workload.
+USER eval
+
+# No ENTRYPOINT on purpose -- the same image serves the four roles the TEE path needs:
 #   replay a run:  python -m scripts.transcript_proxy --mode replay --transcript t.json
 #   score a run:   python -m scripts.run_eval --repo ... --api-base http://127.0.0.1:8712/v1
+#   prepare mounts: python -m scripts.prepare_attested_inputs --part ...
+#   attest a run:   python -m scripts.run_attested_eval --repo ... --transcript t.json ...
 #   verify a run:  python -m scripts.verify_attestation --artifact a.json --evidence e.json
-CMD ["python", "-m", "scripts.verify_attestation", "--help"]
+CMD ["python", "-m", "scripts.run_attested_eval", "--help"]

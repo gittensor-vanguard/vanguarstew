@@ -225,6 +225,12 @@ def test_headline_reports_stable_unstable_and_inconclusive():
     assert DEFAULT_MAX_CV == 0.05
 
 
+def test_headline_masks_non_finite_cv():
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        line = repeatability_headline({"runs": 2, "stable": False, "mean": 0.5, "cv": bad})
+        assert "cv n/a" in line
+
+
 def test_cv_uses_sample_standard_deviation():
     # The CV of a sample of repeated runs uses the sample (Bessel-corrected) standard deviation,
     # so run-to-run spread is not underestimated. Population stddev (pstdev) would give sd=0.04,
