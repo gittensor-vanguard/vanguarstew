@@ -14,8 +14,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from benchmark.freeze import _git as _freeze_git  # noqa: E402
-from benchmark.freeze import _safe_extractall, build_context, export_tree  # noqa: E402
+from benchmark.freeze import (  # noqa: E402
+    _git as _freeze_git,
+)
+from benchmark.freeze import (
+    _safe_extractall,
+    build_context,
+    export_tree,
+    write_frozen,
+)
 
 
 def _git(repo, *args, env=None):
@@ -255,6 +262,28 @@ def test_export_tree_raises_runtime_error_for_bad_commit():
     finally:
         shutil.rmtree(repo, ignore_errors=True)
         shutil.rmtree(dest, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_write_frozen_normalizes_context_mode_under_restrictive_umask(tmp_path):
+    repo = tmp_path / "repo"
+    dest = tmp_path / "frozen"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "seed")
+
+    previous_umask = os.umask(0o077)
+    try:
+        write_frozen(repo, "HEAD", dest)
+    finally:
+        os.umask(previous_umask)
+
+    assert (dest.stat().st_mode & 0o777) == 0o755
+    assert ((dest / ".vanguarstew_context.json").stat().st_mode & 0o777) == 0o644
 
 
 def _commit(repo: str, name: str, date_iso: str, message: str) -> None:
