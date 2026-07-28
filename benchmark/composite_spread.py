@@ -48,7 +48,11 @@ def _headline_partition(artifact: dict) -> dict:
 
 
 def _headline_parts(artifact: dict) -> dict:
-    parts = _headline_partition(artifact).get("composite_parts")
+    partition = _headline_partition(artifact)
+    scored = partition.get("scored_repos")
+    if isinstance(scored, int) and not isinstance(scored, bool) and scored == 0:
+        return {"judge_mean": None, "objective_mean": None}
+    parts = partition.get("composite_parts")
     if not isinstance(parts, dict):
         if parts is not None:
             logger.warning(

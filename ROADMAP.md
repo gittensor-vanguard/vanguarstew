@@ -54,12 +54,23 @@ The score is defensible, not just subjective prose-judging.
 
 A *general* maintainer, not one tuned to a single repo.
 
-- [x] Diverse + **held-out** repos: `benchmark/repo_sets/curated.json` (5 repos), repo-set config, `--repo-set` wiring.
+- [x] Diverse + **held-out** repos: `benchmark/repo_sets/curated.json` (6 repos), repo-set config, `--repo-set` wiring.
 - [x] Generalization report: `run_eval --generalization` replays tuned+held-out partitions, reports `generalization_gap`.
 - [x] Judge-robustness: disagreement tracking, pairwise judging, evidence anchoring.
 - [x] Spot-check / manual review of the top agent (as ninja does).
 - [x] **Acceptance run:** `run_eval --generalization` on curated set → `generalization_gap = 0.097`, zero crashes. Held-out performance does not collapse.
 - **Status:** ✅ complete. Acceptance run passed. See `m3_acceptance_result.json` and `blog/m3-milestone.md`.
+
+> **⚠️ The recorded acceptance artifact predates the current repo set and is not reproducible
+> from it.** `m3_acceptance_result.json` was produced against the pre-#1741 `curated.json`. It
+> scores `hatch` and `httpx` — tier `recent`, `after: 2025-09-01` freeze windows — neither of
+> which is still in the config, and it does not cover `h2`, `jsonpickle`, or `pint`, which are.
+> #1741 replaced the set with six all-`obscure` repos on `before: 2021-01-01` windows and
+> per-repo `horizon_days`, so `generalization_gap = 0.097` describes a configuration the
+> repository no longer contains. Re-running
+> `run_eval --generalization --repo-set benchmark/repo_sets/curated.json` and replacing the
+> artifact would restore a reproducible figure; until then treat the number as historical
+> rather than a current measurement of the shipped configuration.
 
 ## M4 — Hardening & release readiness ✅
 
@@ -69,7 +80,7 @@ Close the crash-and-correctness gap so a full benchmark run completes clean.
 - [x] **Benchmark scoring:** module-recall farming fixed (#289), backlog threshold reachable for single-word titles (#308), composite-score wiring (#341).
 - [x] **Leakage lockout:** tag-creation-date filter for frozen releases (#332), release-tag scrubbing in `scrub_context` (#330), forward-reference masking in git-only fallback (#312).
 - [x] **Tooling:** `compare_eval` CLI for diffing replay artifacts (#306), `--fail-under` score floor for CI gating (#318, #367).
-- [x] **Acceptance run:** M3 acceptance completed clean with `generalization_gap = 0.097`, zero crashes across 5 repos.
+- [x] **Acceptance run:** M3 acceptance completed clean with `generalization_gap = 0.097`, zero crashes across 5 repos (that artifact predates the current repo set — see the M3 note above).
 - **Status:** ✅ complete. Benchmark runs clean on 5 repos; no agent crashes from malformed LLM output; leakage audit clean; full test suite green (3659 passed).
 
 ## M5 — Measured, anti-gaming contribution scoring ✅

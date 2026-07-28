@@ -130,6 +130,17 @@ def test_disagreement_outlook_falls_back_to_report_when_stats_empty():
     assert out["verdict"] == "stable"
 
 
+def test_zero_dual_order_count_does_not_turn_stored_rate_into_evidence():
+    art = {
+        "composite_mean": 0.7,
+        "judge_report": {"disagreement_rate": 0.75, "dual_order_tasks": 0},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["dual_order_tasks"] is None
+    assert out["disagreement_rate"] is None
+    assert out["verdict"] is None
+
+
 def test_consistent_report_rate_preserved_without_stats():
     art = _run(0.2, 5)
     out = summarize_disagreement_outlook(art)
