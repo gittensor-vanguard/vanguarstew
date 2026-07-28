@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autonomy is not enough. A maintainer agent should be verifiable. — vanguarstew</title>
+<meta name="description" content="Vanguarstew v0.8.0 connects measurable maintainer judgment to an isolated, receipt-bound, fail-closed autonomous maintenance pipeline.">
+<meta name="theme-color" content="#0C1412">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23CFA954'/><text x='16' y='22.5' font-size='18' text-anchor='middle' font-family='Georgia,serif' font-weight='700' fill='%23231a08'>V</text></svg>">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://gittensor-vanguard.github.io/vanguarstew/blog/verifiable-autonomous-maintainer/">
+<meta property="og:title" content="Autonomy is not enough. A maintainer agent should be verifiable.">
+<meta property="og:description" content="Why v0.8.0 moves Vanguarstew beyond benchmarking into isolated, receipt-bound, fail-closed autonomous maintenance.">
+<style>
+  :root{
+    --ink:#F4F0E6; --ink-2:#FAF6EC; --panel:#FFFFFF; --panel-2:#F5F1E5;
+    --line:#E3DCC9; --line-soft:#ECE6D6;
+    --text:#1E2B25; --muted:#586A5F; --faint:#8B998E;
+    --brass:#9A7A2B; --brass-hi:#C29A40; --brass-deep:#7C6220;
+    --green:#3C8A57; --blue:#3F6F91; --violet:#7355B8;
+    --btn-ink:#2A2007; --glass:rgba(255,255,255,.58);
+    --shadow:0 22px 54px -34px rgba(70,58,26,.30);
+    --aur-1:rgba(207,169,84,.34); --aur-2:rgba(124,190,144,.26); --aur-3:rgba(150,176,224,.22);
+    --video-tint:linear-gradient(180deg,rgba(244,240,230,.74),rgba(244,240,230,.60));
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --wrap:1060px; --prose:710px;
+    color-scheme:light;
+  }
+  :root[data-theme="dark"]{
+    --ink:#0C1412; --ink-2:#0F1A15; --panel:#12201A; --panel-2:#152720;
+    --line:#26372E; --line-soft:#1C2B24;
+    --text:#E7EAE2; --muted:#93A69B; --faint:#6C7F75;
+    --brass:#CFA954; --brass-hi:#E7CB84; --brass-deep:#8A7132;
+    --green:#7CBE90; --blue:#7AA9C7; --violet:#AC90E4;
+    --btn-ink:#1A1305; --glass:rgba(18,32,26,.62);
+    --shadow:0 26px 64px -36px rgba(0,0,0,.80);
+    --aur-1:rgba(207,169,84,.16); --aur-2:rgba(124,190,144,.10); --aur-3:rgba(172,144,228,.09);
+    --video-tint:linear-gradient(180deg,rgba(12,20,18,.68),rgba(12,20,18,.58));
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ink); color:var(--text); font-family:var(--sans);
+    font-size:17px; line-height:1.65; -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility; transition:background .4s ease,color .4s ease;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.035;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .wrap{max-width:var(--wrap); margin-inline:auto; padding-inline:26px}
+  .prose{max-width:var(--prose); margin-inline:auto; padding-inline:26px}
+  a{color:inherit}
+  h1,h2,h3{font-family:var(--serif); font-weight:600; text-wrap:balance; letter-spacing:-.012em; margin:0}
+  p{margin:0}
+  code{font-family:var(--mono); font-size:.88em; background:color-mix(in srgb,var(--text) 8%,transparent); padding:.12em .4em; border-radius:4px}
+  :focus-visible{outline:2px solid var(--brass); outline-offset:3px; border-radius:3px}
+
+  .aurora,.videobg{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none}
+  .aurora b{position:absolute; border-radius:50%; filter:blur(72px); display:block}
+  .aurora .a1{width:58vw; height:58vw; left:-10vw; top:-16vw; background:radial-gradient(circle,var(--aur-1),transparent 66%); animation:aur1 28s ease-in-out infinite alternate}
+  .aurora .a2{width:50vw; height:50vw; right:-8vw; top:0; background:radial-gradient(circle,var(--aur-2),transparent 66%); animation:aur2 34s ease-in-out infinite alternate}
+  .aurora .a3{width:48vw; height:48vw; left:26vw; bottom:-18vw; background:radial-gradient(circle,var(--aur-3),transparent 66%); animation:aur3 31s ease-in-out infinite alternate}
+  @keyframes aur1{to{transform:translate(16vw,12vh) scale(1.18)}}
+  @keyframes aur2{to{transform:translate(-13vw,9vh) scale(1.12)}}
+  @keyframes aur3{to{transform:translate(11vw,-9vh) scale(1.22)}}
+  .videobg video{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 1s ease}
+  .videobg video.ready{opacity:1}
+  .videobg .tint{position:absolute; inset:0; background:var(--video-tint)}
+  @media(prefers-reduced-motion:reduce){.aurora b{animation:none}.videobg video{display:none}}
+
+  header.top,main,footer{position:relative; z-index:1}
+  header.top{position:sticky; top:0; z-index:20; background:color-mix(in srgb,var(--ink) 78%,transparent); backdrop-filter:blur(10px) saturate(1.05); border-bottom:1px solid var(--line-soft)}
+  header.top .wrap{display:flex; align-items:center; gap:18px; height:60px}
+  .brandmark{display:flex; align-items:center; gap:11px; font-family:var(--serif); font-size:1.12rem; text-decoration:none}
+  .brandmark .dot{width:11px; height:11px; border-radius:50%; background:radial-gradient(circle at 32% 30%,var(--brass-hi),var(--brass) 45%,var(--brass-deep)); box-shadow:0 0 0 1px color-mix(in srgb,var(--brass-hi) 40%,transparent),0 0 14px color-mix(in srgb,var(--brass) 50%,transparent)}
+  .top nav{margin-left:auto; display:flex; align-items:center; gap:22px}
+  .top nav a{font-family:var(--mono); font-size:.76rem; letter-spacing:.05em; color:var(--muted); text-decoration:none}
+  .top nav a:hover{color:var(--text)}
+  .themebtn{width:34px; height:34px; border-radius:8px; border:1px solid var(--line); background:var(--glass); color:var(--brass); display:inline-grid; place-items:center; cursor:pointer; padding:0}
+  .themebtn:hover{border-color:var(--brass); transform:translateY(-1px)}
+  .themebtn svg{width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round}
+  .themebtn .i-moon{fill:currentColor; stroke:none}.themebtn .i-sun{display:none}
+  :root[data-theme="dark"] .themebtn .i-moon{display:none}:root[data-theme="dark"] .themebtn .i-sun{display:block}
+  @media(max-width:680px){.top nav a.hide-sm{display:none}}
+
+  article{padding-block:clamp(48px,7vw,86px)}
+  .eyebrow{font-family:var(--mono); font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:var(--brass)}
+  .art-head{margin-bottom:clamp(36px,6vw,56px)}
+  .art-title{font-size:clamp(2.15rem,5vw,3.4rem); line-height:1.06; margin-top:16px}
+  .art-meta{font-family:var(--mono); font-size:.78rem; color:var(--faint); margin-top:18px; display:flex; gap:12px; flex-wrap:wrap}
+  .art-lead{font-size:1.2rem; color:var(--muted); line-height:1.62; margin-top:24px}
+  .art-body{display:flex; flex-direction:column; gap:22px; margin-top:42px}
+  .art-body p,.art-body li{color:color-mix(in srgb,var(--text) 88%,var(--muted)); font-size:1.03rem; line-height:1.78}
+  .art-body h2{font-size:1.58rem; margin-top:28px}
+  .art-body h3{font-size:1.18rem; margin-top:10px; color:var(--brass)}
+  .art-body ul,.art-body ol{margin:0; padding-left:1.35em; display:flex; flex-direction:column; gap:8px}
+  .art-body b{color:var(--text); font-weight:650}
+  .art-body a.inline{color:var(--brass); text-decoration:underline; text-underline-offset:3px}
+  .rule{height:1px; background:var(--line-soft); margin:22px 0 4px}
+
+  .thesis{background:linear-gradient(145deg,color-mix(in srgb,var(--brass) 10%,var(--glass)),var(--glass)); border:1px solid var(--line); border-radius:14px; padding:24px 25px; box-shadow:var(--shadow)}
+  .thesis .k{font-family:var(--mono); font-size:.69rem; letter-spacing:.14em; text-transform:uppercase; color:var(--brass); margin-bottom:8px}
+  .thesis p{font-family:var(--serif); color:var(--text); font-size:1.2rem; line-height:1.5}
+
+  .flow{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:8px 0 4px}
+  .step{position:relative; min-height:185px; background:var(--glass); border:1px solid var(--line); border-radius:12px; padding:18px 16px; box-shadow:var(--shadow)}
+  .step .n{font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; color:var(--brass)}
+  .step h3{font-family:var(--serif); color:var(--text); font-size:1.08rem; margin-top:8px}
+  .step p{color:var(--muted); font-size:.86rem; line-height:1.55; margin-top:8px}
+  .step:not(:last-child)::after{content:"→"; position:absolute; right:-10px; top:22px; z-index:2; color:var(--brass); background:var(--ink); width:18px; text-align:center; font-family:var(--mono)}
+  @media(max-width:820px){.flow{grid-template-columns:repeat(2,1fr)}.step:nth-child(2)::after{display:none}}
+  @media(max-width:500px){.flow{grid-template-columns:1fr}.step{min-height:0}.step::after{display:none!important}}
+
+  .boundary{border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--glass); box-shadow:var(--shadow)}
+  .boundary .head{padding:18px 20px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--brass) 7%,transparent)}
+  .boundary .head span{font-family:var(--mono); color:var(--brass); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase}
+  .boundary ul{padding:19px 24px 21px 42px; margin:0}
+
+  .close-card{background:radial-gradient(700px 280px at 80% -30%,color-mix(in srgb,var(--brass) 15%,transparent),transparent 60%),var(--glass); border:1px solid var(--line); border-radius:14px; padding:clamp(26px,5vw,40px); margin-top:16px; box-shadow:var(--shadow)}
+  .close-card h3{font-size:1.38rem; color:var(--text)}
+  .close-card p{color:var(--muted); margin-top:10px}
+  .close-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:20px}
+  .btn{display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:.82rem; text-decoration:none; padding:11px 16px; border-radius:5px; border:1px solid transparent}
+  .btn-primary{background:linear-gradient(180deg,var(--brass-hi),var(--brass) 60%,var(--brass-deep)); color:var(--btn-ink); font-weight:650; border-color:var(--brass-hi)}
+  .btn-ghost{color:var(--text); border-color:var(--line); background:var(--glass)}
+
+  footer{border-top:1px solid var(--line-soft); margin-top:40px}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:16px 26px; align-items:center; padding-block:30px; font-family:var(--mono); font-size:.74rem; color:var(--faint)}
+  footer a{color:var(--muted); text-decoration:none}footer a:hover{color:var(--brass)}footer .sp{margin-left:auto}
+  #cursorglow{position:fixed; top:0; left:0; width:560px; height:560px; margin:-280px 0 0 -280px; border-radius:50%; pointer-events:none; z-index:0; opacity:0; transition:opacity .6s ease; background:radial-gradient(circle,color-mix(in srgb,var(--brass) 20%,transparent),color-mix(in srgb,var(--brass) 7%,transparent) 42%,transparent 72%); filter:blur(32px)}
+  #cursorglow.on{opacity:.75}
+  @media(prefers-reduced-motion:reduce){#cursorglow{display:none}}
+</style>
+<script>(function(){try{var t=localStorage.getItem('vgs-theme')||'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><b class="a1"></b><b class="a2"></b><b class="a3"></b></div>
+<div class="videobg" aria-hidden="true"><video id="bgvid" autoplay muted loop playsinline preload="auto"><source src="../../bg.mp4" type="video/mp4"></video><div class="tint"></div></div>
+<header class="top">
+  <div class="wrap">
+    <a class="brandmark" href="../../"><span class="dot"></span>vanguarstew</a>
+    <nav>
+      <a href="../../#bench" class="hide-sm">Benchmark</a>
+      <a href="../../leaderboard/" class="hide-sm">Leaderboard</a>
+      <a href="../" class="hide-sm" style="color:var(--brass)">Blog</a>
+      <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub&nbsp;↗</a>
+      <button class="themebtn" id="themebtn" type="button" aria-label="Toggle light or dark theme" title="Toggle theme"><svg class="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg><svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg></button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <article>
+    <div class="prose art-head">
+      <p class="eyebrow">Vanguarstew journal</p>
+      <h1 class="art-title">Autonomy is not enough. A maintainer agent should be verifiable.</h1>
+      <div class="art-meta">
+        <span>July 28, 2026</span><span>·</span><span>v0.8.0 · Verifiable autonomy</span><span>·</span>
+        <a href="https://github.com/gittensor-vanguard/vanguarstew/releases/tag/v0.8.0" style="color:var(--brass)">Release ↗</a>
+      </div>
+      <p class="art-lead">Vanguarstew now connects measurable maintainer judgment to a live,
+        isolated, receipt-bound, fail-closed maintenance pipeline. The important change is not
+        simply that it can act—it is that a score-backed action must survive verifiable gates first.</p>
+    </div>
+
+    <div class="prose art-body">
+      <p>Software agents can open pull requests, review diffs, and press a merge button. That is
+        useful—but it is not enough to make them trustworthy maintainers.</p>
+
+      <p>A maintainer operates where mistakes compound. One weak review can merge a regression.
+        One noisy metric can reward the wrong contribution. One unavailable dependency can leave a
+        queue in an ambiguous state. If an autonomous system cannot show what it measured, constrain
+        what it executed, and stop safely when verification fails, autonomy only makes uncertainty
+        move faster.</p>
+
+      <p>With <a class="inline" href="https://github.com/gittensor-vanguard/vanguarstew/releases/tag/v0.8.0"><b>v0.8.0</b></a>,
+        Vanguarstew takes a large step beyond measuring maintainer-agent performance. It now connects
+        that benchmark to a live autonomous maintenance pipeline with a receipt-bound integrity layer.</p>
+
+      <div class="thesis">
+        <div class="k">The central idea</div>
+        <p>The important change is not that the agent can act on its own. The important change is
+          that a score-backed action has to survive a chain of measurable and verifiable gates first.</p>
+      </div>
+
+      <div class="rule"></div>
+      <h2>From a benchmark to an operating system for maintenance</h2>
+
+      <p>Vanguarstew began with a hard question: can an agent predict what experienced maintainers
+        will do next?</p>
+
+      <p>The benchmark answers that by freezing real repositories in the past, asking the agent to
+        infer their maintainer philosophy and next development priorities, and comparing those
+        predictions with the future that actually happened. The answer key is real project
+        history—not a synthetic list of ideal responses.</p>
+
+      <p>That makes maintainer judgment measurable. Version 0.8.0 connects that measurement to live
+        maintenance. Eligible incoming changes now move through four explicit stages:</p>
+
+      <div class="flow" aria-label="Four-stage verifiable maintenance pipeline">
+        <div class="step"><div class="n">01 / MEASURE</div><h3>Build evidence</h3><p>Generate before-and-after benchmark artifacts and validate their structure.</p></div>
+        <div class="step"><div class="n">02 / ISOLATE</div><h3>Contain execution</h3><p>Run candidate code unprivileged, read-only, without network access or model credentials.</p></div>
+        <div class="step"><div class="n">03 / RECOMPUTE</div><h3>Bind the decision</h3><p>Re-run the gates and final decision inside a measured Polaris Intel TDX workload.</p></div>
+        <div class="step"><div class="n">04 / ACT</div><h3>Fail closed</h3><p>Use the result only after exact receipt verification. Otherwise, take no score-backed action.</p></div>
+      </div>
+
+      <p>This is the difference between automation and accountable automation. The pipeline does not
+        merely report that evaluation happened. It requires evidence tied to the workload, inputs,
+        and output that produced the decision.</p>
+
+      <div class="rule"></div>
+      <h2>Why this is a big update</h2>
+
+      <h3>1. Performance and operation are now connected</h3>
+      <p>Many agent projects stop at an offline score. The benchmark says the model performed well,
+        but the production workflow remains a separate collection of scripts and assumptions.</p>
+      <p>Vanguarstew now uses its measurement discipline as part of its maintenance loop. Frozen
+        evidence, reproducible gates, conservative decisions, and explicit failure states govern
+        whether an eligible contribution can receive a score-backed outcome. The benchmark is no
+        longer only a report card. It is part of the operating discipline.</p>
+
+      <h3>2. Candidate code does not inherit reviewer trust</h3>
+      <p>A contribution being evaluated must not receive the credentials or ambient authority of
+        the system evaluating it. Candidate execution is separated from trusted orchestration. It
+        runs without network access, with read-only inputs, as an unprivileged user, and without
+        access to the model credential. A narrowly scoped broker mediates the model interface while
+        keeping the credential outside candidate-controlled code.</p>
+      <p>This does not make arbitrary code harmless. It creates a concrete, testable boundary that
+        sharply reduces what evaluated code can reach and makes failures easier to contain.</p>
+
+      <h3>3. The final decision is recomputed, not merely notarized</h3>
+      <p>Hashing a host-produced verdict inside a TEE would prove that the TEE saw the verdict. It
+        would not prove that the decision itself followed the benchmark contract.</p>
+      <p>Vanguarstew's receipt workload instead receives the bounded benchmark artifacts and runs a
+        fixed validator inside the measured environment. The validator repeats the integrity gates,
+        recomputes the score deltas, applies the conservative decision rule, and emits only the
+        canonical aggregate result with <code>egress=none</code>.</p>
+      <p>The local verifier then checks freshness, workload binding, mounted-input binding, exact
+        output, no-egress policy, and report-data binding before the result becomes usable. The
+        receipt is attached to decision recomputation—not just to a string containing a decision.</p>
+
+      <h3>4. Failure has a safe meaning</h3>
+      <p>Reliable autonomy is defined as much by what happens when a dependency fails as by what
+        happens on the happy path. If isolation cannot start, evidence is incomplete, a gate is
+        inconsistent, execution is unavailable, or receipt verification fails, the benchmark
+        result is unavailable. The pipeline does not silently downgrade to an unverified score.</p>
+      <p>A trust boundary that disappears during an outage is not a trust boundary.</p>
+
+      <div class="rule"></div>
+      <h2>What remains under human control</h2>
+      <p>Autonomy should have a defined authority boundary. Changes to the benchmark and
+        contribution-integrity system can alter how future contributions are measured, so those
+        changes remain subject to manual maintainer review.</p>
+      <p>Contributor-authored benchmark changes must begin with an open issue, discussion with the
+        maintainers, and the public <code>benchmark-change-approved</code> label before a pull request
+        is opened. The system may use the benchmark to assess changes, but it must not rewrite its
+        own scoring rules and approve that rewrite through the same automated path.</p>
+
+      <div class="rule"></div>
+      <h2>The honest trust boundary</h2>
+      <p>The language around trusted execution is easy to overstate. Here is what this release does
+        and does not claim:</p>
+
+      <div class="boundary">
+        <div class="head"><span>Claim boundary</span></div>
+        <ul>
+          <li>The current result is <b><code>polaris-verified</code></b>. Receipt bindings are
+            independently recomputed, but independent Intel-chain verification requires a separately
+            reviewed local DCAP/QVL policy.</li>
+          <li>Hosted model inference happens <b>outside</b> the TEE. The measured workload verifies
+            and recomputes the decision from the bound artifacts.</li>
+          <li>This is an <b>execution-integrity</b> layer, not a workload-confidentiality claim.</li>
+          <li>This release does not claim GPU provenance.</li>
+          <li>Sensitive execution artifacts are retained under restricted handling rather than
+            published as routine review output.</li>
+        </ul>
+      </div>
+
+      <p>These limits do not weaken the update. They make it useful. Trust grows when a system says
+        exactly what its evidence proves—and exactly what it does not.</p>
+
+      <div class="rule"></div>
+      <h2>What contributors should expect</h2>
+      <p>Vanguarstew can now participate as an active maintainer rather than only as a benchmarked
+        agent. Eligible pull requests may be reviewed, scored, labeled, merged, or closed through
+        the autonomous pipeline, while protected benchmark and integrity changes remain manually
+        controlled.</p>
+      <p>The system is live, but it is still early. A working pipeline is not the same thing as an
+        ecosystem-proven pipeline. Real contributions will surface edge cases that controlled
+        validation cannot predict.</p>
+      <p>If an outcome is delayed, unclear, or unexpected, contact the maintainers or open an issue.
+        Those reports are not interruptions to the project—they are how a reliable maintainer is built.</p>
+
+      <div class="rule"></div>
+      <h2>The larger goal</h2>
+      <p>We are not trying to build a bot that produces the most activity. We are trying to build a
+        maintainer agent whose judgment improves, whose actions are constrained, and whose important
+        decisions can be checked.</p>
+      <p>That requires three things working together: a benchmark grounded in real maintainer
+        history, an autonomous system capable of acting on live repository work, and an integrity
+        layer that turns critical execution claims into verifiable evidence.</p>
+      <p>Version 0.8.0 brings those pieces together for the first time in Vanguarstew.</p>
+
+      <div class="close-card">
+        <h3>Autonomy is the visible part. Accountability is the important part.</h3>
+        <p>Explore the release, inspect the public receipt contract, and help us test the pipeline
+          against real contribution workflows.</p>
+        <div class="close-cta">
+          <a class="btn btn-primary" href="https://github.com/gittensor-vanguard/vanguarstew/releases/tag/v0.8.0">Read v0.8.0 ↗</a>
+          <a class="btn btn-ghost" href="https://github.com/gittensor-vanguard/vanguarstew/blob/test/docs/polaris-benchmark-seal.md">Receipt contract ↗</a>
+        </div>
+      </div>
+    </div>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brandmark" style="font-size:1rem"><span class="dot"></span>vanguarstew</span>
+    <span>a repository-maintainer agent &amp; its benchmark</span><span class="sp"></span>
+    <a href="../../">Home</a><a href="../../leaderboard/">Leaderboard</a><a href="../">Blog</a>
+    <a href="https://github.com/gittensor-vanguard/vanguarstew">GitHub</a>
+  </div>
+</footer>
+<div id="cursorglow" aria-hidden="true"></div>
+<script>
+(function(){
+  var b=document.getElementById('themebtn'); if(!b)return;
+  b.addEventListener('click',function(){
+    var r=document.documentElement,d=r.getAttribute('data-theme')==='dark'?'light':'dark';
+    r.setAttribute('data-theme',d); try{localStorage.setItem('vgs-theme',d)}catch(e){}
+  });
+})();
+(function(){var v=document.getElementById('bgvid');if(!v)return;function ready(){v.classList.add('ready')}v.addEventListener('canplay',ready,{once:true});if(v.readyState>=3)ready();})();
+(function(){
+  if(matchMedia('(prefers-reduced-motion:reduce)').matches||!matchMedia('(pointer:fine)').matches)return;
+  var g=document.getElementById('cursorglow'),x=innerWidth/2,y=innerHeight/2,tx=x,ty=y,shown=false;
+  addEventListener('pointermove',function(e){tx=e.clientX;ty=e.clientY;if(!shown){g.classList.add('on');shown=true}},{passive:true});
+  function tick(){x+=(tx-x)*.055;y+=(ty-y)*.055;g.style.transform='translate3d('+x+'px,'+y+'px,0)';requestAnimationFrame(tick)}tick();
+})();
+</script>
+</body>
+</html>
