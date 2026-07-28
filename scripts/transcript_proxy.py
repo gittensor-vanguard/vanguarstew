@@ -111,8 +111,13 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def build_server(mode: str, port: int, upstream: str = "", store: TranscriptStore = None):
+    # `store if store is not None`, NOT `store or ...`: a TranscriptStore defines __len__, so an
+    # EMPTY one is falsy -- and record mode always starts empty. `store or TranscriptStore()` would
+    # therefore bind a throwaway store to the handler while main() saved the original, so record
+    # mode recorded into one object and persisted another (i.e. never recorded anything).
     handler = type("_BoundHandler", (_Handler,), {
-        "mode": mode, "upstream": upstream, "store": store or TranscriptStore(),
+        "mode": mode, "upstream": upstream,
+        "store": store if store is not None else TranscriptStore(),
     })
     return ThreadingHTTPServer(("127.0.0.1", port), handler)
 

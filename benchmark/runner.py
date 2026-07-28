@@ -122,8 +122,21 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                enrich_github=False, github_token=None,
                recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
                w_judge=0.6, w_objective=0.4, dual_order_judge=True,
-               min_history=10, after=None, before=None, horizon_days=None) -> dict:
-    solve = load_solve(agent_file)
+               min_history=10, after=None, before=None, horizon_days=None,
+               solve_fn=None) -> dict:
+    """Run one replay using a local agent file or a trusted caller-supplied adapter.
+
+    ``solve_fn`` is the isolation seam used by deployment: the trusted evaluator can keep
+    task generation, judging, and secrets outside an untrusted candidate sandbox while the
+    adapter exchanges only the frozen task and candidate result.  The legacy ``agent_file``
+    path remains the local-development default.
+    """
+    if solve_fn is None:
+        solve = load_solve(agent_file)
+    elif callable(solve_fn):
+        solve = solve_fn
+    else:
+        raise TypeError("solve_fn must be callable")
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
     tasks = generate_tasks(
