@@ -19,6 +19,10 @@ artifacts inside the measured TDX workload. It does **not** claim that hosted mo
 the TEE, that Polaris provides workload confidentiality, or that the Intel chain was independently
 verified unless a separate local DCAP verifier succeeds.
 
+Receipt validity is independent of benchmark outcome. A receipt can validly attest a positive,
+neutral, or merge-blocking regression result; successful verification means the declared decision
+was recomputed from the bound artifacts, not that the candidate passed the benchmark.
+
 ## Offline plan
 
 The combined report must be a mode-`0600` regular file. It must contain the public and second
