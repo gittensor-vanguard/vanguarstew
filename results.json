@@ -630,5 +630,75 @@
       }
     },
     "merged": false
+  },
+  {
+    "timestamp": "2026-07-28T14:56:40.996461+00:00",
+    "pr_number": 1974,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.04,
+      "per_repo": [
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.0
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.051
+        },
+        {
+          "repo": "https://github.com/hgrecco/pint",
+          "composite_delta": 0.171
+        }
+      ],
+      "foresight": {
+        "module_recall_mean": 0.528,
+        "kind_recall_mean": 1.0,
+        "release_accuracy": 1.0,
+        "module_recall_n": 9,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "private": {
+      "composite_delta": -0.048,
+      "foresight": {
+        "module_recall_mean": 0.811,
+        "kind_recall_mean": 1.0,
+        "release_accuracy": 1.0,
+        "module_recall_n": 9,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "since_anchor": {
+      "anchor": "v0.7.0",
+      "public": {
+        "composite_delta": 0.047,
+        "composite_score": 0.722,
+        "anchor_score": 0.675
+      },
+      "private": {
+        "composite_delta": 0.276,
+        "composite_score": 0.877,
+        "anchor_score": 0.601
+      }
+    },
+    "evidence": {
+      "inputs": {
+        "repo_set": "public+private",
+        "repo_set_partition": "tuned",
+        "seed": 0,
+        "rotation_seed": null,
+        "model": "deepseek-chat",
+        "agent_commit": "be24fc7cef5a5e5486ec6bafb72fd9f76636c56e",
+        "eval_image": null,
+        "transcript_digest": "e8b1c5d40d82b4fbfa02975008e21259ef98720996425fe5cb1f94cfd0b6c75f"
+      },
+      "artifact_digest": "a77094a99dffff45373dcf5a35f44921d2521851388d0a7fb4dc203746ee9233",
+      "report_data": "369d4a1ae5b4ddea3b63a1e0256785d1ddd70b37205f12d57eed66182708b786"
+    },
+    "merged": false
   }
 ]
