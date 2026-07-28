@@ -120,7 +120,15 @@ def test_malformed_content_length_returns_400():
             b"Content-Length: not-a-number\r\n"
             b"\r\n"
         )
-        reply = raw.recv(4096)
+        # Read the whole response, not just the first packet: the status line and the JSON body
+        # (with the error message) can arrive in separate recv() calls. The handler speaks HTTP/1.0
+        # and closes the connection after the response, so recv() returns b"" at the end.
+        reply = b""
+        while True:
+            chunk = raw.recv(4096)
+            if not chunk:
+                break
+            reply += chunk
         raw.close()
         assert b" 400 " in reply
         assert b"invalid Content-Length" in reply
