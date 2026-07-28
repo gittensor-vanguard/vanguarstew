@@ -32,6 +32,21 @@ def test_parse_owner_repo_tolerates_non_string_remote_url():
     assert gc.parse_owner_repo(None) == (None, None)
 
 
+def test_parse_owner_repo_rejects_non_github_remotes():
+    # A non-GitHub remote must not fall through to a bare path split -- that would return a
+    # truthy (owner, repo) pair from the wrong host and send fetch_context_at querying
+    # api.github.com against a namespace that was never a GitHub repo.
+    assert gc.parse_owner_repo("https://gitlab.com/foo/bar") == (None, None)
+    assert gc.parse_owner_repo("https://bitbucket.org/foo/bar.git") == (None, None)
+    assert gc.parse_owner_repo("git@gitlab.com:foo/bar.git") == (None, None)
+
+
+def test_parse_owner_repo_strips_git_suffix_before_trailing_slash():
+    # The ".git" strip must not be defeated by a trailing slash on the remote.
+    assert gc.parse_owner_repo("https://github.com/foo/bar.git/") == ("foo", "bar")
+    assert gc.parse_owner_repo("https://github.com/foo/bar/") == ("foo", "bar")
+
+
 def test_parse_dt_tolerates_unusable_timestamps():
     assert gc._parse_dt(123) is None
     assert gc._parse_dt(None) is None
@@ -39,6 +54,25 @@ def test_parse_dt_tolerates_unusable_timestamps():
     assert gc._parse_dt("not-a-date") is None
     parsed = gc._parse_dt("2023-01-01T00:00:00Z")
     assert parsed is not None and parsed.year == 2023
+
+
+def test_parse_dt_rejects_naive_timestamps():
+    # An offset-less timestamp parses fine into a naive datetime, but every caller compares it
+    # against a timezone-aware `until` -- left as-is this raises TypeError deep inside
+    # enrich_context instead of degrading like every other unusable input.
+    assert gc._parse_dt("2020-06-01T00:00:00") is None
+
+
+def test_item_open_at_does_not_raise_on_naive_timestamps():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    # created_at with no UTC offset must degrade (excluded), not raise TypeError.
+    assert not gc._item_open_at({"created_at": "2023-01-01T00:00:00", "closed_at": None}, T)
+
+
+def test_milestone_at_does_not_raise_on_naive_timestamps():
+    T = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    # A naive created_at can't be placed relative to T, so the milestone is treated as unknowable.
+    assert gc._milestone_at({"number": 1, "created_at": "2023-01-01T00:00:00"}, T) is None
 
 
 def test_open_at_T_filtering(monkeypatch):

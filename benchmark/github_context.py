@@ -61,22 +61,26 @@ _ENRICH_META_KEYS = (
 
 
 def parse_owner_repo(remote_url: str):
-    """Extract (owner, repo) from an ssh or https GitHub remote URL.
+    """Extract (owner, repo) from an ssh or https GitHub remote URL, or ``(None, None)``
+    when the remote is not a GitHub URL at all.
 
     Uses the first two non-empty path segments after ``github.com/`` so URLs with trailing
     ``/tree/``, ``/blob/``, or other subpaths still resolve to the repository root.
     """
     if not isinstance(remote_url, str):
         return None, None
-    s = remote_url.strip()
+    s = remote_url.strip().rstrip("/")
     if s.endswith(".git"):
         s = s[:-4]
     if s.startswith("git@"):
-        path = s.split(":", 1)[-1]
+        host, _, rest = s[len("git@"):].partition(":")
+        if host != "github.com":
+            return None, None
+        path = rest
     elif "github.com/" in s:
         path = s.split("github.com/", 1)[-1]
     else:
-        path = s
+        return None, None
     parts = [p for p in path.split("/") if p]
     if len(parts) >= 2:
         return parts[0], parts[1]
@@ -84,13 +88,22 @@ def parse_owner_repo(remote_url: str):
 
 
 def _parse_dt(value):
-    """Parse an ISO-8601 timestamp string, or None when the input is unusable."""
+    """Parse a timezone-aware ISO-8601 timestamp string, or None when the input is unusable.
+
+    A naive timestamp (no UTC offset) is treated as unusable rather than parsed: every caller
+    compares the result against a timezone-aware ``until``, and a naive datetime raises
+    ``TypeError`` on that comparison. GitHub's API always emits an offset (``Z`` or explicit),
+    so this only degrades a malformed/hand-built timestamp — never a real API response.
+    """
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
 
 
 def _item_open_at(item: dict, until: datetime) -> bool:
