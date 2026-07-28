@@ -131,8 +131,22 @@ def test_safe_extractall_extracts_regular_files_with_deterministic_modes():
         with open(os.path.join(dest, "src", "app.py"), encoding="utf-8") as f:
             assert f.read() == "print('ok')\n"
         # Deterministic, umask/runtime-independent permissions.
+        assert (os.stat(dest).st_mode & 0o777) == 0o755
         assert (os.stat(os.path.join(dest, "src", "app.py")).st_mode & 0o777) == 0o644
         assert (os.stat(os.path.join(dest, "run.sh")).st_mode & 0o777) == 0o755
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_safe_extractall_normalizes_an_owner_only_destination_root():
+    dest = tempfile.mkdtemp()
+    try:
+        os.chmod(dest, 0o700)
+        with tarfile.open(fileobj=_tar_from([("module.py", b"VALUE = 1\n", None)]), mode="r:") as tf:
+            _safe_extractall(tf, dest)
+
+        assert (os.stat(dest).st_mode & 0o777) == 0o755
+        assert (os.stat(os.path.join(dest, "module.py")).st_mode & 0o777) == 0o644
     finally:
         shutil.rmtree(dest, ignore_errors=True)
 
