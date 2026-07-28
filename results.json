@@ -910,5 +910,75 @@
       "report_data": "5e6c028b56e5fa7b4e90c00ebacfc0b77903713e938fd93f7c198d157b41c17a"
     },
     "merged": false
+  },
+  {
+    "timestamp": "2026-07-28T19:19:01.705894+00:00",
+    "pr_number": 2015,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.08,
+      "per_repo": [
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.132
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.2
+        },
+        {
+          "repo": "https://github.com/hgrecco/pint",
+          "composite_delta": 0.092
+        }
+      ],
+      "foresight": {
+        "module_recall_mean": 0.516,
+        "kind_recall_mean": 1.0,
+        "release_accuracy": 1.0,
+        "module_recall_n": 9,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "private": {
+      "composite_delta": -0.003,
+      "foresight": {
+        "module_recall_mean": 0.796,
+        "kind_recall_mean": 0.833,
+        "release_accuracy": 1.0,
+        "module_recall_n": 9,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "since_anchor": {
+      "anchor": "v0.7.0",
+      "public": {
+        "composite_delta": 0.042,
+        "composite_score": 0.717,
+        "anchor_score": 0.675
+      },
+      "private": {
+        "composite_delta": 0.305,
+        "composite_score": 0.906,
+        "anchor_score": 0.601
+      }
+    },
+    "evidence": {
+      "inputs": {
+        "repo_set": "public+private",
+        "repo_set_partition": "tuned",
+        "seed": 0,
+        "rotation_seed": null,
+        "model": "deepseek-chat",
+        "agent_commit": "af14b3cccfc529bcc5a63c12d52ab11bf7f24f9b",
+        "eval_image": null,
+        "transcript_digest": "26f9409443ed28625446a6e87054c02354a7df7e9e940b2b0dc0f9dab9eff518"
+      },
+      "artifact_digest": "d7196657160b7a864a80cc04fed9e2aa7dd5da9f17230f463734de6c06e3f8eb",
+      "report_data": "81686d912016ecab34038534bc1c37df6c0d9a89e55eea1949e7faa3d5b7dffa"
+    },
+    "merged": false
   }
 ]
