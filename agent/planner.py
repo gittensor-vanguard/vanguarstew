@@ -656,6 +656,23 @@ def _pr_queue_note(context: dict) -> str:
     )
 
 
+def _safe_count(n) -> int:
+    """Return ``n`` when it is a usable non-negative plan-item count, else ``0``.
+
+    ``n`` reaches ``_offline_plan_stub``/``reconcile_plan_with_queue`` from ``solve(n=...)``'s
+    plain (unenforced) annotation, ultimately from ``--horizon`` -- which argparse types as
+    ``int`` but never lower-bounds. Every other input in this module is validated before use
+    (see ``_pr_number``); ``n`` alone was sliced raw. A non-int ``n`` (e.g. a stringified
+    horizon) crashed the whole plan step with an uncaught ``TypeError``, and a negative ``n``
+    did not error -- Python's negative-slice semantics silently dropped the plan's LAST
+    ``abs(n)`` items instead of returning the empty/zero-item result "plan the next -1 actions"
+    actually calls for. ``bool`` is rejected too, matching ``_pr_number``.
+    """
+    if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+        return 0
+    return n
+
+
 def _offline_plan_stub(context: dict, n: int) -> list:
     """Deterministic offline plan: prioritize the visible PR queue when present."""
     items = []
@@ -683,7 +700,7 @@ def _offline_plan_stub(context: dict, n: int) -> list:
             "rationale": "offline",
             "theme": "offline",
         })
-    return items[:n]
+    return items[:_safe_count(n)]
 
 
 def _pr_queue(context: dict) -> list:
@@ -952,6 +969,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     """
     prs = _pr_queue(context)
     plan = _normalize_plan(plan)
+    n = _safe_count(n)
     if not prs:
         return plan[:n]
 

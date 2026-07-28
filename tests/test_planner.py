@@ -49,6 +49,7 @@ from agent.planner import (  # noqa: E402
     _release_cadence_signal,
     _release_timing_state,
     _repo_layout_note,
+    _safe_count,
     _safe_prs,
     _significant_tokens,
     plan_next_actions,
@@ -64,6 +65,45 @@ def test_empty_queue_passes_plan_through():
     assert reconcile_plan_with_queue(plan, {"open_prs": []}, 5) == plan
     # and is capped to n
     assert len(reconcile_plan_with_queue(plan, {}, 1)) == 1
+
+
+def test_safe_count_rejects_bool_non_int_and_negative():
+    # #2077: bool is never a real count (isinstance(True, int) is True), a non-int crashed the
+    # raw slice, and a negative n silently dropped the plan's LAST |n| items via Python's
+    # negative-slice semantics instead of erroring/degrading.
+    assert _safe_count(True) == 0
+    assert _safe_count(False) == 0
+    assert _safe_count("3") == 0
+    assert _safe_count(5.0) == 0
+    assert _safe_count(-1) == 0
+    assert _safe_count(-5) == 0
+    assert _safe_count(0) == 0
+    assert _safe_count(5) == 5
+
+
+def test_reconcile_plan_with_queue_negative_n_returns_empty_not_truncated_from_the_end():
+    plan = [{"title": f"item {i}", "kind": "feature"} for i in range(5)]
+    # A naive raw plan[:-1] would silently drop only the last item; must instead be empty.
+    assert reconcile_plan_with_queue(plan, {"open_prs": []}, -1) == []
+
+
+def test_reconcile_plan_with_queue_non_int_n_degrades_instead_of_crashing():
+    plan = [{"title": "item", "kind": "feature"}]
+    assert reconcile_plan_with_queue(plan, {"open_prs": []}, "3") == []
+    assert reconcile_plan_with_queue(plan, {"open_prs": []}, None) == []
+
+
+def test_offline_plan_stub_negative_and_non_int_n_returns_empty():
+    ctx = {"open_prs": [{"number": 7, "title": "Add streaming export"}]}
+    assert _offline_plan_stub(ctx, -1) == []
+    assert _offline_plan_stub(ctx, "2") == []
+
+
+def test_plan_next_actions_negative_horizon_returns_empty_plan():
+    # End-to-end: a `--horizon -1` reaching solve()/plan_next_actions() must degrade to an
+    # empty plan, not crash and not silently drop the last planned item.
+    llm = LLM(api_key="offline")
+    assert plan_next_actions({"open_prs": []}, {}, -1, llm) == []
 
 
 def test_queue_honored_is_left_intact():
