@@ -1,5 +1,6 @@
 """Tests for the blend-weight integrity gate (deterministic, offline)."""
 
+import errno
 import json
 import logging
 import os
@@ -433,3 +434,37 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
     assert "artifact is not valid JSON" in result.stderr
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    result = _run_cli(link)
+    assert result.returncode == 1
+    assert result.stderr == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        weight_integrity_cli.load_artifact(str(link))
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        weight_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"

@@ -171,6 +171,33 @@ def test_report_slices_expands_partition_per_repo():
     assert ("tuned:repo-0", entry) in slices
 
 
+def test_generalization_partition_with_pooled_report_still_expands_per_repo():
+    # run_multi_replay writes a *pooled* judge_report/judge_order_stats alongside per_repo, so a
+    # real --generalization partition carries BOTH. Keying the leaf branch on that telemetry made
+    # the partition short-circuit as a leaf and never expand its rows; an aggregate carries no
+    # top-level tally, so every W-L-T check was then skipped as "no tally to compare" and a
+    # fabricated per-repo count went unverified. Mirrors tally_integrity / objective_integrity,
+    # which discriminate on the leaf-only rows key.
+    stats = _stats()
+    pooled = build_judge_report({"challenger": 2, "baseline": 1, "tie": 0}, stats)
+
+    def partition(entry):
+        return {"scored_repos": 1, "judge_order_stats": stats, "judge_report": pooled,
+                "per_repo": [entry]}
+
+    good = partition(_artifact())
+    report = {"generalization_gap": 0.0, "tuned": good, "held_out": copy.deepcopy(good)}
+    assert [label for label, _ in _report_slices(report)] == ["tuned:repo-0", "held_out:repo-0"]
+    assert check_judge_report_integrity(report)["passed"] is True     # no false positive
+
+    tampered = _artifact()
+    tampered["judge_report"]["wins"] = 999                            # contradicts its own tally
+    result = check_judge_report_integrity(
+        {"generalization_gap": 0.0, "tuned": partition(tampered), "held_out": copy.deepcopy(good)})
+    assert result["passed"] is False
+    assert "tuned:repo-0:wins_match_tally" in failed_checks(result)
+
+
 def test_no_dual_order_tasks_allows_null_rate():
     stats = {"agree": 0, "disagree": 0, "tie": 0, "single": 2, "offline": 0,
              "dual_order_tasks": 0, "disagreement_rate": None}
@@ -291,7 +318,8 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
 
 # --- bad artifact paths get an actionable message, never a raw errno or a traceback ----------
 # Each failure mode is exercised end-to-end through the real CLI process, so the exit code and
-# the stderr the user actually sees are both covered.
+# the stderr the user actually sees are both covered. Path/JSON failures exit 2 so CI can tell
+# them apart from --strict gate failure (exit 1).
 
 
 def _run_cli(*args):
@@ -303,14 +331,14 @@ def _run_cli(*args):
 
 def test_cli_missing_file_reports_clean_error(tmp_path):
     proc = _run_cli(str(tmp_path / "does-not-exist.json"))
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "artifact not found" in proc.stderr
     assert "Traceback" not in proc.stderr
 
 
 def test_cli_directory_path_reports_clean_error(tmp_path):
     proc = _run_cli(str(tmp_path))
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "artifact path is a directory, not a file" in proc.stderr
     assert "Traceback" not in proc.stderr
 
@@ -325,8 +353,32 @@ def test_cli_unreadable_file_reports_clean_error(tmp_path):
         proc = _run_cli(str(locked))
     finally:
         locked.chmod(0o600)
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "not readable" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    link = tmp_path / "dangling.json"
+    link.symlink_to(tmp_path / "does-not-exist.json")
+    proc = _run_cli(str(link))
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    # A dangling symlink is named as such (via os.path.islink), not mislabeled as merely
+    # missing — the path exists, its target does not (#1961).
+    assert "broken symlink" in proc.stderr
+    assert "artifact not found" not in proc.stderr
+
+
+def test_cli_symlink_loop_reports_clean_error(tmp_path):
+    # A self-referential symlink raises OSError(ELOOP); it must report a loop, not a generic
+    # "cannot read" line (#1961).
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    proc = _run_cli(str(loop))
+    assert proc.returncode == 2
+    assert "symlink loop" in proc.stderr
+    assert "Errno" not in proc.stderr
     assert "Traceback" not in proc.stderr
 
 
@@ -334,7 +386,7 @@ def test_cli_invalid_json_reports_clean_error(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
     proc = _run_cli(str(path))
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "not valid JSON" in proc.stderr
     assert "Traceback" not in proc.stderr
 
@@ -343,7 +395,7 @@ def test_cli_non_object_json_reports_clean_error(tmp_path):
     path = tmp_path / "list.json"
     path.write_text("[1, 2]", encoding="utf-8")
     proc = _run_cli(str(path))
-    assert proc.returncode == 1
+    assert proc.returncode == 2
     assert "must be a JSON object" in proc.stderr
     assert "Traceback" not in proc.stderr
 

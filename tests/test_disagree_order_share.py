@@ -157,8 +157,10 @@ def test_cli_generalization_reports_partitions(tmp_path, capsys):
     assert body["partitions"]["held_out"]["disagree"] == 1
 
 
-def test_cli_missing_file(tmp_path):
+def test_cli_missing_file(tmp_path, capsys):
     assert cli.run([str(tmp_path / "nope.json")]) == 2
+    err = capsys.readouterr().err
+    assert "artifact not found" in err and "Errno" not in err and "Traceback" not in err
 
 
 def test_cli_invalid_json(tmp_path):
@@ -169,8 +171,13 @@ def test_cli_non_object_artifact(tmp_path):
     assert cli.run([_write(tmp_path, "arr.json", "[1, 2, 3]")]) == 2
 
 
-def test_cli_unreadable_path_is_handled(tmp_path):
+def test_cli_directory_path_reports_distinct_error(tmp_path, capsys):
+    # A directory raises IsADirectoryError; name it distinctly instead of the raw
+    # "[Errno 21] Is a directory" the generic OSError arm printed before (#1777).
     assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "artifact path is a directory, not a file" in err
+    assert "Errno" not in err and "Traceback" not in err
 
 
 def test_module_main_no_arg_exits_nonzero():

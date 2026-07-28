@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -224,6 +226,48 @@ def test_check_rows_list_warns_for_skipped_rows(caplog):
     assert any("checks[0] is int" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_skips_a_dict_row_missing_or_mistyped_name_or_passed(caplog):
+    # #1660: the row guard only skipped non-dict rows, so a dict row missing "name"/"passed" (or
+    # carrying a wrong-typed one) slipped through and made the row["name"]/row["passed"] reads
+    # raise KeyError. Such a row is now skipped with a warning, mirroring the sibling gates.
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert _check_rows_list([{"passed": False}]) == []          # missing name
+        assert _check_rows_list([{"name": "min_tuned"}]) == []      # missing passed
+        assert _check_rows_list([{"name": 99, "passed": False}]) == []   # non-str name
+        assert _check_rows_list([{"name": "x", "passed": "no"}]) == []   # non-bool passed
+    good = {"name": "min_tuned", "passed": False}
+    assert _check_rows_list([good, {"passed": True}]) == [good]     # the valid row survives
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_a_none_or_blank_name(caplog):
+    # `None` (the most common malformed value) is neither str nor bool, so both fields reject it by
+    # type; a blank/whitespace name is a str but carries no identity, so it would surface as an
+    # empty entry in failed_checks / the headline's ", "-joined names. Both are skipped.
+    with caplog.at_level(logging.WARNING, logger="benchmark.repo_set_readiness"):
+        assert _check_rows_list([{"name": None, "passed": False}]) == []
+        assert _check_rows_list([{"name": "min_tuned", "passed": None}]) == []
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+        assert _check_rows_list([{"name": "   ", "passed": False}]) == []
+    assert any("name is NoneType, not str" in r.message for r in caplog.records)
+    assert any("passed is NoneType, not bool" in r.message for r in caplog.records)
+    assert any("name is blank" in r.message for r in caplog.records)
+
+
+def test_failed_checks_and_headline_survive_a_check_row_missing_name():
+    # #1660 end to end: the reporting helpers no longer raise KeyError on a malformed row, and the
+    # malformed row is excluded from both the numerator and denominator of the headline count.
+    result = {"passed": False,
+              "checks": [{"name": "min_tuned", "passed": False}, {"passed": False}]}
+    assert failed_checks(result) == ["min_tuned"]
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    line = readiness_headline(result)
+    assert "NOT READY" in line and "min_tuned" in line
+    assert readiness_headline(
+        {"passed": False, "checks": [{"name": "", "passed": False}]}
+    ) == "readiness: no checks evaluated"
+
+
 def test_readiness_headline_survives_non_list_checks():
     for bad in _MALFORMED_CHECKS:
         assert readiness_headline({"checks": bad, "passed": False}) == (
@@ -269,3 +313,107 @@ def test_cli_passes_for_curated_json():
     )
     assert proc.returncode == 0
     assert "READY" in proc.stderr
+
+
+# --- #1698: load_config reports actionable errors instead of a raw errno / traceback ------
+
+def test_cli_missing_config_reports_clean_error(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(missing)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config not found" in proc.stderr
+    assert str(missing) in proc.stderr
+
+
+def test_cli_directory_path_reports_clean_error(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "directory" in proc.stderr or "not readable" in proc.stderr
+
+
+def test_cli_oversized_int_config_reports_clean_error(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal past
+    # CPython's 4300-digit limit; without the ValueError arm this dumped a raw traceback.
+    huge = tmp_path / "huge.json"
+    huge.write_text('{"repos": ' + "9" * 4400 + "}", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(huge)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config is not valid JSON" in proc.stderr
+
+
+def test_cli_invalid_json_config_reports_clean_error(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(bad)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config is not valid JSON" in proc.stderr
+
+
+def test_cli_non_object_config_reports_clean_error(tmp_path):
+    arr = tmp_path / "arr.json"
+    arr.write_text("[1, 2, 3]", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.repo_set_readiness", str(arr)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 1
+    assert "Traceback" not in proc.stderr
+    assert "config must be a JSON object" in proc.stderr
+
+
+def test_load_config_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "config path is a directory, not a file" in err and "Traceback" not in err
+
+
+def test_load_config_permission_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_config_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    from scripts import repo_set_readiness as cli
+
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_config(str(tmp_path / "set.json"))
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot read config" in err and "Traceback" not in err

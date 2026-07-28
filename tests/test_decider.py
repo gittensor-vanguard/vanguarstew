@@ -364,6 +364,9 @@ def test_release_context_note_empty_when_no_releases():
 def test_is_planning_request():
     assert _is_planning_request("plan the next 5 maintainer actions") is True
     assert _is_planning_request("Plan The Next 3 actions") is True
+    # Time-horizon curated template (#1768) — must match or reject→plan / bump notes never fire.
+    assert _is_planning_request("plan the maintainer actions for the next 90 days") is True
+    assert _is_planning_request("Plan the maintainer actions for the next 14 days") is True
     assert _is_planning_request("review PR #1") is False
     assert _is_planning_request(None) is False
 
@@ -374,12 +377,45 @@ def test_planning_version_bump_note_on_planning_request_with_tags():
     assert "version_bump" in note
     assert _planning_version_bump_note(ctx, "merge PR #9") == ""
     assert _planning_version_bump_note({}, "plan the next 5 maintainer actions") == ""
+    # Time-horizon wording also solicits the bump note when tags are visible.
+    assert "version_bump" in _planning_version_bump_note(
+        ctx, "plan the maintainer actions for the next 51 days"
+    )
 
 
-def test_planning_version_bump_note_on_cadence_without_tags():
+def test_planning_version_bump_note_silent_right_after_a_cut():
+    # Tip release without dates → suppress; do not solicit version_bump.
     ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}]}
-    note = _planning_version_bump_note(ctx, "plan the next 3 maintainer actions")
+    assert _planning_version_bump_note(ctx, "plan the next 3 maintainer actions") == ""
+
+
+def test_planning_version_bump_note_on_pressure():
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "feat: a", "date": "2020-06-09T12:00:00+00:00"},
+            {"subject": "chore(release): 2.0.0", "date": "2020-04-01T12:00:00+00:00"},
+        ],
+    }
+    note = _planning_version_bump_note(ctx, "plan the maintainer actions for the next 51 days")
     assert "version_bump" in note
+
+
+def test_decide_clears_version_bump_when_just_cut():
+    class FixedLLM:
+        offline = False
+
+        def chat_json(self, system, user, stub=None):
+            if system == SYSTEM:
+                return {
+                    "action": "plan", "labels": [], "reviewer": None,
+                    "version_bump": "minor", "patch": None, "rationale": "cadence",
+                }
+            return {"verdict": "ok", "reasoning": "because"}
+
+    ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}]}
+    out = decide(ctx, {}, "plan the next 5 maintainer actions", FixedLLM())
+    assert out["version_bump"] is None
 
 
 def test_decide_prompt_surfaces_planning_bump_note():

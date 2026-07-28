@@ -1,5 +1,6 @@
 """Tests for decisive-rate summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import sys
@@ -131,6 +132,52 @@ def test_cli_unreadable_file_exits_two(tmp_path, capsys):
         assert "not readable" in capsys.readouterr().err
     finally:
         os.chmod(path, 0o600)  # restore so pytest can remove tmp_path
+
+
+def test_cli_broken_symlink_reports_the_dangling_target(tmp_path, capsys):
+    # A dangling symlink raises FileNotFoundError just like a missing path, so it used to report
+    # "not found" -- misdiagnosing it, since the link exists and only its target is gone. islink()
+    # separates the two.
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_cli_symlink_loop_exits_two_instead_of_crashing(monkeypatch, tmp_path, capsys):
+    # A symlink loop raises OSError(ELOOP), which none of the named subclass arms catch -- it
+    # escaped load_artifact as a raw traceback (exit 1), not the clean exit 2 this CLI intends.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_cli_other_oserror_reports_cleanly_instead_of_a_traceback(monkeypatch, tmp_path, capsys):
+    # A non-ELOOP OSError (a real I/O error) previously propagated as a raw traceback; it now
+    # keeps its underlying text with a clean exit 2, like the sibling loaders.
+    path = str(tmp_path / "run.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err.startswith(f"cannot read artifact ({path}):")
 
 
 def test_cli_invalid_json_exits_two(tmp_path, capsys):

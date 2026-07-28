@@ -1,6 +1,7 @@
 """Tests for the judge tally integrity gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
@@ -396,6 +397,59 @@ def test_integrity_headline_uses_sanitized_row_count(caplog):
     assert any("checks[1] is int" in r.message for r in caplog.records)
 
 
+def test_check_rows_list_skips_a_dict_row_missing_or_mistyped_name_or_passed(caplog):
+    # #727: the row guard only skipped non-dict rows, so a dict row missing "name"/"passed" (or
+    # carrying a wrong-typed one) slipped through and made the row["name"]/row["passed"] reads
+    # raise KeyError. Such a row is now skipped with a warning, mirroring the sibling gates.
+    with caplog.at_level(logging.WARNING, logger="benchmark.tally_integrity"):
+        assert _check_rows_list([{"passed": False}]) == []           # missing name
+        assert _check_rows_list([{"name": "tally_present"}]) == []   # missing passed
+        assert _check_rows_list([{"name": 99, "passed": False}]) == []   # non-str name
+        assert _check_rows_list([{"name": "x", "passed": "no"}]) == []   # non-bool passed
+    good = {"name": "tally_present", "passed": False}
+    assert _check_rows_list([good, {"passed": True}]) == [good]      # the valid row survives
+    assert any("missing required key(s) ['name']" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_a_none_name_or_none_passed(caplog):
+    # `None` is the most common malformed value in a deserialized artifact and is neither a `str`
+    # nor a `bool`, so both fields reject it by type and the row is skipped, never reaching the
+    # row["name"]/row["passed"] reads.
+    with caplog.at_level(logging.WARNING, logger="benchmark.tally_integrity"):
+        assert _check_rows_list([{"name": None, "passed": False}]) == []
+        assert _check_rows_list([{"name": "tally_present", "passed": None}]) == []
+        assert _check_rows_list([{"name": None, "passed": None}]) == []
+    assert any("name is NoneType, not str" in r.message for r in caplog.records)
+    assert any("passed is NoneType, not bool" in r.message for r in caplog.records)
+
+
+def test_check_rows_list_skips_a_blank_name(caplog):
+    # A blank/whitespace-only name is a `str`, so the type check alone let it through and it would
+    # surface as an empty entry in failed_checks / the headline's ", "-joined name list. A name
+    # that carries no identity is unusable, so it is skipped like any other malformed row.
+    with caplog.at_level(logging.WARNING, logger="benchmark.tally_integrity"):
+        assert _check_rows_list([{"name": "", "passed": False}]) == []
+        assert _check_rows_list([{"name": "   ", "passed": False}]) == []
+        assert _check_rows_list([{"name": "\t\n", "passed": False}]) == []
+    assert any("name is blank" in r.message for r in caplog.records)
+    # and a blank-named failing row never reaches the reported output
+    assert failed_checks({"checks": [{"name": "", "passed": False}]}) == []
+    assert integrity_headline(
+        {"passed": False, "checks": [{"name": "", "passed": False}]}
+    ) == "tally integrity: no checks evaluated"
+
+
+def test_failed_checks_and_headline_survive_a_check_row_missing_name():
+    # #727 end to end: the reporting helpers no longer raise KeyError on a malformed row, and the
+    # malformed row is excluded from both the numerator and denominator of the headline count.
+    result = {"passed": False,
+              "checks": [{"name": "tally_present", "passed": False}, {"passed": False}]}
+    assert failed_checks(result) == ["tally_present"]
+    assert failed_checks({"checks": [{"passed": False}]}) == []
+    line = integrity_headline(result)
+    assert line == "tally integrity: INCONSISTENT (1/1 checks failed: tally_present)"
+
+
 def test_failed_checks_logs_warning_for_skipped_rows(caplog):
     checks = [{"name": "tally_present", "passed": False}, 42]
     with caplog.at_level(logging.WARNING, logger="benchmark.tally_integrity"):
@@ -443,17 +497,37 @@ def test_cli_strict_exits_nonzero_on_inconsistent(tmp_path):
 
 def test_cli_reports_clean_error_for_missing_file(tmp_path):
     missing = tmp_path / "missing.json"
-    result = _run_cli(str(missing), "--strict")
-    assert result.returncode == 1
+    result = _run_cli(str(missing))
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
-    assert "artifact not found" in result.stderr
+    assert "Errno" not in result.stderr
+    assert f"artifact not found: {missing}" in result.stderr
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    # A dangling symlink raises FileNotFoundError like a missing path; it must be named as a
+    # broken link (its target is gone, the link itself exists), not reported as "not found".
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 2
+    assert result.stderr == f"artifact is a broken symlink (target does not exist): {link}\n"
 
 
 def test_cli_directory_path_reports_clean_error(tmp_path):
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
+    assert "Errno" not in result.stderr
     assert "directory" in result.stderr
+
+
+def test_cli_load_error_exit_is_distinct_from_the_strict_gate_exit(tmp_path):
+    # Load errors exit 2 while a failed --strict gate exits 1, so CI can tell them apart.
+    missing = tmp_path / "gone.json"
+    result = _run_cli(str(missing), "--strict")
+    assert result.returncode == 2
+    assert result.stdout == ""
 
 
 def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
@@ -463,7 +537,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         tally_integrity_cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
@@ -475,16 +549,124 @@ def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         tally_integrity_cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_artifact_symlink_loop_is_named_not_leaked(monkeypatch, tmp_path, capsys):
+    # A symlink loop raises OSError(ELOOP), which no specific arm catches; it must be named
+    # as a loop, not leaked as a raw errno string.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_load_artifact_not_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    # A path that routes through a regular file raises NotADirectoryError; it must be named
+    # distinctly instead of falling through as a raw errno string.
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(20, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
+
+
+def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys):
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "cannot read artifact" in err and "Traceback" not in err
+
+
+def test_cli_reports_a_clean_error_for_an_oversized_int_literal(tmp_path):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an integer literal beyond
+    # the int-string-conversion limit; it must land in the same clean invalid-JSON arm.
+    huge = tmp_path / "huge.json"
+    huge.write_text('{"composite_mean": ' + "9" * 5000 + "}", encoding="utf-8")
+    result = _run_cli(str(huge))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "not valid JSON" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_non_utf8_artifact(tmp_path):
+    # Non-UTF-8 bytes raise UnicodeDecodeError (a ValueError subclass) mid-read; it must land
+    # in the clean invalid-JSON arm, not escape as a traceback.
+    path = tmp_path / "latin1.json"
+    path.write_bytes(b'\xff\xfe{"a": 1}')
+    result = _run_cli(str(path))
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "not valid JSON" in result.stderr
+
+
+def test_load_artifact_generic_os_error_prints_the_path_exactly_once(monkeypatch, tmp_path, capsys):
+    # An OSError carrying the filename would print the path twice via str(exc); the fallback
+    # uses strerror so the path appears exactly once, in the message's own prefix.
+    path = str(tmp_path / "run.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(5, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err == f"cannot read artifact ({path}): Input/output error\n"
+    assert err.count(path) == 1
+
+
+def test_islink_probe_is_not_reachable_before_open_or_on_a_symlink_loop(monkeypatch, tmp_path, capsys):
+    # The broken-symlink probe must run only after open() fails with FileNotFoundError: never
+    # on a successful open (no pre-open TOCTOU probe) and never on the ELOOP path.
+    calls = []
+    real_islink = os.path.islink
+    monkeypatch.setattr(os.path, "islink", lambda p: (calls.append(p), real_islink(p))[1])
+
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    assert tally_integrity_cli.load_artifact(str(good)) == {"ok": True}
+    assert calls == []
+
+    loop_path = str(tmp_path / "loop.json")
+
+    def _eloop(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", loop_path)
+
+    monkeypatch.setattr("builtins.open", _eloop)
+    with pytest.raises(SystemExit) as excinfo:
+        tally_integrity_cli.load_artifact(loop_path)
+    assert excinfo.value.code == 2
+    assert calls == []
+    assert capsys.readouterr().err.endswith(f"artifact path is a symlink loop: {loop_path}\n")
 
 
 def test_cli_reports_clean_error_for_non_object_artifact(tmp_path):
     path = tmp_path / "array.json"
     path.write_text(json.dumps([1, 2]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "must be a JSON object" in result.stderr
 
 
@@ -492,6 +674,6 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "broken.json"
     path.write_text("{not json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "artifact is not valid JSON" in result.stderr

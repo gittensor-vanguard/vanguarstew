@@ -1,5 +1,6 @@
 """Tests for the scored-fraction utility (deterministic, offline)."""
 
+import errno
 import json
 import os
 import subprocess
@@ -202,6 +203,57 @@ def test_cli_directory_path_reports_clean_error(tmp_path, capsys):
     assert "artifact path is a directory, not a file" in err
     assert "[Errno" not in err
     assert "Traceback" not in err
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink semantics differ on Windows")
+def test_cli_broken_symlink_to_missing_target_is_named(tmp_path, capsys):
+    # A dangling link exists but its target is gone: name the broken symlink, not "not found".
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "gone.json")
+    assert cli.run([str(link)]) == 2
+    err = capsys.readouterr().err
+    assert err == f"artifact is a broken symlink (target does not exist): {link}\n"
+    assert "not found" not in err
+    assert "[Errno" not in err
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink semantics differ on Windows")
+def test_cli_broken_symlink_to_missing_directory_target_is_named(tmp_path, capsys):
+    # Closure-feedback case (#1826): a link whose *directory* target is missing is still a broken
+    # symlink — open() raises FileNotFoundError, so it reports the dangling link, not a directory.
+    link = tmp_path / "dirlink.json"
+    link.symlink_to(tmp_path / "missing_dir", target_is_directory=True)
+    assert cli.run([str(link)]) == 2
+    err = capsys.readouterr().err
+    assert err == f"artifact is a broken symlink (target does not exist): {link}\n"
+    assert "[Errno" not in err
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink semantics differ on Windows")
+def test_cli_real_symlink_loop_is_named(tmp_path, capsys):
+    # A real self-referential symlink: open() raises OSError(ELOOP) for real (not monkeypatched),
+    # exercising the actual filesystem path the generic OSError arm must classify.
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    assert cli.run([str(loop)]) == 2
+    err = capsys.readouterr().err
+    assert err == f"artifact path is a symlink loop: {loop}\n"
+    assert "[Errno" not in err
+    assert "Traceback" not in err
+
+
+def test_load_artifact_non_eloop_oserror_keeps_underlying_text(monkeypatch, tmp_path, capsys):
+    # A non-ELOOP OSError still falls to the generic arm and keeps its underlying text.
+    def _raise(*args, **kwargs):
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(tmp_path / "run.json"))
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"cannot read artifact ({tmp_path / 'run.json'}):")
+    assert "symlink loop" not in err
 
 
 def test_load_artifact_permission_error_is_clean(monkeypatch, tmp_path, capsys):

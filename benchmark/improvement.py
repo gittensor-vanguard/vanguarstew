@@ -22,6 +22,7 @@ the relevant checks rather than raising.
 from __future__ import annotations
 
 import logging
+import math
 
 from benchmark.acceptance import _partition_error
 from benchmark.trend import headline_score
@@ -34,7 +35,19 @@ _CHECK_ROW_KEYS = ("name", "passed")
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A finite, non-boolean real number — used to guard headline / detail formatting.
+
+    ``math.isfinite`` raises ``OverflowError`` for a Python ``int`` too large to convert to a
+    ``float`` (a hand-edited or oversized ``baseline_composite`` / ``gain``); reject it the way
+    ``skip_share`` / ``component_floor`` do so ``_num`` never crashes with ``OverflowError`` or
+    prints ``nan`` for a non-finite mean.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _dict(value) -> dict:

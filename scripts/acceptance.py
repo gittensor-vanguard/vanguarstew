@@ -5,6 +5,8 @@
 
 ``gen.json`` is a ``run_eval --generalization --out`` artifact. With --strict the process exits
 non-zero when the acceptance checks fail, so the M3/M4 acceptance run can gate CI.
+
+Path / JSON failures exit 2 (via ``scripts.artifact_io``), distinct from the gating exit 1.
 """
 
 from __future__ import annotations
@@ -19,33 +21,9 @@ from benchmark.acceptance import (
     acceptance_headline,
     check_acceptance,
 )
+from scripts.artifact_io import load_artifact  # re-exported for tests / callers
 
-
-def load_artifact(path: str) -> dict:
-    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"artifact not found: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except PermissionError:
-        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except IsADirectoryError:
-        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except OSError as exc:
-        print(f"cannot read artifact ({path}): {exc}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except ValueError as exc:
-        # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
-        # beyond the int-string-conversion limit (py3.11+); JSONDecodeError subclasses it.
-        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
-        raise SystemExit(1) from None
-    if not isinstance(data, dict):
-        raise ValueError(f"artifact must be a JSON object: {path}")
-    return data
+__all__ = ["load_artifact", "main"]
 
 
 def main() -> None:
@@ -59,13 +37,7 @@ def main() -> None:
                     help="exit 1 when the acceptance checks fail (for CI gating)")
     args = ap.parse_args()
 
-    try:
-        artifact = load_artifact(args.artifact)
-    except SystemExit as exc:
-        raise SystemExit(exc.code) from None
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        sys.exit(1)
+    artifact = load_artifact(args.artifact)
 
     result = check_acceptance(artifact,
                               max_gap=args.max_gap, min_scored_repos=args.min_scored_repos)

@@ -62,11 +62,18 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
 def _check_rows_list(checks) -> list[dict]:
     """Return gate-check rows from a ``checks`` list for headline / failed_checks helpers.
 
     ``None`` means the key is absent. An empty list means zero checks. Both are silent.
-    Tuples and other non-list iterables are warned and treated as empty (never coerced).
+    Tuples and other non-list iterables are warned and treated as empty (never coerced). A
+    usable row is a dict with a ``str`` ``name`` and a ``bool`` ``passed``; a row that is not a
+    dict, is missing either key, or carries a wrong-typed one is warned and skipped, so the
+    ``row["name"]``/``row["passed"]`` reads in ``failed_checks``/``sample_adequacy_headline``
+    can't raise ``KeyError``. Mirrors the sanitizer the other gates use (e.g. ``row_integrity``).
     """
     if checks is None:
         return []
@@ -85,6 +92,26 @@ def _check_rows_list(checks) -> list[dict]:
                 type(row).__name__,
             )
             continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "sample_adequacy: checks[%s] missing required key(s) %s; skipping", idx, missing)
+            continue
+        name = row["name"]
+        if not isinstance(name, str):
+            logger.warning(
+                "sample_adequacy: checks[%s] name is %s, not str; skipping",
+                idx, type(name).__name__)
+            continue
+        if not name.strip():
+            logger.warning(
+                "sample_adequacy: checks[%s] name is blank; skipping", idx)
+            continue
+        if not isinstance(row["passed"], bool):
+            logger.warning(
+                "sample_adequacy: checks[%s] passed is %s, not bool; skipping",
+                idx, type(row["passed"]).__name__)
+            continue
         rows.append(row)
     if checks and not rows:
         logger.warning(
@@ -102,13 +129,17 @@ def _partition_entries(result: dict) -> list:
     `tally_integrity`, `weight_integrity`, ...): a multi-repo run's top-level ``per_repo`` is the
     complete list, so it must not be summed *together with* the ``tuned``/``held_out`` partition
     lists. Counting both shapes on an artifact that carries them would double-count every task.
+
+    Both ``tuned`` and ``held_out`` are always included (via ``.get("per_repo")``, which is
+    ``None`` when the key is absent) rather than filtered on key presence — a partition that
+    never got populated (no ``per_repo``, no ``error``) must fail closed the same way an
+    explicit empty ``per_repo: []`` does, not be silently dropped from consideration.
     """
     if "per_repo" in result:
         return [result.get("per_repo")]
     return [
         part.get("per_repo")
         for part in (_dict(result.get("tuned")), _dict(result.get("held_out")))
-        if "per_repo" in part
     ]
 
 

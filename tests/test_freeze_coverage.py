@@ -201,4 +201,33 @@ def test_cli_permission_error_exits_two(capsys):
     with patch("builtins.open", mock_open()) as mocked:
         mocked.side_effect = PermissionError("permission denied")
         assert cli.run(["locked.json"]) == 2
-    assert "cannot read artifact" in capsys.readouterr().err
+    assert "not readable" in capsys.readouterr().err
+
+
+def test_cli_directory_path_exits_two(tmp_path, capsys):
+    # A directory (POSIX raises IsADirectoryError) must get a distinct message, not the raw
+    # "[Errno 21] Is a directory" that the generic OSError arm leaked (#1791).
+    assert cli.run([str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "is a directory" in err
+    assert "Errno" not in err
+
+
+def test_cli_broken_symlink_exits_two(tmp_path, capsys):
+    link = tmp_path / "dangling.json"
+    link.symlink_to(tmp_path / "no_such_target.json")
+    assert cli.run([str(link)]) == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err
+    assert "not found" not in err  # a dangling link must not be mislabeled as merely missing
+
+
+def test_cli_symlink_loop_exits_two(tmp_path, capsys):
+    # ELOOP was the exact gap that sank the prior attempt (PR #1792); a self-referential
+    # symlink must report a loop, not leak the raw errno.
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    assert cli.run([str(loop)]) == 2
+    err = capsys.readouterr().err
+    assert "symlink loop" in err
+    assert "Errno" not in err

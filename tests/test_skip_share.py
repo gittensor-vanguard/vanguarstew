@@ -1,5 +1,6 @@
 """Tests for the skip-share reporting utility (deterministic, offline)."""
 
+import errno
 import json
 import os
 import subprocess
@@ -323,3 +324,50 @@ def test_load_artifact_generic_os_error_is_handled(monkeypatch, tmp_path, capsys
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "cannot read artifact" in err and "Traceback" not in err
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    assert cli.run([str(link)]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_load_artifact_generic_oserror_keeps_message(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "io.json")
+    exc = OSError(5, "Input/output error", path)
+
+    def _raise(*args, **kwargs):
+        raise exc
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"cannot read artifact ({path}): {exc}\n"

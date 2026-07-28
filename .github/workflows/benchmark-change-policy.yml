@@ -1,0 +1,45 @@
+name: Benchmark change policy
+
+# The benchmark is the repository's contribution-integrity root. Contributor changes to this
+# surface require an explicitly approved open issue before a PR is opened. pull_request_target is
+# required to close fork PRs; the job checks out only the trusted base commit and never executes or
+# reads code from the contributor's head ref.
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+    branches: [test, main]
+    paths:
+      - "benchmark/**"
+      - "scripts/score_pr_delta.py"
+      - "scripts/compare_eval.py"
+      - "scripts/leaderboard_feed.py"
+      - "scripts/benchmark_pr_policy.py"
+      - ".github/workflows/benchmark-change-policy.yml"
+      - "CONTRIBUTING.md"
+      - "REVIEW.md"
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+concurrency:
+  group: benchmark-change-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted base policy
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Enforce benchmark change approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/benchmark_pr_policy.py

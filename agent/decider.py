@@ -19,7 +19,7 @@ import json
 import logging
 
 from agent.context import context_for_agent
-from agent.planner import _release_cadence_signal
+from agent.planner import _release_cadence_signal, _release_timing_state
 from benchmark.score import base_from_releases
 
 logger = logging.getLogger(__name__)
@@ -256,24 +256,44 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out["rationale"] = _normalize_rationale(out.get("rationale"))
     out["patch"] = _normalize_patch(out.get("patch"))
     out["version_bump"] = _normalize_version_bump(out.get("version_bump"))
+    # Just after a cut, a version_bump prediction matches nothing (bump_actual is None when the
+    # revealed window has no release) — clear it the same way the planner suppresses release items.
+    if _release_timing_state(context) == "suppress":
+        out["version_bump"] = None
     return out
 
 
 def _is_planning_request(request: str) -> bool:
-    return isinstance(request, str) and "plan the next" in request.lower()
+    """True for either runner planning template (commit-horizon or time-horizon).
+
+    Commit-horizon: ``plan the next N maintainer actions``.
+    Time-horizon (curated ``horizon_days``): ``plan the maintainer actions for the next N days``.
+    The latter does not contain the contiguous substring ``plan the next``, so a naive check
+    skipped the reject→plan guard and the version_bump note on every production curated task (#1768).
+    """
+    if not isinstance(request, str):
+        return False
+    low = request.lower()
+    if "plan the next" in low:
+        return True
+    return "plan the maintainer actions for the next" in low and "day" in low
 
 
 def _planning_version_bump_note(context: dict, request: str) -> str:
-    """Ask for version_bump on planning requests when release cadence or tags are visible."""
+    """Ask for version_bump on planning requests when freeze-T timing says a cut is due."""
     if not _is_planning_request(request):
+        return ""
+    state = _release_timing_state(context)
+    # Just-cut: do not solicit a bump — clearing happens post-LLM in decide() as well.
+    if state == "suppress":
         return ""
     ctx = context_for_agent(context) if isinstance(context, dict) else {}
     has_tags = isinstance(ctx.get("releases"), list) and bool(ctx.get("releases"))
-    if not (_release_cadence_signal(context) or has_tags):
+    if not (state == "pressure" or _release_cadence_signal(context) or has_tags):
         return ""
     return (
         "\nThe request is forward planning: even when action is plan, set version_bump to "
-        "major, minor, or patch when release cadence or frozen tags indicate the next cut.\n"
+        "major, minor, or patch when freeze-T release timing or frozen tags indicate the next cut.\n"
     )
 
 

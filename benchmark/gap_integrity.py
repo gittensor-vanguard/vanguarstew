@@ -57,11 +57,18 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+_CHECK_ROW_KEYS = ("name", "passed")
+
+
 def _check_rows_list(checks) -> list[dict]:
     """Return gap-integrity check rows for headline / failed_checks helpers.
 
     ``None`` means the key is absent. An empty list means zero checks. Both are silent.
-    Tuples and other non-list iterables are warned and treated as empty (never coerced).
+    Tuples and other non-list iterables are warned and treated as empty (never coerced). A
+    usable row is a dict with a ``str`` ``name`` and a ``bool`` ``passed``; a row that is not a
+    dict, is missing either key, or carries a wrong-typed one is warned and skipped, so the
+    ``row["name"]``/``row["passed"]`` reads in ``failed_checks``/``integrity_headline`` can't
+    raise ``KeyError`` (#717). Mirrors the sanitizer the other gates use (e.g. ``row_integrity``).
     """
     if checks is None:
         return []
@@ -79,6 +86,21 @@ def _check_rows_list(checks) -> list[dict]:
                 idx,
                 type(row).__name__,
             )
+            continue
+        missing = [key for key in _CHECK_ROW_KEYS if key not in row]
+        if missing:
+            logger.warning(
+                "gap_integrity: checks[%s] missing required key(s) %s; skipping", idx, missing)
+            continue
+        if not isinstance(row["name"], str):
+            logger.warning(
+                "gap_integrity: checks[%s] name is %s, not str; skipping",
+                idx, type(row["name"]).__name__)
+            continue
+        if not isinstance(row["passed"], bool):
+            logger.warning(
+                "gap_integrity: checks[%s] passed is %s, not bool; skipping",
+                idx, type(row["passed"]).__name__)
             continue
         rows.append(row)
     if checks and not rows:

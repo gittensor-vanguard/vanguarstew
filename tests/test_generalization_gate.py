@@ -1,6 +1,7 @@
 """Tests for the generalization gate (deterministic, offline)."""
 
 import copy
+import errno
 import os
 import subprocess
 import sys
@@ -171,6 +172,19 @@ def test_held_out_repo_count_falls_back_to_per_repo_length():
     }, min_held_out_repos=3)
     assert result["held_out_repos"] == 3
     assert result["passed"] is True
+
+
+def test_held_out_repo_fallback_excludes_skipped_zero_task_repos():
+    # A held-out repo skipped for having zero tasks (too small for the horizon, etc.) must not
+    # be counted as having scored -- only 1 of 4 entries here actually scored.
+    result = check_generalization({
+        "tuned": {"composite_mean": 0.68, "scored_repos": 3,
+                  "per_repo": [{"tasks": 5}, {"tasks": 5}, {"tasks": 5}]},
+        "held_out": {"composite_mean": 0.63,
+                     "per_repo": [{"tasks": 5}, {"tasks": 0}, {"tasks": 0}, {"tasks": 0}]},
+    }, min_held_out_repos=3)
+    assert result["held_out_repos"] == 1
+    assert result["passed"] is False
 
 
 def test_thresholds_are_configurable():
@@ -385,3 +399,40 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err
     assert "Traceback" not in err
+
+
+def test_cli_broken_symlink_reports_clean_error(tmp_path):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.generalization_gate", str(link)],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert proc.stderr == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(str(link))
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact is a broken symlink (target does not exist): {link}\n"
+    )
+
+
+def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"

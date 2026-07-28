@@ -5,12 +5,16 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from scripts.compare_eval import (  # noqa: E402
     _is_generalization,
+    _is_scored_unavailable,
+    _per_repo_unavailable,
     _repo_key,
     compare_eval_artifacts,
     comparison_headline,
@@ -164,6 +168,85 @@ def test_compare_eval_artifacts_reports_per_repo_deltas():
     assert by_repo["/b"]["composite_mean"]["delta"] == 0.0
 
 
+def test_per_repo_skipped_repo_tasks_zero_is_not_a_real_score():
+    # A per-repo row for a *skipped* repo is recorded as tasks: 0 with a placeholder
+    # composite_mean of 0.0 (mean of an empty task list). Per-repo rows never carry
+    # scored_repos (#1846), so that 0.0 must be masked as unavailable — comparing a scored
+    # baseline against a skipped candidate must not fabricate a ~-0.7 delta.
+    baseline = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.7,
+                                                     "tasks": 3}]}
+    candidate = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.0,
+                                                      "tasks": 0}]}
+    row = compare_eval_artifacts(baseline, candidate)["per_repo"][0]
+    assert row["composite_mean"] == {"baseline": 0.7, "candidate": None, "delta": None}
+    # symmetric: a skipped baseline against a scored candidate is equally masked
+    row = compare_eval_artifacts(candidate, baseline)["per_repo"][0]
+    assert row["composite_mean"] == {"baseline": None, "candidate": 0.7, "delta": None}
+
+
+def test_per_repo_both_skipped_reports_no_delta():
+    # Two placeholders must not net to a real delta: 0.0 == None here, not delta 0.0.
+    art = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.0,
+                                                "tasks": 0}]}
+    row = compare_eval_artifacts(art, art)["per_repo"][0]
+    assert row["composite_mean"] == {"baseline": None, "candidate": None, "delta": None}
+
+
+def test_per_repo_non_numeric_tasks_is_unavailable():
+    # A row whose tasks count is missing/non-numeric can't attest a real score either.
+    baseline = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.7,
+                                                     "tasks": 3}]}
+    candidate = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.0,
+                                                      "tasks": "n/a"}]}
+    row = compare_eval_artifacts(baseline, candidate)["per_repo"][0]
+    assert row["composite_mean"]["candidate"] is None
+    assert row["composite_mean"]["delta"] is None
+
+
+def test_is_scored_unavailable_separates_the_two_shapes():
+    # Aggregate/partition shape is governed SOLELY by scored_repos ...
+    assert _is_scored_unavailable({"scored_repos": 0, "composite_mean": 0.0}) is True
+    assert _is_scored_unavailable({"scored_repos": 3, "composite_mean": 0.6}) is False
+    # ... and a real aggregate (scored_repos > 0) is never masked by a stray tasks field, so the
+    # two placeholder signals never conflate (the review's #1 concern).
+    assert _is_scored_unavailable({"scored_repos": 3, "tasks": 0, "composite_mean": 0.6}) is False
+    # Per-repo/single-repo shape (no scored_repos) is governed SOLELY by the tasks count.
+    assert _is_scored_unavailable({"tasks": 0, "composite_mean": 0.0}) is True
+    assert _is_scored_unavailable({"tasks": 2, "composite_mean": 0.5}) is False
+    # A non-dict is never "unavailable" (it is simply not scored data here).
+    assert _is_scored_unavailable(None) is False
+    assert _is_scored_unavailable([{"tasks": 0}]) is False
+
+
+def test_per_repo_unavailable_covers_every_tasks_value():
+    # Positive counts (int and float) attest a real score.
+    assert _per_repo_unavailable({"tasks": 1}) is False
+    assert _per_repo_unavailable({"tasks": 2.0}) is False
+    # Zero / negative / non-numeric / bool / nested values cannot.
+    for bad in (0, 0.0, -1, "n/a", None, [], {}, True, False, float("nan")):
+        assert _per_repo_unavailable({"tasks": bad}) is True, bad
+    # A row with NO tasks key is not a task-count placeholder — the helper stays silent (False),
+    # so a legitimately-shaped row without that field is not masked (the review's edge case).
+    assert _per_repo_unavailable({"composite_mean": 0.5}) is False
+
+
+def test_per_repo_row_without_tasks_key_is_not_masked():
+    # End-to-end: a per-repo row carrying a real composite_mean but no tasks field still diffs.
+    baseline = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.4}]}
+    candidate = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.5}]}
+    row = compare_eval_artifacts(baseline, candidate)["per_repo"][0]
+    assert row["composite_mean"] == {"baseline": 0.4, "candidate": 0.5, "delta": 0.1}
+
+
+def test_aggregate_with_zero_tasks_and_scored_repos_is_governed_by_scored_repos():
+    # A top-level aggregate that happens to carry both fields must not be masked by tasks when it
+    # was actually scored (scored_repos > 0) -- no regression for the aggregate code path.
+    scored = {"composite_mean": 0.6, "scored_repos": 2, "tasks": 0}
+    unscored = {"composite_mean": 0.0, "scored_repos": 0, "tasks": 0}
+    diff = compare_eval_artifacts(unscored, scored)
+    assert diff["composite_mean"] == {"baseline": None, "candidate": 0.6, "delta": None}
+
+
 def test_compare_eval_artifacts_tolerates_non_list_per_repo():
     # A malformed artifact whose per_repo is not a list must not crash the diff (#464); it is
     # treated as an empty repo table, so the top-level composite_mean still diffs.
@@ -216,6 +299,33 @@ def test_cli_reports_a_clean_error_for_a_missing_file(tmp_path):
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
     assert str(missing) in result.stderr
+    assert "artifact not found" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_a_directory_path(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    result = _run_cli(str(good), str(tmp_path))
+    assert result.returncode == 1
+    assert "artifact path is a directory, not a file" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root bypasses file permission bits")
+def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    locked = tmp_path / "locked.json"
+    locked.write_text(json.dumps({"composite_mean": 0.6}), encoding="utf-8")
+    locked.chmod(0o000)
+    try:
+        result = _run_cli(str(good), str(locked))
+    finally:
+        locked.chmod(0o600)
+    assert result.returncode == 1
+    assert "not readable" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
@@ -227,6 +337,7 @@ def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
     assert "must be a JSON object" in result.stderr
+    assert str(bad) in result.stderr
 
 
 def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
@@ -236,6 +347,33 @@ def test_cli_reports_a_clean_error_for_invalid_json(tmp_path):
     invalid.write_text("{not valid json", encoding="utf-8")
     result = _run_cli(str(good), str(invalid))
     assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "artifact is not valid JSON" in result.stderr
+
+
+def test_cli_reports_a_clean_error_for_an_empty_file(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    empty = tmp_path / "empty.json"
+    empty.write_text("", encoding="utf-8")
+    result = _run_cli(str(good), str(empty))
+    assert result.returncode == 1
+    assert "not valid JSON" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "symlink"),
+    reason="symlink not supported on this platform",
+)
+def test_cli_reports_a_clean_error_for_a_broken_symlink(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    broken = tmp_path / "broken.json"
+    os.symlink(tmp_path / "nonexistent.json", broken)
+    result = _run_cli(str(good), str(broken))
+    assert result.returncode == 1
+    assert "not found" in result.stderr
     assert "Traceback" not in result.stderr
 
 
@@ -334,6 +472,30 @@ def test_compare_eval_diffs_generalization_partitions_and_gap():
     assert "composite_mean" not in diff
 
 
+def test_generalization_diff_includes_per_partition_composite_parts():
+    # #1821: score_pr_delta's Pareto floor needs judge_mean/objective_mean per partition,
+    # not just the net composite_mean, or an axis regression behind a net gain slips through.
+    baseline = {
+        "repo_set": "foo.json", "generalization_gap": 0.0,
+        "tuned": {"composite_mean": 0.575, "scored_repos": 3,
+                  "composite_parts": {"judge_mean": 0.55, "objective_mean": 0.60}},
+        "held_out": {"composite_mean": 0.575, "scored_repos": 3,
+                     "composite_parts": {"judge_mean": 0.55, "objective_mean": 0.60}},
+    }
+    candidate = {
+        "repo_set": "foo.json", "generalization_gap": 0.0,
+        "tuned": {"composite_mean": 0.6, "scored_repos": 3,
+                  "composite_parts": {"judge_mean": 1.0, "objective_mean": 0.20}},
+        "held_out": {"composite_mean": 0.6, "scored_repos": 3,
+                     "composite_parts": {"judge_mean": 1.0, "objective_mean": 0.20}},
+    }
+    diff = compare_eval_artifacts(baseline, candidate)
+    gen = diff["generalization"]
+    assert gen["tuned"]["composite_parts"]["judge_mean"]["delta"] == 0.45
+    assert gen["tuned"]["composite_parts"]["objective_mean"]["delta"] == -0.4
+    assert gen["held_out"]["composite_parts"]["objective_mean"]["delta"] == -0.4
+
+
 def test_generalization_diff_tolerates_missing_and_none_partition_scores():
     # A partition that only recorded an error (no composite_mean) diffs to None, no crash.
     baseline = {"repo_set": "foo.json",
@@ -408,3 +570,44 @@ def test_comparison_headline_generalization_marks_unavailable_delta():
     )
     line = comparison_headline(diff)
     assert "tuned n/a" in line and "gap n/a" in line and "held_out +0.100" in line
+
+
+def test_a_delta_that_overflows_is_unavailable_not_infinity():
+    """Finite operands can produce a non-finite difference; the result needs its own guard.
+
+    Load-bearing: `_numeric` checks each operand, so `1e308` and `-1e308` both pass — but their
+    difference overflows to `inf`, and `_delta` returned it as if it were a real measurement.
+    """
+    diff = compare_eval_artifacts({"composite_mean": -1e308}, {"composite_mean": 1e308})
+    triplet = diff["composite_mean"]
+    # The operands are legitimate and reported as-is; only the difference is unusable.
+    assert triplet["baseline"] == -1e308
+    assert triplet["candidate"] == 1e308
+    assert triplet["delta"] is None
+
+
+def test_an_overflowing_delta_cannot_earn_the_top_band():
+    """The real harm: an arithmetic overflow used to clear every BAND_THRESHOLDS entry.
+
+    `score_pr_delta._delta` tests only `isinstance`, so an `inf` delta reached
+    `_band_for_delta`, cleared every floor and reported `xl` — the top multiplier — from two
+    finite composites that never measured anything.
+    """
+    from scripts.score_pr_delta import score_pr_delta
+
+    result = score_pr_delta({"composite_mean": -1e308}, {"composite_mean": 1e308})
+    assert result["composite_deltas"]["composite_mean"] is None
+    assert result["band"] == "none"
+
+
+def test_ordinary_deltas_are_unaffected_by_the_finiteness_guard():
+    """Control: a normal difference still bands exactly as before.
+
+    Passes both before and after the guard, so the `None`s above are caused by the overflow
+    rather than by the check firing indiscriminately.
+    """
+    from scripts.score_pr_delta import score_pr_delta
+
+    result = score_pr_delta({"composite_mean": 0.6}, {"composite_mean": 0.7})
+    assert result["composite_deltas"]["composite_mean"] == 0.1
+    assert result["band"] == "l"

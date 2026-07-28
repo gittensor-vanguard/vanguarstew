@@ -1,10 +1,13 @@
 """Tests for frozen-context leakage auditing."""
 
+import errno
 import json
 import logging
 import os
 import subprocess
 import sys
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -17,6 +20,7 @@ from benchmark.leakage_audit import (  # noqa: E402
     audit_headline,
     is_clean,
 )
+from scripts import audit_context as audit_cli  # noqa: E402
 
 _LEAKY_CTX = {
     "readme_excerpt": "roadmap; tracked in #101",
@@ -166,3 +170,83 @@ def test_audit_cli_reports_and_strict_exit(tmp_path):
     )
     assert strict_ok.returncode == 0
     assert json.loads(strict_ok.stdout)["clean"] is True
+
+
+# --- audit_context CLI: bad paths get a specific, actionable message, not a bare exception -----
+
+
+def _run_audit_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.audit_context", *args],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_audit_cli_directory_path_reports_the_specific_reason(tmp_path):
+    result = _run_audit_cli(str(tmp_path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "Errno" not in result.stderr
+    if os.name == "nt":
+        assert result.stderr == f"context is not readable (check file permissions): {tmp_path}\n"
+    else:
+        assert result.stderr == f"context path is a directory, not a file: {tmp_path}\n"
+
+
+def test_audit_cli_missing_file_reports_not_found(tmp_path):
+    missing = tmp_path / "nope.json"
+    result = _run_audit_cli(str(missing))
+    assert result.returncode == 1
+    assert "Errno" not in result.stderr
+    assert result.stderr == f"context not found: {missing}\n"
+
+
+def test_audit_cli_broken_symlink_reports_the_dangling_target(tmp_path):
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    result = _run_audit_cli(str(link))
+    assert result.returncode == 1
+    assert result.stderr == f"context is a broken symlink (target does not exist): {link}\n"
+
+
+def test_audit_cli_oversized_int_literal_reports_clean_json_error(tmp_path):
+    path = tmp_path / "huge.json"
+    path.write_text('{"frozen_at": ' + "9" * 5000 + "}", encoding="utf-8")
+    result = _run_audit_cli(str(path))
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.startswith(f"context is not valid JSON ({path}):")
+
+
+def test_audit_cli_non_object_reports_clean_error(tmp_path):
+    path = tmp_path / "arr.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    result = _run_audit_cli(str(path))
+    assert result.returncode == 1
+    assert result.stderr == f"context must be a JSON object: {path}\n"
+
+
+def test_load_context_symlink_loop_reports_a_loop(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as exc:
+        audit_cli.load_context(path)
+    assert exc.value.code == 1
+    assert capsys.readouterr().err == f"context path is a symlink loop: {path}\n"
+
+
+def test_load_context_other_oserror_keeps_the_generic_message(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "ctx.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as exc:
+        audit_cli.load_context(path)
+    assert exc.value.code == 1
+    assert capsys.readouterr().err.startswith(f"cannot read context ({path}):")

@@ -25,6 +25,12 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q --cov=agent --cov=benchmark --cov-fail
   - the diff is non-trivial;
   - code changes under `agent/` or `benchmark/` ship a test change under `tests/`;
   - the author is within the open-PR limit (**at most 2 open PRs** per contributor; the maintainer is exempt). Over-limit PRs are **auto-closed** by the `PR limit` workflow (`.github/workflows/pr-limit.yml`) — it keeps your 2 earliest open PRs and closes newer extras, at open time and on a periodic sweep.
+- **Benchmark change policy** (see `.github/workflows/benchmark-change-policy.yml`):
+  contributor PRs touching the benchmark/contribution-integrity surface are auto-closed unless
+  they reference an open issue carrying the `benchmark-change-approved` label. Maintainer-authored
+  changes bypass automatic closure but still require CI and manual review. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#benchmark-integrity-changes) for the exact paths and approval
+  process.
 
 If a gate is red, the PR is not mergeable — there is no human override that skips it.
 
@@ -92,6 +98,17 @@ A regression on either the judge or the objective component (past the noise floo
 other (sounding better to the judge while the objective anchor quietly drops) counts as a
 regression. The author must revise until it clears, or the PR is closed.
 
+The floor also **fails closed on a corrupt axis**. A component mean that is *reported* but
+non-finite (`NaN`/`±Inf`, or an integer too large to convert) can't be shown to have held,
+so it blocks exactly like a measured regression: `band: "blocked"`, no `perf:*` label. The
+report names the offending components in a `corrupt_axes` field (e.g.
+`["judge_mean"]`) and says so in its `reason`. Without this, a candidate carrying a
+non-finite `judge_mean` could rise on the other axis and still mint a `perf:xl` — the
+Goodhart trade-off the floor exists to catch. A component the run never reported at all is
+*unavailable*, not corrupt: it stays excluded from the floor, and so do the placeholder
+`0.0` parts of a run that scored nothing (`scored_repos: 0`), which remains mergeable with
+no band rather than blocked.
+
 Before a band is finalized, the maintainer bot runs an **anti-cheating pass** over the
 diff — looking for benchmark-detection branching, hardcoded outputs that match a known
 repo/task, disabled assertions, or anything that would make the measured delta not
@@ -135,7 +152,9 @@ tests, trivial/no-op diff, duplicated or plagiarized work, **conceptual redundan
 module/metric that re-derives what existing code already produces over the same data shape —
 parametrize or extend instead), AI-attributed content, or (for `agent/` PRs) a
 maintainer-bot-run `scripts/score_pr_delta.py` regression (`band: "blocked"` — see § `perf:*`
-above) or a flagged anti-cheating finding.
+above) or a flagged anti-cheating finding. Unapproved contributor changes to the benchmark or
+contribution-integrity surface are closed before review; propose and obtain approval in an issue
+first.
 
 ## Disagree with a decision?
 

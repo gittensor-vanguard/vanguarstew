@@ -135,6 +135,15 @@ def test_oversized_int_weight_is_not_numeric():
     assert out["sum"] is None
 
 
+def test_finite_weights_overflowing_to_a_non_finite_sum_yield_none_sum():
+    # Both weights individually pass the finite guard, but their sum overflows to inf; the reported
+    # sum must degrade to None, never serialize as the invalid-JSON token Infinity.
+    out = summarize_blend_weights({"weights": {"judge": 1e308, "objective": 1e308}})
+    assert out["judge"] == 1e308 and out["objective"] == 1e308
+    assert out["sum"] is None
+    assert json.dumps(out, allow_nan=False)  # would raise if sum were inf
+
+
 def test_headline():
     assert "judge 0.6" in blend_weights_headline(summarize_blend_weights(_run()))
 

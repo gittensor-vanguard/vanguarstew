@@ -11,7 +11,9 @@ With --strict, exits non-zero when any two tasks' replay windows overlap.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import sys
 
 from benchmark.task_independence import (
@@ -22,13 +24,39 @@ from benchmark.task_independence import (
 
 
 def load_tasks(path: str):
-    """Load a JSON task array, exiting with a clear message on a bad path or bad JSON."""
+    """Load a JSON task array, exiting with a clear message on a bad path or bad JSON.
+
+    Path problems get a specific, actionable message instead of a raw errno string: a broken
+    symlink (dangling target), a symlink loop, ``FileNotFoundError`` (missing),
+    ``PermissionError`` (unreadable -- including a directory on Windows), ``IsADirectoryError``
+    (a directory on POSIX), and any other ``OSError``.
+
+    Broken-symlink detection runs *after* ``open`` fails (``FileNotFoundError`` + ``islink``),
+    so there is no ``exists``/``open`` TOCTOU pre-check that can raise on a symlink loop.
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+    except FileNotFoundError:
+        # open() already failed; classify dangling symlink vs missing path without a prior
+        # exists() probe (which can raise on a symlink loop and races with open).
+        if os.path.islink(path):
+            print(f"task file is a broken symlink (target does not exist): {path}", file=sys.stderr)
+        else:
+            print(f"task file not found: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except PermissionError:
+        # Windows raises PermissionError (not IsADirectoryError) when ``path`` is a directory.
+        print(f"task file is not readable (check file permissions): {path}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except IsADirectoryError:
+        print(f"task file path is a directory, not a file: {path}", file=sys.stderr)
+        raise SystemExit(2) from None
     except OSError as exc:
-        # Covers missing file, permission denied, and "is a directory".
-        print(f"cannot read task file ({path}): {exc}", file=sys.stderr)
+        if getattr(exc, "errno", None) == errno.ELOOP:
+            print(f"task file path is a symlink loop: {path}", file=sys.stderr)
+        else:
+            print(f"cannot read task file ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from None
     except ValueError as exc:
         # json.load raises a plain ValueError (not JSONDecodeError) on an integer literal
