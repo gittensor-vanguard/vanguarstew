@@ -9,6 +9,7 @@ import pytest
 
 from benchmark.docker_solve_adapter import SANDBOX_IMAGE, DockerSolveAdapter
 from benchmark.unix_model_broker import ModelBrokerError, UnixModelBroker
+from scripts.sandbox_candidate_entry import _load_solve
 
 
 def _socket(path):
@@ -133,3 +134,17 @@ def test_broker_allows_local_transcript_proxy_but_rejects_plaintext_remote(tmp_p
             api_key="host-only-key",
             model="fixed-model",
         )
+
+
+def test_sandbox_entrypoint_loads_candidate_package_from_mounted_root(tmp_path):
+    candidate = tmp_path / "candidate"
+    package = candidate / "candidatepkg"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "helper.py").write_text("VALUE = 7\n", encoding="utf-8")
+    (candidate / "agent.py").write_text(
+        "from candidatepkg.helper import VALUE\n"
+        "def solve(**kwargs): return {'value': VALUE}\n",
+        encoding="utf-8",
+    )
+    assert _load_solve(candidate)() == {"value": 7}
