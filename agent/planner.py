@@ -187,6 +187,28 @@ REPO_LAYOUT_GUIDANCE = (
     "layout this repository may not have."
 )
 
+# How many modules the focus note names. The plan is `n` items (5 on the scored request), so a
+# focus list longer than that stops being a ranking and becomes a list of everything — which is
+# what the objective anchor's *recall* (no precision penalty) would reward and a reader would
+# not. Kept at the plan's own budget so the note says "concentrate here", not "name them all".
+_MODULE_FOCUS_TOP = 5
+
+# Conventional-commit scope: `fix(http2): ...` -> `http2`. A scope names the module the author
+# themselves assigned to the change, so it is the single most direct module signal a subject
+# carries -- weighted above an incidental mention below.
+_MODULE_SCOPE_RE = re.compile(r"^\s*[a-z]+\(([^)]+)\)\s*!?:", re.I)
+
+# A scope names its module deliberately; a bare mention in prose may be incidental. Weight the
+# deliberate signal higher rather than treating the two as equal evidence.
+_SCOPE_WEIGHT = 2.0
+
+MODULE_FOCUS_GUIDANCE = (
+    "That ordering is where this repository's work actually concentrates (tree size at the "
+    "freeze commit, adjusted by which modules recent commit subjects name). Absent a specific "
+    "reason to look elsewhere, weight the plan toward the modules near the front — and when an "
+    "item does touch one, say so in its `files`."
+)
+
 
 def _pr_title(pr: dict) -> str:
     """Return a stripped PR title when it is a string; else empty."""
@@ -640,6 +662,126 @@ def _repo_layout_note(context: dict) -> str:
     )
 
 
+def _module_weights(context: dict) -> dict:
+    """The frozen tree's per-module file counts, or ``{}`` when absent or malformed.
+
+    Derived by ``agent.context.load_context``; guarded here rather than assumed because the
+    planner is also called with hand-built context (tests, older frozen artifacts), exactly as
+    :func:`_repo_layout` guards its own key. Non-str keys and non-positive / non-int counts are
+    dropped — a weight is a file count, and a bool is not one.
+    """
+    if not isinstance(context, dict):
+        return {}
+    raw = context.get("module_weights")
+    if not isinstance(raw, dict):
+        if raw is not None:
+            logger.warning(
+                "planner: module_weights is %s, not a dict; treating as empty",
+                type(raw).__name__,
+            )
+        return {}
+    return {
+        name: count
+        for name, count in raw.items()
+        if isinstance(name, str) and name.strip()
+        and isinstance(count, int) and not isinstance(count, bool) and count > 0
+    }
+
+
+def _module_attention(context: dict, modules) -> dict:
+    """Recency-weighted count of how often recent commit subjects name each module.
+
+    The frozen checkout is a ``git archive`` export with no ``.git`` (``benchmark/freeze.py``),
+    so the agent cannot read which files a commit touched — the subject text is the only
+    per-commit signal there is. A subject names its module two ways: a conventional-commit
+    scope (deliberate, weighted ``_SCOPE_WEIGHT``) and a plain token match (incidental).
+
+    ``recent_commits`` is newest-first, so the newest subject carries ~2x the weight of the
+    oldest: what the maintainers touched last week predicts next week better than what they
+    touched fifty commits ago. Only names in ``modules`` can score, so a subject mentioning
+    something that is not a real module in the tree contributes nothing.
+    """
+    scores: dict = {}
+    commits = _recent_commits(context)
+    total = len(commits)
+    if not total or not modules:
+        return {}
+    token_index = {module: _anchor_tokens(module) for module in modules}
+    for rank, commit in enumerate(commits):
+        if not isinstance(commit, dict):
+            continue
+        subject = commit.get("subject")
+        if not isinstance(subject, str) or not subject.strip():
+            continue
+        recency = 1.0 + (total - rank) / total
+        scope = _MODULE_SCOPE_RE.match(subject)
+        scope_tokens = _anchor_tokens(scope.group(1)) if scope else set()
+        subject_tokens = _anchor_tokens(subject)
+        for module, module_tokens in token_index.items():
+            if not module_tokens:
+                continue
+            if scope_tokens & module_tokens:
+                scores[module] = scores.get(module, 0.0) + _SCOPE_WEIGHT * recency
+            elif subject_tokens & module_tokens:
+                scores[module] = scores.get(module, 0.0) + recency
+    return scores
+
+
+def _module_focus(context: dict, top: int = _MODULE_FOCUS_TOP) -> list:
+    """Modules ranked by where the repository's work concentrates, most-likely first.
+
+    Two freeze-T-only signals, each normalized to ``[0, 1]`` so neither can dominate purely by
+    being on a larger scale, then summed:
+
+    - **tree size** (prior) — how much of the repository lives under the module. Big modules
+      absorb most changes, and this is available for every module in the tree.
+    - **subject attention** (update) — how much recent maintainer text points at it. Sharper
+      when it fires, but silent for modules no subject happens to name.
+
+    Ties break on the size weight, then the name, so the ordering is deterministic for a given
+    frozen checkout — two runs of the same task must produce the same prompt.
+    """
+    weights = _module_weights(context)
+    if not weights:
+        return []
+    if isinstance(top, bool) or not isinstance(top, int) or top <= 0:
+        top = _MODULE_FOCUS_TOP
+    attention = _module_attention(context, list(weights))
+    max_weight = max(weights.values())
+    max_attention = max(attention.values()) if attention else 0.0
+    ranked = sorted(
+        weights,
+        key=lambda m: (
+            -(weights[m] / max_weight
+              + (attention.get(m, 0.0) / max_attention if max_attention else 0.0)),
+            -weights[m],
+            m,
+        ),
+    )
+    return ranked[:top]
+
+
+def _module_focus_note(context: dict) -> str:
+    """Prompt note ranking the repo's modules by where work concentrates.
+
+    ``_repo_layout_note`` already tells the plan which entries exist, but it lists them
+    alphabetically — which says nothing about whether the repository's work happens in `docs/`
+    or in the package. This orders them, so a plan grounded in real paths is also grounded in
+    the *likely* ones.
+
+    Empty when the tree could not be walked, so a context without module weights produces a
+    byte-identical prompt to before this note existed (the same posture
+    ``_config_surface_note`` takes for source-driven repos).
+    """
+    focus = _module_focus(context)
+    if not focus:
+        return ""
+    return (
+        f"\nWhere this repository's changes concentrate, most active first: "
+        f"{', '.join(focus)}.\n{MODULE_FOCUS_GUIDANCE}\n"
+    )
+
+
 def _pr_queue_note(context: dict) -> str:
     prs = [p for p in _safe_prs(context) if _pr_title(p)]
     if not prs:
@@ -691,6 +833,21 @@ def _pr_queue(context: dict) -> list:
         p for p in _safe_prs(context)
         if isinstance(p, dict) and _pr_title(p)
     ]
+
+
+def _anchor_tokens(text) -> set:
+    """Lower-cased ``[a-z0-9]+`` tokens — a local mirror of ``benchmark/score.py::_tokens``.
+
+    Distinct from :func:`_significant_tokens`, which drops stopwords and tokens of length <= 2
+    for PR-title matching. Module matching must *not* filter: the objective anchor scores a
+    module as recalled when its raw tokens intersect the plan's, so real module names that are
+    short (`h2`, `ci`, `www`) or stopword-shaped have to keep scoring here or the focus ranking
+    would silently ignore exactly the modules the anchor still counts. ``agent/`` must not
+    import ``benchmark/``, so the rule is duplicated (see ``context.top_module``).
+    """
+    if not isinstance(text, str):
+        return set()
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 def _significant_tokens(text: str) -> set:
@@ -1005,6 +1162,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
         f"{_repo_layout_note(context)}"
+        f"{_module_focus_note(context)}"
         f"{_recent_kinds_note(context)}"
         f"{_release_cadence_note(context)}"
         f"{_config_surface_note(context)}"

@@ -33,6 +33,11 @@ _LAYOUT_EXCLUDED = frozenset({CONTEXT_FILE, ".git"})
 # from. Real repos sit far below this (7-25 entries across the curated set).
 REPO_LAYOUT_LIMIT = 40
 
+# Upper bound on files walked when weighing modules. A tree walk is O(files), and the weights
+# only rank the same top-level entries `repo_layout` already caps, so a pathological checkout
+# must not make load_context() unbounded. Curated repos sit at 10^2-10^3 files.
+MODULE_WEIGHT_FILE_LIMIT = 20000
+
 # Issue/PR back-reference (`#123`), GitHub deep-links, and raw commit SHAs. The scored replay
 # path masks all three via ``benchmark.leakage.strip_forward_refs`` before the agent sees the
 # text; this module's git-only fallback must mirror that policy locally. We deliberately do NOT
@@ -153,6 +158,79 @@ def repo_layout(repo_path: str, limit: int = REPO_LAYOUT_LIMIT) -> list:
     return entries
 
 
+def top_module(path: str):
+    """The normalized top-level module a repo-relative path belongs to, or ``None``.
+
+    A local mirror of ``benchmark/score.py::_top_module`` — the normalization the objective
+    anchor uses to turn a changed path into the module name it scores (`agent/foo.py` ->
+    `agent`; a top-level file drops one extension, `README.md` -> `readme`; a top-level dotfile
+    has no extension to strip, `.gitignore` -> `gitignore`). ``agent/`` must not import
+    ``benchmark/`` (a miner-only split is planned), so the rule is duplicated here the same way
+    ``planner._is_release_subject`` mirrors ``is_release_subject``. Keep the two aligned: if the
+    anchor's normalization changes, module weights would rank names the anchor no longer scores.
+    """
+    if not isinstance(path, str):
+        return None
+    parts = [p for p in path.split("/") if p]
+    if not parts:
+        return None
+    if len(parts) > 1:
+        top = parts[0]
+    else:
+        top = parts[0].rsplit(".", 1)[0] or parts[0].lstrip(".")
+    return top.lower() if top else None
+
+
+def module_weights(repo_path: str, limit: int = MODULE_WEIGHT_FILE_LIMIT) -> dict:
+    """Files per top-level module in the frozen tree, or ``{}`` when it cannot be walked.
+
+    Read from the frozen checkout itself, so it is leakage-safe by construction for the same
+    reason :func:`repo_layout` is: ``benchmark/freeze.py::export_tree`` writes a ``git archive``
+    export of commit T and nothing after it. That export carries **no ``.git``**, so the agent
+    cannot see which files recent commits touched — the tree's own shape is the only structural
+    signal available at T, and it is what this reports.
+
+    Why weigh at all: the objective anchor scores plans by which modules they name, and a
+    module's file count is the strongest freeze-T-only predictor of whether the next window
+    touches it (big modules absorb most changes). ``repo_layout`` lists entries alphabetically,
+    which tells the plan a module exists but not whether the repository's work concentrates
+    there.
+
+    Keys are :func:`top_module` names so they line up with what the anchor scores. The freeze
+    artifact and ``.git`` are skipped (``_LAYOUT_EXCLUDED``); an unreadable ``repo_path``
+    degrades to ``{}`` rather than raising, so the planner simply omits the note.
+    """
+    if not isinstance(repo_path, str) or not repo_path:
+        return {}
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        limit = MODULE_WEIGHT_FILE_LIMIT
+    counts: dict = {}
+    seen = 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(repo_path):
+            # Prune excluded trees in place so os.walk never descends into them.
+            dirnames[:] = sorted(d for d in dirnames if d not in _LAYOUT_EXCLUDED)
+            for name in sorted(filenames):
+                if name in _LAYOUT_EXCLUDED:
+                    continue
+                if seen >= limit:
+                    return counts
+                seen += 1
+                rel = os.path.relpath(os.path.join(dirpath, name), repo_path)
+                module = top_module(rel.replace(os.sep, "/"))
+                if module:
+                    counts[module] = counts.get(module, 0) + 1
+    except (OSError, ValueError) as exc:
+        # Same posture as repo_layout: weights are optional prompt context, so a checkout that
+        # cannot be walked degrades to "unknown" instead of aborting solve().
+        logger.warning(
+            "module_weights: cannot walk %s (%s: %s); continuing without module weights",
+            repo_path, type(exc).__name__, exc,
+        )
+        return {}
+    return counts
+
+
 def _with_repo_layout(context, repo_path: str) -> dict:
     """Attach the checkout's real top-level layout to a loaded context.
 
@@ -161,10 +239,17 @@ def _with_repo_layout(context, repo_path: str) -> dict:
     could only come from a hand-authored or tampered artifact and must not be able to feed
     invented paths into the plan. A non-dict context is passed through untouched, matching the
     pass-through ``context_for_agent`` already guards.
+
+    ``module_weights`` is derived the same way and for the same reason — both describe the
+    frozen tree, and neither may be spoofed by the context JSON.
     """
     if not isinstance(context, dict):
         return context
-    return {**context, "repo_layout": repo_layout(repo_path)}
+    return {
+        **context,
+        "repo_layout": repo_layout(repo_path),
+        "module_weights": module_weights(repo_path),
+    }
 
 
 def load_context(repo_path: str) -> dict:

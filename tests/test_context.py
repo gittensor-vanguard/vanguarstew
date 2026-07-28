@@ -453,16 +453,18 @@ def test_load_context_derives_repo_layout_and_never_trusts_the_context_file():
 def test_load_context_reads_a_valid_file_from_the_file_not_git():
     # Happy path: a well-formed context file's GitHub-derived content is returned as written,
     # and it is read from the FILE (its `_source` marker survives) rather than being rebuilt
-    # from git. `repo_layout` is derived from the checkout and added on top.
+    # from git. `repo_layout` and `module_weights` are derived from the checkout and added on top.
+    derived = {"repo_layout", "module_weights"}
     repo = _repo_with_commit()
     try:
         payload = {"_source": "github-api", "open_prs": [{"number": 1, "title": "x"}]}
         with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
             json.dump(payload, f)
         out = load_context(repo)
-        assert {k: v for k, v in out.items() if k != "repo_layout"} == payload
+        assert {k: v for k, v in out.items() if k not in derived} == payload
         assert out["_source"] == "github-api"  # from the file, not the git rebuild ("git")
         assert out["repo_layout"] == ["f.txt"]  # .git and the freeze artifact stay out
+        assert out["module_weights"] == {"f": 1}  # same exclusions, counted per top-level module
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
