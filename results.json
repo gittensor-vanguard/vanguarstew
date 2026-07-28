@@ -700,5 +700,75 @@
       "report_data": "369d4a1ae5b4ddea3b63a1e0256785d1ddd70b37205f12d57eed66182708b786"
     },
     "merged": false
+  },
+  {
+    "timestamp": "2026-07-28T15:20:16.397671+00:00",
+    "pr_number": 2005,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": 0.095,
+      "per_repo": [
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": 0.133
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": 0.035
+        },
+        {
+          "repo": "https://github.com/hgrecco/pint",
+          "composite_delta": 0.117
+        }
+      ],
+      "foresight": {
+        "module_recall_mean": 0.804,
+        "kind_recall_mean": 1.0,
+        "release_accuracy": 1.0,
+        "module_recall_n": 9,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "private": {
+      "composite_delta": -0.015,
+      "foresight": {
+        "module_recall_mean": 0.844,
+        "kind_recall_mean": 0.833,
+        "release_accuracy": 0.667,
+        "module_recall_n": 9,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "since_anchor": {
+      "anchor": "v0.7.0",
+      "public": {
+        "composite_delta": 0.18,
+        "composite_score": 0.855,
+        "anchor_score": 0.675
+      },
+      "private": {
+        "composite_delta": 0.312,
+        "composite_score": 0.913,
+        "anchor_score": 0.601
+      }
+    },
+    "evidence": {
+      "inputs": {
+        "repo_set": "public+private",
+        "repo_set_partition": "tuned",
+        "seed": 0,
+        "rotation_seed": null,
+        "model": "deepseek-chat",
+        "agent_commit": "4b75c1ef3e03d4ea3a0c0027a405a68ea613933d",
+        "eval_image": null,
+        "transcript_digest": "340041d31e4fe558fcb3f23cc6123576a6e41d58c4caa203a3e5d071f5c50175"
+      },
+      "artifact_digest": "6d98e730d2b57cea51cb105c0df760c1de09dcc74e424d94833398c302da2953",
+      "report_data": "6c1186ab99faae328d9e6f0b77d38e22f542be75d8257ec7f1bd7b485134c6cc"
+    },
+    "merged": false
   }
 ]
