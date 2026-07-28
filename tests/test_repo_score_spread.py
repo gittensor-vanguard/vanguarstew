@@ -158,6 +158,12 @@ def test_repo_scores_masks_unscored_aggregate_but_keeps_real_leaf():
     # A genuine single-repo leaf has no scored_repos key (or a real count) -> still contributes.
     assert _repo_scores({"composite_mean": 0.6}) == [0.6]
     assert _repo_scores({"scored_repos": 1, "composite_mean": 0.6}) == [0.6]
+    assert _repo_scores({
+        "per_repo": [
+            {"tasks": 0, "scored_repos": 0, "composite_mean": 0.0},
+            {"tasks": 3, "composite_mean": 0.6},
+        ]
+    }) == [0.6]
 
 
 def test_spread_helper():
