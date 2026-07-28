@@ -12,6 +12,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from scripts.leaderboard_feed import (  # noqa: E402
+    _EVIDENCE_INPUT_FIELDS,
     _foresight_of,
     _safe_per_repo,
     _since_anchor_fields,
@@ -544,3 +545,46 @@ def test_to_leaderboard_entry_foresight_end_to_end_via_score_pr_delta():
     entry = to_leaderboard_entry(combined, pr_number=9, timestamp="t")
     assert entry["public"]["foresight"]["module_recall_mean"] == 0.9
     assert entry["private"]["foresight"] is None  # baseline artifact carries no foresight key
+
+
+# --- attestation evidence published on the feed (TEE track) ---------------------------------
+
+def test_evidence_is_omitted_when_not_supplied():
+    # Pre-attestation entries stay valid: no null placeholder for readers to special-case.
+    entry = to_leaderboard_entry(_real_combined_report(), pr_number=5, timestamp="t")
+    assert "evidence" not in entry
+
+
+def test_evidence_publishes_the_binding_a_verifier_needs():
+    from benchmark.attestation import build_evidence
+    artifact = {"composite_mean": 0.62}
+    ev = build_evidence(artifact, {"repo_set": "curated", "seed": 0, "model": "m@snap1",
+                                   "agent_commit": "abc", "eval_image": "sha256:img",
+                                   "transcript_digest": "t123"})
+    entry = to_leaderboard_entry(_real_combined_report(), pr_number=5, timestamp="t", evidence=ev)
+    assert entry["evidence"]["artifact_digest"] == ev["artifact_digest"]
+    assert entry["evidence"]["report_data"] == ev["report_data"]
+    assert entry["evidence"]["inputs"]["model"] == "m@snap1"
+
+
+def test_evidence_drops_unlisted_input_fields():
+    """The allowlist is the point: an upstream field must not start being published just because
+    it appeared in the bundle. A repo path smuggled into inputs must never reach the feed."""
+    ev = {"inputs": {"repo_set": "curated", "hidden_repo_paths": ["/srv/secret/hidden-repo"],
+                     "operator_note": "internal"},
+          "artifact_digest": "d", "report_data": "r"}
+    entry = to_leaderboard_entry(_real_combined_report(), pr_number=5, timestamp="t", evidence=ev)
+    assert set(entry["evidence"]["inputs"]) == set(_EVIDENCE_INPUT_FIELDS)
+    assert "hidden-repo" not in json.dumps(entry)
+    assert "operator_note" not in json.dumps(entry)
+
+
+def test_evidence_tolerates_malformed_bundles():
+    for bad in (None, {}, "x", 5, [1], True):
+        entry = to_leaderboard_entry(_real_combined_report(), pr_number=5, timestamp="t",
+                                     evidence=bad)
+        assert "evidence" not in entry, bad
+    # a bundle with a non-dict inputs still publishes, with every field None rather than raising
+    entry = to_leaderboard_entry(_real_combined_report(), pr_number=5, timestamp="t",
+                                 evidence={"inputs": "nope", "artifact_digest": "d"})
+    assert entry["evidence"]["inputs"]["repo_set"] is None

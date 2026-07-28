@@ -92,6 +92,14 @@ def test_decisive_margin_mismatch_fails():
     assert "decisive_margin_matches" in failed_checks(result)
 
 
+def test_fractional_decisive_margin_cannot_truncate_to_expected_integer():
+    art = _artifact()
+    art["decisive_margin"] = art["decisive_margin"] + 0.5
+    result = check_tally_integrity(art)
+    assert result["passed"] is False
+    assert "decisive_margin_matches" in failed_checks(result)
+
+
 def test_missing_tally_fails_tally_present():
     art = _artifact()
     del art["tally"]

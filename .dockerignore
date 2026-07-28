@@ -1,0 +1,23 @@
+# The eval image is a deliberately small, auditable runtime allowlist.  In particular, build
+# context must never pick up a developer's dotenv, receipts, git metadata, caches, or untracked
+# working files merely because they happen to sit beside the source checkout.
+**
+!agent.py
+!agent/
+agent/*
+!agent/__init__.py
+!agent/llm.py
+!agent/context.py
+!agent/philosophy.py
+!agent/planner.py
+!agent/decider.py
+!benchmark/
+!benchmark/**
+!scripts/
+scripts/*
+!scripts/__init__.py
+!scripts/run_attested_eval.py
+!scripts/prepare_attested_inputs.py
+!scripts/transcript_proxy.py
+!pyproject.toml
+!vanguarstew_agent_files.json

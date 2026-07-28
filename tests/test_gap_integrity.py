@@ -1,6 +1,7 @@
 """Tests for the generalization-gap integrity gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
@@ -308,18 +309,21 @@ def test_cli_strict_exits_nonzero_on_inconsistent(tmp_path):
 
 
 def test_cli_reports_clean_error_for_missing_file(tmp_path):
+    # Path failure must exit 2 so CI can tell it apart from --strict gate failure (exit 1).
     missing = tmp_path / "missing.json"
     result = _run_cli(str(missing), "--strict")
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "artifact not found" in result.stderr
+    assert "Errno" not in result.stderr
 
 
 def test_cli_directory_path_reports_clean_error(tmp_path):
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "directory" in result.stderr
+    assert "Errno" not in result.stderr
 
 
 def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
@@ -329,7 +333,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         gap_integrity_cli.load_artifact(str(tmp_path / "gen.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
@@ -341,16 +345,58 @@ def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         gap_integrity_cli.load_artifact(str(tmp_path / "gen.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "not readable" in err and "Traceback" not in err
+
+
+def test_cli_broken_symlink_reports_distinct_error(tmp_path):
+    # A dangling symlink raises FileNotFoundError too; naming it "not found" misdiagnoses
+    # the problem (the link exists, only its target is gone).
+    link = tmp_path / "broken.json"
+    link.symlink_to(tmp_path / "nonexistent.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 2
+    assert "broken symlink" in result.stderr
+    assert "not found" not in result.stderr
+    assert "Traceback" not in result.stderr and "Errno" not in result.stderr
+
+
+def test_cli_symlink_loop_exits_two_instead_of_leaking_errno(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        gap_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert err == f"artifact path is a symlink loop: {path}\n"
+    assert "Traceback" not in err and "Errno" not in err
+
+
+def test_cli_other_oserror_reports_cleanly(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "run.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.EIO, "Input/output error", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        gap_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert err.startswith(f"cannot read artifact ({path}):")
 
 
 def test_cli_reports_clean_error_for_non_object_artifact(tmp_path):
     path = tmp_path / "array.json"
     path.write_text(json.dumps([1, 2]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "must be a JSON object" in result.stderr
 
 
@@ -358,7 +404,7 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "broken.json"
     path.write_text("{not json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "artifact is not valid JSON" in result.stderr
 

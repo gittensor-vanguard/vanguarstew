@@ -338,6 +338,13 @@ def test_is_release_subject_rejects_incidental_versions():
     assert not is_release_subject("fix crash in v1.2.0 parser")
     assert not is_release_subject("docs: mention support for Python 3.11.0")
     assert not is_release_subject("add retry logic")
+    assert not is_release_subject("1.2.0 parser compatibility notes")
+
+
+def test_is_release_subject_rejects_native_git_revert_titles():
+    assert not is_release_subject('Revert "Release v1.2.0"')
+    assert not is_release_subject("Revert v2.0")
+    assert is_release_subject("v1.2.0-rc.1")
 
 
 def test_is_release_subject_accepts_two_component_tags():

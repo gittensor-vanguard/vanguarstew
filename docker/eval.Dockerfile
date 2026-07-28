@@ -11,13 +11,17 @@
 # whole eval runs on the Python standard library, so there is no dependency resolution to pin, and
 # no wheel-build nondeterminism to chase. Base image + git + this source tree is the entire TCB.
 #
-# For production attestation, tighten two things beyond this file:
-#   - pin the base image by digest (FROM python:3.12-slim@sha256:...), not by tag, so the
-#     measurement cannot shift under you when the tag is re-pushed;
-#   - pin the apt package versions, or drop to a distroless base with git vendored in.
-# Both are deliberately left as tags here so the spike stays buildable as-is.
+# The base is pinned BY DIGEST, not by tag: `python:3.12-slim` is re-pushed regularly, and a tag
+# that moves underneath you silently changes the image measurement an attestation quote commits to
+# -- the one thing that must not drift. Refresh deliberately (docker pull, re-read RepoDigests)
+# rather than letting upstream do it for you.
+#
+# Still to tighten for production attestation: pin the apt package versions, or move to a
+# distroless base with git vendored in, so `apt-get install` cannot pull a different git between
+# builds. Left as-is here because it does not affect reproducibility of a single built image --
+# the digest of THIS image is what gets attested.
 
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
 # git is a genuine runtime dependency: the benchmark materializes and freezes real repositories.
 RUN apt-get update \
@@ -28,14 +32,17 @@ RUN apt-get update \
 # container user and git's "dubious ownership" guard aborts every rev-list. That guard protects a
 # multi-user machine from a hostile repo owner; neither condition holds in a single-purpose eval
 # sandbox that only ever reads repositories it was explicitly handed, and inside an enclave the
-# input set is fixed by the attested measurement anyway.
-RUN git config --global --add safe.directory '*'
+# input set is fixed by the quote-bound mounted-files digest. Use system scope because the workload
+# runs as an unprivileged user below.
+RUN git config --system --add safe.directory '*' \
+    && useradd --uid 10001 --create-home --home-dir /home/eval eval
 
 # Deterministic interpreter behaviour: no .pyc writes, unbuffered output, and a fixed hash seed so
 # any incidental set/dict iteration in the pipeline cannot vary between runs of the same image.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONHASHSEED=0
+    PYTHONHASHSEED=0 \
+    HOME=/home/eval
 
 WORKDIR /eval
 COPY . /eval
@@ -44,8 +51,14 @@ COPY . /eval
 # calls. A record-mode run overrides this and points --api-base at the proxy instead.
 ENV VANGUARSTEW_OFFLINE=1
 
-# No ENTRYPOINT on purpose -- the same image serves the three roles the spike needs:
+# The replay only needs read access to the image and mounted inputs; frozen checkouts are created
+# under /tmp. Root privileges are not part of the measured workload.
+USER eval
+
+# No ENTRYPOINT on purpose -- the same image serves the four roles the TEE path needs:
 #   replay a run:  python -m scripts.transcript_proxy --mode replay --transcript t.json
 #   score a run:   python -m scripts.run_eval --repo ... --api-base http://127.0.0.1:8712/v1
+#   prepare mounts: python -m scripts.prepare_attested_inputs --part ...
+#   attest a run:   python -m scripts.run_attested_eval --repo ... --transcript t.json ...
 #   verify a run:  python -m scripts.verify_attestation --artifact a.json --evidence e.json
-CMD ["python", "-m", "scripts.verify_attestation", "--help"]
+CMD ["python", "-m", "scripts.run_attested_eval", "--help"]

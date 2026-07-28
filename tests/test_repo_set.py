@@ -118,6 +118,12 @@ def test_freeze_window_validation():
         validate_repo_set(_mutate(freeze_window={"rotation_seed": True}))
 
 
+@pytest.mark.parametrize("value", [0, -1])
+def test_freeze_window_rejects_non_positive_horizon_days(value):
+    with pytest.raises(RepoSetError, match="horizon_days must be >= 1"):
+        validate_repo_set(_mutate(freeze_window={"horizon_days": value}))
+
+
 @pytest.mark.parametrize("bad_fw, match", [
     ({"min_history": 0}, "min_history must be >= 1"),
     ({"min_history": -3}, "min_history must be >= 1"),
