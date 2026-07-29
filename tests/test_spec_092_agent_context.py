@@ -1,6 +1,6 @@
 """Contract tests for Spec 011 — the agent knowable-at-T context (as-built, no behavior change).
 
-Each test group pins one EARS section of ``specs/011-agent-context/spec.md``. Expected scrub
+Each test group pins one EARS section of ``specs/092-agent-context/spec.md``. Expected scrub
 results, warning messages, and error texts are pinned as literal values so a silent wording
 change is caught. Git fixtures are built inline in ``tmp_path``; deterministic and offline.
 """
