@@ -32,7 +32,17 @@ Repository = "https://github.com/gittensor-vanguard/vanguarstew"
 Issues = "https://github.com/gittensor-vanguard/vanguarstew/issues"
 
 [tool.setuptools]
-packages = ["agent", "benchmark"]
+# Must list subpackages explicitly (an explicit `packages` list does not auto-include them) and
+# every package the installed distribution needs: benchmark imports its *_corpus data subpackages
+# at runtime (judge_calibration / score_calibration) and `python -m scripts.*` is the documented
+# operational entrypoint set. Keep in sync with find_packages(exclude=["tests*"]).
+packages = [
+    "agent",
+    "benchmark",
+    "benchmark.judge_corpus",
+    "benchmark.score_corpus",
+    "scripts",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"
