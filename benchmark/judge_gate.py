@@ -66,6 +66,20 @@ def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _is_whole_number(value) -> bool:
+    """A finite, non-boolean whole-number int or float (e.g. JSON-decoded ``10.0``)."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        try:
+            return math.isfinite(value) and value.is_integer()
+        except (TypeError, OverflowError):
+            return False
+    return False
+
+
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
@@ -190,9 +204,9 @@ def _disagreement_rate_from_telemetry(telemetry: dict) -> float | None:
     # ``dual_order_tasks`` it is a subset of. An incoherent block (``disagree > dual``, e.g.
     # stale/hand-edited telemetry) would otherwise yield a rate above 1.0 and false-fail the
     # instability gates; treat it as underivable and fall through to the stored rate / None.
-    if (_is_int(dual) and dual > 0 and _is_int(disagreements)
+    if (_is_whole_number(dual) and dual > 0 and _is_whole_number(disagreements)
             and 0 <= disagreements <= dual):
-        return round(disagreements / dual, 3)
+        return round(int(disagreements) / int(dual), 3)
     rate = telemetry.get("disagreement_rate")
     return round(float(rate), 3) if _is_number(rate) else None
 

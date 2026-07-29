@@ -25,6 +25,7 @@ from benchmark.judge_gate import (  # noqa: E402
     _is_int,
     _is_number,
     _is_passed,
+    _is_whole_number,
     _judge_source,
     check_judge,
     failed_checks,
@@ -69,6 +70,14 @@ def test_is_int_semantics():
     assert _is_int(3.0) is False
 
 
+def test_is_whole_number_semantics():
+    assert _is_whole_number(3) is True
+    assert _is_whole_number(3.0) is True
+    assert _is_whole_number(2.5) is False
+    assert _is_whole_number(True) is False
+    assert _is_whole_number(float("nan")) is False
+
+
 def test_dict_helper():
     d = {"a": 1}
     assert _dict(d) is d
@@ -105,6 +114,22 @@ def test_dual_order_tasks_prefers_report_then_stats():
 
 def test_rate_from_coherent_counts():
     assert _disagreement_rate_from_telemetry({"dual_order_tasks": 5, "disagree": 1}) == 0.2
+
+
+def test_rate_recomputes_from_whole_number_float_dual():
+    # JSON-decoded ``10.0`` must recompute from counts, not trust a stale stored rate.
+    stats = {
+        "dual_order_tasks": 10.0,
+        "disagree": 8,
+        "agree": 1,
+        "tie": 1,
+        "disagreement_rate": 0.0,
+    }
+    assert _disagreement_rate_from_telemetry(stats) == 0.8
+    art = {"judge_dual_order": True, "judge_order_stats": stats}
+    result = check_judge(art, max_disagreement=0.3)
+    assert result["passed"] is False
+    assert result["disagreement_rate"] == 0.8
 
 
 def test_rate_derives_dual_from_agree_disagree_tie():
