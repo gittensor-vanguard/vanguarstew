@@ -99,6 +99,36 @@ def test_review_offline_stub_value_label_reflects_agent_touch():
     assert review_pr(non_agent_pr, None, llm)["value_label"] == "mult:contribution"
 
 
+def test_value_label_keys_on_the_manifest_not_the_agent_prefix():
+    """value_label must reflect the scored manifest (vanguarstew_agent_files.json), not the
+    agent/ path prefix. A PR touching only agent/review.py — an agent/ file that is NOT in the
+    manifest — can never earn a perf:* band (score_pr_delta doesn't measure it), so it is
+    flat-rate, not perf:pending (#2116). Manifest files stay perf:pending."""
+    llm = LLM(api_key="offline")
+
+    review_only = {"number": 1, "title": "t", "files": ["agent/review.py", "tests/test_review.py"]}
+    assert review_pr(review_only, None, llm)["value_label"] == "mult:contribution"
+
+    # Every scored manifest file still counts as the measured surface.
+    for scored in ("agent.py", "agent/llm.py", "agent/context.py", "agent/philosophy.py",
+                   "agent/planner.py", "agent/decider.py", "agent/__init__.py"):
+        pr = {"number": 2, "title": "t", "files": [scored]}
+        assert review_pr(pr, None, llm)["value_label"] == "perf:pending", scored
+
+    # A mix of a scored file and review.py is still on the measured surface.
+    mixed = {"number": 3, "title": "t", "files": ["agent/planner.py", "agent/review.py"]}
+    assert review_pr(mixed, None, llm)["value_label"] == "perf:pending"
+
+
+def test_measured_agent_files_loaded_from_manifest():
+    from agent.review import MEASURED_AGENT_FILES
+
+    # The manifest is readable in-tree, so review.py is excluded and the scored files are present.
+    assert "agent/review.py" not in MEASURED_AGENT_FILES
+    assert "agent/planner.py" in MEASURED_AGENT_FILES
+    assert "agent.py" in MEASURED_AGENT_FILES
+
+
 def test_review_tolerates_missing_fields():
     llm = LLM(api_key="offline")
     rev = review_pr({}, None, llm)

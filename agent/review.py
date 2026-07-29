@@ -12,8 +12,34 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+
+def _measured_agent_files() -> frozenset:
+    """The scored, miner-editable agent files, read from ``vanguarstew_agent_files.json``.
+
+    This is the surface a ``perf:*`` band is measured on (via ``scripts/score_pr_delta.py``).
+    Not every ``agent/`` path is on it: ``agent/review.py`` — this maintainer-assist tool —
+    is deliberately absent, so a review.py-only PR is flat-rate, never perf-measured. Reading
+    the manifest (rather than hardcoding a list) keeps this the single source of truth. An
+    empty set is returned when the manifest can't be read; ``review_pr`` then falls back to the
+    ``agent/`` prefix so value_label never regresses the common case on a read failure.
+    """
+    manifest = os.path.join(os.path.dirname(__file__), os.pardir, "vanguarstew_agent_files.json")
+    try:
+        with open(manifest, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return frozenset()
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, list):
+        return frozenset()
+    return frozenset(f for f in files if isinstance(f, str) and f.strip())
+
+
+MEASURED_AGENT_FILES = _measured_agent_files()
 
 SYSTEM = (
     "You are an experienced repository maintainer reviewing a pull request. Assess it on the "
@@ -193,7 +219,14 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         for path in raw_files:
             if isinstance(path, str) and path.strip():
                 files.append(path.strip())
-    touches_agent = any(f == "agent.py" or f.startswith("agent/") for f in files)
+    # perf:pending means "awaits a perf:* band from a live score_pr_delta run", which only
+    # measures the manifest files — so it keys on manifest membership, not the agent/ prefix.
+    # An off-manifest agent/ file (agent/review.py) is flat-rate, never perf-measured. Fall
+    # back to the prefix only if the manifest was unreadable (empty set).
+    if MEASURED_AGENT_FILES:
+        touches_measured = any(f in MEASURED_AGENT_FILES for f in files)
+    else:
+        touches_measured = any(f == "agent.py" or f.startswith("agent/") for f in files)
     number = _pr_number(pr)
     user = (
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy is not None else "")
@@ -205,9 +238,10 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + f"{NON_REDUNDANCY_GUIDANCE}\n\n"
         + "Return JSON with keys:\n"
         + f'  "action": one of {ACTIONS},\n'
-        + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
-        + 'agent/ (its real value tier needs a live benchmark run, not a guess); '
-        + '"mult:contribution" for everything else,\n'
+        + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches a '
+        + 'scored agent file in the vanguarstew_agent_files.json manifest (its real value tier '
+        + 'needs a live benchmark run, not a guess); "mult:contribution" for everything else, '
+        + 'including agent/review.py and other non-manifest paths,\n'
         + '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
         + '  "tests_present": boolean — does it add or update tests,\n'
         + '  "summary": one sentence on what the PR does,\n'
@@ -217,7 +251,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
     )
     stub = {
         "action": "comment",
-        "value_label": "perf:pending" if touches_agent else "mult:contribution",
+        "value_label": "perf:pending" if touches_measured else "mult:contribution",
         "scope_ok": True,
         "tests_present": any(f.startswith("tests/") for f in files),
         "summary": "offline stub review",
