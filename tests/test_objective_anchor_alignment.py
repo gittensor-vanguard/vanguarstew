@@ -25,8 +25,8 @@ import pytest  # noqa: E402
 
 from agent.decider import (  # noqa: E402
     _base_from_releases,
-    _historical_bump_class,
     _parse_semver,
+    _recent_bump_class,
     decide,
 )
 from agent.planner import (  # noqa: E402
@@ -151,39 +151,43 @@ def test_base_from_releases_mirror_matches_anchor(releases):
     assert _base_from_releases(releases) == base_from_releases(releases)
 
 
-# ── decider: modal historical bump class ──────────────────────────────────────────────────
+# ── decider: most-recent-pair bump class ──────────────────────────────────────────────────
 
 
-def test_historical_bump_class_is_modal():
+def test_recent_bump_class_tracks_latest_step():
     ctx = {"releases": [
         {"tag": "v1.0.0"}, {"tag": "v1.0.1"}, {"tag": "v1.0.2"}, {"tag": "v1.1.0"},
     ]}
-    assert _historical_bump_class(ctx) == "patch"
-
-
-def test_historical_bump_class_tie_prefers_smaller_bump():
-    ctx = {"releases": [{"tag": "v1.0.0"}, {"tag": "v1.0.1"}, {"tag": "v1.1.0"}]}
-    assert _historical_bump_class(ctx) == "patch"
+    assert _recent_bump_class(ctx) == "minor"
 
     ctx = {"releases": [{"tag": "v1.0.0"}, {"tag": "v1.1.0"}, {"tag": "v2.0.0"}]}
-    assert _historical_bump_class(ctx) == "minor"
+    assert _recent_bump_class(ctx) == "major"
 
 
-def test_historical_bump_class_order_independent():
+def test_recent_bump_class_tracks_regime_change_over_history_mode():
+    # Minor-heavy history whose latest step is a patch: the next cut is asked about the
+    # CURRENT cadence regime, and the latest step tracks it where an all-history mode lags.
+    ctx = {"releases": [
+        {"tag": "v1.0.0"}, {"tag": "v1.1.0"}, {"tag": "v1.2.0"}, {"tag": "v1.2.1"},
+    ]}
+    assert _recent_bump_class(ctx) == "patch"
+
+
+def test_recent_bump_class_order_independent():
     oldest_first = {"releases": [{"tag": "v1.0.0"}, {"tag": "v1.1.0"}, {"tag": "v1.2.0"}]}
     newest_first = {"releases": [{"tag": "v1.2.0"}, {"tag": "v1.1.0"}, {"tag": "v1.0.0"}]}
-    assert _historical_bump_class(oldest_first) == _historical_bump_class(newest_first) == "minor"
+    assert _recent_bump_class(oldest_first) == _recent_bump_class(newest_first) == "minor"
 
 
-def test_historical_bump_class_single_release_defaults_to_patch():
-    assert _historical_bump_class({"releases": [{"tag": "v1.2.0"}]}) == "patch"
+def test_recent_bump_class_single_release_defaults_to_patch():
+    assert _recent_bump_class({"releases": [{"tag": "v1.2.0"}]}) == "patch"
 
 
-def test_historical_bump_class_none_without_versioned_releases():
-    assert _historical_bump_class({"releases": []}) is None
-    assert _historical_bump_class({"releases": [{"tag": "nope"}]}) is None
-    assert _historical_bump_class({}) is None
-    assert _historical_bump_class(None) is None
+def test_recent_bump_class_none_without_versioned_releases():
+    assert _recent_bump_class({"releases": []}) is None
+    assert _recent_bump_class({"releases": [{"tag": "nope"}]}) is None
+    assert _recent_bump_class({}) is None
+    assert _recent_bump_class(None) is None
 
 
 # ── decider: version_bump backfill on planning requests ───────────────────────────────────

@@ -81,9 +81,6 @@ _NULL_BUMPS = frozenset({"null", "none", "n/a"})
 # so the version shapes the anchor parses are mirrored here and locked by an equivalence test.
 _SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
 
-# Tie order for the modal historical bump class: mature repos cut far more patches than
-# majors, so an even split reads as the smaller bump.
-_BUMP_TIE_ORDER = ("patch", "minor", "major")
 
 
 def _parse_semver(text) -> tuple | None:
@@ -126,20 +123,14 @@ def _base_from_releases(releases) -> str | None:
     return best_tag
 
 
-def _historical_bump_class(context: dict) -> str | None:
-    """The modal bump class across the repo's frozen release history, else None.
+def _release_versions(releases) -> list:
+    """Distinct parsed versions across frozen releases, ascending.
 
-    A bump prediction is only ever compared against a window that actually contains a cut,
-    where no prediction can never match — abstaining forfeits that comparison with certainty
-    while a wrong class scores no worse. The modal class is the repo's own cadence read back
-    to it: each frozen release contributes one version (``tag`` over ``name``, as the anchor
-    resolves it), the distinct versions are ordered, and each consecutive pair classifies by
-    its highest differing component. Ties prefer the smaller bump (``_BUMP_TIE_ORDER``); a
-    lone versioned release falls back to "patch"; no versioned releases at all means no basis
-    to predict, so None.
+    Each release contributes one version (``tag`` authoritative, display ``name`` a
+    fallback — the same per-release resolution as ``_base_from_releases``); malformed rows
+    contribute nothing. Ordering is by version, not list position: frozen ``releases`` may
+    arrive oldest-first (git builders) or newest-first (GitHub API).
     """
-    ctx = context_for_agent(context) if isinstance(context, dict) else {}
-    releases = ctx.get("releases")
     rows = releases if isinstance(releases, list) else []
     versions = []
     for rel in rows:
@@ -152,20 +143,33 @@ def _historical_bump_class(context: dict) -> str | None:
             if ver is not None:
                 versions.append(ver)
                 break
-    if not versions:
+    return sorted(set(versions))
+
+
+def _recent_bump_class(context: dict) -> str | None:
+    """The bump class of the repo's most recent version step, else None.
+
+    A bump prediction is only ever compared against a window that actually contains a cut,
+    where no prediction can never match — abstaining forfeits that comparison with certainty
+    while a wrong class scores no worse. The latest step (the two highest distinct versions,
+    classified by their highest differing component) tracks the repo's *current* cadence
+    regime, where an all-history mode lags it: a repo that spent years on 0.x minors and now
+    ships patch releases is asked about the next cut, not its median era. A lone versioned
+    release falls back to "patch" (the common mature-repo step); no versioned releases at
+    all means no basis to predict, so None.
+    """
+    ctx = context_for_agent(context) if isinstance(context, dict) else {}
+    ordered = _release_versions(ctx.get("releases"))
+    if not ordered:
         return None
-    ordered = sorted(set(versions))
-    counts = {"major": 0, "minor": 0, "patch": 0}
-    for old, new in zip(ordered, ordered[1:]):
-        if new[0] != old[0]:
-            counts["major"] += 1
-        elif new[1] != old[1]:
-            counts["minor"] += 1
-        elif new[2] != old[2]:
-            counts["patch"] += 1
-    if not any(counts.values()):
+    if len(ordered) < 2:
         return "patch"
-    return max(_BUMP_TIE_ORDER, key=lambda level: counts[level])
+    old, new = ordered[-2], ordered[-1]
+    if new[0] != old[0]:
+        return "major"
+    if new[1] != old[1]:
+        return "minor"
+    return "patch"
 
 
 def _normalize_action(action) -> str:
@@ -358,7 +362,7 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
         and _is_planning_request(request)
         and _release_timing_state(context) != "suppress"
     ):
-        out["version_bump"] = _historical_bump_class(context)
+        out["version_bump"] = _recent_bump_class(context)
     # Just after a cut, a version_bump prediction matches nothing (bump_actual is None when the
     # revealed window has no release) — clear it the same way the planner suppresses release items.
     if _release_timing_state(context) == "suppress":
