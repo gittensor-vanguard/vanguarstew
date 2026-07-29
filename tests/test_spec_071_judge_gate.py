@@ -66,7 +66,13 @@ def test_is_number_rejects_oversized_int():
 def test_is_int_semantics():
     assert _is_int(3) is True
     assert _is_int(True) is False
-    assert _is_int(3.0) is False
+    # #2119: a finite whole-number float is treated as int so the recompute path fires.
+    assert _is_int(3.0) is True
+    assert _is_int(10.0) is True
+    # Non-whole, non-finite, or bool floats are still rejected.
+    assert _is_int(3.5) is False
+    assert _is_int(float("nan")) is False
+    assert _is_int(float("inf")) is False
 
 
 def test_dict_helper():

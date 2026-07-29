@@ -63,7 +63,24 @@ def _is_number(value) -> bool:
 
 
 def _is_int(value) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
+    """True for a native ``int`` or a finite whole-number ``float`` (e.g. ``10.0``).
+
+    JSON decodes all numbers as ``float`` when the source omits no fractional part, so
+    ``dual_order_tasks: 10`` round-trips as ``10.0`` in some serialisation paths. A finite
+    whole-number float must be treated the same as its ``int`` twin; otherwise the recompute
+    path in :func:`_disagreement_rate_from_telemetry` is skipped and a stale stored
+    ``disagreement_rate`` false-passes the judge gate (#2119).
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        try:
+            return math.isfinite(value) and value == int(value)
+        except (OverflowError, ValueError):
+            return False
+    return False
 
 
 def _dict(value) -> dict:

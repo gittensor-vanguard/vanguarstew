@@ -75,6 +75,64 @@ def test_non_finite_dual_order_tasks_fails_the_gate():
         assert "enough_dual_order_tasks" in failed_checks(result), bad
 
 
+def test_float_dual_order_tasks_recomputes_rate_not_stale():
+    # #2119: dual_order_tasks as a whole-number float (10.0, common from JSON) must trigger
+    # the recompute path — not fall through to a stale stored disagreement_rate.
+    r = {
+        "judge_dual_order": True,
+        "judge_order_stats": {
+            "dual_order_tasks": 10.0,  # float, not int
+            "disagree": 8, "agree": 1, "tie": 1,
+            "disagreement_rate": 0.0,  # stale — counts imply 0.8
+        },
+    }
+    result = check_judge(r, max_disagreement=0.3)
+    assert result["passed"] is False
+    assert result["disagreement_rate"] == 0.8
+    assert "low_disagreement" in failed_checks(result)
+
+
+def test_float_dual_order_tasks_recompute_matches_int():
+    # The same artifact with int vs float dual_order_tasks must produce the same verdict.
+    for dual in (10, 10.0):
+        r = {
+            "judge_dual_order": True,
+            "judge_order_stats": {
+                "dual_order_tasks": dual,
+                "disagree": 8, "agree": 1, "tie": 1,
+                "disagreement_rate": 0.0,
+            },
+        }
+        result = check_judge(r, max_disagreement=0.3)
+        assert result["passed"] is False, f"dual={dual!r}"
+        assert result["disagreement_rate"] == 0.8, f"dual={dual!r}"
+
+
+def test_fractional_float_dual_order_tasks_does_not_recompute():
+    # A non-whole float (e.g. 10.5) is not a valid task count — the recompute path must
+    # NOT fire. Fall through to stored rate instead.
+    r = {
+        "judge_dual_order": True,
+        "judge_order_stats": {
+            "dual_order_tasks": 10.5,
+            "disagree": 8, "agree": 1, "tie": 1,
+            "disagreement_rate": 0.05,
+        },
+    }
+    result = check_judge(r, max_disagreement=0.3)
+    assert result["passed"] is True
+    assert result["disagreement_rate"] == 0.05
+
+
+def test_disagreement_rate_from_telemetry_accepts_float_counts():
+    from benchmark.judge_gate import _disagreement_rate_from_telemetry as rate
+    assert rate({"dual_order_tasks": 10.0, "disagree": 2}) == 0.2
+    assert rate({"dual_order_tasks": 5.0, "disagree": 5}) == 1.0
+    assert rate({"dual_order_tasks": 5.0, "disagree": 0}) == 0.0
+    # Non-whole float falls through to stored rate
+    assert rate({"dual_order_tasks": 5.5, "disagree": 2, "disagreement_rate": 0.1}) == 0.1
+
+
 def test_dual_order_tasks_falls_back_to_judge_order_stats():
     # judge_report lacks the count; it is read from judge_order_stats instead.
     r = {"judge_dual_order": True, "judge_report": {"disagreement_rate": 0.1},
