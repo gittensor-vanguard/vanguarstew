@@ -667,12 +667,122 @@ def _repo_layout_note(context: dict) -> str:
 # enough that an item never carries more modules than its own text supports.
 _BACKFILL_MAX_FILES = 2
 
+# Layout-entry tiers for backfill ranking (lower = preferred when the cap bites). Directories
+# in ``repo_layout`` carry a trailing ``/``; tiers are measured against that form.
+_BACKFILL_TIER_PACKAGE = 0
+_BACKFILL_TIER_SRC_LIB = 1
+_BACKFILL_TIER_CODE_DIR = 2
+_BACKFILL_TIER_TESTS = 3
+_BACKFILL_TIER_CONFIG = 4
+_BACKFILL_TIER_DOCS = 5
+_BACKFILL_TIER_OTHER = 6
+
+_BACKFILL_SRC_LIB_NAMES = frozenset({"src", "lib"})
+_BACKFILL_TEST_DIR_NAMES = frozenset({"test", "tests", "testing", "testcase"})
+_BACKFILL_DOC_DIR_NAMES = frozenset({"docs", "doc", "documentation", "wiki"})
+_BACKFILL_DOC_FILE_STEMS = frozenset({"readme", "news", "changes", "changelog"})
+_BACKFILL_CONFIG_FILE_NAMES = frozenset({
+    "tox.ini", "setup.py", "setup.cfg", "pyproject.toml", "manifest.in",
+    "makefile", "requirements.txt", "constraints.txt", "package.json",
+    "cargo.toml", "go.mod", "pom.xml", "build.gradle",
+})
+
 # Margin under the judge renderer's 1400-char compact per-field budget (benchmark/judge.py
 # ``_render``; mirrored, not imported — ``agent/`` must not depend on ``benchmark/``). A plan
 # pushed past that budget is shown to the judge as a mangled ``{"truncated": true,
 # "json_prefix": ...}`` blob with its tail items invisible, so growing the plan must never be
 # what tips it over: backfill only fires while the compact-serialized plan stays under this.
 _JUDGE_PLAN_COMPACT_BUDGET = 1300
+
+
+def _package_dirs(context: dict) -> frozenset[str]:
+    """Normalized package-directory names from derived context, or empty when absent."""
+    if not isinstance(context, dict):
+        return frozenset()
+    raw = context.get("package_dirs")
+    if not isinstance(raw, list):
+        return frozenset()
+    return frozenset(
+        n.lower() for n in raw
+        if isinstance(n, str) and n.strip()
+    )
+
+
+def _layout_entry_basename(entry: str) -> str:
+    return entry.rstrip("/").split("/")[0]
+
+
+def _layout_entry_stem(entry: str) -> str:
+    basename = _layout_entry_basename(entry)
+    if "." in basename:
+        return basename.rsplit(".", 1)[0].lower()
+    return basename.lower()
+
+
+def _is_config_surface_entry(entry: str, basename_lower: str) -> bool:
+    if basename_lower.startswith(".") and basename_lower not in {".", ".."}:
+        return True
+    if basename_lower in _BACKFILL_CONFIG_FILE_NAMES:
+        return True
+    markers = ("pre-commit", "dependabot", "renovate", "workflow")
+    return any(marker in basename_lower for marker in markers)
+
+
+def _is_docs_entry(basename_lower: str, stem_lower: str) -> bool:
+    if basename_lower in _BACKFILL_DOC_DIR_NAMES:
+        return True
+    if stem_lower in _BACKFILL_DOC_FILE_STEMS:
+        return True
+    return stem_lower.startswith("readme") or stem_lower.startswith("changelog")
+
+
+def _layout_entry_tier(entry: str, package_dirs: frozenset[str]) -> int:
+    basename_lower = _layout_entry_basename(entry).lower()
+    stem_lower = _layout_entry_stem(entry)
+    if basename_lower in package_dirs or stem_lower in package_dirs:
+        return _BACKFILL_TIER_PACKAGE
+    if basename_lower in _BACKFILL_SRC_LIB_NAMES:
+        return _BACKFILL_TIER_SRC_LIB
+    is_dir = entry.endswith("/")
+    if basename_lower in _BACKFILL_TEST_DIR_NAMES or basename_lower.startswith("test"):
+        return _BACKFILL_TIER_TESTS
+    if is_dir:
+        if _is_config_surface_entry(entry, basename_lower):
+            return _BACKFILL_TIER_CONFIG
+        if _is_docs_entry(basename_lower, stem_lower):
+            return _BACKFILL_TIER_DOCS
+        return _BACKFILL_TIER_CODE_DIR
+    if _is_config_surface_entry(entry, basename_lower):
+        return _BACKFILL_TIER_CONFIG
+    if _is_docs_entry(basename_lower, stem_lower):
+        return _BACKFILL_TIER_DOCS
+    return _BACKFILL_TIER_OTHER
+
+
+def _recent_commit_text_tokens(context: dict) -> set:
+    tokens: set = set()
+    for commit in _recent_commits(context):
+        if isinstance(commit, dict):
+            tokens |= _significant_tokens(commit.get("subject", ""))
+    return tokens
+
+
+def _rank_backfill_entries(
+    matched: list,
+    context: dict,
+    entry_token_map: dict,
+    layout_order: dict,
+) -> list:
+    package_dirs = _package_dirs(context)
+    commit_tokens = _recent_commit_text_tokens(context)
+
+    def sort_key(entry: str):
+        tier = _layout_entry_tier(entry, package_dirs)
+        tokens = entry_token_map.get(entry, set())
+        in_commits = 0 if tokens and tokens & commit_tokens else 1
+        return (tier, in_commits, layout_order.get(entry, len(layout_order)))
+
+    return sorted(matched, key=sort_key)
 
 
 def _backfill_files_from_layout(plan: list, context: dict) -> list:
@@ -684,7 +794,9 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
     The repair is strictly token-gated: a layout entry is attached only when the item's own
     title/theme/rationale shares a significant token with the entry's name, so an item never
     claims a module its text does not mention, and the plan stays exactly as specific as the
-    model made it. Entries are attached in layout order, capped at ``_BACKFILL_MAX_FILES``.
+    model made it. Matched entries are ranked (package dir, then ``src``/``lib``, then other
+    code trees, tests, config surface, docs) and capped at ``_BACKFILL_MAX_FILES``, with
+    ties within a tier broken by whether the entry's tokens appear in recent commit subjects.
 
     `triage` items are maintainer actions, not commit work, and pass through untouched, as
     does any item that already carries `files` and any item on an empty/unreadable layout.
@@ -702,6 +814,8 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
     if not entries:
         return plan
     entry_tokens = [(entry, _significant_tokens(entry)) for entry in entries]
+    entry_token_map = dict(entry_tokens)
+    layout_order = {entry: idx for idx, entry in enumerate(entries)}
     out = []
     for i, item in enumerate(plan):
         if (
@@ -719,7 +833,10 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
         matched = [
             entry for entry, tokens in entry_tokens
             if tokens and tokens & text_tokens
-        ][:_BACKFILL_MAX_FILES]
+        ]
+        matched = _rank_backfill_entries(
+            matched, context, entry_token_map, layout_order,
+        )[:_BACKFILL_MAX_FILES]
         if matched:
             candidate = {**item, "files": matched}
             trial = out + [candidate] + plan[i + 1:]

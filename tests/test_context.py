@@ -25,6 +25,7 @@ from agent.context import (  # noqa: E402
     _mask_forward_refs,
     context_for_agent,
     load_context,
+    package_dirs,
     repo_layout,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
@@ -431,6 +432,40 @@ def test_repo_layout_caps_the_entry_count():
         shutil.rmtree(repo, ignore_errors=True)
 
 
+def test_package_dirs_from_init_py_and_pyproject_name():
+    repo = tempfile.mkdtemp()
+    try:
+        os.makedirs(os.path.join(repo, "pint"))
+        _write(repo, "pint/__init__.py")
+        _write(repo, "pyproject.toml", "[project]\nname = \"pint\"\nversion = \"0.1\"\n")
+        os.makedirs(os.path.join(repo, "bench"))
+        assert package_dirs(repo) == ["pint"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def test_package_dirs_matches_distribution_name_to_directory():
+    repo = tempfile.mkdtemp()
+    try:
+        os.makedirs(os.path.join(repo, "my_package"))
+        _write(repo, "setup.py", "name = 'my-package'\n")
+        assert package_dirs(repo) == ["my_package"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_load_context_derives_package_dirs():
+    repo = _repo_with_commit()
+    try:
+        os.makedirs(os.path.join(repo, "vanguarstew"))
+        _write(repo, "vanguarstew/__init__.py")
+        out = load_context(repo)
+        assert out["package_dirs"] == ["vanguarstew"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_load_context_derives_repo_layout_and_never_trusts_the_context_file():
     # `build_context` never emits `repo_layout`, so a value in the file could only come from a
@@ -460,7 +495,7 @@ def test_load_context_reads_a_valid_file_from_the_file_not_git():
         with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
             json.dump(payload, f)
         out = load_context(repo)
-        assert {k: v for k, v in out.items() if k != "repo_layout"} == payload
+        assert {k: v for k, v in out.items() if k not in ("repo_layout", "package_dirs")} == payload
         assert out["_source"] == "github-api"  # from the file, not the git rebuild ("git")
         assert out["repo_layout"] == ["f.txt"]  # .git and the freeze artifact stay out
     finally:

@@ -153,6 +153,118 @@ def repo_layout(repo_path: str, limit: int = REPO_LAYOUT_LIMIT) -> list:
     return entries
 
 
+# Packaging metadata probes for :func:`package_dirs` — regex-only, no TOML dependency.
+_PYPROJECT_PROJECT_NAME_RE = re.compile(
+    r"^\s*name\s*=\s*[\"']([^\"']+)[\"']",
+    re.M,
+)
+_SETUP_CFG_NAME_RE = re.compile(
+    r"^\s*name\s*=\s*([^\s#]+)",
+    re.M,
+)
+_SETUP_PY_NAME_RE = re.compile(
+    r"name\s*=\s*[\"']([^\"']+)[\"']",
+)
+
+
+def _read_text_file(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _distribution_names(repo_path: str) -> set[str]:
+    """Distribution names parsed from packaging metadata at the repo root."""
+    names: set[str] = set()
+    pyproject = os.path.join(repo_path, "pyproject.toml")
+    text = _read_text_file(pyproject)
+    if text:
+        in_project = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if stripped == "[project]":
+                in_project = True
+                continue
+            if stripped.startswith("[") and stripped.endswith("]"):
+                if in_project:
+                    break
+                continue
+            if in_project:
+                match = _PYPROJECT_PROJECT_NAME_RE.match(stripped)
+                if match:
+                    names.add(match.group(1).strip())
+                    break
+    setup_cfg = os.path.join(repo_path, "setup.cfg")
+    text = _read_text_file(setup_cfg)
+    if text:
+        in_metadata = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if stripped == "[metadata]":
+                in_metadata = True
+                continue
+            if stripped.startswith("[") and stripped.endswith("]"):
+                if in_metadata:
+                    break
+                continue
+            if in_metadata:
+                match = _SETUP_CFG_NAME_RE.match(stripped)
+                if match:
+                    names.add(match.group(1).strip().strip("\"'"))
+                    break
+    setup_py = os.path.join(repo_path, "setup.py")
+    text = _read_text_file(setup_py)
+    if text:
+        match = _SETUP_PY_NAME_RE.search(text)
+        if match:
+            names.add(match.group(1).strip())
+    return names
+
+
+def _normalize_pkg_token(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+def package_dirs(repo_path: str) -> list:
+    """Top-level directories that are the project's own package roots.
+
+    Derived from the checkout: a directory containing ``__init__.py``, or whose name matches
+    a distribution name parsed from ``pyproject.toml``, ``setup.cfg``, or ``setup.py``. Live
+    task checkouts are named ``task_N``, so the project name is not recoverable from the path.
+    """
+    if not isinstance(repo_path, str) or not repo_path:
+        return []
+    try:
+        names = os.listdir(repo_path)
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "package_dirs: cannot list %s (%s: %s); continuing without package dirs",
+            repo_path, type(exc).__name__, exc,
+        )
+        return []
+    dist_norm = {_normalize_pkg_token(n) for n in _distribution_names(repo_path)}
+    found: set[str] = set()
+    for name in names:
+        if name in _LAYOUT_EXCLUDED or not name or name.startswith("."):
+            continue
+        path = os.path.join(repo_path, name)
+        if not os.path.isdir(path):
+            continue
+        init_py = os.path.join(path, "__init__.py")
+        if os.path.isfile(init_py):
+            found.add(name)
+            continue
+        if _normalize_pkg_token(name) in dist_norm:
+            found.add(name)
+    return sorted(found)
+
+
 def _with_repo_layout(context, repo_path: str) -> dict:
     """Attach the checkout's real top-level layout to a loaded context.
 
@@ -164,7 +276,11 @@ def _with_repo_layout(context, repo_path: str) -> dict:
     """
     if not isinstance(context, dict):
         return context
-    return {**context, "repo_layout": repo_layout(repo_path)}
+    return {
+        **context,
+        "repo_layout": repo_layout(repo_path),
+        "package_dirs": package_dirs(repo_path),
+    }
 
 
 def load_context(repo_path: str) -> dict:

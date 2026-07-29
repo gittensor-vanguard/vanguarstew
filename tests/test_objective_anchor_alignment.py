@@ -84,12 +84,27 @@ def test_backfill_never_attaches_unmentioned_modules():
     assert "files" not in out[0]
 
 
-def test_backfill_caps_at_two_entries_in_layout_order():
+def test_backfill_caps_at_two_entries_by_rank_not_layout_order():
     plan = [{"title": "Modernize tox, src and setup packaging", "kind": "refactor"}]
     out = _backfill_files_from_layout(
         plan, {"repo_layout": ["tox.ini", "src", "setup.py"]},
     )
-    assert out[0]["files"] == ["tox.ini", "src"]
+    assert out[0]["files"] == ["src", "tox.ini"]
+
+
+def test_backfill_prefers_package_dir_when_cap_bites():
+    plan = [{
+        "title": "Speed up pint unit parsing",
+        "kind": "perf",
+        "rationale": "bench harness and examples both exercise the slow path",
+    }]
+    ctx = {
+        "repo_layout": ["bench/", "examples/", "pint/"],
+        "package_dirs": ["pint"],
+        "recent_commits": [{"subject": "tweak bench harness"}],
+    }
+    out = _backfill_files_from_layout(plan, ctx)
+    assert out[0]["files"] == ["pint/", "bench/"]
 
 
 def test_backfill_skips_triage_and_already_filed_items():
