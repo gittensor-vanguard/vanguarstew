@@ -49,6 +49,7 @@ from agent.planner import (  # noqa: E402
     _release_cadence_signal,
     _release_timing_state,
     _repo_layout_note,
+    _safe_n,
     _safe_prs,
     _significant_tokens,
     plan_next_actions,
@@ -64,6 +65,41 @@ def test_empty_queue_passes_plan_through():
     assert reconcile_plan_with_queue(plan, {"open_prs": []}, 5) == plan
     # and is capped to n
     assert len(reconcile_plan_with_queue(plan, {}, 1)) == 1
+
+
+def test_safe_n_rejects_bad_types_and_clamps_negatives():
+    assert _safe_n(5) == 5
+    assert _safe_n(0) == 0
+    for bad in ("3", 5.0, None, [5], {"n": 5}, True, False):
+        assert _safe_n(bad) == 0
+    for negative in (-1, -5):
+        assert _safe_n(negative) == 0
+
+
+def test_reconcile_plan_with_queue_negative_n_degrades_to_empty_not_drop_last():
+    # Regression (#2077): items[:n] with a negative n drops items off the *end* of the list
+    # (Python slice semantics) instead of being treated as an invalid count.
+    plan = [{"title": f"item {i}", "kind": "feature"} for i in range(5)]
+    assert reconcile_plan_with_queue(plan, {"open_prs": []}, -1) == []
+
+
+def test_reconcile_plan_with_queue_non_int_n_does_not_raise():
+    # Regression (#2077): a stringified/float n used to raise
+    # "TypeError: slice indices must be integers or None or have an __index__ method".
+    plan = [{"title": f"item {i}", "kind": "feature"} for i in range(5)]
+    assert reconcile_plan_with_queue(plan, {"open_prs": []}, "3") == []
+    assert reconcile_plan_with_queue(plan, {"open_prs": []}, 5.0) == []
+
+
+def test_offline_plan_stub_negative_and_non_int_n_degrade_to_empty():
+    ctx = {"open_prs": [{"number": 7, "title": "Add streaming export"}]}
+    assert _offline_plan_stub(ctx, -1) == []
+    assert _offline_plan_stub(ctx, "3") == []
+
+
+def test_plan_next_actions_negative_and_non_int_n_do_not_raise():
+    assert plan_next_actions(CTX, {}, -1, LLM(api_key="offline")) == []
+    assert plan_next_actions(CTX, {}, "3", LLM(api_key="offline")) == []
 
 
 def test_queue_honored_is_left_intact():

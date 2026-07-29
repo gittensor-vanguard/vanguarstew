@@ -215,6 +215,24 @@ def _pr_number(pr: dict):
     return number
 
 
+def _safe_n(n) -> int:
+    """Coerce an untrusted plan-item count to a valid non-negative int.
+
+    ``n`` reaches ``_offline_plan_stub``/``reconcile_plan_with_queue``/``plan_next_actions``
+    straight from ``solve()``'s plain, unenforced ``n: int`` annotation, which in turn comes
+    from an unvalidated CLI ``--horizon`` flag. Used raw in ``list[:n]`` slicing, a non-int
+    (e.g. a stringified horizon) raises ``TypeError: slice indices must be integers...`` and
+    aborts the whole plan step, while a negative int exploits Python's negative-slice
+    semantics to drop items off the *end* of the list instead of being treated as an invalid
+    count. Neither degrades safely, so normalize to a plan-item count here: an unusable type
+    plans nothing (mirrors ``_pr_number``'s documented fallback rather than a crash), and a
+    negative count clamps to zero rather than reinterpreting it as a slice index.
+    """
+    if isinstance(n, bool) or not isinstance(n, int):
+        return 0
+    return max(n, 0)
+
+
 def _pr_dedup_key(pr: dict):
     """Return a stable dedup key for an open PR in queue reconciliation.
 
@@ -658,6 +676,7 @@ def _pr_queue_note(context: dict) -> str:
 
 def _offline_plan_stub(context: dict, n: int) -> list:
     """Deterministic offline plan: prioritize the visible PR queue when present."""
+    n = _safe_n(n)
     items = []
     for pr in _safe_prs(context):
         title = _pr_title(pr)
@@ -950,6 +969,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
 
     With no open PRs (or none matched) the plan passes through unchanged, capped to `n`.
     """
+    n = _safe_n(n)
     prs = _pr_queue(context)
     plan = _normalize_plan(plan)
     if not prs:
@@ -999,6 +1019,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
 
 
 def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
+    n = _safe_n(n)
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
     user = (
