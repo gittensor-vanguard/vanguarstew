@@ -152,14 +152,23 @@ def _pr_number(pr: dict):
 
     Frozen PR JSON can carry a non-int ``number`` (bool, list, dict). Formatting it
     verbatim into the review prompt would emit garbage like ``#True``; treat such values
-    as numberless, matching ``agent.planner._pr_number``.
+    as numberless, matching ``agent.planner._pr_number``. Digit-only strings and integral
+    finite floats coerce to ``int``; other malformed scalars fall back to numberless.
     """
     if not isinstance(pr, dict):
         return None
     number = pr.get("number")
-    if isinstance(number, bool) or not isinstance(number, int):
+    if isinstance(number, bool):
         return None
-    return number
+    if isinstance(number, int):
+        return number
+    if isinstance(number, float) and number.is_integer():
+        return int(number)
+    if isinstance(number, str):
+        stripped = number.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return None
 
 
 def _clip_text(value, limit: int) -> str:

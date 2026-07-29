@@ -151,9 +151,14 @@ def test_redundant_items_targeting_same_pr_are_collapsed():
 
 def test_pr_number_normalizes_non_scalar_and_bool():
     assert _pr_number({"number": 7}) == 7
+    assert _pr_number({"number": "7"}) == 7
+    assert _pr_number({"number": " 7 "}) == 7
+    assert _pr_number({"number": 7.0}) == 7
     assert _pr_number({"number": [7]}) is None      # unhashable list -> numberless
     assert _pr_number({"number": {"n": 7}}) is None  # unhashable dict -> numberless
     assert _pr_number({"number": True}) is None      # bool is never a real PR number
+    assert _pr_number({"number": 7.5}) is None       # non-integral float -> numberless
+    assert _pr_number({"number": "7.0"}) is None     # fractional string literal -> numberless
     assert _pr_number({"number": None}) is None
     assert _pr_number({}) is None
     # dedup key must stay hashable: it falls back to title when the number is unusable.
@@ -620,6 +625,19 @@ def test_pr_queue_note_uses_pr_number_not_raw_number_field():
     assert "#True" not in bad
     bad = _pr_queue_note({"open_prs": [{"number": [7], "title": "Add streaming export"}]})
     assert "#?: Add streaming export" in bad
+
+
+def test_reconcile_does_not_duplicate_when_pr_number_is_coercible():
+    plan = [{"title": "Review PR #7: Add streaming export", "kind": "feature", "rationale": "queue"}]
+    for number in ("7", 7.0):
+        ctx = {"open_prs": [{"number": number, "title": "Add streaming export"}]}
+        out = reconcile_plan_with_queue(plan, ctx, 5)
+        assert len(out) == 1
+        assert out[0]["title"] == "Review PR #7: Add streaming export"
+        assert out[0].get("restates_pr") != "triage"
+        note = _pr_queue_note(ctx)
+        assert "#7: Add streaming export" in note
+        assert "#?:" not in note
 
 
 _TRUNCATED_CTX = {

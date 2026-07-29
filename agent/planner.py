@@ -214,14 +214,23 @@ def _pr_number(pr: dict):
     ``_pr_dedup_key`` — would raise ``TypeError: unhashable type`` and abort the whole plan
     step. Treat a non-int ``number`` as numberless (dedup falls back to title), mirroring the
     existing numberless handling rather than crashing. ``bool`` is rejected too: it is never a
-    real PR number and would alias 0/1.
+    real PR number and would alias 0/1. Digit-only strings and integral finite floats coerce
+    to ``int``; other malformed scalars fall back to numberless.
     """
     if not isinstance(pr, dict):
         return None
     number = pr.get("number")
-    if isinstance(number, bool) or not isinstance(number, int):
+    if isinstance(number, bool):
         return None
-    return number
+    if isinstance(number, int):
+        return number
+    if isinstance(number, float) and number.is_integer():
+        return int(number)
+    if isinstance(number, str):
+        stripped = number.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return None
 
 
 def _pr_dedup_key(pr: dict):
