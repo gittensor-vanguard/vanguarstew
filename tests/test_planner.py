@@ -16,6 +16,7 @@ from agent.llm import LLM  # noqa: E402
 from agent.planner import (  # noqa: E402
     _AUTOMATION_STREAM_MIN,
     _CC_TYPE_TO_PLAN_KIND,
+    _CONFIG_SUBJECT_SHARE_MIN,
     _PLAN_KINDS,
     CONFIG_SURFACE_GUIDANCE,
     OBJECTIVE_ANCHOR_GUIDANCE,
@@ -27,10 +28,14 @@ from agent.planner import (  # noqa: E402
     _calibrate_release_prediction,
     _commit_plan_kind,
     _commits_since_last_release,
+    _config_subject_share,
+    _config_subject_share_signal,
     _config_surface_note,
+    _config_surface_signal,
     _days_since_last_release,
     _explicit_pr_number,
     _is_automation_subject,
+    _is_config_tooling_subject,
     _is_planned_release,
     _is_release_subject,
     _is_review_item,
@@ -1100,7 +1105,7 @@ def test_plan_next_actions_suppresses_release_just_after_a_cut():
     assert not any(_is_planned_release(item) for item in plan)
 
 
-# --- #1640: config-surface directive gated on real automation evidence ---------------------
+# --- #1640 / #2176: config-surface directive gated on automation or vocab evidence ---------
 
 def test_is_automation_subject_matches_only_tooling_markers():
     # Real automation markers.
@@ -1224,6 +1229,125 @@ def test_planner_prompt_includes_config_surface_only_with_automation():
     assert CONFIG_SURFACE_GUIDANCE in captured["user"]
     assert "`.github/workflows/`" in captured["user"]
     assert "`.pre-commit-config.yaml`" in captured["user"]
+
+
+def test_is_config_tooling_subject_matches_vocabulary_not_source_work():
+    assert _is_config_tooling_subject("ci: tune workflow") is True
+    assert _is_config_tooling_subject("Update tox.ini and requirements") is True
+    assert _is_config_tooling_subject("Pin urllib3 in requirements.txt") is True
+    assert _is_config_tooling_subject("Update changelog for 2.0") is True
+    assert _is_config_tooling_subject("travis: fix the build matrix") is True
+    assert _is_config_tooling_subject("Update pyproject.toml build config") is True
+    # Source-led subjects must not count (false positive = regression).
+    assert _is_config_tooling_subject("feat: add streaming export") is False
+    assert _is_config_tooling_subject("fix: loader race in decision tree") is False
+    assert _is_config_tooling_subject("chore: bump version from 1.2.0 to 1.3.0") is False
+    assert _is_config_tooling_subject(None) is False
+    assert _is_config_tooling_subject("") is False
+    assert _is_config_tooling_subject(42) is False
+
+
+def test_config_subject_share_signal_needs_enough_vocab_not_a_lone_mention():
+    assert _CONFIG_SUBJECT_SHARE_MIN == 0.35  # threshold locked; change needs new justification
+    # 3/10 = 0.30 — below threshold; automation markers absent too.
+    below = {
+        "recent_commits": [
+            {"subject": "ci: fix workflow"},
+            {"subject": "update tox config"},
+            {"subject": "pin requirements"},
+            *[{"subject": f"feat: item {i}"} for i in range(7)],
+        ]
+    }
+    assert _config_subject_share(below) == 0.3
+    assert _config_subject_share_signal(below) is False
+    assert _config_surface_signal(below) is False
+    # 4/10 = 0.40 — at/above threshold; still no automation markers.
+    above = {
+        "recent_commits": [
+            {"subject": "ci: fix workflow"},
+            {"subject": "update tox config"},
+            {"subject": "pin requirements"},
+            {"subject": "update changelog"},
+            *[{"subject": f"feat: item {i}"} for i in range(6)],
+        ]
+    }
+    assert _config_subject_share(above) == 0.4
+    assert _automation_surface_signal(above) is False
+    assert _config_subject_share_signal(above) is True
+    assert _config_surface_signal(above) is True
+
+
+def test_config_subject_share_signal_ignores_malformed_commits():
+    malformed = {
+        "recent_commits": [
+            "not-a-dict",
+            None,
+            {},
+            {"subject": None},
+            {"subject": "ci: fix workflow"},
+            {"subject": "update tox"},
+            {"subject": "pin deps in requirements"},
+            {"subject": "refresh changelog"},
+            {"subject": "feat: a"},
+            {"subject": "fix: b"},
+            {"subject": "docs: c"},
+        ]
+    }
+    # 4 vocab-bearing among 7 valid subjects ≈ 0.57.
+    assert _config_subject_share_signal(malformed) is True
+    assert _config_subject_share_signal({"recent_commits": "not-a-list"}) is False
+    assert _config_subject_share_signal(None) is False
+
+
+def test_config_surface_note_fires_on_vocab_share_without_automation():
+    ctx = {
+        "recent_commits": [
+            {"subject": "ci: fix workflow"},
+            {"subject": "update tox and requirements"},
+            {"subject": "pin urllib3"},
+            {"subject": "update changelog"},
+            {"subject": "feat: a"},
+            {"subject": "fix: b"},
+            {"subject": "refactor: c"},
+            {"subject": "docs: d"},
+            {"subject": "test: e"},
+            {"subject": "perf: f"},
+        ]
+    }
+    assert _automation_surface_signal(ctx) is False
+    note = _config_surface_note(ctx)
+    assert CONFIG_SURFACE_GUIDANCE in note
+
+
+def test_planner_prompt_includes_config_surface_with_vocab_share_not_automation():
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Fix loader", "kind": "bugfix"}]
+
+    plan_next_actions(
+        {
+            "open_prs": [],
+            "recent_commits": [
+                {"subject": "ci: fix workflow"},
+                {"subject": "update tox and requirements"},
+                {"subject": "pin urllib3"},
+                {"subject": "update changelog"},
+                {"subject": "feat: a"},
+                {"subject": "fix: b"},
+                {"subject": "refactor: c"},
+                {"subject": "docs: d"},
+                {"subject": "test: e"},
+                {"subject": "perf: f"},
+            ],
+        },
+        {},
+        2,
+        CapturingLLM(api_key="offline"),
+    )
+    assert CONFIG_SURFACE_GUIDANCE in captured["user"]
 
 
 def test_every_plan_kind_names_a_kind_the_objective_anchor_scores():

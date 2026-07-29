@@ -190,6 +190,25 @@ _AUTOMATION_SCOPE_RE = re.compile(r"^[a-z]+\((?:deps|deps-dev)\)!?:")
 # not coming (a wrong module costs as much as a missed one).
 _AUTOMATION_STREAM_MIN = 2
 
+# Independent second trigger (#2176): share of recent subjects carrying config/tooling
+# vocabulary. Pre-2021 freeze windows name the surface in human subjects (travis, tox,
+# requirements, workflow, …) without post-2021 automation markers; at 0.35 on the current
+# curated set this fires 3/18 tasks (all config-dominated revealed windows) with 0 FP.
+_CONFIG_SUBJECT_SHARE_MIN = 0.35
+
+# Word-boundary match on config/tooling vocabulary in commit subjects. Complements
+# ``_is_automation_subject`` (tooling-emitted markers) for pre-2021 history where maintainers
+# name the surface directly. Case-insensitive; incidental substrings ("decision" ⊃ "ci") do not
+# qualify.
+_CONFIG_TOOLING_VOCAB_RE = re.compile(
+    r"\b(?:"
+    r"ci|tox|requirements|pin|workflow|changelog|"
+    r"travis|appveyor|setuptools|makefile|docker|manifest|"
+    r"config|pre[- ]commit|github|actions|dependenc(?:y|ies)|pyproject"
+    r")\b",
+    re.I,
+)
+
 REPO_LAYOUT_GUIDANCE = (
     "Ground each non-triage item's `files` in that listing — name the entries the item actually "
     "touches (a path under a listed directory is fine), rather than a conventional source "
@@ -592,13 +611,58 @@ def _automation_surface_signal(context: dict) -> bool:
     return False
 
 
-def _config_surface_note(context: dict) -> str:
-    """Inject config-surface guidance only when automation churn is evidenced (#1640).
+def _is_config_tooling_subject(subject) -> bool:
+    """True when a commit subject carries config/tooling vocabulary (#2176).
 
-    A source-driven repo (no automation markers) must see a byte-identical prompt, so this
-    returns the empty string there and never shifts that plan.
+    Independent of ``_is_automation_subject``: human-authored subjects on pre-2021 freeze
+    windows name the tooling surface (travis, tox, requirements, workflow, …) without the
+    post-2021 automation markers. Matched case-insensitively with word boundaries so
+    incidental substrings do not count.
     """
-    if not _automation_surface_signal(context):
+    if not isinstance(subject, str):
+        return False
+    s = subject.strip()
+    if not s:
+        return False
+    return _CONFIG_TOOLING_VOCAB_RE.search(s) is not None
+
+
+def _config_subject_share(context: dict) -> float:
+    """Share of recent subjects (0.0–1.0) that carry config/tooling vocabulary (#2176)."""
+    total = 0
+    matching = 0
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        subject = commit.get("subject")
+        if not isinstance(subject, str) or not subject.strip():
+            continue
+        total += 1
+        if _is_config_tooling_subject(subject):
+            matching += 1
+    if total == 0:
+        return 0.0
+    return matching / total
+
+
+def _config_subject_share_signal(context: dict) -> bool:
+    """True when enough recent subjects carry config/tooling vocabulary (#2176)."""
+    return _config_subject_share(context) >= _CONFIG_SUBJECT_SHARE_MIN
+
+
+def _config_surface_signal(context: dict) -> bool:
+    """True when config-surface guidance should fire — automation stream or vocab share."""
+    return _automation_surface_signal(context) or _config_subject_share_signal(context)
+
+
+def _config_surface_note(context: dict) -> str:
+    """Inject config-surface guidance when automation churn or tooling vocabulary is evidenced.
+
+    A source-driven repo (no automation markers and low config/tooling vocabulary share) must
+    see a byte-identical prompt, so this returns the empty string there and never shifts
+    that plan.
+    """
+    if not _config_surface_signal(context):
         return ""
     return f"\n{CONFIG_SURFACE_GUIDANCE}\n"
 
