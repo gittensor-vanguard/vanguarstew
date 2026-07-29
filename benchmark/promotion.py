@@ -40,6 +40,7 @@ import math
 
 from benchmark.acceptance import _partition_error
 from benchmark.judge_gate import _disagreement_rate
+from benchmark.trend import aggregate_composite_unscored
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +188,7 @@ def _scored_composite(result: dict):
     composite = result.get("composite_mean")
     if not _is_number(composite):
         return None
-    scored = result.get("scored_repos")
-    if _is_number(scored) and not scored:
+    if aggregate_composite_unscored(result):
         return None
     return composite
 

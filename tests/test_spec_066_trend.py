@@ -23,6 +23,7 @@ from benchmark.trend import (  # noqa: E402
     _trend_point,
     _trend_regressions,
     _trend_series,
+    aggregate_composite_unscored,
     headline_score,
     trend,
     trend_headline,
@@ -91,6 +92,16 @@ def test_genuine_zero_composite_is_kept():
     # 0.0 with no zero scored_repos is a real score, not "unscored".
     assert headline_score({"composite_mean": 0.0}) == 0.0
     assert headline_score({"composite_mean": 0.0, "scored_repos": 3}) == 0.0
+    assert headline_score({"composite_mean": 0.0, "tasks": 3}) == 0.0
+
+
+def test_zero_task_single_repo_placeholder_is_unscored():
+    assert headline_score({"tasks": 0, "composite_mean": 0.0}) is None
+
+
+def test_aggregate_composite_unscored_non_dict_is_false():
+    for artifact in (None, [], "x", 5):
+        assert aggregate_composite_unscored(artifact) is False
 
 
 # --- Trend summary --------------------------------------------------------------------------

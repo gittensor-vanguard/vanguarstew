@@ -169,6 +169,10 @@ def test_single_repo_zero_kept():
     assert _scored_composite({"composite_mean": 0.0}) == 0.0     # no scored_repos key
 
 
+def test_zero_task_single_repo_placeholder_is_none():
+    assert _scored_composite({"composite_mean": 0.0, "tasks": 0}) is None
+
+
 def test_bool_scored_repos_not_placeholder():
     assert _scored_composite({"composite_mean": 0.7, "scored_repos": False}) == 0.7
 

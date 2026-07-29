@@ -79,6 +79,15 @@ def test_headline_score_treats_unscored_multi_repo_as_unscored():
     assert out["regressions"] == []
 
 
+def test_headline_score_treats_zero_task_single_repo_as_unscored():
+    # A single-repo run that generated no tasks reports tasks: 0 with a placeholder composite_mean
+    # of 0.0 — nothing scored, not a real zero. It must read as None.
+    assert headline_score({"tasks": 0, "composite_mean": 0.0}) is None
+    assert headline_score({"tasks": 0.0, "composite_mean": 0.0}) is None
+    # A genuinely scored single-repo run whose composite is really 0.0 is unaffected.
+    assert headline_score({"tasks": 3, "composite_mean": 0.0}) == 0.0
+
+
 def test_is_number_rejects_non_finite_and_non_numeric():
     # Real numbers pass; NaN/Inf (which survive a JSON round trip) and non-numerics do not.
     assert _is_number(0.6) and _is_number(0) and _is_number(-1.5)

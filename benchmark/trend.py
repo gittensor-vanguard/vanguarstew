@@ -40,24 +40,47 @@ def _is_number(value) -> bool:
         return False
 
 
+def aggregate_composite_unscored(artifact) -> bool:
+    """True when ``composite_mean`` is a placeholder rather than a real score.
+
+    Two disjoint signals govern the two artifact shapes:
+
+    * an aggregate / partition carries ``scored_repos`` — when it is a real number and zero,
+      nothing was scored and the reported ``composite_mean`` is ``_mean([])`` == ``0.0``;
+    * a single-repo or per-repo row (no ``scored_repos`` key) carries ``tasks`` — when present
+      and not a positive count, the row's ``composite_mean`` is likewise a placeholder.
+
+    When ``scored_repos`` is a real number it decides outright, so a genuinely scored aggregate
+    (``scored_repos > 0``) is never masked by a stray ``tasks`` field. A non-dict input is not
+    unscored (callers that accept arbitrary artifacts should type-check first).
+    """
+    if not isinstance(artifact, dict):
+        return False
+    scored = artifact.get("scored_repos")
+    if _is_number(scored):
+        return not scored
+    if "tasks" not in artifact:
+        return False
+    tasks = artifact.get("tasks")
+    return not _is_number(tasks) or tasks <= 0
+
+
 def headline_score(artifact) -> float | None:
     """The single comparable score for an artifact, or ``None`` when unavailable.
 
     Single-repo and multi-repo artifacts expose a top-level ``composite_mean``. A
     ``--generalization`` artifact nests scores under ``tuned`` / ``held_out``; its headline is
     the **tuned** ``composite_mean`` (the primary figure, mirrored by ``held_out`` and the gap).
-    An aggregate run that scored no repos (``scored_repos: 0``) carries a placeholder 0.0 and is
-    treated as unscored. Anything without a numeric score yields ``None``.
+    An aggregate run that scored no repos (``scored_repos: 0``) or a single-repo run that generated
+    no tasks (``tasks: 0``) carries a placeholder 0.0 and is treated as unscored. Anything without
+    a numeric score yields ``None``.
     """
     if not isinstance(artifact, dict):
         return None
     # A --generalization artifact scores under its tuned partition; anything else at the top level.
     tuned, held_out = artifact.get("tuned"), artifact.get("held_out")
     source = tuned if isinstance(tuned, dict) and isinstance(held_out, dict) else artifact
-    # An aggregate that scored no repos reports a placeholder composite_mean of 0.0, not a real
-    # score. A single-repo artifact has no scored_repos key and keeps its score.
-    scored = source.get("scored_repos")
-    if _is_number(scored) and not scored:
+    if aggregate_composite_unscored(source):
         return None
     score = source.get("composite_mean")
     return round(float(score), 3) if _is_number(score) else None

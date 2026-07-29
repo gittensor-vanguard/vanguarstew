@@ -219,6 +219,12 @@ def test_check_score_floor_single_repo_zero_below_floor_unchanged():
     assert msg is not None and "FAIL" in msg
 
 
+def test_check_score_floor_skips_zero_task_single_repo_placeholder():
+    # A single-repo run that scored nothing reports tasks: 0 with a placeholder 0.0. It has no real
+    # score to gate, so the floor is skipped (None), not reported as "below threshold".
+    assert check_score_floor({"tasks": 0, "composite_mean": 0.0, "error": "no usable tasks"}, 0.5) is None
+
+
 # --- #573: non-list weight_sweep must not abort stderr reporting --------------------
 
 _MALFORMED_WEIGHT_SWEEP = [42, 3.14, True, {"w_judge": 0.6}, "not a list"]
