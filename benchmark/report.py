@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import math
 
+from benchmark.comparability import artifact_kind
+
 logger = logging.getLogger(__name__)
 
 # Tuned minus held-out above this threshold triggers an "inspect" verdict on generalization runs.
@@ -47,24 +49,6 @@ def _repo_key(entry: dict) -> str:
     if isinstance(freeze, str) and freeze:
         return freeze[:10]
     return "unknown"
-
-
-def _looks_like_partition(part: dict) -> bool:
-    return bool(part) and any(k in part for k in ("scored_repos", "composite_mean", "error"))
-
-
-def _is_generalization(artifact: dict) -> bool:
-    if "composite_mean" in artifact:
-        return False
-    if "generalization_gap" not in artifact:
-        return False
-    if not isinstance(artifact.get("repo_set"), str):
-        return False
-    tuned = artifact.get("tuned")
-    held_out = artifact.get("held_out")
-    if not isinstance(tuned, dict) or not isinstance(held_out, dict):
-        return False
-    return _looks_like_partition(tuned) and _looks_like_partition(held_out)
 
 
 def _composite_parts_dict(artifact: dict) -> dict:
@@ -320,7 +304,7 @@ def render_report(artifact, *, gap_inspect_threshold: float = DEFAULT_GAP_INSPEC
     """
     if not isinstance(artifact, dict):
         return _render_unknown(artifact)
-    if _is_generalization(artifact):
+    if artifact_kind(artifact) == "generalization":
         return _render_generalization(artifact, gap_inspect_threshold=gap_inspect_threshold)
     if artifact.get("error") and "composite_mean" not in artifact:
         return _render_error(artifact)

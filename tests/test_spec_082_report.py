@@ -108,6 +108,16 @@ def test_multi_repo_with_stray_error_still_renders_multi_repo():
 # ---- AC-3: generalization verdict -------------------------------------------------------------
 
 
+def test_generalization_without_repo_set_renders_generalization():
+    art = _generalization()
+    art.pop("repo_set", None)
+    md = render_report(art)
+    assert md.startswith("# Benchmark report (generalization)")
+    assert "Repo set:" not in md
+    assert "Generalization gap (tuned − held-out): 0.050" in md
+    assert "Verdict: pass" in md
+
+
 def test_generalization_verdict_pass_and_inspect():
     passing = render_report(_generalization())
     assert "Verdict: pass" in passing

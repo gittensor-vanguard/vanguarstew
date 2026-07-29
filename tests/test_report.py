@@ -228,6 +228,15 @@ def test_render_multi_repo_includes_per_repo_table():
     assert "Repos: 2/2 scored" in md
 
 
+def test_render_generalization_without_repo_set():
+    art = _generalization()
+    art.pop("repo_set", None)
+    md = render_report(art)
+    assert "# Benchmark report (generalization)" in md
+    assert "Repo set:" not in md
+    assert "Generalization gap (tuned − held-out): 0.050" in md
+
+
 def test_render_generalization_includes_gap_and_partitions():
     md = render_report(_generalization())
     assert "# Benchmark report (generalization)" in md
