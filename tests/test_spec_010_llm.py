@@ -104,6 +104,27 @@ def test_chat_json_returns_parsed_json_when_output_is_valid(monkeypatch):
     assert llm.chat_json("system", "user", stub={"action": "plan"}) == {"action": "merge"}
 
 
+def test_chat_json_list_stub_prefers_plan_array_over_echoed_object(monkeypatch):
+    """Planner passes a list stub; that must prefer the plan array over an example object (#1945)."""
+    reply = (
+        'Example item: {"title": "Fix the loader race", "kind": "bugfix"}\n'
+        'Plan:\n'
+        '[{"title": "Fix quick-router crash", "kind": "bugfix"},'
+        '{"title": "Cut v1.4.0", "kind": "release"}]'
+    )
+    llm = _live_llm(monkeypatch, reply)
+    stub = [{"title": "offline", "kind": "triage"}]
+    plan = llm.chat_json("system", "user", stub=stub)
+    assert isinstance(plan, list)
+    assert len(plan) == 2
+    assert plan[0]["title"] == "Fix quick-router crash"
+    # Dict-stub callers keep object preference (decide/philosophy/review).
+    assert llm.chat_json("system", "user", stub={"action": "plan"}) == {
+        "title": "Fix the loader race",
+        "kind": "bugfix",
+    }
+
+
 def test_chat_json_still_propagates_a_transport_error(monkeypatch):
     # Only a parse failure falls back to the stub; a transport/connection error must still raise.
     monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
@@ -215,6 +236,26 @@ def test_pick_best_json_prefers_dict_over_list():
     assert best == {"a": 1}
 
 
+def test_pick_best_json_prefer_list_ranks_array_above_dict():
+    """List-contract callers must not lose a plan array to an earlier object aside (#1945)."""
+    plan = [
+        {"title": "Fix quick-router crash on empty config", "kind": "bugfix"},
+        {"title": "Cut v1.4.0", "kind": "release"},
+        {"title": "Refactor plugin loader", "kind": "refactor"},
+    ]
+    example = {"title": "Fix the loader race", "kind": "bugfix"}
+    assert _pick_best_json([example, plan], prefer_list=True) == plan
+    # Default object preference still discards the plan (the bug without prefer_list).
+    assert _pick_best_json([example, plan]) == example
+
+
+def test_pick_best_json_prefer_list_falls_back_to_object_when_no_array():
+    """Planner still needs {"plan": [...]} wrappers when no bare array span exists."""
+    wrapper = {"plan": [{"title": "Ship it", "kind": "release"}]}
+    aside = {"title": "example item", "kind": "bugfix"}
+    assert _pick_best_json([aside, wrapper], prefer_list=True) == wrapper
+
+
 def test_pick_best_json_prefers_longest_serialized_form():
     best = _pick_best_json([{"a": 1}, {"a": 1, "b": 2, "c": 3}])
     assert best == {"a": 1, "b": 2, "c": 3}
@@ -228,6 +269,28 @@ def test_pick_best_json_equal_rank_prefers_last_candidate():
 def test_extract_json_prefers_object_over_leading_citation_array():
     text = '[1] the agent decided: {"decision": "approve", "confidence": 0.9}'
     assert extract_json(text) == {"decision": "approve", "confidence": 0.9}
+
+
+def test_extract_json_prefer_list_keeps_plan_array_over_echoed_example_object():
+    """Regression for #1945: echoed plan-item shape must not discard the full plan list."""
+    reply = (
+        "Here is an example item shape:\n"
+        '{"title": "Fix the loader race", "kind": "bugfix"}\n\n'
+        "And the full plan:\n"
+        "[\n"
+        '  {"title": "Fix quick-router crash on empty config", "kind": "bugfix",'
+        ' "files": ["router.py"]},\n'
+        '  {"title": "Cut v1.4.0", "kind": "release", "files": []},\n'
+        '  {"title": "Refactor plugin loader", "kind": "refactor",'
+        ' "files": ["loader.py"]}\n'
+        "]"
+    )
+    plan = extract_json(reply, prefer_list=True)
+    assert isinstance(plan, list)
+    assert len(plan) == 3
+    assert plan[0]["title"] == "Fix quick-router crash on empty config"
+    # Object-contract default still picks the echoed example (unchanged for decide/etc.).
+    assert extract_json(reply) == {"title": "Fix the loader race", "kind": "bugfix"}
 
 
 def test_extract_json_multiple_arrays_prefers_longest():

@@ -63,7 +63,7 @@ class LLM:
                 f"unexpected chat-completion response envelope: {str(body)[:200]!r}"
             ) from exc
 
-    def chat_json(self, system: str, user: str, stub=None):
+    def chat_json(self, system: str, user: str, stub=None, *, prefer_list=None):
         """Completion parsed as JSON, with `stub` as the fallback.
 
         Returns `stub` verbatim in offline mode. For a live call, returns the parsed JSON —
@@ -72,11 +72,17 @@ class LLM:
         model output does not crash the agent (M4: no agent crashes from malformed LLM
         output). Callers already treat the stub shape as "the model gave us nothing usable".
         Transport errors from `chat` (`URLError`/`HTTPError`/`OSError`) still propagate.
+
+        When ``prefer_list`` is omitted, list preference is inferred from ``stub``: a list
+        stub (planner) prefers array spans over object asides; a dict stub keeps the
+        default object-over-array ranking used by decide/philosophy/review.
         """
         if self.offline:
             return stub if stub is not None else {}
+        if prefer_list is None:
+            prefer_list = isinstance(stub, list)
         try:
-            return extract_json(self.chat(system, user))
+            return extract_json(self.chat(system, user), prefer_list=prefer_list)
         except (ValueError, TypeError):
             return stub if stub is not None else {}
 
@@ -127,34 +133,45 @@ def _iter_top_level_spans(text: str):
         i = end + 1
 
 
-def _pick_best_json(candidates):
-    """Prefer object payloads over arrays, then the longest serialization.
+def _pick_best_json(candidates, *, prefer_list: bool = False):
+    """Prefer the caller's expected container type, then the longest serialization.
 
-    When two candidates have equal rank (same type, same serialized length),
-    the *last* one wins — in an LLM response a schema example or chain-of-thought
-    aside typically appears before the real answer, so the later candidate is the
-    more reliable signal.  ``max`` returns the first equal-rank element, so we
-    reverse the list to pick the last.
+    Default (``prefer_list=False``) ranks objects above arrays so a bracket-shaped
+    aside (e.g. a ``[1]`` citation) cannot beat a dict answer. List-contract callers
+    (planner) pass ``prefer_list=True`` so an echoed example object cannot discard
+    the full plan array.
+
+    When two candidates have equal rank (same preferred-type bit, same serialized
+    length), the *last* one wins — in an LLM response a schema example or
+    chain-of-thought aside typically appears before the real answer, so the later
+    candidate is the more reliable signal.  ``max`` returns the first equal-rank
+    element, so we reverse the list to pick the last.
     """
     if not candidates:
         return None
 
     def _rank(value):
         serialized = json.dumps(value, separators=(",", ":"))
-        return (isinstance(value, dict), len(serialized))
+        type_pref = (
+            isinstance(value, list) if prefer_list else isinstance(value, dict)
+        )
+        return (type_pref, len(serialized))
 
     return max(reversed(candidates), key=_rank)
 
 
-def extract_json(text: str):
+def extract_json(text: str, *, prefer_list: bool = False):
     """Best-effort JSON extraction from an LLM response.
 
     Tries, in order: a fenced code block, the raw response verbatim, then
     balanced top-level `{...}`/`[...]` spans scanned across the text. Among
-    those spans, object spans are preferred over array spans and, within a
-    type, the longest span wins — this keeps a stray bracket-shaped aside
-    (e.g. a `[1]` citation ahead of the real payload) from being mistaken
-    for the answer while still supporting genuine array responses.
+    those spans, the preferred container type wins (objects by default; arrays
+    when ``prefer_list=True``) and, within a type, the longest span wins — this
+    keeps a stray bracket-shaped aside (e.g. a ``[1]`` citation ahead of a dict
+    payload) from being mistaken for the answer, while list-contract callers can
+    still recover a genuine plan array when an earlier object aside co-occurs.
+    When ``prefer_list=True`` and no array span exists, the best object is still
+    returned (e.g. a ``{"plan": [...]}`` wrapper the planner already unwraps).
     """
     if text is None:
         raise ValueError("empty LLM response")
@@ -165,7 +182,7 @@ def extract_json(text: str):
             fence_candidates.append(json.loads(fence_match.group(1)))
         except (ValueError, TypeError):
             continue
-    best_fence = _pick_best_json(fence_candidates)
+    best_fence = _pick_best_json(fence_candidates, prefer_list=prefer_list)
     if best_fence is not None:
         return best_fence
 
@@ -183,6 +200,6 @@ def extract_json(text: str):
         spans.append((opener, span, value))
 
     if spans:
-        return _pick_best_json([s[2] for s in spans])
+        return _pick_best_json([s[2] for s in spans], prefer_list=prefer_list)
 
     raise ValueError(f"could not parse JSON from response: {text[:200]!r}")
