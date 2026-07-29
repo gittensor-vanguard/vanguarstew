@@ -926,6 +926,7 @@ def test_is_release_subject_mirrors_the_anchor():
         assert _is_release_subject(good) is True, good
     # NOT cuts — a version under a non-tooling prefix, an incidental version, a revert, plain work:
     for bad in ("fix: 2.0.0", "ci: 3.0.0", "docs: 1.4.0", "revert: release 1.2.0",
+                'Revert "Release v1.2.0"', "Revert v2.0",
                 "bump lodash to v4.17.21", "fix crash in v1.2.0 parser", "Fix the loader",
                 "test: tighten release assertions", None, 42, "", "   "):
         assert _is_release_subject(bad) is False, bad
@@ -934,11 +935,18 @@ def test_is_release_subject_mirrors_the_anchor():
 def test_is_planned_release_detects_kind_and_title():
     assert _is_planned_release({"title": "Cut the next version", "kind": "release"}) is True
     # kind not release, but a release-tooling version-cut title still counts (matches the anchor)
-    assert _is_planned_release({"title": "chore(release): 2.0.0", "kind": "triage"}) is True
+    assert _is_planned_release({"title": "chore(release): 2.0.0", "kind": "feature"}) is True
     # #1561 follow-up: the openclaw task2 gap — a plainly release-titled item under a NON-release
     # kind. The kind-only check missed it; the anchor scored it as a release. Now gated.
     assert _is_planned_release({"title": "Ship the v1.0 release", "kind": "feature"}) is True
     assert _is_planned_release({"title": "Release 2.1.0", "kind": "ci"}) is True
+    # #2115: triage/revert are maintainer actions, not release predictions — even when the title
+    # mentions "release" (queue review of an open release PR; revert of a cut).
+    assert _is_planned_release(
+        {"title": "Review pull request #2: Release v2.0.0", "kind": "triage"}) is False
+    assert _is_planned_release(
+        {"title": 'Revert "Release v1.2.0"', "kind": "revert"}) is False
+    assert _is_planned_release({"title": "chore(release): 2.0.0", "kind": "triage"}) is False
     # ordinary work is not a release prediction
     assert _is_planned_release({"title": "Fix the loader", "kind": "bugfix"}) is False
     assert _is_planned_release({"title": "bump lodash to v4.17.21", "kind": "dep"}) is False
@@ -947,6 +955,22 @@ def test_is_planned_release_detects_kind_and_title():
     assert _is_planned_release(None) is False
     assert _is_planned_release({"kind": "release"}) is True
     assert _is_planned_release({"title": None, "kind": "bugfix"}) is False
+
+
+def test_calibrate_release_keeps_triage_and_revert_with_release_in_title():
+    # #2115: under neutral/no-cadence, real release predictions drop, but a queue review of an
+    # open release PR and a revert of a cut must survive so reconcile can still attach them.
+    triage = {"title": "Review pull request #2: Release v2.0.0", "kind": "triage"}
+    revert = {"title": 'Revert "Release v1.2.0"', "kind": "revert"}
+    plan = [
+        triage,
+        {"title": "Fix loader", "kind": "bugfix"},
+        {"title": "Ship the v1.0 release", "kind": "feature"},
+        revert,
+    ]
+    ctx = {"recent_commits": [{"subject": "fix: a"}, {"subject": "feat: b"}]}
+    out = _calibrate_release_prediction(plan, ctx)
+    assert out == [triage, {"title": "Fix loader", "kind": "bugfix"}, revert]
 
 
 def test_calibrate_release_drops_title_based_release_without_cadence():
