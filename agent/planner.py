@@ -124,8 +124,11 @@ PLAN_ITEM_SCHEMA = (
 )
 
 OBJECTIVE_ANCHOR_GUIDANCE = (
-    "Concrete specificity matters: for each non-triage item, include `files` naming the "
-    "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
+    "Concrete specificity matters: give each non-triage item 1-2 `files` entries naming the "
+    "top-level modules or paths its work lands in (e.g. `src/loader.py`, `docs/`, `tests/`). "
+    "Across the whole plan, the items' `files` should collectively cover the distinct "
+    "surfaces where near-term work is expected — the main package, tests, the config/CI "
+    "surface, docs — not repeat one surface five times. "
     "Pick `kind` to match the maintainer commit type the action would produce "
     "(bugfix/fix, feature/feat, docs, release, refactor, dep, build, ci, test, perf, style, "
     "revert). When several kinds recur in recent history, plan separate items so each kind is "
@@ -301,8 +304,8 @@ def _recent_kinds_note(context: dict) -> str:
     return (
         f"\nRecent maintainer activity by kind, from Conventional-Commit subjects: {mix}.\n"
         "Near-future maintainer work usually continues this mix. Unless the philosophy or "
-        'the PR queue argues otherwise, make the plan items\' "kind" values collectively '
-        "cover the recurring kinds above, and keep `files` on every non-triage item.\n"
+        "the PR queue argues otherwise, include one item per kind that appears at least "
+        "twice above, and give every non-triage item 1-2 `files`.\n"
     )
 
 
