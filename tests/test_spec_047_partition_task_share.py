@@ -170,9 +170,21 @@ def test_generalization_partitions():
         "held_out": _multi(0),
         "generalization_gap": None,
     })
-    assert zero["total_tasks"] == 0
+    assert zero["total_tasks"] is None
     assert zero["partitions"]["tuned"]["share"] is None
     assert zero["partitions"]["held_out"]["share"] is None
+
+
+def test_generalization_failed_partition_withholds_combined_share():
+    art = {
+        "tuned": _multi(3),
+        "held_out": {"error": "failed", "per_repo": []},
+        "generalization_gap": None,
+    }
+    out = summarize_partition_task_share(art)
+    assert out["total_tasks"] is None
+    assert out["partitions"]["tuned"] == {"tasks": 3, "share": None}
+    assert out["partitions"]["held_out"] == {"tasks": 0, "share": None}
 
 
 def test_invalid_kind():

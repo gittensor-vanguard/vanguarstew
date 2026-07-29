@@ -9,8 +9,8 @@
   [`benchmark/repo_task_mean.py`](../../benchmark/repo_task_mean.py) (average tasks per repo),
   [`benchmark/scored_fraction.py`](../../benchmark/scored_fraction.py) (scored-repo coverage)
 
-This spec makes the **existing, implicit** partition-task-share contract explicit. It describes
-the as-built behavior of `benchmark/partition_task_share.py`; it introduces **no behavior change**.
+This spec makes the partition-task-share contract explicit. It describes
+the behavior of `benchmark/partition_task_share.py`.
 
 ## Why
 
@@ -71,9 +71,14 @@ Every summary SHALL include: `kind`, `total_tasks`, `partitions`.
 2. **`multi`** — `total_tasks` SHALL be `_scored_tasks(per_repo)`; WHEN `total_tasks > 0` THEN
    `partitions` SHALL be `{"multi": _partition_entry(total_tasks, total_tasks)}`; OTHERWISE
    `partitions` SHALL be `None`.
-3. **`generalization`** — SHALL score `tuned.per_repo` and `held_out.per_repo` separately;
-   `total_tasks` SHALL be their sum; `partitions` SHALL include both partition entries computed
-   against the combined total.
+3. **`generalization`** — SHALL score `tuned.per_repo` and `held_out.per_repo` separately and
+   report each partition's raw `tasks` count. A partition is **coherent** when
+   `benchmark.acceptance._partition_error` is `None` for that partition and its scored-task count
+   is strictly positive. WHEN both partitions are coherent THEN `total_tasks` SHALL be their sum and
+   each partition's `share` SHALL be computed against that combined total; OTHERWISE `total_tasks`
+   and every partition `share` SHALL be `None` (raw per-partition `tasks` counts are still
+   reported). This gate mirrors `scored_fraction`, `decisive_rate`, and `order_share` so a failed or
+   empty partition cannot present the survivor's sampling as a measured split (#2154).
 4. **`invalid`** — `total_tasks` SHALL be `0`, `partitions` SHALL be `None`.
 
 ### Partition task share headline

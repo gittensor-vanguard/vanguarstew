@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import math
 
+from benchmark.acceptance import _partition_error
 from benchmark.comparability import artifact_kind
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,19 @@ def _partition_entry(tasks: int, total: int) -> dict:
     }
 
 
+def _partition_tasks_slice(part, field: str) -> dict:
+    """Scored-task count for one generalization partition, plus a coherence flag.
+
+    A partition is coherent only when it completed without error and contributed at least one
+    positively-scored task — mirroring the sibling gate in ``scored_fraction``, ``decisive_rate``,
+    and ``order_share`` so a failed or empty partition cannot define the combined share.
+    """
+    part = _dict(part)
+    tasks = _scored_tasks(part.get("per_repo"), field)
+    coherent = _partition_error(part) is None and tasks > 0
+    return {"tasks": tasks, "coherent": coherent}
+
+
 def summarize_partition_task_share(artifact) -> dict:
     """Return scored-task distribution for a replay ``artifact``."""
     artifact = _dict(artifact)
@@ -103,17 +117,24 @@ def summarize_partition_task_share(artifact) -> dict:
             } if scored > 0 else None,
         }
     if kind == "generalization":
-        partitions = {}
-        totals = {}
-        for name in ("tuned", "held_out"):
-            part = _dict(artifact.get(name))
-            totals[name] = _scored_tasks(part.get("per_repo"), f"{name}.per_repo")
-        total = sum(totals.values())
-        for name, tasks in totals.items():
-            partitions[name] = _partition_entry(tasks, total)
+        slices = {
+            name: _partition_tasks_slice(artifact.get(name), f"{name}.per_repo")
+            for name in ("tuned", "held_out")
+        }
+        if all(s["coherent"] for s in slices.values()):
+            total = sum(s["tasks"] for s in slices.values())
+            partitions = {
+                name: _partition_entry(slices[name]["tasks"], total) for name in slices
+            }
+            total_tasks = total
+        else:
+            total_tasks = None
+            partitions = {
+                name: {"tasks": slices[name]["tasks"], "share": None} for name in slices
+            }
         return {
             "kind": kind,
-            "total_tasks": total,
+            "total_tasks": total_tasks,
             "partitions": partitions,
         }
     return {

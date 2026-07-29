@@ -78,9 +78,11 @@ def test_generalization_missing_held_out_partition():
         "generalization_gap": None,
     }
     out = summarize_partition_task_share(art)
-    assert out["total_tasks"] == 6
+    assert out["total_tasks"] is None
+    assert out["partitions"]["tuned"]["tasks"] == 6
+    assert out["partitions"]["tuned"]["share"] is None
     assert out["partitions"]["held_out"]["tasks"] == 0
-    assert out["partitions"]["held_out"]["share"] == 0.0
+    assert out["partitions"]["held_out"]["share"] is None
 
 
 def test_generalization_missing_tuned_per_repo():
@@ -90,18 +92,33 @@ def test_generalization_missing_tuned_per_repo():
         "generalization_gap": None,
     }
     out = summarize_partition_task_share(art)
+    assert out["total_tasks"] is None
     assert out["partitions"]["tuned"]["tasks"] == 0
+    assert out["partitions"]["tuned"]["share"] is None
     assert out["partitions"]["held_out"]["tasks"] == 6
+    assert out["partitions"]["held_out"]["share"] is None
 
 
-def test_generalization_zero_total_yields_zero_shares():
+def test_generalization_failed_partition_withholds_combined_share():
+    art = {
+        "tuned": _multi(3),
+        "held_out": {"error": "failed", "per_repo": []},
+        "generalization_gap": None,
+    }
+    out = summarize_partition_task_share(art)
+    assert out["total_tasks"] is None
+    assert out["partitions"]["tuned"] == {"tasks": 3, "share": None}
+    assert out["partitions"]["held_out"] == {"tasks": 0, "share": None}
+
+
+def test_generalization_zero_total_yields_none_combined():
     art = {
         "tuned": _multi(0, 0),
         "held_out": _multi(0),
         "generalization_gap": None,
     }
     out = summarize_partition_task_share(art)
-    assert out["total_tasks"] == 0
+    assert out["total_tasks"] is None
     assert out["partitions"]["tuned"]["share"] is None
     assert out["partitions"]["held_out"]["share"] is None
 
