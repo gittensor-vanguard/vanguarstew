@@ -10,10 +10,12 @@ from __future__ import annotations
 import logging
 import math
 
+from benchmark.generalization_policy import PROMOTION_MAX_GAP
+
 logger = logging.getLogger(__name__)
 
-# Tuned minus held-out above this threshold triggers an "inspect" verdict on generalization runs.
-DEFAULT_GAP_INSPECT_THRESHOLD = 0.10
+# Tuned minus held-out above the promotion gap triggers an "inspect" verdict on generalization runs.
+DEFAULT_GAP_INSPECT_THRESHOLD = PROMOTION_MAX_GAP
 
 
 def _is_number(value) -> bool:

@@ -36,7 +36,9 @@ top-level `generalization_gap` cannot pass acceptance while integrity fails.
 
 ## Constants
 
-- `DEFAULT_MAX_GAP` SHALL be `0.15`, `DEFAULT_MIN_SCORED_REPOS` SHALL be `1`.
+- ``PROMOTION_MAX_GAP`` SHALL be ``0.1`` (the tuned-minus-held-out gap bound shared by acceptance,
+  the promotion gate, and report verdicts). ``DEFAULT_MIN_HELD_OUT_REPOS`` SHALL be ``3``.
+  ``DEFAULT_MIN_SCORED_REPOS`` SHALL be ``1`` (tuned-partition minimum for acceptance).
 - `_CHECK_ROW_KEYS` SHALL be `("name", "passed")`.
 
 ## Acceptance criteria (EARS)
@@ -82,8 +84,8 @@ top-level `generalization_gap` cannot pass acceptance while integrity fails.
 - `report` SHALL be coerced with `_dict`; `tuned`/`held_out` SHALL be `_dict` of the corresponding
   keys; `gap` SHALL be `_recomputed_gap(tuned, held_out)`.
 - The result SHALL always carry `passed`, `checks`, `generalization_gap`, `max_gap`,
-  `min_scored_repos`; `generalization_gap` SHALL be `gap` when `_is_number(gap)` else `None`;
-  `passed` SHALL be `all(c["passed"] for c in checks)`.
+  `min_scored_repos`, `min_held_out_repos`; `generalization_gap` SHALL be `gap` when `_is_number(gap)`
+  else `None`; `passed` SHALL be `all(c["passed"] for c in checks)`.
 - Five checks SHALL be added in order: `is_generalization`, `no_partition_error`,
   `both_partitions_scored`, `gap_computed`, `gap_within_bound` — **every** check reported even after
   an earlier failure.
@@ -92,8 +94,10 @@ top-level `generalization_gap` cannot pass acceptance while integrity fails.
 - `no_partition_error` SHALL pass when neither partition's `_partition_error` is set; detail SHALL be
   `"both partitions completed without error"`, else
   `"partition error(s): tuned={tuned_err!r}, held_out={held_err!r}"`.
-- `both_partitions_scored` SHALL pass when each partition's `scored_repos` is `_is_number` and `>=
-  min_scored_repos`; detail SHALL be `"tuned scored {tuned_n}, held_out scored {held_n} (min {min})"`.
+- `both_partitions_scored` SHALL pass when the tuned partition's `scored_repos` is `_is_number` and
+  `>= min_scored_repos` and the held-out partition's `scored_repos` is `_is_number` and `>=
+  min_held_out_repos`; detail SHALL be `"tuned scored {tuned_n} (min {min_scored}), held_out scored
+  {held_n} (min {min_held_out})"`.
 - `gap_computed` SHALL pass when `_is_number(gap)`; detail SHALL be `"generalization_gap = {gap}"`,
   else `"generalization_gap is not a number (a partition did not score)"`.
 - `gap_within_bound` SHALL pass when `gap_computed and gap <= max_gap`; detail SHALL be

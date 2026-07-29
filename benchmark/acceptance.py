@@ -1,8 +1,10 @@
 """Gate a ``--generalization`` result against the M3/M4 acceptance criteria.
 
-The M3/M4 acceptance run (ROADMAP.md) is an explicit, still-open deliverable: run
-``run_eval --generalization`` on the curated set and confirm it *completes clean* and that the
-``generalization_gap`` is *reasonable*. Today that check is a manual eyeballing of the JSON.
+This is the **milestone** bar for the M3/M4 acceptance run (ROADMAP.md): confirm the run
+*completes clean* with a *reasonable* gap on enough held-out evidence. The **promotion** bar is
+``check_generalization`` (``benchmark/generalization_gate.py``). Both gates share
+``PROMOTION_MAX_GAP`` and ``DEFAULT_MIN_HELD_OUT_REPOS`` from ``benchmark.generalization_policy``
+so a retune cannot drift between them.
 
 This makes it a reproducible **pass/fail gate**. ``check_acceptance(report)`` evaluates a
 ``run_generalization_report`` artifact against named criteria and returns a structured verdict;
@@ -15,8 +17,9 @@ The criteria (each a named, independently-reported check):
    partitions plus a ``generalization_gap``);
 2. ``no_partition_error`` - neither partition carries an ``error`` — a whole-partition ``error`` or
    a per-repo row that failed to clone/freeze (the run completed clean);
-3. ``both_partitions_scored`` - each partition scored at least ``min_scored_repos`` repos, so
-   the gap contrasts two real measurements;
+3. ``both_partitions_scored`` - the tuned partition scored at least ``min_scored_repos`` repos and
+   the held-out partition scored at least ``min_held_out_repos`` repos, so the gap contrasts two
+   real measurements on enough held-out evidence;
 4. ``gap_computed`` - ``generalization_gap`` is a number (it is ``None`` unless both partitions
    scored, so this guards against a silently-missing gap);
 5. ``gap_within_bound`` - ``generalization_gap <= max_gap``: held-out performance did not
@@ -36,10 +39,15 @@ from __future__ import annotations
 import logging
 import math
 
-logger = logging.getLogger(__name__)
+from benchmark.generalization_policy import (
+    DEFAULT_MIN_HELD_OUT_REPOS,
+    DEFAULT_MIN_SCORED_REPOS,
+)
+from benchmark.generalization_policy import (
+    PROMOTION_MAX_GAP as DEFAULT_MAX_GAP,
+)
 
-DEFAULT_MAX_GAP = 0.15
-DEFAULT_MIN_SCORED_REPOS = 1
+logger = logging.getLogger(__name__)
 
 
 def _is_number(value) -> bool:
@@ -185,12 +193,14 @@ def _check_rows_list(checks) -> list[dict]:
 
 
 def check_acceptance(report, max_gap: float = DEFAULT_MAX_GAP,
-                     min_scored_repos: int = DEFAULT_MIN_SCORED_REPOS) -> dict:
+                     min_scored_repos: int = DEFAULT_MIN_SCORED_REPOS,
+                     min_held_out_repos: int = DEFAULT_MIN_HELD_OUT_REPOS) -> dict:
     """Evaluate a generalization ``report`` against the M3/M4 acceptance criteria.
 
     Returns ``{"passed": bool, "checks": [{"name", "passed", "detail"}], "generalization_gap",
-    "max_gap", "min_scored_repos"}``. ``passed`` is True only when *every* check passes. Every
-    check is always reported (even after an earlier failure) so the full picture is visible.
+    "max_gap", "min_scored_repos", "min_held_out_repos"}``. ``passed`` is True only when *every*
+    check passes. Every check is always reported (even after an earlier failure) so the full
+    picture is visible.
     """
     report = _dict(report)
     tuned = _dict(report.get("tuned"))
@@ -220,10 +230,11 @@ def check_acceptance(report, max_gap: float = DEFAULT_MAX_GAP,
     held_n = held_out.get("scored_repos")
     both_scored = (
         _is_number(tuned_n) and tuned_n >= min_scored_repos
-        and _is_number(held_n) and held_n >= min_scored_repos
+        and _is_number(held_n) and held_n >= min_held_out_repos
     )
     add("both_partitions_scored", both_scored,
-        f"tuned scored {tuned_n}, held_out scored {held_n} (min {min_scored_repos})")
+        f"tuned scored {tuned_n} (min {min_scored_repos}), "
+        f"held_out scored {held_n} (min {min_held_out_repos})")
 
     gap_computed = _is_number(gap)
     add("gap_computed", gap_computed,
@@ -242,6 +253,7 @@ def check_acceptance(report, max_gap: float = DEFAULT_MAX_GAP,
         "generalization_gap": gap if gap_computed else None,
         "max_gap": max_gap,
         "min_scored_repos": min_scored_repos,
+        "min_held_out_repos": min_held_out_repos,
     }
 
 

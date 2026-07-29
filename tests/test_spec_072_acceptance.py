@@ -17,6 +17,7 @@ if ROOT not in sys.path:
 from benchmark.acceptance import (  # noqa: E402
     _CHECK_ROW_KEYS,
     DEFAULT_MAX_GAP,
+    DEFAULT_MIN_HELD_OUT_REPOS,
     DEFAULT_MIN_SCORED_REPOS,
     _check_rows_list,
     _composite,
@@ -44,7 +45,8 @@ def _report(tuned_c=0.65, tuned_n=2, held_c=0.60, held_n=2, **extra):
 # --- Constants -----------------------------------------------------------------------------------
 
 def test_constants_are_pinned():
-    assert (DEFAULT_MAX_GAP, DEFAULT_MIN_SCORED_REPOS) == (0.15, 1)
+    assert DEFAULT_MAX_GAP == 0.1
+    assert (DEFAULT_MIN_SCORED_REPOS, DEFAULT_MIN_HELD_OUT_REPOS) == (1, 3)
     assert _CHECK_ROW_KEYS == ("name", "passed")
 
 
@@ -149,7 +151,8 @@ def test_recomputed_gap():
 
 # --- Gate ----------------------------------------------------------------------------------------
 
-_RESULT_KEYS = {"passed", "checks", "generalization_gap", "max_gap", "min_scored_repos"}
+_RESULT_KEYS = {"passed", "checks", "generalization_gap", "max_gap",
+               "min_scored_repos", "min_held_out_repos"}
 
 
 def test_result_carries_all_keys():
@@ -157,21 +160,21 @@ def test_result_carries_all_keys():
 
 
 def test_accepts_a_clean_generalization_run():
-    result = check_acceptance(_report(0.65, 2, 0.60, 2))    # gap 0.05 <= 0.15
+    result = check_acceptance(_report(0.65, 2, 0.60, 4))    # gap 0.05 <= 0.1, 4 held-out repos
     assert result["passed"] is True
     assert [c["name"] for c in result["checks"]] == [
         "is_generalization", "no_partition_error", "both_partitions_scored",
         "gap_computed", "gap_within_bound"]
     assert result["generalization_gap"] == 0.05
-    assert _named(result["checks"])["gap_within_bound"]["detail"] == "gap 0.05 <= max_gap 0.15"
+    assert _named(result["checks"])["gap_within_bound"]["detail"] == "gap 0.05 <= max_gap 0.1"
 
 
 def test_gap_over_bound_fails():
-    result = check_acceptance(_report(0.70, 2, 0.40, 2))    # gap 0.30 > 0.15
+    result = check_acceptance(_report(0.70, 2, 0.40, 4))    # gap 0.30 > 0.1
     checks = _named(result["checks"])
     assert result["generalization_gap"] == 0.3
     assert checks["gap_within_bound"]["passed"] is False
-    assert checks["gap_within_bound"]["detail"] == "gap 0.3 exceeds max_gap 0.15"
+    assert checks["gap_within_bound"]["detail"] == "gap 0.3 exceeds max_gap 0.1"
 
 
 def test_partition_error_fails_the_gate():
@@ -258,13 +261,13 @@ def test_headline_no_checks():
 
 
 def test_headline_pass():
-    result = check_acceptance(_report(0.65, 2, 0.60, 2))
+    result = check_acceptance(_report(0.65, 2, 0.60, 4))
     assert acceptance_headline(result) == (
         "acceptance: PASS (generalization_gap 0.05, all 5 checks passed)")
 
 
 def test_headline_fail_lists_failures():
-    result = check_acceptance(_report(0.70, 2, 0.40, 2))
+    result = check_acceptance(_report(0.70, 2, 0.40, 4))
     line = acceptance_headline(result)
     assert line.startswith("acceptance: FAIL (1/5 checks failed:")
     assert "gap_within_bound" in line
@@ -274,7 +277,7 @@ def test_headline_fail_lists_failures():
 
 def test_check_does_not_mutate_report():
     import copy
-    report = _report(0.65, 2, 0.60, 2)
+    report = _report(0.65, 2, 0.60, 4)
     snapshot = copy.deepcopy(report)
     check_acceptance(report)
     assert report == snapshot

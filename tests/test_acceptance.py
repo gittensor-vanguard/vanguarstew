@@ -25,7 +25,7 @@ from benchmark.artifact_snapshot import _has_error  # noqa: E402
 from scripts import acceptance as acceptance_cli  # noqa: E402
 
 
-def _report(gap=0.05, tuned_scored=3, held_scored=2, tuned_err=None, held_err=None, tuned_mean=0.6):
+def _report(gap=0.05, tuned_scored=3, held_scored=3, tuned_err=None, held_err=None, tuned_mean=0.6):
     tuned = {"composite_mean": tuned_mean, "scored_repos": tuned_scored}
     held_mean = round(tuned_mean - gap, 3) if gap is not None else 0.55
     held = {"composite_mean": held_mean, "scored_repos": held_scored}
@@ -218,9 +218,14 @@ def test_gap_exactly_at_the_bound_passes():
 
 
 def test_min_scored_repos_boundary_is_inclusive():
-    # scored_repos == min passes; one fewer fails.
-    assert check_acceptance(_report(tuned_scored=2, held_scored=2), min_scored_repos=2)["passed"] is True
-    assert check_acceptance(_report(tuned_scored=2, held_scored=1), min_scored_repos=2)["passed"] is False
+    # scored_repos == min passes; one fewer fails (held_out uses its own minimum).
+    assert check_acceptance(_report(tuned_scored=2, held_scored=3), min_scored_repos=2)["passed"] is True
+    assert check_acceptance(_report(tuned_scored=1, held_scored=3), min_scored_repos=2)["passed"] is False
+
+
+def test_min_held_out_repos_boundary_is_inclusive():
+    assert check_acceptance(_report(tuned_scored=3, held_scored=3), min_held_out_repos=3)["passed"] is True
+    assert check_acceptance(_report(tuned_scored=3, held_scored=2), min_held_out_repos=3)["passed"] is False
 
 
 def _run_cli(*args):

@@ -1,5 +1,10 @@
 """Gate whether a --generalization run actually generalizes to its held-out repos.
 
+This is the **promotion** bar for blocking overfit runs from promotion. ``check_acceptance`` is
+the **milestone** bar for the M3/M4 acceptance run. Both share ``PROMOTION_MAX_GAP`` and
+``DEFAULT_MIN_HELD_OUT_REPOS`` from ``benchmark.generalization_policy`` so a retune cannot drift
+between them.
+
 M3/M4 ask the maintainer agent to hold up on *diverse, unseen* repos, not just the ones it was
 tuned on. ``run_multi_replay --generalization`` already reports a ``tuned`` partition, a
 ``held_out`` partition, and the ``generalization_gap`` between them - but nothing turns that into
@@ -29,11 +34,14 @@ import logging
 import math
 
 from benchmark.acceptance import _partition_error
+from benchmark.generalization_policy import (
+    DEFAULT_MIN_HELD_OUT_REPOS,
+)
+from benchmark.generalization_policy import (
+    PROMOTION_MAX_GAP as DEFAULT_MAX_GAP,
+)
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MAX_GAP = 0.1
-DEFAULT_MIN_HELD_OUT_REPOS = 3
 
 _CHECK_ROW_KEYS = ("name", "passed")
 

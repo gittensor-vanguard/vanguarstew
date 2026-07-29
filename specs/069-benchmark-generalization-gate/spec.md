@@ -46,7 +46,8 @@ re-specifying the helper.
 
 ## Constants
 
-- `DEFAULT_MAX_GAP` SHALL be `0.1`, `DEFAULT_MIN_HELD_OUT_REPOS` SHALL be `3`.
+- `DEFAULT_MAX_GAP` SHALL equal `PROMOTION_MAX_GAP` (`0.1`) from
+  `benchmark/generalization_policy.py`; `DEFAULT_MIN_HELD_OUT_REPOS` SHALL be `3`.
 - `_CHECK_ROW_KEYS` SHALL be `("name", "passed")`.
 
 ## Acceptance criteria (EARS)

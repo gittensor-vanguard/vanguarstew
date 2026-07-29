@@ -52,7 +52,8 @@ no change to `report.py` or `scripts/report.py`.
   `error` field.
 - **AC-3 — Generalization verdict.** For a generalization artifact, `render_report` SHALL report
   `inspect` when `generalization_gap` exceeds `gap_inspect_threshold` (default
-  `DEFAULT_GAP_INSPECT_THRESHOLD = 0.10`, overridable per call) and `pass` otherwise, and SHALL
+  `DEFAULT_GAP_INSPECT_THRESHOLD`, aliasing `PROMOTION_MAX_GAP` from
+  `benchmark/generalization_policy.py`, overridable per call) and `pass` otherwise, and SHALL
   report `n/a` (never `inspect`/`pass`) when the gap is missing or non-finite.
 - **AC-4 — Non-finite or oversized numeric fields render `n/a`.** A `NaN`, `Infinity`, or an int
   too large for `float()` to represent, in any scored field (composite/judge/objective means,
