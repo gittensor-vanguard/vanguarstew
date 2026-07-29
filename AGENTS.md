@@ -30,6 +30,9 @@ Edit this file when policy changes; code, tests, and CI follow.
 - PRs SHALL reference at least one issue (e.g. `Fixes #N`).
 - Commits SHALL NOT carry AI co-authorship or attribution markers.
 - Contributors SHALL target the `test` branch. The maintainer promotes `test` → `main`.
+- WHEN a contributor PR changes `benchmark/`, `scripts/`, `docs/`, `blog/`, or Markdown
+  documentation THEN CI SHALL close it unless a referenced open issue carries the
+  `benchmark-change-approved` label.
 
 ## Scoring (gittensor SN74)
 
