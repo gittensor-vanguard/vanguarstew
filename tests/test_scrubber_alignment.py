@@ -30,6 +30,8 @@ _CASES = [
     "see https://github.com/o/r/pull/900 next",
     "tracked at github.com/o/r/issues/900",
     "cut in github.com/o/r/releases/tag/v9.9.9",
+    "see github.com/o/r/raw/v3.0-async-rewrite/MIGRATING.md",
+    "see github.com/o/r/blame/main/x.py",
     "see www.github.com/o/r/pull/900 next",
     "clone from github.com/o/r to start",
     "notgithub.com/o/r/pull/900 is fine",

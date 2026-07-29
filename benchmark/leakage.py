@@ -40,7 +40,7 @@ _GH_LINK = re.compile(
     # look-alike host (`notgithub.com`, `foo.github.com`) from matching.
     r"(?<![\w.])(?:https?://)?(?:www\.)?github\.com"         # github.com, optional scheme/www
     r"/[^\s" + re.escape(_URL_STOP) + r"]+/"                  # owner/repo/
-    r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|"
+    r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|raw|blame|"
     r"milestone|milestones|discussions)/"           # a forward-referencing link type
     r"[^\s" + re.escape(_URL_STOP) + r"]+",                    # referenced id / path
     re.I,

@@ -47,7 +47,7 @@ _GH_LINK = re.compile(
     # `(?<![\w.])` boundary keeps a look-alike host (`notgithub.com`, `foo.github.com`) from matching.
     r"(?<![\w.])(?:https?://)?(?:www\.)?github\.com"
     r"/[^\s" + re.escape(_URL_STOP) + r"]+/"
-    r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|"
+    r"(?:issues|pull|pulls|commit|commits|compare|releases|tag|tags|tree|blob|raw|blame|"
     r"milestone|milestones|discussions)/"
     r"[^\s" + re.escape(_URL_STOP) + r"]+",
     re.I,

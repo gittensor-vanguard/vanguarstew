@@ -269,6 +269,16 @@ def test_strip_forward_refs_masks_release_tag_link_hiding_next_version():
     assert "github.com" not in out and "v2.0.0" not in out and "<link>" in out
 
 
+def test_strip_forward_refs_masks_raw_and_blame_deeplinks():
+    # raw/ and blame/ take the same /<ref>/<path> shape as blob/tree and can name a future
+    # branch or tag; both must mask to <link>, not pass through verbatim.
+    assert (
+        strip_forward_refs("See github.com/owner/repo/raw/v3.0-async-rewrite/MIGRATING.md")
+        == "See <link>"
+    )
+    assert strip_forward_refs("see github.com/o/r/blame/main/x.py") == "see <link>"
+
+
 def test_strip_forward_refs_masks_ref_and_milestone_deeplinks():
     # tree/blob (a future ref), milestone, and discussion links all point at where the repo
     # went next and must be masked, not just issues/pull/commit/compare.
