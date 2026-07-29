@@ -128,6 +128,39 @@ def test_cli_directory_path_exits_two(tmp_path, capsys):
     assert "directory" in capsys.readouterr().err
 
 
+def test_cli_broken_symlink_is_not_misreported_as_not_found(tmp_path, capsys):
+    # #2021: a dangling symlink used to be reported as "artifact not found". Via the shared
+    # scripts.artifact_io loader it is now classified as a broken symlink and still exits 2.
+    link = tmp_path / "dangling.json"
+    os.symlink(str(tmp_path / "missing-target.json"), str(link))
+    assert cli.run([str(link)]) == 2
+    err = capsys.readouterr().err
+    assert "broken symlink" in err
+    assert "not found" not in err
+
+
+def test_cli_symlink_loop_does_not_leak_a_raw_errno(tmp_path, capsys):
+    # #2021: a symlink loop used to fall through to the generic OSError arm and leak a raw
+    # "[Errno 40] Too many levels of symbolic links". The shared loader names it and exits 2.
+    a = tmp_path / "loop_a.json"
+    b = tmp_path / "loop_b.json"
+    os.symlink(str(b), str(a))
+    os.symlink(str(a), str(b))
+    assert cli.run([str(a)]) == 2
+    err = capsys.readouterr().err
+    assert "symlink loop" in err
+    assert "Errno" not in err
+
+
+def test_cli_still_exits_two_on_a_missing_file_and_bad_json(tmp_path, capsys):
+    assert cli.run([str(tmp_path / "gone.json")]) == 2
+    assert "not found" in capsys.readouterr().err
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    assert cli.run([str(bad)]) == 2
+    assert "not valid JSON" in capsys.readouterr().err
+
+
 def test_failed_checks_helper_is_robust():
     assert failed_checks({}) == []
     assert failed_checks("not a dict") == []
