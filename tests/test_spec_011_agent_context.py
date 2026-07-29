@@ -242,6 +242,17 @@ def test_load_context_invalid_json_warns_and_rebuilds(tmp_path, caplog):
     _assert_rebuilt_from_git(out, caplog, "JSONDecodeError")
 
 
+def test_load_context_oversized_int_warns_and_rebuilds(tmp_path, caplog):
+    # json.load raises a plain ValueError (not JSONDecodeError) for an integer literal beyond
+    # CPython's int-string-conversion limit; load_context must warn and fall back to git (#1494).
+    repo = _repo(str(tmp_path / "r"))
+    with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+        f.write('{"open_issues": ' + "9" * 5000 + "}")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        out = load_context(repo)
+    _assert_rebuilt_from_git(out, caplog, "ValueError")
+
+
 def test_load_context_binary_content_warns_and_rebuilds(tmp_path, caplog):
     repo = _repo(str(tmp_path / "r"))
     with open(os.path.join(repo, CONTEXT_FILE), "wb") as f:
