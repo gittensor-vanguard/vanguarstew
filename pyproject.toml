@@ -24,7 +24,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.4"]
-tee = ["dcap-qvl==0.5.3"]
+tee = ["dcap-qvl==0.6.1"]
 
 [project.urls]
 Homepage = "https://github.com/gittensor-vanguard/vanguarstew"
