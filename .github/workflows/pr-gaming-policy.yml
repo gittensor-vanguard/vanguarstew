@@ -31,7 +31,7 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Enforce declared commit scope
+      - name: Enforce commit identity
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/pr_gaming_policy.py
