@@ -73,6 +73,17 @@ CI must be green before a PR can merge. See [REVIEW.md](REVIEW.md) for exactly h
 contributions are gated, reviewed, and scored — the process is designed to be predictable and
 reproducible.
 
+### Declare every commit's scope
+
+Keep one public declaration consistent across the PR body, its commits, and its changed files.
+Every issue that any commit claims to `Fix`, `Close`, or `Resolve` must also be referenced in the
+PR body. Do not hide an unrelated commit behind a narrower PR title/body, and do not call a change
+`scripts-only`, `docs-only`, or similar when it edits another source surface.
+
+CI evaluates this rule on each PR update and again whenever the normal CI workflow completes.
+Violations are automatically closed; split unrelated work into focused PRs or correct the public
+declaration before reopening.
+
 ## Benchmark, scripts, and documentation changes
 
 The benchmark, scripts, and documentation surfaces are maintainer-directed. Benchmark changes can
