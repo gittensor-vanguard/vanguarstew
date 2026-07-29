@@ -106,7 +106,7 @@ def _trend_point(entry):
 def trend(series, regression_threshold: float = DEFAULT_REGRESSION_THRESHOLD) -> dict:
     """Summarize how the headline score moves across an ordered ``series`` of artifacts.
 
-    ``series`` is an iterable of ``(label, artifact)`` pairs in chronological order (the label is
+    ``series`` is a list of ``(label, artifact)`` pairs in chronological order (the label is
     a caller-chosen name, e.g. a filename or a date). Returns a stable summary:
 
     - ``points``: ``{label, composite_mean, delta}`` per artifact, where ``delta`` is the change

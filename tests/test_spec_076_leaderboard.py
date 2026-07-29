@@ -188,6 +188,17 @@ def test_a_non_list_entries_is_treated_as_no_candidates_with_a_warning(caplog):
     assert any("entries is str" in rec.message for rec in caplog.records)
 
 
+def test_rank_accepts_tuple_and_generator_of_the_same_entries():
+    entries = [("a", _art(0.9)), ("b", _art(0.5))]
+    from_list = rank(entries)
+    from_tuple = rank(tuple(entries))
+    from_generator = rank((pair for pair in entries))
+    for out in (from_tuple, from_generator):
+        assert out["ranking"] == from_list["ranking"]
+        assert out["best"] == from_list["best"]
+        assert out["scored"] == 2 and out["total"] == 2
+
+
 def test_a_malformed_entry_is_skipped_not_crashed(caplog):
     with caplog.at_level(logging.WARNING):
         result = rank([("a", _art(0.9)), ["only-one-element"], "bytes-not-a-pair"])

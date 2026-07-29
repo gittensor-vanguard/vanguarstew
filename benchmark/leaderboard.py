@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Iterable
 
 from benchmark.trend import headline_score
 
@@ -85,18 +86,33 @@ def _components(artifact) -> dict:
 
 
 def _leaderboard_entries(entries) -> list:
-    """Return ``entries`` when it is a list; otherwise treat as no candidates.
+    """Return ``entries`` as a list of candidates.
 
-    A truthy non-list must not reach ``for label, artifact in entries`` or malformed CLI /
-    saved-artifact input aborts leaderboard ranking (#532).
+    Accepts a ``list``, ``tuple``, or other non-string iterable of ``(label, artifact)`` pairs.
+    Scalars and strings must not be iterated — a bare ``"ab"`` would unpack into bogus pairs
+    (#532, #2150).
     """
     if isinstance(entries, list):
         return entries
-    if entries is not None:
+    if isinstance(entries, tuple):
+        return list(entries)
+    if entries is None:
+        return []
+    if isinstance(entries, (str, bytes, dict, int, float, bool)):
         logger.warning(
             "leaderboard: entries is %s, not a list; treating as empty",
             type(entries).__name__,
         )
+        return []
+    if isinstance(entries, Iterable):
+        try:
+            return list(entries)
+        except TypeError:
+            pass
+    logger.warning(
+        "leaderboard: entries is %s, not a list; treating as empty",
+        type(entries).__name__,
+    )
     return []
 
 

@@ -121,18 +121,32 @@ def test_rank_empty_and_all_unscored():
 _MALFORMED_ENTRIES = [42, 3.14, True, {"label": "A"}, "not a list"]
 
 
-def test_leaderboard_entries_accepts_only_real_lists():
+def test_leaderboard_entries_accepts_iterables_and_rejects_scalars():
     rows = [("A", {"composite_mean": 0.5})]
     for bad in _MALFORMED_ENTRIES:
         assert _leaderboard_entries(bad) == [], bad
     assert _leaderboard_entries(rows) == rows
     assert _leaderboard_entries(None) == []
+    as_tuple = (("A", {"composite_mean": 0.5}), ("B", {"composite_mean": 0.7}))
+    assert _leaderboard_entries(as_tuple) == list(as_tuple)
+    assert _leaderboard_entries((label, art) for label, art in rows) == rows
 
 
 def test_rank_survives_non_list_entries():
     for bad in _MALFORMED_ENTRIES:
         out = rank(bad)
         assert out["best"] is None and out["ranking"] == [] and out["scored"] == 0, bad
+
+
+def test_rank_accepts_tuple_and_generator_entries():
+    entries = [("A", _single(0.55)), ("B", _single(0.70)), ("C", _single(0.60))]
+    from_list = rank(entries)
+    from_tuple = rank(tuple(entries))
+    from_generator = rank((pair for pair in entries))
+    for out in (from_tuple, from_generator):
+        assert [r["label"] for r in out["ranking"]] == [r["label"] for r in from_list["ranking"]]
+        assert out["scored"] == from_list["scored"] == 3
+        assert out["total"] == from_list["total"] == 3
 
 
 def test_rank_logs_warning_for_non_list_entries(caplog):
