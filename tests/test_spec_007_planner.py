@@ -339,7 +339,22 @@ def test_offline_plan_is_deterministic_and_prioritizes_queue():
     assert any("streaming export" in i["title"].lower() for i in first)
 
 
-def test_offline_stub_without_queue_returns_single_item():
+def test_offline_stub_without_queue_returns_context_derived_items():
+    llm = LLM(api_key="offline")
+    ctx = {
+        "recent_commits": [{"subject": "fix: parser crash"}] * 5,
+        "repo_layout": ["pint/", "docs/", "CHANGES", "tests/"],
+    }
+    out = plan_next_actions(ctx, {}, 5, llm)
+    _assert_plan_shape(out)
+    assert len(out) == 1
+    assert out[0]["kind"] == "bugfix"
+    assert out[0]["files"] == ["pint/"]
+    assert "pint/" in out[0]["title"]
+    assert "bugfix appears 5 times in recent history" in out[0]["rationale"]
+
+
+def test_offline_stub_without_derivable_evidence_returns_single_item():
     llm = LLM(api_key="offline")
     out = plan_next_actions({"open_prs": []}, {}, 3, llm)
     assert len(out) == 1

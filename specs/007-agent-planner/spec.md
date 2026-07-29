@@ -95,7 +95,8 @@ a reviewable definition of the planning surface.
 
 - WHEN the LLM is offline (`VANGUARSTEW_OFFLINE=1` / `api_key == "offline"`) THEN
   `plan_next_actions()` SHALL return a deterministic stub that prioritizes visible open PRs
-  (review items per queued PR, else a single offline stub action), after normalization and
+  (review items per queued PR, else context-derived items from recent kind mix and repo layout
+  when that evidence exists, otherwise a single offline stub action), after normalization and
   reconciliation — exercisable in CI without a key.
 
 ### Robustness (per constitution)

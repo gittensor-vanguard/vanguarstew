@@ -746,6 +746,119 @@ def _pr_queue_note(context: dict) -> str:
     )
 
 
+# Top-level names that are release/changelog surfaces, not generic source packages.
+_RELEASE_LAYOUT_NAMES = frozenset({
+    "changes", "changelog", "history", "news", "release-notes", "release_notes",
+})
+
+
+def _layout_entry_specialized_kind(entry: str) -> str | None:
+    """The plan kind a top-level layout entry most strongly suggests, or ``None``."""
+    lower = entry.lower().rstrip("/")
+    base = lower.split("/")[-1]
+    if "doc" in lower and "docker" not in lower:
+        return "docs"
+    if "test" in lower:
+        return "test"
+    if lower.startswith(".github") or "workflow" in lower or base == "ci":
+        return "ci"
+    if any(marker in lower for marker in ("requirements", "poetry.lock", "pnpm-lock", "yarn.lock",
+                                           "package-lock", "gemfile", "go.mod", "cargo.lock")):
+        return "dep"
+    if any(marker in lower for marker in ("makefile", "cmakelists", "setup.py", "setup.cfg",
+                                           "pyproject.toml", "cargo.toml")):
+        return "build"
+    if base in _RELEASE_LAYOUT_NAMES or base.startswith("changelog"):
+        return "release"
+    return None
+
+
+def _is_generic_source_layout_entry(entry: str) -> bool:
+    """True when a layout entry can anchor feature/bugfix/refactor-style work."""
+    if not entry or entry.startswith("."):
+        return False
+    lower = entry.lower().rstrip("/")
+    base = lower.split("/")[-1]
+    if base in _RELEASE_LAYOUT_NAMES or base in {"readme", "license", "contributing"}:
+        return False
+    if _layout_entry_specialized_kind(entry) is not None:
+        return False
+    return True
+
+
+def _layout_entry_for_kind(kind: str, entries: list, used: set) -> str | None:
+    """Pick a deterministic layout entry for ``kind``, preferring unused entries."""
+    available = [entry for entry in entries if entry not in used]
+    if not available:
+        return None
+
+    specialized = sorted(
+        entry for entry in available if _layout_entry_specialized_kind(entry) == kind
+    )
+    if specialized:
+        return specialized[0]
+
+    if kind in {"feature", "bugfix", "refactor", "perf", "style", "revert"}:
+        generic_dirs = sorted(
+            entry for entry in available
+            if entry.endswith("/") and _is_generic_source_layout_entry(entry)
+        )
+        if generic_dirs:
+            return generic_dirs[0]
+        generic = sorted(
+            entry for entry in available if _is_generic_source_layout_entry(entry)
+        )
+        if generic:
+            return generic[0]
+    return None
+
+
+def _context_derived_plan_items(context: dict) -> list:
+    """Build fallback plan items from recent kind mix and repo layout at freeze-T."""
+    layout = _repo_layout(context)
+    if not layout:
+        return []
+
+    items = []
+    used_entries: set = set()
+    for kind, count in _recent_kind_counts(context):
+        if kind == "release":
+            continue
+        entry = _layout_entry_for_kind(kind, layout, used_entries)
+        if entry is None:
+            continue
+        used_entries.add(entry)
+        items.append({
+            "title": f"Continue recurring {kind} work in {entry}",
+            "kind": kind,
+            "rationale": f"{kind} appears {count} times in recent history",
+            "theme": f"{kind} maintenance",
+            "files": [entry],
+        })
+
+    if _release_timing_state(context) == "pressure":
+        entry = _layout_entry_for_kind("release", layout, used_entries)
+        if entry is not None:
+            items.append({
+                "title": f"Cut the next release updating {entry}",
+                "kind": "release",
+                "rationale": (
+                    "freeze-T timing shows release pressure — another version cut is due"
+                ),
+                "theme": "release cadence",
+                "files": [entry],
+            })
+    return items
+
+
+_OFFLINE_STUB_FALLBACK = {
+    "title": "offline stub action",
+    "kind": "triage",
+    "rationale": "offline",
+    "theme": "offline",
+}
+
+
 def _offline_plan_stub(context: dict, n: int) -> list:
     """Deterministic offline plan: prioritize the visible PR queue when present."""
     items = []
@@ -767,12 +880,9 @@ def _offline_plan_stub(context: dict, n: int) -> list:
             "theme": "PR queue",
         })
     if not items:
-        items.append({
-            "title": "offline stub action",
-            "kind": "triage",
-            "rationale": "offline",
-            "theme": "offline",
-        })
+        items.extend(_context_derived_plan_items(context))
+    if not items:
+        items.append(dict(_OFFLINE_STUB_FALLBACK))
     return items[:n]
 
 

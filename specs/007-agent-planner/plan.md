@@ -66,8 +66,10 @@ reconcile_plan_with_queue(plan, context, n)
 
 ### Offline stub (`_offline_plan_stub`)
 
-One review item per open PR with a string title; if the queue is empty, a single
-`"offline stub action"` triage item. Capped to `n`.
+One review item per open PR with a string title; when the queue is empty, context-derived items
+from recent kind counts and repo layout (each item names its `files` entry in its own text and
+cites the counted evidence in its rationale), plus a release item only when freeze-T timing
+reports pressure; otherwise a single `"offline stub action"` triage item. Capped to `n`.
 
 ## The invariants this pins
 

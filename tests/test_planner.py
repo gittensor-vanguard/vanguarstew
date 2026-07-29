@@ -192,6 +192,72 @@ def test_offline_stub_numberless_pr_keeps_the_plain_heading():
     assert stub[0]["title"] == "Review pull request: Refactor the scheduler module"
 
 
+def test_offline_stub_derives_plan_from_recent_kind_mix_and_layout():
+    ctx = {
+        "recent_commits": [{"subject": "fix: parser crash"}] * 5,
+        "repo_layout": ["pint/", "docs/", "CHANGES", "tests/"],
+    }
+    stub = _offline_plan_stub(ctx, 5)
+    assert len(stub) == 1
+    assert stub[0]["kind"] == "bugfix"
+    assert stub[0]["files"] == ["pint/"]
+    assert "pint/" in stub[0]["title"]
+    assert "bugfix appears 5 times in recent history" in stub[0]["rationale"]
+
+
+def test_offline_stub_adds_release_item_when_commit_count_signals_pressure():
+    # Twenty commits since the last visible cut is past the pressure threshold even without dates.
+    ctx = {
+        "recent_commits": [{"subject": "fix: parser crash"}] * 20,
+        "repo_layout": ["pint/", "docs/", "CHANGES", "tests/"],
+    }
+    stub = _offline_plan_stub(ctx, 5)
+    assert [item["kind"] for item in stub] == ["bugfix", "release"]
+    assert stub[1]["files"] == ["CHANGES"]
+    assert "CHANGES" in stub[1]["title"]
+
+
+def test_offline_stub_covers_recurring_kinds_and_release_under_pressure():
+    ctx = {
+        "frozen_at": {"date": "2020-07-01T12:00:00+00:00"},
+        "recent_commits": (
+            [{"subject": "fix: loader", "date": "2020-06-20T12:00:00+00:00"}] * 6
+            + [{"subject": "docs: readme", "date": "2020-06-19T12:00:00+00:00"}] * 4
+            + [{"subject": "chore(release): 1.0.0", "date": "2020-05-01T12:00:00+00:00"}]
+        ),
+        "repo_layout": ["mylib/", "docs/", "CHANGES"],
+    }
+    stub = _offline_plan_stub(ctx, 5)
+    kinds = [item["kind"] for item in stub]
+    assert kinds[:2] == ["bugfix", "docs"]
+    assert kinds[-1] == "release"
+    for item in stub:
+        assert item.get("files")
+        for path in item["files"]:
+            assert path in item["title"] or path in item.get("rationale", "")
+
+
+def test_offline_stub_without_derivable_evidence_falls_back_to_triage():
+    assert _offline_plan_stub({"open_prs": []}, 3) == [{
+        "title": "offline stub action",
+        "kind": "triage",
+        "rationale": "offline",
+        "theme": "offline",
+    }]
+
+
+def test_offline_stub_context_items_are_deterministic_and_capped():
+    ctx = {
+        "recent_commits": [{"subject": "feat: export"}] * 10,
+        "repo_layout": ["pkg/", "docs/"],
+    }
+    first = _offline_plan_stub(ctx, 1)
+    second = _offline_plan_stub(ctx, 1)
+    assert first == second
+    assert len(first) == 1
+    assert first[0]["kind"] == "feature"
+
+
 def test_offline_plan_does_not_duplicate_review_of_a_short_titled_pr():
     # Regression: a short (< 8 char) or single-significant-token PR title ("Fix bug") could not be
     # re-matched to its PR by reconcile (no #N, subject-phrase disabled < 8 chars, token-overlap
