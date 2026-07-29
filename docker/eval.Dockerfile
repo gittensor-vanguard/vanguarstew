@@ -55,7 +55,7 @@ ENV VANGUARSTEW_OFFLINE=1
 # under /tmp. Root privileges are not part of the measured workload.
 USER eval
 
-# No ENTRYPOINT on purpose -- the same image serves the four roles the TEE path needs:
+# No ENTRYPOINT on purpose -- the same image serves the five roles the TEE path needs:
 #   replay a run:  python -m scripts.transcript_proxy --mode replay --transcript t.json
 #   score a run:   python -m scripts.run_eval --repo ... --api-base http://127.0.0.1:8712/v1
 #   prepare mounts: python -m scripts.prepare_attested_inputs --part ...
