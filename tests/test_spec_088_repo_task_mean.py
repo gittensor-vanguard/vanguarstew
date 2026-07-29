@@ -1,4 +1,4 @@
-"""Contract tests for specs/046-benchmark-repo-task-mean — assert repo_task_mean.py satisfies
+"""Contract tests for specs/088-benchmark-repo-task-mean — assert repo_task_mean.py satisfies
 the spec's EARS criteria: count parsing, per_repo row extraction, partition stats, artifact-kind
 branches (including the generalization partition split), the headline, and pure evaluation.
 Offline, deterministic.
