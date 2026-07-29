@@ -7,6 +7,7 @@ cannot be silently edited after the fact without breaking its binding.
 
 import json
 import os
+import signal
 import sys
 import threading
 
@@ -238,6 +239,43 @@ def test_build_server_binds_the_exact_store_even_when_empty():
         assert server.RequestHandlerClass.store is empty
     finally:
         server.server_close()
+
+
+def test_record_proxy_flushes_when_background_sigint_was_ignored(tmp_path, monkeypatch):
+    """A non-interactive shell ignores SIGINT for background jobs unless the proxy resets it."""
+    from scripts import transcript_proxy
+
+    class _Server:
+        closed = False
+
+        def serve_forever(self):
+            os.kill(os.getpid(), signal.SIGINT)
+
+        def server_close(self):
+            self.closed = True
+
+    server = _Server()
+    monkeypatch.setattr(transcript_proxy, "build_server", lambda *args, **kwargs: server)
+    output = tmp_path / "transcript.json"
+    original = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        status = transcript_proxy.main(
+            [
+                "--mode", "record",
+                "--upstream", "https://example.invalid/v1",
+                "--out", str(output),
+                "--port", "0",
+            ]
+        )
+        assert signal.getsignal(signal.SIGINT) == signal.SIG_IGN
+    finally:
+        signal.signal(signal.SIGINT, original)
+
+    assert status == 0
+    assert server.closed is True
+    assert output.is_file()
+    assert len(TranscriptStore.load(str(output))) == 0
 
 
 def test_record_mode_actually_records_through_a_fake_upstream():

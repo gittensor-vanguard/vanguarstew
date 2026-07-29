@@ -124,6 +124,15 @@ def _artifacts():
     }
 
 
+def _blocked_artifacts():
+    return {
+        "baseline_public": _artifact(50),
+        "candidate_public": _artifact(40),
+        "baseline_private": _artifact(50),
+        "candidate_private": _artifact(40),
+    }
+
+
 def _report(*, padding="", artifacts=None):
     artifacts = artifacts or _artifacts()
     public = score_pr_delta(artifacts["baseline_public"], artifacts["candidate_public"])
@@ -346,6 +355,23 @@ def test_receipt_verifier_checks_report_files_workload_and_exact_stdout():
     changed = verify_benchmark_seal(_receipt(plan, stdout="changed"), plan=plan)
     assert changed["ok"] is False
     assert changed["stdout_exact"] is False
+
+
+def test_blocked_benchmark_is_a_valid_attestable_execution():
+    artifacts = _blocked_artifacts()
+    report = _report(artifacts=artifacts)
+    plan = _plan(report, artifacts)
+
+    assert report["band"] == "blocked"
+    assert report["blocks_merge"] is True
+    assert report["label"] is None
+    assert report["multiplier"] is None
+    assert json.loads(plan.stdout)["band"] == "blocked"
+    assert json.loads(plan.stdout)["blocks_merge"] is True
+
+    verification = verify_benchmark_seal(_receipt(plan), plan=plan)
+    assert verification["ok"] is True
+    assert verification["verification_level"] == "polaris-verified"
 
 
 def test_live_runner_saves_receipt_privately_and_prints_only_summary(tmp_path, capsys):
