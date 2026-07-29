@@ -109,9 +109,33 @@ def test_backfill_release_item_earns_changelog_by_its_own_words():
 
 
 def test_backfill_release_item_without_surface_tokens_gets_nothing():
-    # "release" is a stopword for token matching, so a bare release title attaches nothing.
+    # The title never names a layout entry (only the generic word "release"), so nothing attaches.
     plan = [{"title": "Prepare the next release", "kind": "release"}]
     out = _backfill_files_from_layout(plan, {"repo_layout": ["CHANGELOG.rst", "src/"]})
+    assert "files" not in out[0]
+
+
+def test_backfill_attaches_docs_when_item_names_docs():
+    plan = [{"title": "Refresh the docs for the new API", "kind": "docs"}]
+    out = _backfill_files_from_layout(plan, {"repo_layout": ["CHANGES", "pint/", "docs/"]})
+    assert out[0]["files"] == ["docs/"]
+
+
+def test_backfill_attaches_changes_when_item_names_changes():
+    plan = [{"title": "Update CHANGES for the upcoming cut", "kind": "docs"}]
+    out = _backfill_files_from_layout(plan, {"repo_layout": ["CHANGES", "pint/", "docs/"]})
+    assert out[0]["files"] == ["CHANGES"]
+
+
+def test_backfill_strips_entry_extension_for_token_match():
+    plan = [{"title": "Update changes.rst for the upcoming cut", "kind": "docs"}]
+    out = _backfill_files_from_layout(plan, {"repo_layout": ["changes.rst", "src/"]})
+    assert out[0]["files"] == ["changes.rst"]
+
+
+def test_backfill_never_attaches_docs_without_mention():
+    plan = [{"title": "Improve error messages", "kind": "bugfix"}]
+    out = _backfill_files_from_layout(plan, {"repo_layout": ["docs/", "src/"]})
     assert "files" not in out[0]
 
 

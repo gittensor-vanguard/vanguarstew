@@ -25,6 +25,10 @@ _STOPWORDS = frozenset({
     "bugfix", "refactor", "docs", "release", "work", "that", "this",
 })
 
+# Connective noise only — layout backfill must keep domain nouns like ``docs``, ``changes``,
+# and ``release`` that are real top-level modules but are dropped by ``_STOPWORDS`` for PR matching.
+_LAYOUT_STOPWORDS = frozenset({"the", "and", "for", "with", "this", "that"})
+
 # Word-boundary match so an incidental substring ("preview" ⊃ "review", "emergency" ⊃
 # "merge") doesn't misclassify greenfield work as an existing review item. Anchored only
 # at the start, so real suffixes ("reviews", "merged", "approved") still count.
@@ -701,7 +705,7 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
     entries = _repo_layout(context)
     if not entries:
         return plan
-    entry_tokens = [(entry, _significant_tokens(entry)) for entry in entries]
+    entry_tokens = [(entry, _layout_entry_tokens(entry)) for entry in entries]
     out = []
     for i, item in enumerate(plan):
         if (
@@ -712,9 +716,9 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
             out.append(item)
             continue
         text_tokens = (
-            _significant_tokens(item.get("title", ""))
-            | _significant_tokens(item.get("theme", ""))
-            | _significant_tokens(item.get("rationale", ""))
+            _layout_match_tokens(item.get("title", ""))
+            | _layout_match_tokens(item.get("theme", ""))
+            | _layout_match_tokens(item.get("rationale", ""))
         )
         matched = [
             entry for entry, tokens in entry_tokens
@@ -781,6 +785,26 @@ def _pr_queue(context: dict) -> list:
         p for p in _safe_prs(context)
         if isinstance(p, dict) and _pr_title(p)
     ]
+
+
+def _layout_match_tokens(text: str) -> set:
+    """Tokenize plan-item text for layout backfill (keeps module-name nouns)."""
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
+    return {
+        t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(t) > 2 and t not in _LAYOUT_STOPWORDS
+    }
+
+
+def _layout_entry_tokens(entry: str) -> set:
+    """Tokenize a top-level layout entry, stripping one extension like the objective anchor."""
+    name = (entry or "").strip().rstrip("/")
+    if not name:
+        return set()
+    # Mirror benchmark.score._top_module for a single top-level segment.
+    stem = name.rsplit(".", 1)[0] or name.lstrip(".")
+    return _layout_match_tokens(stem)
 
 
 def _significant_tokens(text: str) -> set:
