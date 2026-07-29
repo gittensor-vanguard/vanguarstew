@@ -20,6 +20,7 @@ from agent.philosophy import (  # noqa: E402
     _OFFLINE_STUB,
     FEWSHOT,
     SYSTEM,
+    _context_philosophy_stub,
     _normalize_philosophy,
     _normalize_string_list,
     _normalize_text,
@@ -224,15 +225,49 @@ def test_infer_philosophy_calls_chat_json_once_with_the_stub():
     out = infer_philosophy({"recent_commits": []}, llm)
     assert len(llm.calls) == 1
     assert llm.calls[0]["system"] == SYSTEM
-    assert llm.calls[0]["stub"] is _OFFLINE_STUB
+    assert llm.calls[0]["stub"] == _context_philosophy_stub({"recent_commits": []})
     assert out == {"summary": "s", "values": ["v"], "merge_bar": "m",
                    "direction": "d", "evidence": ["e"]}
 
 
 @pytest.mark.parametrize("payload", [None, ["a"], "a string", 7])
 def test_infer_philosophy_normalizes_an_unusable_payload(payload):
-    out = infer_philosophy({"recent_commits": []}, RecordingLLM(payload))
-    assert out == _OFFLINE_STUB
+    context = {"recent_commits": []}
+    out = infer_philosophy(context, RecordingLLM(payload))
+    assert out == _context_philosophy_stub(context)
+
+
+def test_context_philosophy_stub_derives_from_readme_and_commits():
+    context = {
+        "readme_excerpt": "# WidgetKit\nA fast widget library.",
+        "recent_commits": [
+            {"subject": "feat: add streaming API"},
+            {"subject": "fix: race in loader"},
+            {"subject": "feat: export metrics"},
+        ],
+    }
+    stub = _context_philosophy_stub(context)
+    assert stub["summary"] == "Project characterized in README as: WidgetKit"
+    assert stub["merge_bar"] == ""
+    assert "offline" not in stub["summary"].lower()
+    assert "offline" not in stub["direction"].lower()
+    assert stub["direction"].startswith("Recent maintainer activity")
+    assert stub["evidence"] == [
+        "feat: add streaming API",
+        "fix: race in loader",
+        "feat: export metrics",
+    ]
+
+
+def test_context_philosophy_stub_without_signals_is_mode_honest():
+    stub = _context_philosophy_stub({})
+    assert stub == {
+        "summary": "philosophy unavailable",
+        "values": [],
+        "merge_bar": "",
+        "direction": "",
+        "evidence": [],
+    }
 
 
 def test_infer_philosophy_prompt_carries_the_documented_sections():

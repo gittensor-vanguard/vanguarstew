@@ -17,6 +17,7 @@ from agent.llm import LLM  # noqa: E402
 from agent.philosophy import (  # noqa: E402  # noqa: E402
     _OFFLINE_STUB,
     FEWSHOT,
+    _context_philosophy_stub,
     _normalize_philosophy,
     _normalize_string_list,
     _normalize_text,
@@ -58,9 +59,11 @@ class _ListLLM:
 
 
 def test_infer_philosophy_coerces_non_dict_response_to_stub():
-    out = infer_philosophy({"recent_commits": [{"subject": "init"}]}, _ListLLM())
+    context = {"recent_commits": [{"subject": "init"}]}
+    out = infer_philosophy(context, _ListLLM())
     assert isinstance(out, dict)
     assert EXPECTED_KEYS <= set(out)
+    assert out == _context_philosophy_stub(context)
 
 
 def test_normalize_text_coerces_scalars():
@@ -112,13 +115,15 @@ class _MalformedPhilosophyLLM:
 
 
 def test_infer_philosophy_normalizes_malformed_field_types():
-    out = infer_philosophy({"recent_commits": [{"subject": "init"}]}, _MalformedPhilosophyLLM())
+    context = {"recent_commits": [{"subject": "init"}]}
+    out = infer_philosophy(context, _MalformedPhilosophyLLM())
     assert isinstance(out["summary"], str)
     assert isinstance(out["values"], list)
     assert isinstance(out["evidence"], list)
     assert out["values"] == ["conservative"]
     assert out["direction"] == "99"
     assert out["evidence"] == ["recent refactors"]
+    assert out["summary"] == _context_philosophy_stub(context)["summary"]
 
 def test_infer_philosophy_handles_non_dict_context():
     llm = LLM(api_key="offline")

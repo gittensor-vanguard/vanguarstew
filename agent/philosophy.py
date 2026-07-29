@@ -8,8 +8,10 @@ is the leading indicator of getting the trajectory right downstream.
 from __future__ import annotations
 
 import json
+import re
 
 from agent.context import context_for_agent
+from agent.planner import _recent_commits, _recent_kind_counts
 
 SYSTEM = (
     "You are an expert analyst of open-source project maintenance. Given a snapshot of a "
@@ -22,8 +24,8 @@ SYSTEM = (
 # demonstrate the expected shape and the "evidence-based, specific" bar without anchoring
 # the model to any particular verdict — one conservative library, one fast-moving app.
 # Canonical offline stub — all five documented philosophy keys with safe default values.
-# Returned verbatim (as a fresh copy) whenever context is not a dict or the LLM returns
-# unusable output, so every caller gets the documented shape regardless of code path.
+# Returned for non-dict context and on the genuine-offline path; live parse failures use
+# ``_context_philosophy_stub`` instead so a submission never claims to be offline.
 _OFFLINE_STUB: dict = {
     "summary": "offline stub philosophy",
     "values": [],
@@ -92,6 +94,75 @@ def _normalize_string_list(value) -> list:
     return []
 
 
+_README_HEADING_RE = re.compile(r"^#+\s*")
+
+
+def _readme_project_hint(context: dict) -> str:
+    """First non-empty README line, with markdown heading markers stripped."""
+    ctx = context_for_agent(context)
+    excerpt = ctx.get("readme_excerpt")
+    if not isinstance(excerpt, str):
+        return ""
+    for line in excerpt.splitlines():
+        text = _README_HEADING_RE.sub("", line.strip())
+        if text:
+            return text[:200]
+    return ""
+
+
+def _recent_commit_subjects(context: dict, limit: int = 5) -> list:
+    """Recent commit subjects from frozen context, in list order."""
+    subjects = []
+    for commit in _recent_commits(context):
+        if not isinstance(commit, dict):
+            continue
+        subject = commit.get("subject")
+        if isinstance(subject, str):
+            text = subject.strip()
+            if text:
+                subjects.append(text)
+        if len(subjects) >= limit:
+            break
+    return subjects
+
+
+def _direction_from_recent_kinds(context: dict) -> str:
+    """A direction line from the dominant recent commit kinds, or empty when unknown."""
+    counts = _recent_kind_counts(context)
+    if not counts:
+        return ""
+    dominant_kind, dominant_count = counts[0]
+    if len(counts) == 1:
+        return (
+            f"Recent maintainer activity emphasizes {dominant_kind} work "
+            f"({dominant_count} recent commit(s))."
+        )
+    mix = ", ".join(f"{kind} ({count})" for kind, count in counts[:3])
+    return f"Recent maintainer activity spans {mix}."
+
+
+def _context_philosophy_stub(context: dict) -> dict:
+    """Mode-honest fallback when live inference fails: derive what freeze-T context supports.
+
+    Unlike ``_OFFLINE_STUB``, this never claims the agent was offline. ``merge_bar`` stays
+    empty because the frozen snapshot does not encode merge policy; ``summary``, ``direction``,
+    and ``evidence`` are filled from ``readme_excerpt`` and ``recent_commits`` when present.
+    """
+    hint = _readme_project_hint(context)
+    summary = (
+        f"Project characterized in README as: {hint}"
+        if hint
+        else "philosophy unavailable"
+    )
+    return {
+        "summary": summary,
+        "values": [],
+        "merge_bar": "",
+        "direction": _direction_from_recent_kinds(context),
+        "evidence": _recent_commit_subjects(context),
+    }
+
+
 def _normalize_philosophy(out: dict, stub: dict) -> dict:
     """Map an LLM philosophy object onto the documented field types."""
     if not isinstance(out, dict):
@@ -122,8 +193,9 @@ def infer_philosophy(context: dict, llm) -> dict:
         '  "direction": where the codebase appears to be heading (the "idea trajectory"),\n'
         '  "evidence": list of concrete signals you used.'
     )
-    out = llm.chat_json(SYSTEM, user, stub=_OFFLINE_STUB)
-    return _normalize_philosophy(out, _OFFLINE_STUB)
+    stub = _OFFLINE_STUB if getattr(llm, "offline", False) else _context_philosophy_stub(context)
+    out = llm.chat_json(SYSTEM, user, stub=stub)
+    return _normalize_philosophy(out, stub)
 
 
 def _render(context: dict) -> str:

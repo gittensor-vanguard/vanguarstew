@@ -44,7 +44,14 @@ The returned philosophy SHALL always be a dict with exactly these five keys:
 
 - `_OFFLINE_STUB` SHALL carry exactly those five keys, with
   `summary = "offline stub philosophy"`, `values = []`, `merge_bar = "unknown (offline)"`,
-  `direction = "unknown (offline)"`, `evidence = []`.
+  `direction = "unknown (offline)"`, `evidence = []`. This constant is used only on the
+  genuine-offline path and for non-dict context; it SHALL NOT be passed to `chat_json` on a
+  live call.
+- `_context_philosophy_stub(context)` SHALL be the live-parse-failure fallback: mode-honest
+  wording that never claims the agent was offline (`summary = "philosophy unavailable"` when
+  no README excerpt is present; `merge_bar = ""`; `direction` derived from dominant recent
+  commit kinds when available; `evidence` listing recent commit subjects). When a README
+  excerpt is present, `summary` SHALL name the project from its first non-empty line.
 - `SYSTEM` SHALL instruct the model to infer values, risk tolerance and direction, to be
   evidence-based, and to respond **only** with JSON.
 - `FEWSHOT` SHALL carry two contrasting worked examples (one conservative library, one fast-moving
@@ -98,9 +105,10 @@ The returned philosophy SHALL always be a dict with exactly these five keys:
 
 - WHEN `context` is not a dict (`None`, a string, a number, a list, a bool — the **non-dict context
   fallback**) THEN it SHALL return `dict(_OFFLINE_STUB)` **without calling the LLM at all**.
-- OTHERWISE it SHALL call `llm.chat_json(SYSTEM, user, stub=_OFFLINE_STUB)` exactly once and return
-  `_normalize_philosophy(out, _OFFLINE_STUB)`, so an unusable payload still yields the documented
-  five keys.
+- OTHERWISE it SHALL call `llm.chat_json(SYSTEM, user, stub=stub)` exactly once, where
+  `stub` is `_OFFLINE_STUB` when `llm.offline` is true and `_context_philosophy_stub(context)`
+  otherwise, and return `_normalize_philosophy(out, stub)`, so an unusable payload still yields
+  the documented five keys without ever labelling a live run as offline.
 - The `user` prompt SHALL contain, in order: the instruction to infer from this repository state,
   the full `FEWSHOT` block, an instruction to base every field on this repository's own signals
   rather than the examples, the rendered context, and the enumeration of the five requested keys.
