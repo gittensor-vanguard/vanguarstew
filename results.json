@@ -1120,5 +1120,75 @@
       "report_data": "78f9ed48d949a5d124e8cab6dc36f69874e8fcddbf562132aeeff14dcfdfb6e1"
     },
     "merged": false
+  },
+  {
+    "timestamp": "2026-07-29T01:44:48.141340+00:00",
+    "pr_number": 2060,
+    "band": "blocked",
+    "label": null,
+    "public": {
+      "composite_delta": -0.02,
+      "per_repo": [
+        {
+          "repo": "https://github.com/kurtmckee/feedparser",
+          "composite_delta": -0.034
+        },
+        {
+          "repo": "https://github.com/pytest-dev/pluggy",
+          "composite_delta": -0.062
+        },
+        {
+          "repo": "https://github.com/hgrecco/pint",
+          "composite_delta": 0.034
+        }
+      ],
+      "foresight": {
+        "module_recall_mean": 0.656,
+        "kind_recall_mean": 1.0,
+        "release_accuracy": 1.0,
+        "module_recall_n": 9,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "private": {
+      "composite_delta": 0.046,
+      "foresight": {
+        "module_recall_mean": 0.914,
+        "kind_recall_mean": 1.0,
+        "release_accuracy": 1.0,
+        "module_recall_n": 9,
+        "kind_recall_n": 4,
+        "release_accuracy_n": 4
+      }
+    },
+    "since_anchor": {
+      "anchor": "v0.7.0",
+      "public": {
+        "composite_delta": 0.143,
+        "composite_score": 0.818,
+        "anchor_score": 0.675
+      },
+      "private": {
+        "composite_delta": 0.346,
+        "composite_score": 0.947,
+        "anchor_score": 0.601
+      }
+    },
+    "evidence": {
+      "inputs": {
+        "repo_set": "public+private",
+        "repo_set_partition": "tuned",
+        "seed": 0,
+        "rotation_seed": null,
+        "model": "deepseek-chat",
+        "agent_commit": "3559d435863e1f0247c44ee61b0d3beb78c24752",
+        "eval_image": null,
+        "transcript_digest": "acf6479e6c55dcd9e4f91097a05dbb84b73e32975af3f4b62c668bc724814bc6"
+      },
+      "artifact_digest": "ca412bd5d6594da0ba06a40eaf3ec3f8e67da539b758607709f6c428cda5740d",
+      "report_data": "20b6ee6b938715281a9f15c31f064cc8908576572a5d463826844279a6d0ec6e"
+    },
+    "merged": false
   }
 ]
