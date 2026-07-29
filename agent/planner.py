@@ -153,15 +153,23 @@ RELEASE_PRESSURE_GUIDANCE = (
     "due) — include one `release`-kind item in the plan, with a concrete version bump in mind."
 )
 
-# Window-local release timing thresholds (#1561). Suppress right after a cut; pressure when the
-# cycle is due. Tuned to the curated horizon_days band [14, 90]: a cut within a week is almost
-# never followed by another in the same short window, while ≥28 days (or ≥20 non-release commits)
-# is past half a typical cycle for the set's median repos.
+# Window-local release timing thresholds (#1561, #2178). Commit-horizon defaults: suppress right
+# after a cut; pressure when the cycle is due. Time-horizon tasks scale these to the planning
+# window — a 7-day suppress constant is meaningless on a 90-day window, and on long horizons a
+# recent cut clusters with another (pressure, not suppress).
 _RELEASE_SUPPRESS_DAYS = 7
 _RELEASE_PRESSURE_DAYS = 28
 _RELEASE_PRESSURE_COMMITS = 20
+# Long curated windows (≥45d): a cut within the last week raises release likelihood (#2178).
+_CLUSTER_PRESSURE_HORIZON_DAYS = 45
+_CLUSTER_RECENT_CUT_DAYS = 7
 # Undated fallback: a release subject among the newest N commits ≈ "just cut".
 _RELEASE_JUST_CUT_LOOKBACK = 3
+# Runner time-horizon template: ``plan the maintainer actions for the next N days``.
+_DAY_HORIZON_REQUEST_RE = re.compile(
+    r"plan the maintainer actions for the next (\d+) days?",
+    re.I,
+)
 
 # Prompt fragment for config-surface planning (#1640). Kept as a named constant so tests can
 # assert prompt inclusion without parsing the full LLM user message.
@@ -289,7 +297,10 @@ def _recent_kind_counts(context: dict) -> list:
     for commit in _recent_commits(context):
         if not isinstance(commit, dict):
             continue
-        kind = _commit_plan_kind(commit.get("subject"))
+        subject = commit.get("subject")
+        kind = _commit_plan_kind(subject)
+        if kind is None and _is_release_subject(subject):
+            kind = "release"
         if kind:
             counts[kind] = counts.get(kind, 0) + 1
     return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
@@ -363,7 +374,7 @@ def _last_release_dt(context: dict):
     for commit in _recent_commits(context):
         if not isinstance(commit, dict):
             continue
-        if _commit_plan_kind(commit.get("subject")) != "release":
+        if not _is_release_subject(commit.get("subject")):
             continue
         dt = _parse_iso_dt(commit.get("date"))
         if dt is not None and (newest is None or dt > newest):
@@ -408,7 +419,7 @@ def _commits_since_last_release(context: dict):
         if not isinstance(commit, dict):
             continue
         saw_any = True
-        if _commit_plan_kind(commit.get("subject")) == "release":
+        if _is_release_subject(commit.get("subject")):
             return n
         n += 1
     return n if saw_any else None
@@ -417,29 +428,70 @@ def _commits_since_last_release(context: dict):
 def _release_just_cut_undated(context: dict) -> bool:
     """True when a release subject sits among the newest commits and dates are unavailable."""
     for commit in _recent_commits(context)[:_RELEASE_JUST_CUT_LOOKBACK]:
-        if isinstance(commit, dict) and _commit_plan_kind(commit.get("subject")) == "release":
+        if isinstance(commit, dict) and _is_release_subject(commit.get("subject")):
             return True
     return False
 
 
-def _release_timing_state(context: dict) -> str:
-    """Freeze-window release timing: ``suppress`` | ``pressure`` | ``neutral`` (#1561).
+def _planning_horizon_days(request: str | None) -> int | None:
+    """Parse the day span from a time-horizon planning request, else ``None``."""
+    if not isinstance(request, str):
+        return None
+    m = _DAY_HORIZON_REQUEST_RE.search(request)
+    if not m:
+        return None
+    try:
+        days = int(m.group(1))
+    except ValueError:
+        return None
+    return days if days > 0 else None
 
-    - **suppress** — a cut landed very recently; predicting another release overfits cadence vibe.
+
+def _release_timing_thresholds(horizon_days: int | None) -> tuple[int | None, int, int]:
+    """Return ``(suppress_days, pressure_days, pressure_commits)`` scaled to the planning window."""
+    if horizon_days is None:
+        return _RELEASE_SUPPRESS_DAYS, _RELEASE_PRESSURE_DAYS, _RELEASE_PRESSURE_COMMITS
+    if horizon_days < _CLUSTER_PRESSURE_HORIZON_DAYS:
+        suppress = max(1, min(_RELEASE_SUPPRESS_DAYS, horizon_days // 2))
+    else:
+        suppress = None
+    pressure_days = max(_RELEASE_PRESSURE_DAYS, horizon_days // 3)
+    pressure_commits = max(_RELEASE_PRESSURE_COMMITS, horizon_days // 2)
+    return suppress, pressure_days, pressure_commits
+
+
+def _release_timing_state(context: dict, *, horizon_days: int | None = None) -> str:
+    """Freeze-window release timing: ``suppress`` | ``pressure`` | ``neutral`` (#1561, #2178).
+
+    - **suppress** — a cut landed very recently relative to the planning window; predicting
+      another release overfits cadence vibe (short windows only).
     - **pressure** — long enough since the last cut (days or commits) that the revealed window
-      is likely to contain one; prompt for a release item.
+      is likely to contain one, or a recent cut on a long window clusters with another.
     - **neutral** — no clear timing read (or mid-cycle); fall back to the cadence backstop.
     """
+    suppress_days, pressure_days, pressure_commits = _release_timing_thresholds(horizon_days)
     days = _days_since_last_release(context)
-    if days is not None and days <= _RELEASE_SUPPRESS_DAYS:
-        return "suppress"
-    if days is None and _release_just_cut_undated(context):
-        return "suppress"
-
     commits = _commits_since_last_release(context)
-    if days is not None and days >= _RELEASE_PRESSURE_DAYS:
+
+    if (
+        horizon_days is not None
+        and horizon_days >= _CLUSTER_PRESSURE_HORIZON_DAYS
+        and days is not None
+        and days <= _CLUSTER_RECENT_CUT_DAYS
+    ):
         return "pressure"
-    if commits is not None and commits >= _RELEASE_PRESSURE_COMMITS:
+
+    if suppress_days is not None:
+        if days is not None and days <= suppress_days:
+            return "suppress"
+        if days is None and _release_just_cut_undated(context):
+            if horizon_days is not None and horizon_days >= _CLUSTER_PRESSURE_HORIZON_DAYS:
+                return "pressure"
+            return "suppress"
+
+    if days is not None and days >= pressure_days:
+        return "pressure"
+    if commits is not None and commits >= pressure_commits:
         return "pressure"
     return "neutral"
 
@@ -447,19 +499,19 @@ def _release_timing_state(context: dict) -> str:
 def _release_cadence_signal(context: dict) -> bool:
     """True when recent commits show a release cut (mirrors heuristic_plan cadence)."""
     return any(
-        _commit_plan_kind(commit.get("subject")) == "release"
+        _is_release_subject(commit.get("subject"))
         for commit in _recent_commits(context)
         if isinstance(commit, dict)
     )
 
 
-def _release_cadence_note(context: dict) -> str:
+def _release_cadence_note(context: dict, *, horizon_days: int | None = None) -> str:
     """Inject release-item guidance from freeze-T timing, not from cadence vibe (#1561).
 
     Pressure → ask for a release item. Suppress / mid-cycle → stay silent (a just-cut release
     subject in history must NOT re-trigger "include a release" — that was the over-predict).
     """
-    if _release_timing_state(context) != "pressure":
+    if _release_timing_state(context, horizon_days=horizon_days) != "pressure":
         return ""
     return f"\n{RELEASE_PRESSURE_GUIDANCE}\n"
 
@@ -522,7 +574,9 @@ def _is_planned_release(item) -> bool:
     return _is_release_subject(item.get("title"))
 
 
-def _calibrate_release_prediction(plan: list, context: dict) -> list:
+def _calibrate_release_prediction(
+    plan: list, context: dict, *, horizon_days: int | None = None,
+) -> list:
     """Gate release predictions on freeze-T timing rather than cadence vibe (#1561).
 
     - **suppress** (just cut): drop release-kind / release-titled items — another cut in the
@@ -537,7 +591,7 @@ def _calibrate_release_prediction(plan: list, context: dict) -> list:
     are not predictions (#2115), so they survive the strip and reconcile can still attach them
     to an open release PR.
     """
-    state = _release_timing_state(context)
+    state = _release_timing_state(context, horizon_days=horizon_days)
     if state == "suppress":
         return [item for item in plan if not _is_planned_release(item)]
     if state == "pressure":
@@ -1094,15 +1148,18 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     return out[:n]
 
 
-def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
+def plan_next_actions(
+    context: dict, philosophy: dict, n: int, llm, request: str | None = None,
+) -> list:
     if not isinstance(context, dict):
         return _offline_plan_stub({}, n)
+    horizon_days = _planning_horizon_days(request)
     user = (
         f"Repository philosophy:\n{json.dumps(philosophy, indent=1)[:4000]}\n\n"
         f"Repository state:\n{_render(context)}\n"
         f"{_repo_layout_note(context)}"
         f"{_recent_kinds_note(context)}"
-        f"{_release_cadence_note(context)}"
+        f"{_release_cadence_note(context, horizon_days=horizon_days)}"
         f"{_config_surface_note(context)}"
         f"{_pr_queue_note(context)}\n"
         f"Plan the next {n} maintainer actions/PRs. Return a JSON list; each item:\n"
@@ -1123,7 +1180,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
         else:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
-    plan = _calibrate_release_prediction(plan, context)
+    plan = _calibrate_release_prediction(plan, context, horizon_days=horizon_days)
     plan = _backfill_files_from_layout(plan, context)
     return reconcile_plan_with_queue(plan, context, n)
 

@@ -20,7 +20,7 @@ import logging
 import re
 
 from agent.context import context_for_agent
-from agent.planner import _release_cadence_signal, _release_timing_state
+from agent.planner import _planning_horizon_days, _release_cadence_signal, _release_timing_state
 
 logger = logging.getLogger(__name__)
 
@@ -365,15 +365,16 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     # so the repo's own modal cadence class weakly dominates abstaining. Backfill only fills
     # a hole: an explicit prediction from the LLM always stands, and just after a cut
     # (suppress) no bump is coming, so none is invented.
+    horizon_days = _planning_horizon_days(request)
     if (
         out["version_bump"] is None
         and _is_planning_request(request)
-        and _release_timing_state(context) != "suppress"
+        and _release_timing_state(context, horizon_days=horizon_days) != "suppress"
     ):
         out["version_bump"] = _recent_bump_class(context)
     # Just after a cut, a version_bump prediction matches nothing (bump_actual is None when the
     # revealed window has no release) — clear it the same way the planner suppresses release items.
-    if _release_timing_state(context) == "suppress":
+    if _release_timing_state(context, horizon_days=horizon_days) == "suppress":
         out["version_bump"] = None
     return out
 
@@ -398,7 +399,8 @@ def _planning_version_bump_note(context: dict, request: str) -> str:
     """Ask for version_bump on planning requests when freeze-T timing says a cut is due."""
     if not _is_planning_request(request):
         return ""
-    state = _release_timing_state(context)
+    horizon_days = _planning_horizon_days(request)
+    state = _release_timing_state(context, horizon_days=horizon_days)
     # Just-cut: do not solicit a bump — clearing happens post-LLM in decide() as well.
     if state == "suppress":
         return ""

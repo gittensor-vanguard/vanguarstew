@@ -40,6 +40,7 @@ from agent.planner import (  # noqa: E402
     _normalize_plan_item,
     _offline_plan_stub,
     _plan_list,
+    _planning_horizon_days,
     _pr_dedup_key,
     _pr_number,
     _pr_queue_note,
@@ -48,6 +49,7 @@ from agent.planner import (  # noqa: E402
     _release_cadence_note,
     _release_cadence_signal,
     _release_timing_state,
+    _release_timing_thresholds,
     _repo_layout_note,
     _safe_prs,
     _significant_tokens,
@@ -875,6 +877,61 @@ def test_release_timing_pressure_when_cycle_is_due():
     many = {"recent_commits": [{"subject": f"feat: {i}"} for i in range(20)]}
     assert _commits_since_last_release(many) == 20
     assert _release_timing_state(many) == "pressure"
+
+
+def test_release_detection_uses_anchor_aligned_subject_mirror():
+    # Non-CC release subjects the kind mirror misses must still anchor timing (#2178).
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "feat: a", "date": "2020-06-09T12:00:00+00:00"},
+            {"subject": "Preparing release 0.12.0", "date": "2020-06-08T12:00:00+00:00"},
+        ],
+    }
+    assert _commit_plan_kind("Preparing release 0.12.0") is None
+    assert _is_release_subject("Preparing release 0.12.0") is True
+    assert _days_since_last_release(ctx) == 2
+    assert _commits_since_last_release(ctx) == 1
+    assert _release_cadence_signal(ctx) is True
+
+
+def test_recent_kinds_note_counts_non_cc_release_subjects():
+    ctx = {"recent_commits": [
+        {"subject": "feat: a"},
+        {"subject": "Update the changelog for 1.2.0"},
+        {"subject": "fix: b"},
+    ]}
+    note = _recent_kinds_note(ctx)
+    assert "release (1)" in note
+    assert "feature (1)" in note
+    assert "bugfix (1)" in note
+
+
+def test_planning_horizon_days_parses_time_horizon_requests():
+    assert _planning_horizon_days("plan the maintainer actions for the next 60 days") == 60
+    assert _planning_horizon_days("Plan the maintainer actions for the next 14 day") == 14
+    assert _planning_horizon_days("plan the next 5 maintainer actions") is None
+    assert _planning_horizon_days(None) is None
+
+
+def test_release_timing_thresholds_scale_with_horizon():
+    assert _release_timing_thresholds(None) == (7, 28, 20)
+    assert _release_timing_thresholds(14) == (7, 28, 20)
+    assert _release_timing_thresholds(90) == (None, 30, 45)
+
+
+def test_release_timing_long_horizon_clusters_after_recent_cut():
+    # On a 90-day window a cut 2 days ago raises pressure, not suppress (#2178).
+    ctx = {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {"subject": "chore(release): 1.4.0", "date": "2020-06-08T12:00:00+00:00"},
+            {"subject": "feat: a", "date": "2020-06-07T12:00:00+00:00"},
+        ],
+    }
+    assert _release_timing_state(ctx) == "suppress"
+    assert _release_timing_state(ctx, horizon_days=90) == "pressure"
+    assert RELEASE_PRESSURE_GUIDANCE in _release_cadence_note(ctx, horizon_days=90)
 
 
 def test_release_cadence_note_only_under_pressure_not_just_because_history_had_a_cut():
