@@ -93,6 +93,34 @@ def test_tally_counts_missing_or_malformed(artifact):
     assert _tally_counts(artifact) is None
 
 
+def test_tally_counts_judge_report_fallback():
+    # Multi-repo aggregates carry no top-level tally; counts live in judge_report.
+    slice_ = {"judge_report": {"wins": 5, "losses": 3, "ties": 2}}
+    assert _tally_counts(slice_) == (5, 3, 2)
+
+
+def test_tally_counts_tally_precedence_over_judge_report():
+    slice_ = {
+        "tally": {"challenger": 1, "baseline": 0, "tie": 0},
+        "judge_report": {"wins": 9, "losses": 9, "ties": 9},
+    }
+    assert _tally_counts(slice_) == (1, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "report",
+    (
+        {"wins": -1, "losses": 3, "ties": 2},
+        {"wins": 5, "losses": 3},
+        {"wins": "5", "losses": 3, "ties": 2},
+        None,
+    ),
+)
+def test_tally_counts_judge_report_malformed(report):
+    slice_ = {"judge_report": report}
+    assert _tally_counts(slice_) is None
+
+
 # --- Decisive rate summary ------------------------------------------------------------------
 
 

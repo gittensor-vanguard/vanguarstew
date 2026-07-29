@@ -49,10 +49,18 @@ artifact.
 
 ### Tally parsing (`_tally_counts`)
 
-- SHALL read `challenger`, `baseline`, and `tie` from `artifact["tally"]` when `tally` is a `dict`.
-- WHEN `tally` is missing or not a `dict` THEN `_tally_counts` SHALL return `None`.
-- WHEN every count is a non-negative `_is_int` THEN `_tally_counts` SHALL return the triple.
-- WHEN any count is invalid THEN `_tally_counts` SHALL return `None`.
+- SHALL read `challenger`, `baseline`, and `tie` from `slice_["tally"]` when `tally` is a `dict`.
+- WHEN every tally count is a non-negative `_is_int` THEN `_tally_counts` SHALL return the triple.
+- WHEN any tally count is invalid THEN `_tally_counts` SHALL NOT return from the tally path.
+- WHEN no usable tally is found (absent, not a `dict`, or invalid counts) THEN `_tally_counts`
+  SHALL consult `slice_["judge_report"]` — multi-repo aggregates carry no top-level `tally`
+  (`run_multi_replay` writes win/loss/tie counts into `judge_report` only), so this fallback is
+  the primary path for `multi` artifacts.
+- WHEN `judge_report` is a `dict` and `wins`, `losses`, and `ties` are all non-negative `_is_int`
+  THEN `_tally_counts` SHALL return `(wins, losses, ties)`.
+- WHEN `judge_report` is missing, not a `dict`, or any count is invalid THEN `_tally_counts`
+  SHALL return `None`.
+- A valid top-level `tally` SHALL take precedence over `judge_report`.
 
 ### Decisive rate summary (`summarize_decisive_rate`)
 
@@ -64,7 +72,8 @@ Every summary SHALL include: `kind`, `total`, `decisive`, `tie`, `decisive_rate`
 
 The `kind` (from `benchmark.comparability.artifact_kind`) selects the slice:
 
-1. **`single` / `multi` / `invalid`** — top-level slice from the artifact's own tally;
+1. **`single` / `multi` / `invalid`** — top-level slice via `_slice_summary` (from `tally`, or from
+   `judge_report` when tally is absent — the usual path for `multi` aggregates);
    `partitions` SHALL be `None`.
 2. **`generalization`** — per-partition slices for `tuned` and `held_out`; WHEN both carry an
    `_is_int` `total` THEN overall counts SHALL be summed and rates computed on the totals;
