@@ -1,12 +1,14 @@
 """Tests for the repeatability stability gate (deterministic, offline)."""
 
 import copy
+import errno
 import json
 import logging
 import os
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -320,6 +322,38 @@ def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
     assert "artifact is a broken symlink (target does not exist)" in err
     assert str(link) in err
     assert "Traceback" not in err
+
+
+def test_load_artifact_symlink_loop_is_named_distinctly(capsys):
+    # #2090: os.path.exists() swallows OSError(ELOOP) and returns False, so the old
+    # exists()/islink() pre-check misreported a symlink loop as a dangling target. A symlink
+    # loop raises OSError(ELOOP) from open() itself, which no other arm catches; it must be
+    # named as a loop, not leaked as a raw errno string or misreported as "broken symlink".
+    path = "loop.json"
+    with patch(
+        "builtins.open",
+        side_effect=OSError(errno.ELOOP, "Too many levels of symbolic links", path),
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_load_artifact_not_a_directory_error_is_named_distinctly(capsys):
+    # #2090: a parent path component that is a regular file raises NotADirectoryError, which
+    # previously had no dedicated arm and fell into the generic OSError branch with a raw errno.
+    path = "result.json/child.json"
+    with patch(
+        "builtins.open",
+        side_effect=NotADirectoryError(20, "Not a directory", path),
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
 
 
 def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):

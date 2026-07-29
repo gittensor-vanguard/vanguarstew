@@ -267,6 +267,67 @@ def test_main_catches_repo_set_error_from_run_multi_replay(monkeypatch, capsys):
     assert "bad config: boom" in capsys.readouterr().err
 
 
+def test_held_out_with_explicit_repo_set_partition_all_errors_instead_of_silently_dropping(
+    monkeypatch, capsys,
+):
+    # #2064: --repo-set-partition all --held-out used to silently drop --held-out and replay
+    # `all` instead of the held-out slice the user asked for. It must error instead.
+    monkeypatch.setattr(
+        sys, "argv",
+        _argv("--repo-set", "/some/config.json", "--repo-set-partition", "all", "--held-out"),
+    )
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "--held-out" in capsys.readouterr().err
+
+
+def test_held_out_with_explicit_repo_set_partition_tuned_errors_instead_of_silently_overriding(
+    monkeypatch, capsys,
+):
+    # #2064: --repo-set-partition tuned --held-out used to silently override the explicit
+    # `tuned` choice to `held_out`. It must error instead of picking one silently.
+    monkeypatch.setattr(
+        sys, "argv",
+        _argv("--repo-set", "/some/config.json", "--repo-set-partition", "tuned", "--held-out"),
+    )
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "--held-out" in capsys.readouterr().err
+
+
+def test_held_out_alone_still_selects_the_held_out_partition(monkeypatch, capsys):
+    # Control: --held-out without an explicit --repo-set-partition must still resolve to the
+    # held-out partition, unaffected by the new conflict check.
+    monkeypatch.setattr(sys, "argv", _argv("--repo-set", "/some/config.json", "--held-out"))
+    captured = {}
+
+    def fake_run_multi_replay(repo_set=None, repo_set_partition=None, **kw):
+        captured["partition"] = repo_set_partition
+        return {"tasks": 0}
+
+    with patch("scripts.run_eval.run_multi_replay", side_effect=fake_run_multi_replay):
+        main()
+    capsys.readouterr()
+    assert captured["partition"] == "held_out"
+
+
+def test_repo_set_partition_default_is_still_tuned_without_held_out(monkeypatch, capsys):
+    # Control: omitting both flags must still default to "tuned" (unchanged behavior).
+    monkeypatch.setattr(sys, "argv", _argv("--repo-set", "/some/config.json"))
+    captured = {}
+
+    def fake_run_multi_replay(repo_set=None, repo_set_partition=None, **kw):
+        captured["partition"] = repo_set_partition
+        return {"tasks": 0}
+
+    with patch("scripts.run_eval.run_multi_replay", side_effect=fake_run_multi_replay):
+        main()
+    capsys.readouterr()
+    assert captured["partition"] == "tuned"
+
+
 def test_main_catches_repo_set_error_from_run_generalization_report(monkeypatch, capsys):
     monkeypatch.setattr(
         sys, "argv",

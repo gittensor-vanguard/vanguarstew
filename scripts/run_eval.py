@@ -135,7 +135,7 @@ def main() -> None:
                      help="two or more git repos to replay and aggregate into a composite_mean")
     src.add_argument("--repo-set",
                      help="validated repo-set JSON config to replay (see benchmark/repo_sets/)")
-    ap.add_argument("--repo-set-partition", default="tuned",
+    ap.add_argument("--repo-set-partition", default=None,
                     choices=["tuned", "held_out", "all"],
                     help="which repos from --repo-set to replay (default: tuned)")
     ap.add_argument("--agent", default="agent.py", help="agent entrypoint file")
@@ -180,6 +180,14 @@ def main() -> None:
         ap.error("--generalization requires --repo-set")
     if args.generalization and args.held_out:
         ap.error("--generalization already runs both partitions; do not combine it with --held-out")
+    if args.held_out and args.repo_set_partition is not None:
+        # --repo-set-partition defaults to "tuned", so telling "left at default" apart from
+        # "explicitly typed tuned" needs default=None above. Silently resolving one flag over
+        # the other (the prior behaviour) replayed the wrong repo slice with no warning --
+        # e.g. `--repo-set-partition all --held-out` dropped --held-out and ran `all`, and
+        # `--repo-set-partition tuned --held-out` silently overrode the explicit `tuned`.
+        ap.error("--held-out already selects the held-out partition; "
+                 "do not combine it with an explicit --repo-set-partition")
 
     common = dict(
         agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
@@ -193,8 +201,9 @@ def main() -> None:
         if args.repo_set and args.generalization:
             result = run_generalization_report(args.repo_set, **common)
         elif args.repo_set:
-            partition = ("held_out" if args.held_out and args.repo_set_partition == "tuned"
-                        else args.repo_set_partition)
+            # The --held-out / --repo-set-partition conflict is already rejected above, so at
+            # most one of them is actually selecting a partition here.
+            partition = "held_out" if args.held_out else (args.repo_set_partition or "tuned")
             result = run_multi_replay(repo_set=args.repo_set, repo_set_partition=partition, **common)
         elif args.repos:
             result = run_multi_replay(args.repos, **common)

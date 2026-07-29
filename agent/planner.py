@@ -103,6 +103,15 @@ _RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?
 # the same way the objective anchor's `is_release_subject` does — a title-shaped release the
 # `_commit_plan_kind` (Conventional-Commit-prefix only) check alone would miss (#1561 follow-up).
 _RELEASE_KW_RE = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
+# Git-native revert subjects (`Revert "Release v1.2.0"`) are the opposite of a cut. Mirrors
+# benchmark/score.py `_NATIVE_REVERT_SUBJECT` so the planner backstop does not treat them as
+# release predictions (#2115).
+_NATIVE_REVERT_SUBJECT = re.compile(r"^\s*revert\b", re.I)
+
+# Plan kinds that name a maintainer action over existing work, not a release *prediction*.
+# Their titles may mention "release" (queue review of an open release PR; revert of a cut)
+# without predicting another version cut (#2115).
+_NON_RELEASE_PREDICTION_KINDS = frozenset({"triage", "revert"})
 
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
@@ -466,9 +475,12 @@ def _is_release_subject(text) -> bool:
 
     A version under any **non-tooling** CC prefix is NOT a cut (``fix: 2.0.0``, ``ci: 3.0.0``) —
     the prefix is authoritative there — matching the anchor so the backstop gates exactly what the
-    anchor would score as a release prediction. A non-string title never raises.
+    anchor would score as a release prediction. A git-native ``Revert ...`` subject is never a
+    cut (mirrors the anchor's ``_NATIVE_REVERT_SUBJECT``). A non-string title never raises.
     """
     if not isinstance(text, str):
+        return False
+    if _NATIVE_REVERT_SUBJECT.match(text):
         return False
     m = _CC_PREFIX_RE.match(text)
     if m:
@@ -492,12 +504,21 @@ def _is_planned_release(item) -> bool:
     the title half is :func:`_is_release_subject`, a full mirror of the anchor's
     ``is_release_subject`` — so a release-*titled* item under a non-release ``kind`` is gated too,
     not just ``kind == "release"`` (#1561 follow-up: openclaw task2 slipped the kind-only check).
+
+    ``triage`` / ``revert`` are never predictions (#2115): a queue review of an open release PR,
+    or a revert of a cut, may mention ``release`` in the title without forecasting another cut.
     """
     if not isinstance(item, dict):
         return False
     kind = item.get("kind")
-    if isinstance(kind, str) and kind.strip().lower() == "release":
+    if isinstance(kind, str):
+        kind = kind.strip().lower()
+    else:
+        kind = ""
+    if kind == "release":
         return True
+    if kind in _NON_RELEASE_PREDICTION_KINDS:
+        return False
     return _is_release_subject(item.get("title"))
 
 
@@ -512,7 +533,9 @@ def _calibrate_release_prediction(plan: list, context: dict) -> list:
       shows no release cut (openclaw-style philosophy over-predict); keep them when a cut is
       evidenced mid-history (not tip-just-cut).
 
-    Runs BEFORE queue reconciliation so a genuine open release *PR* is still merged back in.
+    Runs BEFORE queue reconciliation. Triage/revert items that mention ``release`` in the title
+    are not predictions (#2115), so they survive the strip and reconcile can still attach them
+    to an open release PR.
     """
     state = _release_timing_state(context)
     if state == "suppress":

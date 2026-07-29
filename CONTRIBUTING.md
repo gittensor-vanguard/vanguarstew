@@ -26,6 +26,8 @@ Two halves with different rules:
 - **`benchmark/` — the evaluation harness.** Freeze a repo at a point in time, generate
   replay tasks from GitHub history, run agents, and judge them pairwise. This is
   validator-owned; changes here affect how *everyone* is scored, so they get extra scrutiny.
+- **`scripts/`, `docs/`, and `blog/` — maintainer-directed operations and documentation.**
+  These surfaces define how the system is run and how its public guarantees are presented.
 
 See [README.md](README.md) for the architecture and [ROADMAP.md](ROADMAP.md) for milestones.
 
@@ -71,12 +73,23 @@ CI must be green before a PR can merge. See [REVIEW.md](REVIEW.md) for exactly h
 contributions are gated, reviewed, and scored — the process is designed to be predictable and
 reproducible.
 
-## Benchmark integrity changes
+### Use an accurate commit identity
 
-The benchmark and contribution-integrity surface is maintainer-directed because changing the
-measurement can change how every contributor is evaluated. This includes `benchmark/`,
-`scripts/score_pr_delta.py`, `scripts/compare_eval.py`, `scripts/leaderboard_feed.py`, the scoring
-contract in `REVIEW.md`, and the CI policy that protects these paths.
+Do not make Git author or committer metadata claim the PR author's account name when GitHub
+attributes that same commit role to a different account. Legitimate commits from collaborators are
+allowed when their Git metadata identifies them accurately, and an email that GitHub cannot link to
+an account is not treated as evidence of another identity.
+
+CI evaluates this rule on each PR update and again whenever the normal CI workflow completes.
+Identity mismatches are automatically closed; correct the commit attribution before reopening.
+
+## Benchmark, scripts, and documentation changes
+
+The benchmark, scripts, and documentation surfaces are maintainer-directed. Benchmark changes can
+change how every contributor is evaluated; scripts control operational behavior; documentation
+defines the project's public contracts and claims. The protected paths are `benchmark/**`,
+`scripts/**`, `docs/**`, `blog/**`, Markdown files anywhere in the repository, and the CI policy
+protecting them.
 
 Contributor PRs touching this surface are automatically closed unless they were discussed and
 approved before the PR was opened:

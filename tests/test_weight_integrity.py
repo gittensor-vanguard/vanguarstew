@@ -387,18 +387,21 @@ def test_cli_strict_exit_codes(tmp_path):
 
 
 def test_cli_missing_and_non_object_files(tmp_path):
+    # Path/JSON failures exit 2 so CI can tell them apart from --strict gate failure (exit 1).
     missing = _run_cli(tmp_path / "does-not-exist.json", "--strict")
-    assert missing.returncode == 1
+    assert missing.returncode == 2
     assert "Traceback" not in missing.stderr
     assert "artifact not found" in missing.stderr
     arr = tmp_path / "arr.json"
     arr.write_text("[1, 2, 3]")
-    assert _run_cli(arr, "--strict").returncode == 1
+    non_object = _run_cli(arr, "--strict")
+    assert non_object.returncode == 2
+    assert "artifact must be a JSON object" in non_object.stderr
 
 
 def test_cli_directory_path_reports_clean_error(tmp_path):
     result = _run_cli(tmp_path)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "directory" in result.stderr
 
@@ -410,7 +413,7 @@ def test_load_artifact_is_a_directory_error_is_handled(monkeypatch, tmp_path, ca
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         weight_integrity_cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "artifact path is a directory, not a file" in err and "Traceback" not in err
 
@@ -422,16 +425,30 @@ def test_load_artifact_permission_error_is_handled(monkeypatch, tmp_path, capsys
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         weight_integrity_cli.load_artifact(str(tmp_path / "run.json"))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "not readable" in err and "Traceback" not in err
+
+
+def test_load_artifact_not_a_directory_error_is_handled(monkeypatch, tmp_path, capsys):
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(20, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        weight_integrity_cli.load_artifact(path)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "parent component is not a directory" in err and "Traceback" not in err
 
 
 def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "broken.json"
     path.write_text("{not json", encoding="utf-8")
     result = _run_cli(path)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "Traceback" not in result.stderr
     assert "artifact is not valid JSON" in result.stderr
 
@@ -440,7 +457,7 @@ def test_cli_broken_symlink_reports_clean_error(tmp_path):
     link = tmp_path / "broken.json"
     link.symlink_to(tmp_path / "nonexistent.json")
     result = _run_cli(link)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert result.stderr == (
         f"artifact is a broken symlink (target does not exist): {link}\n"
     )
@@ -451,7 +468,7 @@ def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
     link.symlink_to(tmp_path / "nonexistent.json")
     with pytest.raises(SystemExit) as excinfo:
         weight_integrity_cli.load_artifact(str(link))
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     assert capsys.readouterr().err == (
         f"artifact is a broken symlink (target does not exist): {link}\n"
     )
@@ -466,5 +483,5 @@ def test_load_artifact_symlink_loop_is_handled(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr("builtins.open", _raise)
     with pytest.raises(SystemExit) as excinfo:
         weight_integrity_cli.load_artifact(path)
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
