@@ -137,10 +137,13 @@ contract (`AGENTS.md` → Benchmark integrity):
   warning, not crash.
 - One bad field SHALL NOT abort a replay run.
 
-`solve()` MAY propagate exceptions from the filesystem (`OSError` on unreadable frozen repo) or
-the inference transport (`urllib.error.URLError` / `http.client.HTTPException` on network
-failure). These are infrastructure failures, not contract violations; the benchmark harness
-(`benchmark/runner.py`) catches them.
+`solve()` SHALL NOT propagate exceptions out of its four workflow steps (`load_context`,
+`infer_philosophy`, `plan_next_actions`, `decide`). IF any step raises (filesystem,
+inference transport — e.g. `urllib.error.URLError` / `http.client.HTTPException` — or any
+other failure) THEN `solve()` SHALL log a warning and substitute that step's existing
+deterministic fallback (`{}` for context, the philosophy offline stub, the planner offline
+stub, the decider offline stub) so the remaining steps still run and a fully-shaped output
+dict is returned.
 
 ## Out of scope
 

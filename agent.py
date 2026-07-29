@@ -7,13 +7,25 @@ this orchestration; they must keep the `solve` signature intact.
 
 from __future__ import annotations
 
+import logging
 import time
 
 from agent.context import load_context
 from agent.decider import decide
 from agent.llm import LLM
-from agent.philosophy import infer_philosophy
-from agent.planner import plan_next_actions
+from agent.philosophy import _OFFLINE_STUB, infer_philosophy
+from agent.planner import _offline_plan_stub, plan_next_actions
+
+logger = logging.getLogger(__name__)
+
+_DECISION_STUB = {
+    "action": "plan",
+    "labels": [],
+    "reviewer": None,
+    "version_bump": None,
+    "patch": None,
+    "rationale": "offline stub decision",
+}
 
 
 def solve(
@@ -27,11 +39,47 @@ def solve(
     started = time.time()
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
 
-    # The maintainer workflow, in order.
-    context = load_context(repo_path)            # only what was knowable at time T
-    philosophy = infer_philosophy(context, llm)  # 1. ground in the repo's direction
-    plan = plan_next_actions(context, philosophy, n, llm)  # 3a. plan next actions/PRs
-    decision = decide(context, philosophy, request, llm)   # 3b. concrete call
+    # The maintainer workflow, in order. Each step is isolated so a transport blip in one
+    # cannot void the other three (issue #2207).
+    try:
+        context = load_context(repo_path)  # only what was knowable at time T
+    except Exception as exc:
+        logger.warning(
+            "solve: load_context failed (%s: %s); using empty context",
+            type(exc).__name__,
+            exc,
+        )
+        context = {}
+
+    try:
+        philosophy = infer_philosophy(context, llm)  # 1. ground in the repo's direction
+    except Exception as exc:
+        logger.warning(
+            "solve: infer_philosophy failed (%s: %s); using offline stub",
+            type(exc).__name__,
+            exc,
+        )
+        philosophy = dict(_OFFLINE_STUB)
+
+    try:
+        plan = plan_next_actions(context, philosophy, n, llm)  # 3a. plan next actions/PRs
+    except Exception as exc:
+        logger.warning(
+            "solve: plan_next_actions failed (%s: %s); using offline plan stub",
+            type(exc).__name__,
+            exc,
+        )
+        plan = _offline_plan_stub(context if isinstance(context, dict) else {}, n)
+
+    try:
+        decision = decide(context, philosophy, request, llm)  # 3b. concrete call
+    except Exception as exc:
+        logger.warning(
+            "solve: decide failed (%s: %s); using offline decision stub",
+            type(exc).__name__,
+            exc,
+        )
+        decision = dict(_DECISION_STUB)
 
     return {
         "philosophy": philosophy,
