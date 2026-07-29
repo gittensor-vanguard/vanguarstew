@@ -17,7 +17,10 @@ import benchmark.github_context as gc  # noqa: E402
 from agent.context import (  # noqa: E402
     _SHA,
     CONTEXT_FILE,
+    CONTEXT_RENDER_BUDGET,
+    CONTEXT_RENDER_WHITELIST,
     README_PROBE_NAMES,
+    README_RENDER_ALLOWANCE,
     _agent_context_list,
     _agent_issue_pr_list,
     _context_from_git,
@@ -25,6 +28,7 @@ from agent.context import (  # noqa: E402
     _mask_forward_refs,
     context_for_agent,
     load_context,
+    render_frozen_context,
     repo_layout,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
@@ -152,6 +156,71 @@ def test_prompt_renderers_coerce_malformed_list_fields_to_empty():
         assert payload["releases"] == []
         assert payload["milestones"] == []
         assert payload["labels"] == []
+
+
+def _oversized_frozen_context():
+    """Synthetic context matching the issue #2190 reproduction (50 commits + README)."""
+    return {
+        "frozen_at": {"date": "2020-06-10T12:00:00+00:00"},
+        "recent_commits": [
+            {
+                "sha": f"{idx:010d}",
+                "subject": f"feat(module-{idx}): add capability {idx}",
+                "date": "2020-06-09T12:00:00+00:00",
+            }
+            for idx in range(50)
+        ],
+        "open_issues": [
+            {"number": i, "title": f"issue {i}", "labels_as_of_t": True, "labels": ["bug"]}
+            for i in range(20)
+        ],
+        "open_prs": [],
+        "labels": ["bug", "enhancement"],
+        "milestones": [{"title": "v2"}],
+        "releases": [{"tag": "v1.0.0"}],
+        "readme_excerpt": "R" * README_RENDER_ALLOWANCE,
+    }
+
+
+@pytest.mark.parametrize(
+    "render",
+    [render_philosophy_context, render_planner_context, render_decider_context],
+)
+def test_prompt_renderers_emit_valid_json_within_budget(render):
+    rendered = render(_oversized_frozen_context())
+    assert len(rendered) <= CONTEXT_RENDER_BUDGET
+    payload = json.loads(rendered)
+    assert list(payload) == list(CONTEXT_RENDER_WHITELIST)
+    assert isinstance(payload["readme_excerpt"], str)
+    assert payload["readme_excerpt"].endswith("R")
+    assert len(payload["recent_commits"]) < 50
+
+
+def test_render_frozen_context_drops_oldest_commits_before_readme():
+    ctx = _oversized_frozen_context()
+    rendered = render_frozen_context(ctx)
+    payload = json.loads(rendered)
+    assert len(payload["recent_commits"]) < len(ctx["recent_commits"])
+    assert payload["recent_commits"][0] == ctx["recent_commits"][0]
+    assert len(payload["readme_excerpt"]) == README_RENDER_ALLOWANCE
+
+
+def test_render_frozen_context_drops_open_issues_before_readme():
+    ctx = {
+        "recent_commits": [{"sha": "abc123", "subject": "init"}],
+        "open_issues": [
+            {"number": i, "title": "x" * 300, "labels_as_of_t": True}
+            for i in range(100)
+        ],
+        "open_prs": [],
+        "labels": [],
+        "milestones": [],
+        "releases": [{"tag": "v1.0.0"}],
+        "readme_excerpt": "module-alpha module-beta",
+    }
+    payload = json.loads(render_frozen_context(ctx))
+    assert len(payload["open_issues"]) < len(ctx["open_issues"])
+    assert payload["readme_excerpt"] == ctx["readme_excerpt"]
 
 
 def test_context_for_agent_passes_through_falsy_non_dict_rows():

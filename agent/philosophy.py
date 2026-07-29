@@ -7,9 +7,7 @@ is the leading indicator of getting the trajectory right downstream.
 
 from __future__ import annotations
 
-import json
-
-from agent.context import context_for_agent
+from agent.context import render_frozen_context
 
 SYSTEM = (
     "You are an expert analyst of open-source project maintenance. Given a snapshot of a "
@@ -127,9 +125,4 @@ def infer_philosophy(context: dict, llm) -> dict:
 
 
 def _render(context: dict) -> str:
-    ctx = context_for_agent(context)
-    keep = {k: ctx.get(k) for k in (
-        "frozen_at", "recent_commits", "open_issues", "open_prs",
-        "labels", "milestones", "releases", "readme_excerpt",
-    )}
-    return json.dumps(keep, indent=1)[:12000]
+    return render_frozen_context(context)

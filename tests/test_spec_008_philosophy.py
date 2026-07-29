@@ -302,9 +302,8 @@ def test_render_marks_missing_keys_null():
 
 
 def test_render_is_truncated_at_the_prompt_budget():
-    # The cap is a prompt-budget bound, not a serialization guarantee: an oversized context is cut
-    # mid-value, so the rendered block is not necessarily valid JSON.
     rendered = _render({"readme_excerpt": "x" * (RENDER_BUDGET * 4), "recent_commits": []})
-    assert len(rendered) == RENDER_BUDGET
-    with pytest.raises(json.JSONDecodeError):
-        json.loads(rendered)
+    assert len(rendered) <= RENDER_BUDGET
+    payload = json.loads(rendered)
+    assert isinstance(payload["readme_excerpt"], str)
+    assert len(payload["readme_excerpt"]) < RENDER_BUDGET * 4

@@ -19,7 +19,7 @@ import json
 import logging
 import re
 
-from agent.context import context_for_agent
+from agent.context import context_for_agent, render_frozen_context
 from agent.planner import _release_cadence_signal, _release_timing_state
 
 logger = logging.getLogger(__name__)
@@ -449,9 +449,4 @@ def _release_context_note(context: dict) -> str:
 
 
 def _render(context: dict) -> str:
-    ctx = context_for_agent(context)
-    keep = {k: ctx.get(k) for k in (
-        "frozen_at", "recent_commits", "open_issues", "open_prs",
-        "labels", "milestones", "releases", "readme_excerpt",
-    )}
-    return json.dumps(keep, indent=1)[:12000]
+    return render_frozen_context(context)

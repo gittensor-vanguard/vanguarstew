@@ -33,6 +33,23 @@ _LAYOUT_EXCLUDED = frozenset({CONTEXT_FILE, ".git"})
 # from. Real repos sit far below this (7-25 entries across the curated set).
 REPO_LAYOUT_LIMIT = 40
 
+# Keys and byte budget for the frozen-context JSON block embedded in planner/decider/philosophy
+# prompts. Element-level shrinking keeps the serialization syntactically valid JSON (#2190).
+CONTEXT_RENDER_WHITELIST = (
+    "frozen_at",
+    "recent_commits",
+    "open_issues",
+    "open_prs",
+    "labels",
+    "milestones",
+    "releases",
+    "readme_excerpt",
+)
+CONTEXT_RENDER_BUDGET = 12000
+# README is capped at 4000 chars at freeze time; reserve the same allowance in prompts.
+README_RENDER_ALLOWANCE = 4000
+_CONTEXT_SHRINK_BOUND = 10_000
+
 # Issue/PR back-reference (`#123`), GitHub deep-links, and raw commit SHAs. The scored replay
 # path masks all three via ``benchmark.leakage.strip_forward_refs`` before the agent sees the
 # text; this module's git-only fallback must mirror that policy locally. We deliberately do NOT
@@ -271,6 +288,103 @@ def context_for_agent(context: dict) -> dict:
     if out.get("_releases_truncated") is True:
         out["releases"] = []
     return out
+
+
+def _context_keep_dict(ctx: dict) -> dict:
+    """Build the whitelist projection used by prompt renderers."""
+    return {key: ctx.get(key) for key in CONTEXT_RENDER_WHITELIST}
+
+
+def _serialize_context_keep(keep: dict) -> str:
+    return json.dumps(keep, indent=1)
+
+
+def _mutable_context_lists(keep: dict) -> dict:
+    """Return a shallow copy with list fields copied so shrink steps do not mutate callers."""
+    out = dict(keep)
+    for key in ("recent_commits", "open_issues", "open_prs", "milestones", "labels", "releases"):
+        value = out.get(key)
+        if isinstance(value, list):
+            out[key] = list(value)
+    return out
+
+
+def _fit_context_keep(keep: dict, budget: int = CONTEXT_RENDER_BUDGET) -> str:
+    """Shrink list elements and readme text until the JSON block fits ``budget`` chars."""
+    keep = _mutable_context_lists(keep)
+    output = _serialize_context_keep(keep)
+    if len(output) <= budget:
+        return output
+
+    # Lists are newest-first; pop from the end to drop the oldest entries first.
+    shrink_lists = (
+        "recent_commits",
+        "open_issues",
+        "open_prs",
+        "milestones",
+        "labels",
+        "releases",
+    )
+    steps = 0
+    while len(output) > budget and steps < _CONTEXT_SHRINK_BOUND:
+        steps += 1
+        changed = False
+        for key in shrink_lists:
+            items = keep.get(key)
+            if isinstance(items, list) and items:
+                items.pop()
+                changed = True
+                output = _serialize_context_keep(keep)
+                if len(output) <= budget:
+                    return output
+                break
+        if not changed:
+            break
+
+    excerpt = keep.get("readme_excerpt")
+    if isinstance(excerpt, str) and excerpt and len(output) > budget:
+        cap = min(len(excerpt), README_RENDER_ALLOWANCE)
+        lo, hi, best = 0, cap, 0
+        while lo <= hi and steps < _CONTEXT_SHRINK_BOUND:
+            steps += 1
+            mid = (lo + hi) // 2
+            keep["readme_excerpt"] = excerpt[:mid]
+            candidate = _serialize_context_keep(keep)
+            if len(candidate) <= budget:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        keep["readme_excerpt"] = excerpt[:best]
+        output = _serialize_context_keep(keep)
+
+    while len(output) > budget and steps < _CONTEXT_SHRINK_BOUND:
+        steps += 1
+        changed = False
+        for key in shrink_lists:
+            items = keep.get(key)
+            if isinstance(items, list) and items:
+                items.pop()
+                changed = True
+                output = _serialize_context_keep(keep)
+                if len(output) <= budget:
+                    return output
+                break
+        if not changed:
+            if isinstance(keep.get("readme_excerpt"), str) and keep["readme_excerpt"]:
+                keep["readme_excerpt"] = ""
+                output = _serialize_context_keep(keep)
+                if len(output) <= budget:
+                    return output
+            break
+
+    return output
+
+
+def render_frozen_context(context: dict, *, budget: int = CONTEXT_RENDER_BUDGET) -> str:
+    """Serialize the agent-facing frozen context for prompt embedding."""
+    keep = _context_keep_dict(context_for_agent(context))
+    return _fit_context_keep(keep, budget)
 
 
 def _context_from_git(repo_path: str) -> dict:
