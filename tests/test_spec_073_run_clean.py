@@ -103,6 +103,18 @@ def test_single_artifact_scans_no_per_repo():
     assert _partition_errors(_single()) == []
 
 
+def test_partition_per_repo_errors_without_generalization_gap():
+    artifact = {
+        "tuned": {
+            "composite_mean": 0.7,
+            "scored_repos": 2,
+            "per_repo": [{"repo": "a", "error": "clone failed"}],
+        },
+        "held_out": {"composite_mean": 0.6, "scored_repos": 2, "per_repo": []},
+    }
+    assert _partition_errors(artifact) == ["tuned.per_repo[a] error: 'clone failed'"]
+
+
 def test_scan_ignores_non_error_rows():
     findings = _partition_errors(_multi([{"tasks": 3}, "   ", 42, {"repo": "a"}]))
     assert findings == []

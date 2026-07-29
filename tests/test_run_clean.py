@@ -67,6 +67,23 @@ def test_partition_error_in_generalization():
     assert result["passed"] is False
 
 
+def test_partition_per_repo_error_without_generalization_gap():
+    # Partition-shaped artifacts missing generalization_gap classify as single, but per-repo
+    # errors on tuned/held_out must still fail the gate (#2152).
+    art = {
+        "tuned": {
+            "composite_mean": 0.7,
+            "scored_repos": 2,
+            "per_repo": [{"repo": "a", "error": "clone failed"}],
+        },
+        "held_out": {"composite_mean": 0.6, "scored_repos": 2, "per_repo": []},
+    }
+    result = check_run_clean(art)
+    assert result["passed"] is False
+    assert result["artifact_kind"] == "single"
+    assert result["findings"] == ["tuned.per_repo[a] error: 'clone failed'"]
+
+
 def test_malformed_string_per_repo_row_fails():
     # A per_repo row that is itself a non-empty string is a malformed/corrupt entry, not a
     # well-formed result dict — it must fail closed (aligned with acceptance._partition_error),

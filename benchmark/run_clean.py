@@ -117,18 +117,22 @@ def _partition_errors(artifact: dict) -> list[str]:
     if artifact.get("error"):
         findings.append(f"top-level error: {artifact.get('error')!r}")
     kind = artifact_kind(artifact)
-    if kind == "generalization":
+    tuned = artifact.get("tuned")
+    held_out = artifact.get("held_out")
+    has_partitions = isinstance(tuned, dict) and isinstance(held_out, dict)
+    containers = []
+    if has_partitions:
         for part in ("tuned", "held_out"):
             err = _dict(artifact.get(part)).get("error")
             if err:
                 findings.append(f"{part} error: {err!r}")
-        containers = [
-            ("tuned", _dict(artifact.get("tuned")).get("per_repo")),
-            ("held_out", _dict(artifact.get("held_out")).get("per_repo")),
-        ]
-    elif kind == "multi":
-        containers = [("multi", artifact.get("per_repo"))]
-    else:
+        containers.extend([
+            ("tuned", _dict(tuned).get("per_repo")),
+            ("held_out", _dict(held_out).get("per_repo")),
+        ])
+    if kind == "multi":
+        containers.append(("multi", artifact.get("per_repo")))
+    if not containers:
         return findings
     for label, per_repo in containers:
         if not isinstance(per_repo, list):
