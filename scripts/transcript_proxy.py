@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 import urllib.error
 import urllib.request
@@ -36,6 +37,10 @@ from benchmark.transcript import TranscriptStore
 _COMPLETION_PATHS = ("/chat/completions", "/v1/chat/completions")
 
 MAX_BODY_BYTES = 32 * 1024 * 1024
+
+
+def _stop_server(_signum, _frame):
+    raise KeyboardInterrupt
 
 
 def _completion_envelope(content: str) -> dict:
@@ -63,7 +68,13 @@ class _Handler(BaseHTTPRequestHandler):
         if not any(self.path.endswith(p) for p in _COMPLETION_PATHS):
             self._send_json(404, {"error": f"unsupported path {self.path}"})
             return
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            # A malformed Content-Length must not crash the handler before the request-parse
+            # try/except below can report it -- treat it as an unparseable request.
+            self._send_json(400, {"error": "invalid Content-Length header"})
+            return
         if length > MAX_BODY_BYTES:
             self._send_json(413, {"error": "request too large"})
             return
@@ -87,7 +98,11 @@ class _Handler(BaseHTTPRequestHandler):
         # record mode -- forward verbatim, capture the assistant content, store it
         try:
             content, raw = self._forward(request)
-        except (urllib.error.URLError, OSError, ValueError) as exc:
+        except (urllib.error.URLError, OSError, ValueError, KeyError, IndexError, TypeError) as exc:
+            # A well-formed HTTP 200 whose JSON is an error envelope or lacks the
+            # choices[0].message.content path raises KeyError/IndexError/TypeError from _forward;
+            # treat it like any other upstream failure (clean 502) rather than crashing the
+            # handler, so a benign upstream error can't take the recorder down mid-run.
             self._send_json(502, {"error": f"upstream call failed: {exc}"})
             return
         self.store.record(request, content)
@@ -140,16 +155,27 @@ def main(argv=None) -> int:
     server = build_server(args.mode, args.port, args.upstream, store)
     print(f"transcript_proxy: {args.mode} on http://127.0.0.1:{args.port}/v1 "
           f"({len(store)} recorded call(s))", file=sys.stderr)
+    # Non-interactive shells start background jobs with SIGINT ignored. Explicitly installing the
+    # handler here makes the launcher's `kill -INT` a reliable flush-and-stop boundary instead of
+    # leaving the proxy alive forever after evaluation. SIGTERM uses the same graceful path.
+    previous_handlers = {
+        signum: signal.signal(signum, _stop_server)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
-        if args.mode == "record":
-            store.save(args.out)
-            print(f"transcript_proxy: wrote {len(store)} call(s) to {args.out} "
-                  f"(digest {store.digest()[:12]})", file=sys.stderr)
+        try:
+            server.server_close()
+            if args.mode == "record":
+                store.save(args.out)
+                print(f"transcript_proxy: wrote {len(store)} call(s) to {args.out} "
+                      f"(digest {store.digest()[:12]})", file=sys.stderr)
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
     return 0
 
 

@@ -1,5 +1,6 @@
 """Tests for disagreement outlook summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import sys
@@ -128,6 +129,17 @@ def test_disagreement_outlook_falls_back_to_report_when_stats_empty():
     assert out["disagreement_rate"] == 0.25
     assert out["disagreements"] == 1
     assert out["verdict"] == "stable"
+
+
+def test_zero_dual_order_count_does_not_turn_stored_rate_into_evidence():
+    art = {
+        "composite_mean": 0.7,
+        "judge_report": {"disagreement_rate": 0.75, "dual_order_tasks": 0},
+    }
+    out = summarize_disagreement_outlook(art)
+    assert out["dual_order_tasks"] is None
+    assert out["disagreement_rate"] is None
+    assert out["verdict"] is None
 
 
 def test_consistent_report_rate_preserved_without_stats():
@@ -317,20 +329,87 @@ def test_cli_custom_threshold_flag(tmp_artifact, capsys):
 
 def test_cli_broken_symlink_exits_two(tmp_path, capsys):
     link = tmp_path / "broken.json"
-    link.symlink_to(tmp_path / "nonexistent.json")
+    try:
+        link.symlink_to(tmp_path / "nonexistent.json")
+    except OSError as exc:
+        pytest.skip(f"symlink not available on this platform: {exc}")
     assert cli.run([str(link)]) == 2
     err = capsys.readouterr().err
-    assert "broken symlink" in err and "Traceback" not in err
+    assert err == f"artifact is a broken symlink (target does not exist): {link}\n"
+    assert "Traceback" not in err
 
 
 def test_load_artifact_broken_symlink_is_handled(tmp_path, capsys):
     link = tmp_path / "broken.json"
-    link.symlink_to(tmp_path / "nonexistent.json")
+    try:
+        link.symlink_to(tmp_path / "nonexistent.json")
+    except OSError as exc:
+        pytest.skip(f"symlink not available on this platform: {exc}")
     with pytest.raises(SystemExit) as excinfo:
         cli.load_artifact(str(link))
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
-    assert "broken symlink" in err and "Traceback" not in err
+    assert err == f"artifact is a broken symlink (target does not exist): {link}\n"
+    assert "Traceback" not in err
+
+
+def test_cli_symlink_loop_is_named_not_leaked(tmp_path, capsys, monkeypatch):
+    # A symlink loop raises OSError(ELOOP); name it, do not leak a raw errno / traceback.
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_cli_not_a_directory_path_component_is_named(tmp_path, capsys, monkeypatch):
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
+
+
+def test_cli_non_utf8_exits_two(tmp_path, capsys):
+    path = tmp_path / "bin.json"
+    path.write_bytes(b"\xff\xfe{not utf-8")
+    assert cli.run([str(path)]) == 2
+    err = capsys.readouterr().err
+    assert "UTF-8" in err or "not valid JSON" in err
+    assert "Traceback" not in err
+
+
+def test_islink_probe_is_not_reachable_before_open_or_on_a_symlink_loop(tmp_path, capsys, monkeypatch):
+    # Broken-symlink classification must run only after open() fails with FileNotFoundError:
+    # never on a successful open (no pre-open TOCTOU probe) and never on the ELOOP path.
+    calls = []
+    real_islink = os.path.islink
+    monkeypatch.setattr(os.path, "islink", lambda p: (calls.append(p), real_islink(p))[1])
+
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    assert cli.load_artifact(str(good)) == {"ok": True}
+    assert calls == []
+
+    loop_path = str(tmp_path / "loop.json")
+
+    def _eloop(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", loop_path)
+
+    monkeypatch.setattr("builtins.open", _eloop)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(loop_path)
+    assert excinfo.value.code == 2
+    assert calls == []
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {loop_path}\n"
 
 
 def test_cli_directory_path_exits_two(tmp_path, capsys):

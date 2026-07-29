@@ -70,6 +70,13 @@ def test_headline():
     assert "mean 3.000" in repo_task_mean_headline(out)
 
 
+def test_headline_masks_non_finite_mean():
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        assert "mean n/a" in repo_task_mean_headline(
+            {"kind": "multi", "scored_repos": 1, "mean_tasks_per_repo": bad}
+        )
+
+
 def test_single_repo_oversized_task_count_is_skipped():
     # json.load yields a Python int for an oversized literal; it must be treated as malformed
     # (skipped) rather than crashing float(tasks) with OverflowError.

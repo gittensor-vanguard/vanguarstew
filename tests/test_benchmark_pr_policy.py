@@ -26,11 +26,26 @@ def _issue(*, approved=True, state="open", pull_request=False):
         ("scripts/compare_eval.py", True),
         ("scripts/leaderboard_feed.py", True),
         ("scripts/benchmark_pr_policy.py", True),
+        ("scripts/unrelated_helper.py", True),
+        ("docs/architecture.md", True),
+        ("docs/nested/example.txt", True),
+        ("blog/release.md", True),
+        ("README.md", True),
+        ("roadmap.MD", True),
+        ("src/README.md", True),
         (".github/workflows/benchmark-change-policy.yml", True),
+        (".github/workflows/pr-integrity.yml", True),
         ("CONTRIBUTING.md", True),
+        ("docs/polaris-benchmark-seal.md", True),
         ("REVIEW.md", True),
-        ("benchmarking/readme.md", False),
+        ("scripts/plan_polaris_benchmark.py", True),
+        ("scripts/run_polaris_benchmark.py", True),
+        ("scripts/sandbox_candidate_entry.py", True),
+        ("scripts/verify_polaris_benchmark.py", True),
+        ("benchmarking/readme.md", True),
+        ("benchmarking/data.json", False),
         ("agent/planner.py", False),
+        ("notes.txt", False),
         (42, False),
     ],
 )
@@ -64,7 +79,7 @@ def test_policy_allows_non_guardrail_and_maintainer_changes():
         body="",
         issues={},
     )
-    assert ordinary == {"allowed": True, "reason": "not a benchmark-integrity change"}
+    assert ordinary == {"allowed": True, "reason": "not a protected change"}
 
     maintainer = policy.evaluate_policy(
         author="matedev01",
@@ -72,7 +87,7 @@ def test_policy_allows_non_guardrail_and_maintainer_changes():
         body="",
         issues={},
     )
-    assert maintainer == {"allowed": True, "reason": "maintainer-authored benchmark change"}
+    assert maintainer == {"allowed": True, "reason": "maintainer-authored protected change"}
 
 
 def test_policy_requires_matching_open_approved_issue():
@@ -92,15 +107,25 @@ def test_policy_requires_matching_open_approved_issue():
     )
     assert denied == {
         "allowed": False,
-        "reason": "benchmark change lacks an approved open issue",
+        "reason": "protected change lacks an approved open issue",
         "referenced_issues": [17, 18],
     }
 
 
-def test_enforce_closes_unapproved_guardrail_pr(monkeypatch):
+@pytest.mark.parametrize(
+    "changed_path",
+    [
+        "benchmark/score.py",
+        "scripts/helper.py",
+        "docs/architecture.md",
+        "blog/update.md",
+        "README.md",
+    ],
+)
+def test_enforce_closes_unapproved_guardrail_pr(monkeypatch, changed_path):
     calls = []
     comments = []
-    monkeypatch.setattr(policy, "_changed_files", lambda repo, number: ["benchmark/score.py"])
+    monkeypatch.setattr(policy, "_changed_files", lambda repo, number: [changed_path])
     monkeypatch.setattr(policy, "_issues", lambda repo, numbers: {12: _issue(approved=False)})
     monkeypatch.setattr(
         policy,
@@ -228,6 +253,10 @@ def test_workflow_uses_only_the_trusted_base_policy():
     assert "persist-credentials: false" in workflow
     assert "branches: [test, main]" in workflow
     assert '"benchmark/**"' in workflow
+    assert '"scripts/**"' in workflow
+    assert '"docs/**"' in workflow
+    assert '"blog/**"' in workflow
+    assert '"**/*.md"' in workflow
     for path in policy.GUARDRAIL_FILES:
         assert f'"{path}"' in workflow
 

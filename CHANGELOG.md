@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- CI contribution policy now auto-closes unapproved contributor PRs that touch the benchmark,
+  operational scripts, documentation, blog posts, or Markdown files. Maintainer-authored changes
+  and changes linked to a pre-approved open issue remain allowed (#2099).
 - Repo-set tooling: **freeze-window value validation** (`min_history >= 1`, non-empty
   `after`/`before`) and `scripts/validate_repo_set.py` CLI to check a repo-set JSON before
   replay (#325).

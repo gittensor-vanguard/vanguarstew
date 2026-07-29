@@ -47,6 +47,17 @@ def test_missing_parts_yield_none_spread():
     assert out["spread"] is None
 
 
+def test_unscored_placeholder_component_parts_are_masked():
+    out = summarize_composite_spread({
+        "scored_repos": 0,
+        "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    })
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+    assert out["spread"] is None
+
+
 def test_malformed_parts_yield_none_spread():
     out = summarize_composite_spread({"composite_mean": 0.5, "composite_parts": 42})
     assert out["spread"] is None

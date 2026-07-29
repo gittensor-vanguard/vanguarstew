@@ -59,7 +59,16 @@ def run(argv=None) -> int:
     # transcript is the one whose digest was bound, which is what lets a third party re-derive the
     # score offline rather than taking the artifact on faith.
     if args.transcript:
-        recorded = TranscriptStore.load(args.transcript).digest()
+        # Mirror `_load`: a bad --transcript path (missing, a directory, unreadable, non-UTF-8,
+        # or malformed JSON) must exit 2 with an actionable message, not raise a raw traceback —
+        # the artifact/evidence reads already do this, and TranscriptStore.load does no guarding
+        # of its own (it only tolerates malformed *content*, not a bad *path* or non-JSON bytes).
+        try:
+            recorded = TranscriptStore.load(args.transcript).digest()
+        except (OSError, ValueError) as exc:
+            print(f"verify_attestation: cannot read transcript ({args.transcript}): {exc}",
+                  file=sys.stderr)
+            raise SystemExit(2) from exc
         claimed = (evidence.get("inputs") or {}).get("transcript_digest")
         report["checks"]["transcript_digest"] = recorded == claimed
         report["ok"] = all(report["checks"].values())

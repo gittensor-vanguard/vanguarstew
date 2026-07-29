@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Close unapproved contributor PRs that modify benchmark-integrity surfaces."""
+"""Close unapproved contributor PRs that modify maintainer-directed surfaces."""
 
 from __future__ import annotations
 
@@ -12,16 +12,11 @@ from pathlib import Path
 
 APPROVAL_LABEL = "benchmark-change-approved"
 MAINTAINERS = frozenset({"matedev01", "vanguarstew"})
-GUARDRAIL_PREFIXES = ("benchmark/",)
+GUARDRAIL_PREFIXES = ("benchmark/", "scripts/", "docs/", "blog/")
 GUARDRAIL_FILES = frozenset(
     {
         ".github/workflows/benchmark-change-policy.yml",
-        "CONTRIBUTING.md",
-        "REVIEW.md",
-        "scripts/benchmark_pr_policy.py",
-        "scripts/compare_eval.py",
-        "scripts/leaderboard_feed.py",
-        "scripts/score_pr_delta.py",
+        ".github/workflows/pr-integrity.yml",
     }
 )
 COMMENT_MARKER = "<!-- vanguarstew:benchmark-change-policy -->"
@@ -36,7 +31,7 @@ class PolicyError(RuntimeError):
 
 
 def touches_guardrail(paths) -> bool:
-    """Whether a changed path belongs to the benchmark-integrity surface."""
+    """Whether a changed path belongs to a maintainer-directed surface."""
     if not isinstance(paths, (list, tuple, set, frozenset)):
         return False
     for path in paths:
@@ -45,7 +40,12 @@ def touches_guardrail(paths) -> bool:
         normalized = path.strip()
         while normalized.startswith("./"):
             normalized = normalized[2:]
-        if normalized in GUARDRAIL_FILES or normalized.startswith(GUARDRAIL_PREFIXES):
+        markdown = normalized.lower().endswith(".md")
+        if (
+            markdown
+            or normalized in GUARDRAIL_FILES
+            or normalized.startswith(GUARDRAIL_PREFIXES)
+        ):
             return True
     return False
 
@@ -75,9 +75,9 @@ def issue_is_approved(issue) -> bool:
 def evaluate_policy(*, author, paths, body, issues) -> dict:
     """Return a deterministic allow/close decision from already-fetched metadata."""
     if not touches_guardrail(paths):
-        return {"allowed": True, "reason": "not a benchmark-integrity change"}
+        return {"allowed": True, "reason": "not a protected change"}
     if author in MAINTAINERS:
-        return {"allowed": True, "reason": "maintainer-authored benchmark change"}
+        return {"allowed": True, "reason": "maintainer-authored protected change"}
     refs = referenced_issues(body)
     for number in refs:
         if issue_is_approved(issues.get(number) if isinstance(issues, dict) else None):
@@ -88,7 +88,7 @@ def evaluate_policy(*, author, paths, body, issues) -> dict:
             }
     return {
         "allowed": False,
-        "reason": "benchmark change lacks an approved open issue",
+        "reason": "protected change lacks an approved open issue",
         "referenced_issues": list(refs),
     }
 
@@ -208,16 +208,16 @@ def enforce(event: dict, repo: str) -> dict:
         issues=issues,
     )
     if decision["allowed"]:
-        print(f"benchmark change policy: allowed ({decision['reason']})")
+        print(f"protected change policy: allowed ({decision['reason']})")
         return decision
 
     comment = (
-        "Closing automatically: changes to the benchmark and contribution-integrity surface "
-        "are maintainer-directed. Please open an issue first, agree the scope with a maintainer, "
+        "Closing automatically: changes to the benchmark, scripts, and documentation are "
+        "maintainer-directed. Please open an issue first, agree the scope with a maintainer, "
         f"and wait for the `{APPROVAL_LABEL}` label before submitting a PR. Then reference that "
         "open issue with `Refs #<number>` and reopen this PR. See "
         "[CONTRIBUTING.md](https://github.com/gittensor-vanguard/vanguarstew/blob/main/"
-        "CONTRIBUTING.md#benchmark-integrity-changes).\n\n"
+        "CONTRIBUTING.md#benchmark-scripts-and-documentation-changes).\n\n"
         f"{COMMENT_MARKER}"
     )
     _sync_close_comment(repo, number, comment)
@@ -229,7 +229,7 @@ def enforce(event: dict, repo: str) -> dict:
         "-f",
         "state=closed",
     )
-    print(f"benchmark change policy: closed PR #{number}")
+    print(f"protected change policy: closed PR #{number}")
     return decision
 
 
@@ -237,13 +237,13 @@ def main() -> int:
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     repo = os.environ.get("GITHUB_REPOSITORY")
     if not event_path or not repo or "/" not in repo:
-        print("benchmark change policy: missing GitHub event context", file=sys.stderr)
+        print("protected change policy: missing GitHub event context", file=sys.stderr)
         return 2
     try:
         event = json.loads(Path(event_path).read_text(encoding="utf-8"))
         enforce(event, repo)
     except (OSError, ValueError, PolicyError) as exc:
-        print(f"benchmark change policy failed safely: {exc}", file=sys.stderr)
+        print(f"protected change policy failed safely: {exc}", file=sys.stderr)
         return 2
     return 0
 
