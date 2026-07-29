@@ -11,7 +11,10 @@ import sys
 from pathlib import Path
 
 APPROVAL_LABEL = "benchmark-change-approved"
-MAINTAINERS = frozenset({"matedev01", "vanguarstew"})
+try:
+    from scripts.maintainers import MAINTAINERS
+except ImportError:
+    from maintainers import MAINTAINERS
 GUARDRAIL_PREFIXES = ("benchmark/", "scripts/", "docs/", "blog/")
 GUARDRAIL_FILES = frozenset(
     {

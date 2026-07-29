@@ -120,10 +120,11 @@ def test_display_name_that_does_not_claim_pr_login_is_allowed():
 
 
 def test_maintainers_are_exempt():
-    assert policy.evaluate_policy(pr_author="matedev01", commits=[]) == {
-        "allowed": True,
-        "reason": "maintainer-authored PR",
-    }
+    for author in ("matedev01", "vanguarstew"):
+        assert policy.evaluate_policy(pr_author=author, commits=[]) == {
+            "allowed": True,
+            "reason": "maintainer-authored PR",
+        }
 
 
 @pytest.mark.parametrize("role", ["author", "committer"])

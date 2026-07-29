@@ -89,6 +89,14 @@ def test_policy_allows_non_guardrail_and_maintainer_changes():
     )
     assert maintainer == {"allowed": True, "reason": "maintainer-authored protected change"}
 
+    bot = policy.evaluate_policy(
+        author="vanguarstew",
+        paths=["benchmark/score.py"],
+        body="",
+        issues={},
+    )
+    assert bot == {"allowed": True, "reason": "maintainer-authored protected change"}
+
 
 def test_policy_requires_matching_open_approved_issue():
     allowed = policy.evaluate_policy(

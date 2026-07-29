@@ -12,6 +12,12 @@ jobs:
   integrity:
     runs-on: ubuntu-latest
     steps:
+      - name: Check out trusted maintainer policy
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
       - name: Check PR integrity
         env:
           GH_TOKEN: ${{ github.token }}
@@ -19,6 +25,8 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os, re, subprocess, sys
+
+          from scripts.maintainers import MAINTAINERS
 
           ev = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
           pr = ev["pull_request"]
@@ -69,9 +77,8 @@ jobs:
                             "(e.g. 'Co-authored-by:' trailers) — this repo does not accept "
                             "AI-attributed contributions.")
 
-          # 5) per-author open-PR limit (contributors only; the maintainer is exempt)
+          # 5) per-author open-PR limit (contributors only; maintainers are exempt)
           author = pr["user"]["login"]
-          MAINTAINERS = {"matedev01"}
           LIMIT = 2
           if author not in MAINTAINERS:
               try:

@@ -10,7 +10,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-MAINTAINERS = frozenset({"matedev01", "vanguarstew"})
+try:
+    from scripts.maintainers import MAINTAINERS
+except ImportError:
+    from maintainers import MAINTAINERS
 COMMENT_MARKER = "<!-- vanguarstew:pr-gaming-policy -->"
 
 
