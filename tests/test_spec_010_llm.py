@@ -256,6 +256,34 @@ def test_pick_best_json_prefer_list_falls_back_to_object_when_no_array():
     assert _pick_best_json([aside, wrapper], prefer_list=True) == wrapper
 
 
+def test_pick_best_json_prefer_list_does_not_let_citation_beat_plan_wrapper():
+    """#2135 regression: blanket array-over-object let [1] discard {"plan": [...]}."""
+    wrapper = {
+        "plan": [
+            {"title": "Fix quick-router crash", "kind": "bugfix"},
+            {"title": "Cut v1.4.0", "kind": "release"},
+        ]
+    }
+    citation = [1]
+    paths = ["router.py", "loader.py"]
+    assert _pick_best_json([citation, wrapper], prefer_list=True) == wrapper
+    assert _pick_best_json([paths, wrapper], prefer_list=True) == wrapper
+    # A genuine plan-like array still beats the wrapper.
+    plan = wrapper["plan"]
+    assert _pick_best_json([wrapper, plan], prefer_list=True) == plan
+
+
+def test_extract_json_prefer_list_keeps_plan_wrapper_when_only_citation_array_cooccurs():
+    reply = (
+        '[1] see prior art\n'
+        '{"plan": [{"title": "Fix loader race", "kind": "bugfix"},'
+        '{"title": "Cut v1.4.0", "kind": "release"}]}'
+    )
+    out = extract_json(reply, prefer_list=True)
+    assert isinstance(out, dict)
+    assert out["plan"][0]["title"] == "Fix loader race"
+
+
 def test_pick_best_json_prefers_longest_serialized_form():
     best = _pick_best_json([{"a": 1}, {"a": 1, "b": 2, "c": 3}])
     assert best == {"a": 1, "b": 2, "c": 3}

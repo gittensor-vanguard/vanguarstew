@@ -74,8 +74,10 @@ class LLM:
         Transport errors from `chat` (`URLError`/`HTTPError`/`OSError`) still propagate.
 
         When ``prefer_list`` is omitted, list preference is inferred from ``stub``: a list
-        stub (planner) prefers array spans over object asides; a dict stub keeps the
-        default object-over-array ranking used by decide/philosophy/review.
+        stub (planner) elevates plan-like arrays (non-empty lists of objects) over object
+        asides; a dict stub keeps the default object-over-array ranking used by
+        decide/philosophy/review. Non-plan arrays (citations) never outrank a plan
+        wrapper object under either mode.
         """
         if self.offline:
             return stub if stub is not None else {}
@@ -133,13 +135,31 @@ def _iter_top_level_spans(text: str):
         i = end + 1
 
 
+def _is_plan_like_list(value) -> bool:
+    """True for a non-empty JSON array of objects — the planner's list-contract shape.
+
+    Citation asides like ``[1]`` and path lists like ``["a.py"]`` are deliberately
+    excluded: preferring those over a ``{"plan": [...]}`` wrapper is what regressed
+    live scoring under a blanket array-over-object rank (#2135).
+    """
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, dict) for item in value)
+    )
+
+
 def _pick_best_json(candidates, *, prefer_list: bool = False):
     """Prefer the caller's expected container type, then the longest serialization.
 
     Default (``prefer_list=False``) ranks objects above arrays so a bracket-shaped
-    aside (e.g. a ``[1]`` citation) cannot beat a dict answer. List-contract callers
-    (planner) pass ``prefer_list=True`` so an echoed example object cannot discard
-    the full plan array.
+    aside (e.g. a ``[1]`` citation) cannot beat a dict answer.
+
+    List-contract callers (planner) pass ``prefer_list=True``. That mode only elevates
+    *plan-like* arrays (non-empty lists of objects) above objects — so an echoed
+    example item cannot discard the full plan array (#1945), while a citation array
+    still loses to a ``{"plan": [...]}`` wrapper (preserving pre-#2135 live behavior
+    when the model returns the wrapper form).
 
     When two candidates have equal rank (same preferred-type bit, same serialized
     length), the *last* one wins — in an LLM response a schema example or
@@ -152,9 +172,14 @@ def _pick_best_json(candidates, *, prefer_list: bool = False):
 
     def _rank(value):
         serialized = json.dumps(value, separators=(",", ":"))
-        type_pref = (
-            isinstance(value, list) if prefer_list else isinstance(value, dict)
-        )
+        if prefer_list:
+            # 2 = plan-like list, 1 = object, 0 = other (citations / scalars lists)
+            type_pref = (
+                2 if _is_plan_like_list(value)
+                else (1 if isinstance(value, dict) else 0)
+            )
+        else:
+            type_pref = 1 if isinstance(value, dict) else 0
         return (type_pref, len(serialized))
 
     return max(reversed(candidates), key=_rank)
@@ -165,13 +190,12 @@ def extract_json(text: str, *, prefer_list: bool = False):
 
     Tries, in order: a fenced code block, the raw response verbatim, then
     balanced top-level `{...}`/`[...]` spans scanned across the text. Among
-    those spans, the preferred container type wins (objects by default; arrays
-    when ``prefer_list=True``) and, within a type, the longest span wins — this
-    keeps a stray bracket-shaped aside (e.g. a ``[1]`` citation ahead of a dict
-    payload) from being mistaken for the answer, while list-contract callers can
-    still recover a genuine plan array when an earlier object aside co-occurs.
-    When ``prefer_list=True`` and no array span exists, the best object is still
-    returned (e.g. a ``{"plan": [...]}`` wrapper the planner already unwraps).
+    those spans, objects win by default; with ``prefer_list=True``, a plan-like
+    array (non-empty list of objects) wins over objects, while non-plan arrays
+    (citations, path lists) still lose to objects. Within a type tier, the
+    longest span wins. When ``prefer_list=True`` and no plan-like array exists,
+    the best object is still returned (e.g. a ``{"plan": [...]}`` wrapper the
+    planner already unwraps).
     """
     if text is None:
         raise ValueError("empty LLM response")
