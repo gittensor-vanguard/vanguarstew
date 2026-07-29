@@ -57,6 +57,24 @@ def test_constructs_defaults_when_no_args():
     assert llm.api_key is None
 
 
+@pytest.mark.parametrize("api_base", [True, b"http://x/"])
+def test_non_string_api_base_degrades_to_offline(monkeypatch, api_base):
+    monkeypatch.setenv("VANGUARSTEW_OFFLINE", "1")
+    llm = LLM(api_base=api_base, api_key="offline")
+    assert llm.api_base == ""
+    assert llm.offline is True
+
+
+def test_string_api_base_is_stripped_and_stays_online(monkeypatch):
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(
+        api_base="https://api.example.com/",
+        api_key="secret",
+    )
+    assert llm.api_base == "https://api.example.com"
+    assert llm.offline is False
+
+
 # ---- Offline mode -----------------------------------------------------------
 
 def test_offline_chat_returns_deterministic_stub():

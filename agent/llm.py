@@ -17,7 +17,9 @@ import urllib.request
 class LLM:
     def __init__(self, model=None, api_base=None, api_key=None, timeout=None):
         self.model = model or "validator-managed-model"
-        self.api_base = (api_base or "").rstrip("/")
+        if not isinstance(api_base, str):
+            api_base = ""
+        self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         env_timeout = os.environ.get("TAU_AGENT_TIMEOUT_SECONDS")
         self.timeout = float(timeout or env_timeout or 120)
