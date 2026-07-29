@@ -663,6 +663,73 @@ def _repo_layout_note(context: dict) -> str:
     )
 
 
+# Cap on backfilled `files` entries per plan item: enough to name where the work lands, few
+# enough that an item never carries more modules than its own text supports.
+_BACKFILL_MAX_FILES = 2
+
+# Margin under the judge renderer's 1400-char compact per-field budget (benchmark/judge.py
+# ``_render``; mirrored, not imported — ``agent/`` must not depend on ``benchmark/``). A plan
+# pushed past that budget is shown to the judge as a mangled ``{"truncated": true,
+# "json_prefix": ...}`` blob with its tail items invisible, so growing the plan must never be
+# what tips it over: backfill only fires while the compact-serialized plan stays under this.
+_JUDGE_PLAN_COMPACT_BUDGET = 1300
+
+
+def _backfill_files_from_layout(plan: list, context: dict) -> list:
+    """Attach `files` to items whose own text names a real top-level entry but left it empty.
+
+    Module credit is read off an item's `files` path segments alongside its title/theme
+    tokens, and `files` is also where a plan states concretely where work lands — an item
+    like "Harden the loader in src" that omits `files` is less specific than its own title.
+    The repair is strictly token-gated: a layout entry is attached only when the item's own
+    title/theme/rationale shares a significant token with the entry's name, so an item never
+    claims a module its text does not mention, and the plan stays exactly as specific as the
+    model made it. Entries are attached in layout order, capped at ``_BACKFILL_MAX_FILES``.
+
+    `triage` items are maintainer actions, not commit work, and pass through untouched, as
+    does any item that already carries `files` and any item on an empty/unreadable layout.
+    `release` items are backfilled like any other: a release lands in the changelog and
+    packaging surfaces, and those are scored modules on the very windows a release item is
+    right about — a release title naming the changelog earns that entry the same token-gated
+    way.
+
+    Backfill never grows the plan past ``_JUDGE_PLAN_COMPACT_BUDGET`` compact-serialized
+    chars: past the judge renderer's per-field budget the whole plan degrades to a truncated
+    prefix blob in the judge's view, so an attachment that would tip it over is skipped —
+    the item is kept verbatim, content is never trimmed to make room.
+    """
+    entries = _repo_layout(context)
+    if not entries:
+        return plan
+    entry_tokens = [(entry, _significant_tokens(entry)) for entry in entries]
+    out = []
+    for i, item in enumerate(plan):
+        if (
+            not isinstance(item, dict)
+            or item.get("files")
+            or item.get("kind") == "triage"
+        ):
+            out.append(item)
+            continue
+        text_tokens = (
+            _significant_tokens(item.get("title", ""))
+            | _significant_tokens(item.get("theme", ""))
+            | _significant_tokens(item.get("rationale", ""))
+        )
+        matched = [
+            entry for entry, tokens in entry_tokens
+            if tokens and tokens & text_tokens
+        ][:_BACKFILL_MAX_FILES]
+        if matched:
+            candidate = {**item, "files": matched}
+            trial = out + [candidate] + plan[i + 1:]
+            serialized = json.dumps(trial, ensure_ascii=True, separators=(",", ":"))
+            if len(serialized) <= _JUDGE_PLAN_COMPACT_BUDGET:
+                item = candidate
+        out.append(item)
+    return out
+
+
 def _pr_queue_note(context: dict) -> str:
     prs = [p for p in _safe_prs(context) if _pr_title(p)]
     if not prs:
@@ -916,6 +983,12 @@ def _normalize_plan_item(item) -> dict | None:
     else:
         kind = ""
     if kind not in _PLAN_KINDS:
+        # An answer in Conventional-Commit spelling ("fix", "feat", "chore", "deps") — the
+        # very spellings OBJECTIVE_ANCHOR_GUIDANCE offers — must keep its intended kind.
+        # Falling through to "triage" here silently zeroes that kind for `kind_recall`
+        # (triage names no commit kind), turning a correct answer into a scoring miss.
+        kind = _CC_TYPE_TO_PLAN_KIND.get(kind, kind)
+    if kind not in _PLAN_KINDS:
         kind = "triage"
     normalized = {
         "title": title,
@@ -1051,6 +1124,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
     plan = _calibrate_release_prediction(plan, context)
+    plan = _backfill_files_from_layout(plan, context)
     return reconcile_plan_with_queue(plan, context, n)
 
 
