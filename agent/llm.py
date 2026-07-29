@@ -14,10 +14,22 @@ import re
 import urllib.request
 
 
+def _coerce_api_base(value) -> str:
+    """Return a trailing-slash-stripped API base string, else empty.
+
+    Non-string ``api_base`` values (``True``, ``bytes``, ints, …) must not crash
+    ``LLM`` construction before offline detection (#2214). Only real strings are
+    kept; everything else degrades to empty → offline, same as ``None`` / ``""``.
+    """
+    if not isinstance(value, str):
+        return ""
+    return value.rstrip("/")
+
+
 class LLM:
     def __init__(self, model=None, api_base=None, api_key=None, timeout=None):
         self.model = model or "validator-managed-model"
-        self.api_base = (api_base or "").rstrip("/")
+        self.api_base = _coerce_api_base(api_base)
         self.api_key = api_key
         env_timeout = os.environ.get("TAU_AGENT_TIMEOUT_SECONDS")
         self.timeout = float(timeout or env_timeout or 120)
