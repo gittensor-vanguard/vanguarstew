@@ -270,7 +270,8 @@ def test_workflow_rechecks_after_every_ci_run_using_trusted_code():
     assert "workflow_run:" in workflow
     assert 'workflows: ["CI"]' in workflow
     assert "types: [completed]" in workflow
-    assert "github.event.pull_request.base.sha" in workflow
+    assert "github.event.pull_request.base.ref" in workflow
+    assert "github.event.pull_request.base.sha" not in workflow
     assert "github.event.repository.default_branch" in workflow
     assert "github.event.pull_request.head" not in workflow
     assert "persist-credentials: false" in workflow
