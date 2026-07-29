@@ -164,7 +164,8 @@ def test_chat_json_falls_back_to_stub_on_malformed_envelope(monkeypatch):
     stub = {"action": "plan", "labels": []}
     llm = _online(monkeypatch)
     with mock.patch("urllib.request.urlopen", return_value=_FakeResp("{}")):
-        assert llm.chat_json("s", "u", stub=stub) == stub
+        out = llm.chat_json("s", "u", stub=stub)
+        assert out is stub
 
 
 def test_chat_json_falls_back_to_empty_dict_when_no_stub(monkeypatch):
@@ -189,3 +190,28 @@ def test_chat_json_returns_parsed_json_from_valid_envelope(monkeypatch):
     llm = _online(monkeypatch)
     with mock.patch("urllib.request.urlopen", return_value=_FakeResp(body)):
         assert llm.chat_json("s", "u") == {"action": "merge"}
+
+
+def test_chat_json_retries_once_on_parse_failure_then_succeeds(monkeypatch):
+    llm = _online(monkeypatch)
+    calls = []
+
+    def fake_chat(system, user):
+        calls.append(user)
+        if len(calls) == 1:
+            return "not json"
+        return '{"action": "merge"}'
+
+    llm.chat = fake_chat
+    assert llm.chat_json("s", "u", stub={"action": "plan"}) == {"action": "merge"}
+    assert len(calls) == 2
+    assert "could not be parsed as JSON" in calls[1]
+    assert "Return ONLY a single JSON object" in calls[1]
+
+
+def test_chat_json_returns_stub_by_identity_after_failed_retry(monkeypatch):
+    llm = _online(monkeypatch)
+    llm.chat = lambda system, user: "still not json"
+    stub = {"action": "plan", "labels": []}
+    out = llm.chat_json("s", "u", stub=stub)
+    assert out is stub

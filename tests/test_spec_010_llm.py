@@ -91,7 +91,24 @@ def test_chat_json_falls_back_to_stub_on_unparseable_output(monkeypatch):
     # (M4 acceptance: no agent crashes from malformed LLM output).
     llm = _live_llm(monkeypatch, "Sure, I'd merge it. (no JSON here)")
     stub = {"action": "plan", "labels": []}
-    assert llm.chat_json("system", "user", stub=stub) == stub
+    out = llm.chat_json("system", "user", stub=stub)
+    assert out is stub
+
+
+def test_chat_json_retries_once_on_parse_failure_then_succeeds(monkeypatch):
+    llm = _live_llm(monkeypatch, "ignored")
+    calls = []
+
+    def fake_chat(system, user):
+        calls.append(user)
+        if len(calls) == 1:
+            return "not json"
+        return '{"action": "merge"}'
+
+    llm.chat = fake_chat
+    assert llm.chat_json("system", "user", stub={"action": "plan"}) == {"action": "merge"}
+    assert len(calls) == 2
+    assert "could not be parsed as JSON" in calls[1]
 
 
 def test_chat_json_falls_back_to_empty_dict_when_stub_is_none(monkeypatch):
@@ -175,7 +192,8 @@ def test_chat_json_falls_back_to_stub_on_malformed_envelope(body, monkeypatch):
     # M4 acceptance: a malformed inference-response envelope must not crash the agent — it
     # falls back to the stub, exactly like unparseable content does (regression for #954).
     stub = {"action": "plan", "labels": []}
-    assert _online_llm(monkeypatch, body).chat_json("system", "user", stub=stub) == stub
+    out = _online_llm(monkeypatch, body).chat_json("system", "user", stub=stub)
+    assert out is stub
 
 
 # --- JSON extraction order ------------------------------------------------------------------

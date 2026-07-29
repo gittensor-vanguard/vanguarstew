@@ -437,3 +437,15 @@ def test_decide_prompt_surfaces_planning_bump_note():
     decide(ctx, {}, "plan the next 5 maintainer actions", CapturingLLM())
     synthesis = captured["users"][-1]
     assert "forward planning" in synthesis and "version_bump" in synthesis
+
+
+def test_decide_live_parse_fallback_uses_neutral_stub_text():
+    class UnparseableLLM:
+        offline = False
+
+        def chat_json(self, system, user, stub=None):
+            return stub
+
+    out = decide({}, {}, "review PR #1", UnparseableLLM())
+    assert out["rationale"] == "no usable decision from model"
+    assert "offline" not in out["rationale"].lower()

@@ -265,6 +265,25 @@ def _normalize_version_bump(bump) -> str | None:
     return level if level in _BUMP_LEVELS else None
 
 
+def _lens_stub(name: str, *, offline: bool) -> dict:
+    """Fallback lens verdict when ``chat_json`` cannot parse a response."""
+    if offline:
+        return {"verdict": f"{name} lens unavailable offline", "reasoning": ""}
+    return {"verdict": f"no usable verdict for {name} lens", "reasoning": ""}
+
+
+def _decision_stub(*, offline: bool) -> dict:
+    """Fallback maintainer decision when ``chat_json`` cannot parse a response."""
+    return {
+        "action": "plan",
+        "labels": [],
+        "reviewer": None,
+        "version_bump": None,
+        "patch": None,
+        "rationale": "offline stub decision" if offline else "no usable decision from model",
+    }
+
+
 def _normalize_lens_verdict(out) -> dict:
     """Coerce one lens's raw output to ``{"verdict": str, "reasoning": str}``.
 
@@ -300,7 +319,7 @@ def _run_lens(name: str, context: dict, philosophy: dict, request: str, llm) -> 
             f"Decision request: {request}\n\n"
             'Return JSON: {"verdict": "one short sentence", "reasoning": "why"}'
         )
-    stub = {"verdict": f"{name} lens unavailable offline", "reasoning": ""}
+    stub = _lens_stub(name, offline=llm.offline)
     return _normalize_lens_verdict(llm.chat_json(system, user, stub=stub))
 
 
@@ -333,16 +352,11 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
         '  "patch": a unified git diff if action=="patch", else null,\n'
         '  "rationale": the tradeoffs/priority/risk you weighed.'
     )
-    stub = {
-        "action": "plan",
-        "labels": [],
-        "reviewer": None,
-        "version_bump": None,
-        "patch": None,
-        "rationale": "offline stub decision",
-    }
+    stub = _decision_stub(offline=llm.offline)
     out = llm.chat_json(SYSTEM, user, stub=stub)
-    if not isinstance(out, dict):
+    if out is stub:
+        out = dict(stub)
+    elif not isinstance(out, dict):
         out = dict(stub)
     out["action"] = _normalize_action(out.get("action"))
     # A planning request ("plan the next N maintainer actions") asks for a plan — it is never a

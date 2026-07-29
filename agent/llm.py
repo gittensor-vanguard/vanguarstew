@@ -68,17 +68,27 @@ class LLM:
 
         Returns `stub` verbatim in offline mode. For a live call, returns the parsed JSON —
         but when the response can't be parsed as JSON, *or* the endpoint returns a malformed
-        (non-chat-completion) envelope, falls back to `stub` instead of raising, so malformed
-        model output does not crash the agent (M4: no agent crashes from malformed LLM
-        output). Callers already treat the stub shape as "the model gave us nothing usable".
+        (non-chat-completion) envelope, retries once with the parse error appended, then falls
+        back to `stub` instead of raising, so malformed model output does not crash the agent
+        (M4: no agent crashes from malformed LLM output). Callers already treat the stub shape
+        as "the model gave us nothing usable" and can detect the fallback via ``out is stub``.
         Transport errors from `chat` (`URLError`/`HTTPError`/`OSError`) still propagate.
         """
         if self.offline:
             return stub if stub is not None else {}
         try:
             return extract_json(self.chat(system, user))
-        except (ValueError, TypeError):
-            return stub if stub is not None else {}
+        except (ValueError, TypeError) as exc:
+            repair_user = (
+                f"{user}\n\n"
+                f"Your previous response could not be parsed as JSON: {exc}\n"
+                "Return ONLY a single JSON object matching the requested schema — "
+                "no prose, no code fences."
+            )
+            try:
+                return extract_json(self.chat(system, repair_user))
+            except (ValueError, TypeError):
+                return stub if stub is not None else {}
 
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
