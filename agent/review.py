@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -152,14 +153,26 @@ def _pr_number(pr: dict):
 
     Frozen PR JSON can carry a non-int ``number`` (bool, list, dict). Formatting it
     verbatim into the review prompt would emit garbage like ``#True``; treat such values
-    as numberless, matching ``agent.planner._pr_number``.
+    as numberless. Digit-only strings and integral finite floats coerce to ``int``,
+    matching ``agent.planner._pr_number`` (#2203).
     """
     if not isinstance(pr, dict):
         return None
     number = pr.get("number")
-    if isinstance(number, bool) or not isinstance(number, int):
+    if isinstance(number, bool):
         return None
-    return number
+    if isinstance(number, int):
+        return number
+    if isinstance(number, float):
+        if math.isfinite(number) and number.is_integer():
+            return int(number)
+        return None
+    if isinstance(number, str):
+        text = number.strip()
+        if text.isdigit():
+            return int(text)
+        return None
+    return None
 
 
 def _clip_text(value, limit: int) -> str:
