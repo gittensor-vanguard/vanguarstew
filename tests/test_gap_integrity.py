@@ -137,7 +137,11 @@ def test_missing_held_out_composite_fails_explicit_check():
 
 def test_zero_scored_repos_on_one_side_requires_null_gap():
     art = _report(held_scored=0, gap=None)
-    assert check_gap_integrity(art)["passed"] is True
+    result = check_gap_integrity(art)
+    assert result["passed"] is True
+    assert result["verified"] is False
+    assert "UNVERIFIED" in integrity_headline(result)
+    assert "CONSISTENT" not in integrity_headline(result)
     art["generalization_gap"] = 0.01
     assert "gap_absent_when_unscored" in failed_checks(check_gap_integrity(art))
 
@@ -197,6 +201,20 @@ def test_every_check_is_reported_even_when_several_fail():
 def test_integrity_headline_reports_consistent_and_inconsistent():
     assert "CONSISTENT" in integrity_headline(check_gap_integrity(_report()))
     assert "INCONSISTENT" in integrity_headline(check_gap_integrity(_report(gap=0.99)))
+
+
+def test_fully_unscored_artifact_reports_unverified_not_consistent():
+    artifact = {
+        "tuned": {"error": "no repos", "scored_repos": 0, "composite_mean": 0.0},
+        "held_out": {"error": "no repos", "scored_repos": 0, "composite_mean": 0.0},
+        "generalization_gap": None,
+    }
+    result = check_gap_integrity(artifact)
+    assert result["passed"] is True
+    assert result["verified"] is False
+    line = integrity_headline(result)
+    assert "UNVERIFIED" in line
+    assert "CONSISTENT" not in line
 
 
 def test_integrity_headline_survives_non_list_checks(caplog):
@@ -297,7 +315,26 @@ def test_cli_strict_passes_for_consistent_artifact(tmp_path):
     result = _run_cli(str(path), "--strict")
     assert result.returncode == 0
     assert "CONSISTENT" in result.stderr
-    assert json.loads(result.stdout)["passed"] is True
+    payload = json.loads(result.stdout)
+    assert payload["passed"] is True
+    assert payload["verified"] is True
+
+
+def test_cli_strict_passes_for_fully_unscored_but_reports_unverified(tmp_path):
+    artifact = {
+        "tuned": {"error": "no repos", "scored_repos": 0, "composite_mean": 0.0},
+        "held_out": {"error": "no repos", "scored_repos": 0, "composite_mean": 0.0},
+        "generalization_gap": None,
+    }
+    path = tmp_path / "unscored.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    result = _run_cli(str(path), "--strict")
+    assert result.returncode == 0
+    assert "UNVERIFIED" in result.stderr
+    assert "CONSISTENT" not in result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["passed"] is True
+    assert payload["verified"] is False
 
 
 def test_cli_strict_exits_nonzero_on_inconsistent(tmp_path):

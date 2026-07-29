@@ -18,6 +18,11 @@ least one repo, and ``None`` otherwise. ``check_acceptance`` gates whether the g
    ``round(tuned.composite_mean - held_out.composite_mean, 3)`` (same rule as
    :func:`~benchmark.runner.run_generalization_report`).
 
+When neither partition scored, only absence rules apply (``gap_absent_when_unscored``); no gap
+arithmetic is verified. The result carries ``verified: False`` and the headline reports
+``UNVERIFIED`` rather than ``CONSISTENT`` so an unscored run cannot read as a sound
+generalization result.
+
 **Rounding semantics:** the expected gap is computed once with ``round(delta, 3)``. The reported
 gap is normalized with ``round(reported, 3)`` before comparison. ``tolerance`` (default ``0.0``)
 allows a non-zero bound only for artifacts that carry extra float noise beyond three decimal
@@ -138,7 +143,7 @@ def check_gap_integrity(report, tolerance: float = DEFAULT_TOLERANCE) -> dict:
     if not isinstance(report, dict):
         add("artifact_shape", False,
             f"artifact must be a JSON object, got {type(report).__name__}")
-        return {"passed": False, "checks": checks, "tolerance": tolerance}
+        return {"passed": False, "checks": checks, "tolerance": tolerance, "verified": False}
 
     tuned = report.get("tuned")
     held_out = report.get("held_out")
@@ -153,7 +158,7 @@ def check_gap_integrity(report, tolerance: float = DEFAULT_TOLERANCE) -> dict:
         if is_generalization else "not a --generalization artifact")
 
     if not is_generalization:
-        return {"passed": False, "checks": checks, "tolerance": tolerance}
+        return {"passed": False, "checks": checks, "tolerance": tolerance, "verified": False}
 
     tuned_scored = _partition_scored(tuned)
     held_scored = _partition_scored(held_out)
@@ -201,7 +206,19 @@ def check_gap_integrity(report, tolerance: float = DEFAULT_TOLERANCE) -> dict:
     else:
         add("gap_matches_partitions", True, "not applicable when gap is absent")
 
-    return {"passed": all(c["passed"] for c in checks), "checks": checks, "tolerance": tolerance}
+    verified = both_scored
+    result: dict = {
+        "passed": all(c["passed"] for c in checks),
+        "checks": checks,
+        "tolerance": tolerance,
+        "verified": verified,
+    }
+    if not verified:
+        if not tuned_scored and not held_scored:
+            result["unverified_reason"] = "neither_partition_scored"
+        else:
+            result["unverified_reason"] = "not_both_partitions_scored"
+    return result
 
 
 def failed_checks(result: dict) -> list[str]:
@@ -216,6 +233,16 @@ def failed_checks(result: dict) -> list[str]:
     ]
 
 
+_UNVERIFIED_HEADLINES = {
+    "neither_partition_scored": (
+        "gap integrity: UNVERIFIED (neither partition scored; gap absent)"
+    ),
+    "not_both_partitions_scored": (
+        "gap integrity: UNVERIFIED (gap absent; not both partitions scored)"
+    ),
+}
+
+
 def integrity_headline(result: dict) -> str:
     """A one-line human summary of a :func:`check_gap_integrity` result.
 
@@ -227,7 +254,13 @@ def integrity_headline(result: dict) -> str:
     if not checks:
         return "gap integrity: no checks evaluated"
     if result.get("passed"):
-        return f"gap integrity: CONSISTENT ({len(checks)} checks passed)"
+        if result.get("verified"):
+            return f"gap integrity: CONSISTENT ({len(checks)} checks passed)"
+        reason = result.get("unverified_reason")
+        return _UNVERIFIED_HEADLINES.get(
+            reason,
+            "gap integrity: UNVERIFIED (gap not computed; partition(s) unscored)",
+        )
     failed = failed_checks(result)
     return (f"gap integrity: INCONSISTENT ({len(failed)}/{len(checks)} checks failed: "
             f"{', '.join(failed)})")

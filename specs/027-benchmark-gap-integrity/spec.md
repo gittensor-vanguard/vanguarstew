@@ -9,9 +9,10 @@
   [`benchmark/acceptance.py`](../../benchmark/acceptance.py) (gap reasonableness gate)
 
 This spec makes the **existing, implicit** gap-integrity contract explicit. It describes the
-as-built behavior of `benchmark/gap_integrity.py`; it introduces **no behavior change**.
-Generalization artifacts report `generalization_gap` from partition composites — that arithmetic
-must be written down and verified before acceptance gates trust it.
+behavior of `benchmark/gap_integrity.py`; the `#2156` headline/`verified` distinction for
+fully-unscored artifacts is the intentional exception documented below. Generalization artifacts
+report `generalization_gap` from partition composites — that arithmetic must be written down
+and verified before acceptance gates trust it.
 
 ## Why
 
@@ -51,6 +52,8 @@ reviewers check gap-integrity changes against intent.
 
 - WHEN either partition has `scored_repos == 0` (or non-numeric `scored_repos`) THEN
   `generalization_gap` SHALL be `None` for `gap_absent_when_unscored` to pass.
+- WHEN both partitions are unscored THEN `passed` MAY be `true` (absence rules only) but
+  `verified` SHALL be `false` and the headline SHALL NOT report `CONSISTENT`.
 - WHEN both partitions have `scored_repos > 0` THEN `generalization_gap` SHALL be numeric for
   `gap_present_when_both_scored` to pass.
 - WHEN both partitions scored THEN both partition `composite_mean` values SHALL be numeric for
@@ -66,8 +69,13 @@ reviewers check gap-integrity changes against intent.
 
 ### Gate result shape
 
-- `check_gap_integrity()` SHALL return `{"passed", "checks", "tolerance"}` where `passed` is
-  `True` only when every check passes.
+- `check_gap_integrity()` SHALL return `{"passed", "checks", "tolerance", "verified"}` where
+  `passed` is `True` only when every check passes.
+- `verified` SHALL be `True` only when both partitions have `scored_repos > 0` (gap arithmetic
+  was subject to verification); otherwise `verified` SHALL be `False`.
+- WHEN `verified` is `False` and the artifact is a generalization report THEN the result SHALL
+  carry `unverified_reason`: `"neither_partition_scored"` when both partitions are unscored,
+  else `"not_both_partitions_scored"`.
 - Each check SHALL carry `name`, `passed`, and `detail` keys.
 
 ### Malformed gate-result robustness
@@ -83,7 +91,10 @@ reviewers check gap-integrity changes against intent.
 - `integrity_headline(result)` SHALL return a one-line summary.
 - IF no usable checks remain after sanitization THEN the headline SHALL read
   `gap integrity: no checks evaluated`.
-- WHEN `result["passed"]` is true THEN the headline SHALL include `CONSISTENT`.
+- WHEN `result["passed"]` is true AND `result["verified"]` is true THEN the headline SHALL
+  include `CONSISTENT`.
+- WHEN `result["passed"]` is true AND `result["verified"]` is false THEN the headline SHALL
+  include `UNVERIFIED` and SHALL NOT include `CONSISTENT`.
 - WHEN `result["passed"]` is false with usable checks THEN the headline SHALL include
   `INCONSISTENT` and failed check names.
 

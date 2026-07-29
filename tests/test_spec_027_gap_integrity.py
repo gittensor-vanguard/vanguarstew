@@ -73,6 +73,8 @@ def test_non_generalization_fails_is_generalization(bad):
 def test_consistent_generalization_passes_all_checks():
     result = check_gap_integrity(_report())
     assert result["passed"] is True
+    assert result["verified"] is True
+    assert "unverified_reason" not in result
     names = [c["name"] for c in result["checks"]]
     assert names == [
         "is_generalization",
@@ -100,7 +102,10 @@ def test_malformed_partition_types_fail_is_generalization():
 
 def test_gap_must_be_none_when_partition_unscored():
     art = _report(held_scored=0, gap=None)
-    assert check_gap_integrity(art)["passed"] is True
+    result = check_gap_integrity(art)
+    assert result["passed"] is True
+    assert result["verified"] is False
+    assert result["unverified_reason"] == "not_both_partitions_scored"
     art["generalization_gap"] = 0.01
     result = check_gap_integrity(art)
     assert result["passed"] is False
@@ -239,6 +244,22 @@ def test_failed_checks_logs_warning_for_skipped_rows(caplog):
 def test_integrity_headline_consistent_and_inconsistent():
     assert "CONSISTENT" in integrity_headline(check_gap_integrity(_report()))
     assert "INCONSISTENT" in integrity_headline(check_gap_integrity(_report(gap=0.99)))
+
+
+def test_fully_unscored_artifact_reports_unverified():
+    artifact = {
+        "tuned": {"error": "no repos", "scored_repos": 0, "composite_mean": 0.0},
+        "held_out": {"error": "no repos", "scored_repos": 0, "composite_mean": 0.0},
+        "generalization_gap": None,
+    }
+    result = check_gap_integrity(artifact)
+    assert result["passed"] is True
+    assert result["verified"] is False
+    assert result["unverified_reason"] == "neither_partition_scored"
+    line = integrity_headline(result)
+    assert "UNVERIFIED" in line
+    assert "CONSISTENT" not in line
+    assert "neither partition scored" in line
 
 
 def test_integrity_headline_no_checks_when_malformed(caplog):

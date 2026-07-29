@@ -16,7 +16,7 @@ Maps the [spec](./spec.md) onto `benchmark/gap_integrity.py` as-built. No produc
 | Gap arithmetic | `test_expected_gap_matches_runner_semantics`, `test_wrong_gap_fails_gap_matches_partitions`, `test_tolerance_accepts_small_delta_after_rounding`, `test_legitimate_zero_gap_when_means_equal`, `test_nan_gap_fails_gap_matches_partitions`, `test_non_finite_composite_fails_gap_matches` |
 | Gate result shape | `test_every_check_reported_even_when_several_fail` |
 | Malformed gate-result robustness | `test_check_rows_list_treats_non_list_as_empty`, `test_check_rows_list_logs_warning_for_non_list`, `test_check_rows_list_skips_non_dict_rows`, `test_failed_checks_tolerates_malformed_result`, `test_failed_checks_logs_warning_for_skipped_rows` |
-| Integrity headline | `test_integrity_headline_consistent_and_inconsistent`, `test_integrity_headline_no_checks_when_malformed` |
+| Integrity headline | `test_integrity_headline_consistent_and_inconsistent`, `test_integrity_headline_no_checks_when_malformed`, `test_fully_unscored_artifact_reports_unverified` |
 | Pure evaluation | `test_check_gap_integrity_does_not_mutate_report` |
 
 ## Verification strategy
