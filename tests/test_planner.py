@@ -1231,6 +1231,19 @@ def test_every_plan_kind_names_a_kind_the_objective_anchor_scores():
             f"anchor reads {commit_kind(subject)!r}"
         )
 
+    # Prefix-less / unrecognized-prefix release subjects must also round-trip (#1871):
+    # the anchor's second arm (`is_release_subject`) was missing from `_commit_plan_kind`.
+    for subject in (
+        "Bump version numbers to 5.1.3",
+        "(daniel, holger) prepare pluggy-0.4.0 release",
+        "Merge branch 'release-6.0.0b1' into develop",
+        "Minor version bump for development",
+        "wip: prepare release 1.2.0",
+    ):
+        planned = _commit_plan_kind(subject)
+        assert planned == "release", subject
+        assert plan_kind(planned) == commit_kind(subject) == "release", subject
+
 
 def test_commit_plan_kind_maps_conventional_prefixes_to_plan_vocabulary():
     assert _commit_plan_kind("feat: add exporter") == "feature"
@@ -1292,8 +1305,23 @@ def test_commit_plan_kind_release_tooling_cut_reads_as_release_not_dep_or_build(
     assert _commit_plan_kind("build(deps): bump actions/checkout from 6.0.2 to 6.0.3") == "build"
 
 
+def test_commit_plan_kind_prefixless_release_subjects_match_the_anchor():
+    """#1871: mirror the objective anchor's second arm for prefix-less release cuts."""
+    for subject in (
+        "Bump version numbers to 5.1.3",
+        "(daniel, holger) prepare pluggy-0.4.0 release",
+        "Merge branch 'release-6.0.0b1' into develop",
+        "Minor version bump for development",
+        "wip: prepare release 1.2.0",
+        "Release v1.2.0",
+        "v2.0.0",
+    ):
+        assert _commit_plan_kind(subject) == "release", subject
+        assert commit_kind(subject) == "release", subject
+
+
 def test_commit_plan_kind_drops_unknown_subjects():
-    # Merge commits, prefix-less subjects, and non-strings carry no kind.
+    # Ordinary merge / prefix-less subjects with no release signal carry no kind.
     assert _commit_plan_kind("Merge pull request from fork/branch") is None
     assert _commit_plan_kind("Add streaming export") is None
     assert _commit_plan_kind("cleanup: tidy") is None   # not a Conventional-Commit type

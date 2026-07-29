@@ -248,22 +248,30 @@ def _safe_prs(context: dict) -> list:
 def _commit_plan_kind(subject):
     """The plan-vocabulary kind a recent-commit subject evidences, or None.
 
-    Reads the Conventional-Commit prefix; a version-cut subject under a release-tooling type
-    ("chore(release): 1.4.0") reads as ``release`` rather than ``dep``. Merge commits and
-    prefix-less subjects carry no reliable kind, and a non-string subject (malformed frozen
-    context) is ignored rather than raising inside ``re``.
+    Prefers a Conventional-Commit prefix; a version-cut subject under a release-tooling type
+    (``chore(release): 1.4.0``) reads as ``release`` rather than ``dep``. When no recognized
+    CC type yields a kind, falls back to :func:`_is_release_subject` — the same second arm
+    the objective anchor's ``commit_kind`` uses — so prefix-less release cuts
+    (``Bump version numbers to 5.1.3``) and unrecognized-prefix release subjects
+    (``wip: prepare release 1.2.0``) are visible to the freeze-T gate and recent-kinds note.
+    Ordinary prefix-less / merge subjects still return ``None``. A non-string subject
+    (malformed frozen context) is ignored rather than raising inside ``re``.
     """
     if not isinstance(subject, str):
         return None
     m = _CC_PREFIX_RE.match(subject)
-    if not m:
-        return None
-    cc_type = m.group(1).lower()
-    if cc_type in _RELEASE_TOOLING_TYPES:
-        body = subject[m.end():].lstrip(" :\t")
-        if _RELEASE_CUT_BODY_RE.match(body):
-            return "release"
-    return _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+    if m:
+        cc_type = m.group(1).lower()
+        if cc_type in _RELEASE_TOOLING_TYPES:
+            body = subject[m.end():].lstrip(" :\t")
+            if _RELEASE_CUT_BODY_RE.match(body):
+                return "release"
+        kind = _CC_TYPE_TO_PLAN_KIND.get(cc_type)
+        if kind:
+            return kind
+    if _is_release_subject(subject):
+        return "release"
+    return None
 
 
 def _recent_commits(context: dict) -> list:
