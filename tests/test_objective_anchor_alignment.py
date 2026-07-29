@@ -30,11 +30,9 @@ from agent.decider import (  # noqa: E402
     decide,
 )
 from agent.planner import (  # noqa: E402
-    RELEASE_PRESSURE_GUIDANCE,
+    _JUDGE_PLAN_COMPACT_BUDGET,
     _backfill_files_from_layout,
     _normalize_plan_item,
-    _release_cadence_note,
-    _release_surface_entries,
     plan_next_actions,
 )
 from benchmark.score import base_from_releases, parse_semver  # noqa: E402
@@ -117,38 +115,28 @@ def test_backfill_release_item_without_surface_tokens_gets_nothing():
     assert "files" not in out[0]
 
 
-# ── release surface: layout-derived entries in the pressure note ──────────────────────────
+# ── files backfill: judge render-budget guard ─────────────────────────────────────────────
 
 
-def test_release_surface_picks_one_changelog_and_one_packaging_entry():
-    ctx = {"repo_layout": ["CHANGELOG.rst", "HISTORY.rst", "setup.py", "docs/", "src/"]}
-    assert _release_surface_entries(ctx) == ["CHANGELOG.rst", "setup.py"]
+def test_backfill_skips_attachment_that_would_cross_the_judge_budget():
+    # A plan already near the judge renderer's compact per-field budget must pass through
+    # verbatim: growing it past the truncation cliff would degrade the WHOLE plan to a
+    # mangled prefix blob in the judge's view, a strictly worse outcome than a missing
+    # files field. Content is never trimmed to make room.
+    bulky = {
+        "title": "Harden the loader in src",
+        "kind": "bugfix",
+        "rationale": "x" * _JUDGE_PLAN_COMPACT_BUDGET,
+    }
+    out = _backfill_files_from_layout([bulky], {"repo_layout": ["src"]})
+    assert "files" not in out[0]
+    assert out[0]["rationale"] == bulky["rationale"]
 
 
-def test_release_surface_matches_bare_stems_but_not_directories():
-    assert _release_surface_entries({"repo_layout": ["news"]}) == ["news"]
-    assert _release_surface_entries({"repo_layout": ["newsfragments/"]}) == []
-    assert _release_surface_entries({"repo_layout": []}) == []
-    assert _release_surface_entries({}) == []
-
-
-_PRESSURE_CTX_BASE = {
-    # >= 20 commits with no release subject and no dated releases => commit-count pressure.
-    "recent_commits": [{"subject": f"improve parser pass {i}"} for i in range(25)],
-}
-
-
-def test_pressure_note_names_the_repos_release_surface():
-    ctx = {**_PRESSURE_CTX_BASE, "repo_layout": ["CHANGELOG.rst", "setup.py", "src/"]}
-    note = _release_cadence_note(ctx)
-    assert RELEASE_PRESSURE_GUIDANCE in note
-    assert "`CHANGELOG.rst`" in note
-    assert "`setup.py`" in note
-
-
-def test_pressure_note_unchanged_when_no_release_surface_exists():
-    ctx = {**_PRESSURE_CTX_BASE, "repo_layout": ["src/", "docs/"]}
-    assert _release_cadence_note(ctx) == f"\n{RELEASE_PRESSURE_GUIDANCE}\n"
+def test_backfill_attaches_normally_under_the_judge_budget():
+    plan = [{"title": "Harden the loader in src", "kind": "bugfix", "rationale": "short"}]
+    out = _backfill_files_from_layout(plan, {"repo_layout": ["src"]})
+    assert out[0]["files"] == ["src"]
 
 
 def test_backfill_no_ops_on_missing_or_malformed_layout():

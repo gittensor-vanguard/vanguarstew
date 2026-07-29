@@ -124,11 +124,8 @@ PLAN_ITEM_SCHEMA = (
 )
 
 OBJECTIVE_ANCHOR_GUIDANCE = (
-    "Concrete specificity matters: give each non-triage item 1-2 `files` entries naming the "
-    "top-level modules or paths its work lands in (e.g. `src/loader.py`, `docs/`, `tests/`). "
-    "Across the whole plan, the items' `files` should collectively cover the distinct "
-    "surfaces where near-term work is expected — the main package, tests, the config/CI "
-    "surface, docs — not repeat one surface five times. "
+    "Concrete specificity matters: for each non-triage item, include `files` naming the "
+    "top-level module or paths you expect to change (e.g. `src/loader.py`, `docs/`, `tests/`). "
     "Pick `kind` to match the maintainer commit type the action would produce "
     "(bugfix/fix, feature/feat, docs, release, refactor, dep, build, ci, test, perf, style, "
     "revert). When several kinds recur in recent history, plan separate items so each kind is "
@@ -304,8 +301,8 @@ def _recent_kinds_note(context: dict) -> str:
     return (
         f"\nRecent maintainer activity by kind, from Conventional-Commit subjects: {mix}.\n"
         "Near-future maintainer work usually continues this mix. Unless the philosophy or "
-        "the PR queue argues otherwise, include one item per kind that appears at least "
-        "twice above, and give every non-triage item 1-2 `files`.\n"
+        'the PR queue argues otherwise, make the plan items\' "kind" values collectively '
+        "cover the recurring kinds above, and keep `files` on every non-triage item.\n"
     )
 
 
@@ -447,43 +444,15 @@ def _release_cadence_signal(context: dict) -> bool:
     )
 
 
-# A top-level changelog-ish FILE (dirs carry a trailing `/` in repo_layout and never match):
-# the canonical stems with an optional common text extension. `newsfragments/`-style trees and
-# arbitrary "*notes*" names deliberately do not match — only entries a release cut actually edits.
-_RELEASE_LOG_RE = re.compile(r"^(changelog|changes|history|news)(\.(md|rst|txt))?$")
-_RELEASE_PACKAGING = frozenset({"setup.py", "setup.cfg", "pyproject.toml"})
-
-
-def _release_surface_entries(context: dict) -> list:
-    """The repo's own release surface: at most one changelog-ish file + one packaging file.
-
-    Read off ``_repo_layout`` only — entries that exist in the frozen checkout, never example
-    filenames — so the pressure note can point the release item's ``files`` at where a cut
-    really lands in THIS repo. Empty when the layout carries neither.
-    """
-    entries = _repo_layout(context)
-    logish = [e for e in entries if _RELEASE_LOG_RE.fullmatch(e.lower())]
-    packaging = [e for e in entries if e.lower() in _RELEASE_PACKAGING]
-    return logish[:1] + packaging[:1]
-
-
 def _release_cadence_note(context: dict) -> str:
     """Inject release-item guidance from freeze-T timing, not from cadence vibe (#1561).
 
-    Pressure → ask for a release item, pointing its ``files`` at the repo's real release
-    surface (changelog/packaging entries from the frozen layout) when one exists — a release
-    lands in exactly those modules, and a release item that names them is concretely, not
-    just nominally, right. Suppress / mid-cycle → stay silent (a just-cut release subject in
-    history must NOT re-trigger "include a release" — that was the over-predict).
+    Pressure → ask for a release item. Suppress / mid-cycle → stay silent (a just-cut release
+    subject in history must NOT re-trigger "include a release" — that was the over-predict).
     """
     if _release_timing_state(context) != "pressure":
         return ""
-    note = f"\n{RELEASE_PRESSURE_GUIDANCE}\n"
-    surfaces = _release_surface_entries(context)
-    if surfaces:
-        listed = ", ".join(f"`{s}`" for s in surfaces)
-        note += f"The release item's `files` should name this repo's release surface: {listed}.\n"
-    return note
+    return f"\n{RELEASE_PRESSURE_GUIDANCE}\n"
 
 
 def _is_release_subject(text) -> bool:
@@ -675,6 +644,13 @@ def _repo_layout_note(context: dict) -> str:
 # enough that an item never carries more modules than its own text supports.
 _BACKFILL_MAX_FILES = 2
 
+# Margin under the judge renderer's 1400-char compact per-field budget (benchmark/judge.py
+# ``_render``; mirrored, not imported — ``agent/`` must not depend on ``benchmark/``). A plan
+# pushed past that budget is shown to the judge as a mangled ``{"truncated": true,
+# "json_prefix": ...}`` blob with its tail items invisible, so growing the plan must never be
+# what tips it over: backfill only fires while the compact-serialized plan stays under this.
+_JUDGE_PLAN_COMPACT_BUDGET = 1300
+
 
 def _backfill_files_from_layout(plan: list, context: dict) -> list:
     """Attach `files` to items whose own text names a real top-level entry but left it empty.
@@ -693,13 +669,18 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
     packaging surfaces, and those are scored modules on the very windows a release item is
     right about — a release title naming the changelog earns that entry the same token-gated
     way.
+
+    Backfill never grows the plan past ``_JUDGE_PLAN_COMPACT_BUDGET`` compact-serialized
+    chars: past the judge renderer's per-field budget the whole plan degrades to a truncated
+    prefix blob in the judge's view, so an attachment that would tip it over is skipped —
+    the item is kept verbatim, content is never trimmed to make room.
     """
     entries = _repo_layout(context)
     if not entries:
         return plan
     entry_tokens = [(entry, _significant_tokens(entry)) for entry in entries]
     out = []
-    for item in plan:
+    for i, item in enumerate(plan):
         if (
             not isinstance(item, dict)
             or item.get("files")
@@ -717,7 +698,11 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
             if tokens and tokens & text_tokens
         ][:_BACKFILL_MAX_FILES]
         if matched:
-            item = {**item, "files": matched}
+            candidate = {**item, "files": matched}
+            trial = out + [candidate] + plan[i + 1:]
+            serialized = json.dumps(trial, ensure_ascii=True, separators=(",", ":"))
+            if len(serialized) <= _JUDGE_PLAN_COMPACT_BUDGET:
+                item = candidate
         out.append(item)
     return out
 
