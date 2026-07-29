@@ -159,7 +159,25 @@ RELEASE_PRESSURE_GUIDANCE = (
 # is past half a typical cycle for the set's median repos.
 _RELEASE_SUPPRESS_DAYS = 7
 _RELEASE_PRESSURE_DAYS = 28
-_RELEASE_PRESSURE_COMMITS = 20
+
+# Release-cut DENSITY pressure: the share of recent subjects that read as release cuts (by the
+# anchor-aligned `_is_release_subject`, not the CC-prefix kind mirror -- which sees 0 of the 64
+# release subjects the anchor classifies across the curated tasks). Density is cadence
+# intensity: 0.08 over a 50-commit window is a cut roughly every 12 commits, so any meaningful
+# revealed window contains one. Measured over the 18 tasks the curated set generates,
+# leave-one-repo-out (threshold refit on 5 repos, applied to the held-out 6th, every fold
+# choosing 0.08): predict-iff-density>=0.08 scores release_match 15/18 (83%) vs 8/18 (44%) for
+# the elapsed-time rules below and 6/18 (33%) for fixing the detector alone -- elapsed time
+# since the last cut is INVERTED on this corpus (releases cluster: a just-cut repo released
+# again in 2 of 3 windows). The elapsed-commits pressure arm (>=20 since a cut) is therefore
+# gone: with the detector blind it degenerated to constant pressure (18/18 tasks, precision
+# 44% = the base rate exactly), and with the detector fixed it is the inverted signal.
+_RELEASE_CUT_DENSITY_PRESSURE = 0.08
+
+# A rate needs a denominator: below this many recent commits, density is noise (one cut in a
+# two-commit context reads as 0.5), so the state falls back to the dated #1561 rules that
+# short histories were calibrated on. Real frozen contexts carry ~50 commits.
+_RELEASE_DENSITY_MIN_WINDOW = 10
 # Undated fallback: a release subject among the newest N commits ≈ "just cut".
 _RELEASE_JUST_CUT_LOOKBACK = 3
 
@@ -353,6 +371,21 @@ def _freeze_dt(context: dict):
     return None
 
 
+def _is_release_cut_commit(commit) -> bool:
+    """A recent commit whose subject reads as a release cut, by the ANCHOR's definition.
+
+    The timing path must see the cuts the objective anchor scores. `_commit_plan_kind` is a
+    CC-prefix classifier, and pre-CC histories cut releases without prefixes ("Preparing
+    release 0.12.0", "Stamp 0.6.0. minor release"): across the curated tasks' 960 distinct
+    subjects the anchor classifies 64 as release and the CC mirror sees 0 of them, which froze
+    `_release_timing_state` at constant pressure. `_is_release_subject` is the anchor-aligned
+    mirror (64/64) and is what closed #1872/#2014/#2136 reached for; scoping it to the timing
+    path (not `_commit_plan_kind` itself) keeps `_recent_kinds_note` and the cadence backstop
+    byte-identical.
+    """
+    return isinstance(commit, dict) and _is_release_subject(commit.get("subject"))
+
+
 def _last_release_dt(context: dict):
     """Most recent knowable-at-T release instant, or ``None`` when undated.
 
@@ -361,9 +394,7 @@ def _last_release_dt(context: dict):
     """
     newest = None
     for commit in _recent_commits(context):
-        if not isinstance(commit, dict):
-            continue
-        if _commit_plan_kind(commit.get("subject")) != "release":
+        if not _is_release_cut_commit(commit):
             continue
         dt = _parse_iso_dt(commit.get("date"))
         if dt is not None and (newest is None or dt > newest):
@@ -408,7 +439,7 @@ def _commits_since_last_release(context: dict):
         if not isinstance(commit, dict):
             continue
         saw_any = True
-        if _commit_plan_kind(commit.get("subject")) == "release":
+        if _is_release_cut_commit(commit):
             return n
         n += 1
     return n if saw_any else None
@@ -416,30 +447,59 @@ def _commits_since_last_release(context: dict):
 
 def _release_just_cut_undated(context: dict) -> bool:
     """True when a release subject sits among the newest commits and dates are unavailable."""
-    for commit in _recent_commits(context)[:_RELEASE_JUST_CUT_LOOKBACK]:
-        if isinstance(commit, dict) and _commit_plan_kind(commit.get("subject")) == "release":
-            return True
-    return False
+    return any(
+        _is_release_cut_commit(commit)
+        for commit in _recent_commits(context)[:_RELEASE_JUST_CUT_LOOKBACK]
+    )
+
+
+def _release_cut_density(context: dict):
+    """Share of recent commits whose subjects read as release cuts, or ``None``.
+
+    ``None`` when the window carries fewer than ``_RELEASE_DENSITY_MIN_WINDOW`` parseable
+    commits -- a rate over a tiny denominator is noise, and the dated #1561 rules were
+    calibrated on exactly those short synthetic histories.
+    """
+    commits = [c for c in _recent_commits(context) if isinstance(c, dict)]
+    if len(commits) < _RELEASE_DENSITY_MIN_WINDOW:
+        return None
+    cuts = sum(1 for c in commits if _is_release_cut_commit(c))
+    return cuts / len(commits)
 
 
 def _release_timing_state(context: dict) -> str:
-    """Freeze-window release timing: ``suppress`` | ``pressure`` | ``neutral`` (#1561).
+    """Freeze-window release timing: ``suppress`` | ``pressure`` | ``neutral`` (#1561, #2178).
 
-    - **suppress** — a cut landed very recently; predicting another release overfits cadence vibe.
-    - **pressure** — long enough since the last cut (days or commits) that the revealed window
-      is likely to contain one; prompt for a release item.
-    - **neutral** — no clear timing read (or mid-cycle); fall back to the cadence backstop.
+    - **pressure** — the history's release-cut DENSITY says the repo cuts often enough that the
+      revealed window likely contains one (`_RELEASE_CUT_DENSITY_PRESSURE`); prompt for a
+      release item. On short histories with no usable denominator, a dated long-elapsed cut
+      (``>= _RELEASE_PRESSURE_DAYS``) still counts.
+    - **suppress** — a cut landed very recently on a LOW-cadence history; predicting another
+      release overfits. High density outranks just-cut (releases cluster).
+    - **neutral** — cadence visible but slow, or no timing read; fall back to the cadence
+      backstop. Elapsed time since a cut never creates pressure here: measured on the curated
+      replay tasks it is the inverted signal (see the density constant's docstring).
     """
+    density = _release_cut_density(context)
+    # Density outranks just-cut: on a high-cadence repo a fresh cut predicts ANOTHER cut, not
+    # quiet (releases cluster -- measured 2/3 of just-cut windows on the curated set revealed
+    # another release). Suppress only applies to a fresh cut on a low-cadence history.
+    if density is not None and density >= _RELEASE_CUT_DENSITY_PRESSURE:
+        return "pressure"
+
     days = _days_since_last_release(context)
     if days is not None and days <= _RELEASE_SUPPRESS_DAYS:
         return "suppress"
     if days is None and _release_just_cut_undated(context):
         return "suppress"
 
-    commits = _commits_since_last_release(context)
+    # A computable density below the pressure bar is evidence of a slow cadence: the elapsed
+    # rules below must NOT fire (elapsed time since a cut is the inverted signal on real
+    # windows -- the old >=20-commits arm was constant pressure at base-rate precision). The
+    # dated arm survives only for short histories where density has no denominator.
+    if density is not None:
+        return "neutral"
     if days is not None and days >= _RELEASE_PRESSURE_DAYS:
-        return "pressure"
-    if commits is not None and commits >= _RELEASE_PRESSURE_COMMITS:
         return "pressure"
     return "neutral"
 

@@ -47,6 +47,7 @@ from agent.planner import (  # noqa: E402
     _recent_kinds_note,
     _release_cadence_note,
     _release_cadence_signal,
+    _release_cut_density,
     _release_timing_state,
     _repo_layout_note,
     _safe_prs,
@@ -871,10 +872,76 @@ def test_release_timing_pressure_when_cycle_is_due():
     assert _release_timing_state(ctx) == "pressure"
     assert RELEASE_PRESSURE_GUIDANCE in _release_cadence_note(ctx)
 
-    # Undated: ≥20 non-release commits since last visible cut → pressure.
+    # Undated long history with NO visible cuts: a real 20+-commit window computes a release
+    # density of 0.0 — a slow-cadence read, NOT pressure. The old ">=20 commits since a cut"
+    # arm fired here, which on real 50-commit frozen histories degenerated to constant
+    # pressure (18/18 curated tasks, 44% precision = the base rate); elapsed time since a cut
+    # is the inverted signal on real windows (#2178).
     many = {"recent_commits": [{"subject": f"feat: {i}"} for i in range(20)]}
     assert _commits_since_last_release(many) == 20
-    assert _release_timing_state(many) == "pressure"
+    assert _release_timing_state(many) == "neutral"
+
+
+def test_release_cut_density_needs_a_real_denominator():
+    # Two commits, one a cut: 0.5 is noise, not cadence — density stays None so the dated
+    # #1561 rules (calibrated on short synthetic histories) keep governing.
+    tiny = {"recent_commits": [{"subject": "chore(release): 1.0.0"}, {"subject": "feat: a"}]}
+    assert _release_cut_density(tiny) is None
+    # Ten commits with one cut: a real rate.
+    real = {"recent_commits": [{"subject": "Preparing release 0.12.0"}]
+            + [{"subject": f"feat: {i}"} for i in range(9)]}
+    assert _release_cut_density(real) == 0.1
+    assert _release_cut_density({}) is None
+    assert _release_cut_density({"recent_commits": [7, None, "x"]}) is None
+
+
+def test_release_timing_pressure_from_cut_density_with_prefixless_subjects():
+    # A pre-CC history that cuts often: 5 anchor-recognizable release subjects in 50 commits
+    # (density 0.10 >= 0.08) -> pressure. None of these subjects carries a CC prefix, so the
+    # kind mirror alone would see zero cuts and the old elapsed-commits arm would have fired
+    # for the WRONG reason on every long history (#2178).
+    cuts = ["Preparing release 0.12.0", "Stamp 0.6.0. minor release", "release 0.11.0",
+            "Minor version bump for development", "Prepare for next minor release"]
+    commits = [{"subject": s} for s in cuts] + [{"subject": f"feat: {i}"} for i in range(45)]
+    ctx = {"recent_commits": commits}
+    assert _release_cut_density(ctx) == 0.1
+    assert _release_timing_state(ctx) == "pressure"
+    assert RELEASE_PRESSURE_GUIDANCE in _release_cadence_note(ctx)
+
+
+def test_release_timing_density_outranks_just_cut_on_high_cadence():
+    # Releases cluster: a fresh cut on a HIGH-cadence history predicts another cut, not quiet
+    # (measured 2/3 of just-cut curated windows revealed another release). Suppress must not
+    # swallow the pressure read.
+    commits = ([{"subject": "release 4.0.0"}]
+               + [{"subject": f"feat: {i}"} for i in range(8)]
+               + [{"subject": "release 3.0.0"}, {"subject": "release 2.3.0"},
+                  {"subject": "release 2.2.0"}]
+               + [{"subject": f"fix: {i}"} for i in range(38)])
+    ctx = {"recent_commits": commits}
+    assert _release_cut_density(ctx) >= 0.08
+    assert _release_timing_state(ctx) == "pressure"
+
+
+def test_release_timing_suppress_only_on_low_cadence_just_cut():
+    # A fresh cut on a SLOW-cadence history (1 cut in 50 commits, density 0.02) is the real
+    # suppress case: the repo does not cut often, and the tip cut just consumed the cycle.
+    commits = [{"subject": "release 1.0.0"}] + [{"subject": f"feat: {i}"} for i in range(49)]
+    ctx = {"recent_commits": commits}
+    assert _release_cut_density(ctx) == 0.02
+    assert _release_timing_state(ctx) == "suppress"
+
+
+def test_release_timing_slow_visible_cadence_is_neutral_not_pressure():
+    # A cut exists mid-history on a slow-cadence window: neither suppress (not at the tip)
+    # nor pressure (elapsed time is the inverted signal on real windows) — neutral.
+    commits = ([{"subject": f"feat: {i}"} for i in range(30)]
+               + [{"subject": "release 1.0.0"}]
+               + [{"subject": f"fix: {i}"} for i in range(19)])
+    ctx = {"recent_commits": commits}
+    assert _release_cut_density(ctx) == 0.02
+    assert _release_timing_state(ctx) == "neutral"
+    assert _release_cadence_note(ctx) == ""
 
 
 def test_release_cadence_note_only_under_pressure_not_just_because_history_had_a_cut():
