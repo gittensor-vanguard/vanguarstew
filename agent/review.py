@@ -12,8 +12,41 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+# The scored surface is exactly the files a live ``score_pr_delta`` run measures — the manifest
+# ``vanguarstew_agent_files.json`` at the repo root — NOT every path under ``agent/``.
+# ``agent/review.py`` (this maintainer-assist tool) is deliberately off the manifest, so a PR
+# touching only it can never earn a ``perf:*`` band and must get the flat ``mult:contribution``
+# tier (#2116). ``agent/`` must not import from ``benchmark/``, so the manifest is read directly.
+_AGENT_FILES_MANIFEST = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vanguarstew_agent_files.json"
+)
+
+
+def _scored_agent_files() -> frozenset:
+    """The manifest files a live ``score_pr_delta`` run actually measures.
+
+    Read from ``vanguarstew_agent_files.json`` (the single source of truth for the scored
+    surface). On any read/parse failure or a malformed manifest, return an empty set so the
+    caller falls back to the historical ``agent/``-prefix heuristic rather than aborting an
+    advisory review — this module never crashes on bad input.
+    """
+    try:
+        with open(_AGENT_FILES_MANIFEST, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "review_pr: cannot read agent-files manifest (%s: %s); "
+            "falling back to the agent/ prefix heuristic", type(exc).__name__, exc,
+        )
+        return frozenset()
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, list):
+        return frozenset()
+    return frozenset(f for f in files if isinstance(f, str) and f.strip())
 
 SYSTEM = (
     "You are an experienced repository maintainer reviewing a pull request. Assess it on the "
@@ -193,7 +226,14 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         for path in raw_files:
             if isinstance(path, str) and path.strip():
                 files.append(path.strip())
-    touches_agent = any(f == "agent.py" or f.startswith("agent/") for f in files)
+    # Only files on the measured manifest can earn a perf:* band; an off-manifest agent/ path
+    # (e.g. agent/review.py) is flat-rate. Fall back to the agent/ prefix only if the manifest
+    # cannot be read (see _scored_agent_files).
+    scored = _scored_agent_files()
+    touches_agent = (
+        any(f in scored for f in files) if scored
+        else any(f == "agent.py" or f.startswith("agent/") for f in files)
+    )
     number = _pr_number(pr)
     user = (
         (f"Repository philosophy:\n{json.dumps(philosophy)[:1500]}\n\n" if philosophy is not None else "")
@@ -205,8 +245,9 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + f"{NON_REDUNDANCY_GUIDANCE}\n\n"
         + "Return JSON with keys:\n"
         + f'  "action": one of {ACTIONS},\n'
-        + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
-        + 'agent/ (its real value tier needs a live benchmark run, not a guess); '
+        + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR changes a '
+        + 'file on the measured agent-files manifest (not every agent/ path — e.g. agent/review.py '
+        + 'is off it); its real value tier needs a live benchmark run, not a guess; '
         + '"mult:contribution" for everything else,\n'
         + '  "scope_ok": boolean — does it map to a referenced issue and stay in scope,\n'
         + '  "tests_present": boolean — does it add or update tests,\n'

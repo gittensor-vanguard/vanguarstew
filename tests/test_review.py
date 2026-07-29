@@ -85,9 +85,9 @@ def test_review_detects_no_tests():
     assert review_pr(pr, None, llm)["tests_present"] is False
 
 
-def test_review_offline_stub_value_label_reflects_agent_touch():
-    """The offline stub can't run a benchmark, but it CAN tell from the files list whether a
-    PR is even on the measured surface — perf:pending for agent/, mult:contribution otherwise."""
+def test_review_offline_stub_value_label_reflects_measured_manifest():
+    """The offline stub can't run a benchmark, but it CAN tell from the files list whether a PR
+    is on the measured manifest surface — perf:pending only there, mult:contribution otherwise."""
     llm = LLM(api_key="offline")
     agent_pr = {"number": 1, "title": "t", "files": ["agent/decider.py", "tests/test_decider.py"]}
     assert review_pr(agent_pr, None, llm)["value_label"] == "perf:pending"
@@ -96,6 +96,40 @@ def test_review_offline_stub_value_label_reflects_agent_touch():
     assert review_pr(agent_entry_pr, None, llm)["value_label"] == "perf:pending"
 
     non_agent_pr = {"number": 3, "title": "t", "files": ["benchmark/score.py", "docs/x.md"]}
+    assert review_pr(non_agent_pr, None, llm)["value_label"] == "mult:contribution"
+
+
+def test_review_off_manifest_agent_path_is_flat_rate():
+    """#2116: a PR touching only an agent/ file that is NOT on the measured manifest (e.g.
+    agent/review.py, the maintainer-assist tool) can never earn a perf:* band, so it must be
+    labeled mult:contribution — not perf:pending, which promises a band that cannot arrive."""
+    llm = LLM(api_key="offline")
+    review_only = {"number": 1, "title": "t", "files": ["agent/review.py", "tests/test_review.py"]}
+    assert review_pr(review_only, None, llm)["value_label"] == "mult:contribution"
+
+    # A mix of an off-manifest and an on-manifest file is still on the measured surface.
+    mixed = {"number": 2, "title": "t", "files": ["agent/review.py", "agent/planner.py"]}
+    assert review_pr(mixed, None, llm)["value_label"] == "perf:pending"
+
+
+def test_scored_agent_files_matches_manifest_and_excludes_review():
+    from agent.review import _scored_agent_files
+
+    scored = _scored_agent_files()
+    assert "agent.py" in scored and "agent/planner.py" in scored
+    assert "agent/review.py" not in scored  # deliberately off the measured surface
+
+
+def test_review_falls_back_to_agent_prefix_when_manifest_unreadable(monkeypatch):
+    # If the manifest cannot be read, the module degrades to the historical agent/ prefix
+    # heuristic (never crashes, never under-labels a real scored file).
+    import agent.review as review_mod
+
+    monkeypatch.setattr(review_mod, "_scored_agent_files", lambda: frozenset())
+    llm = LLM(api_key="offline")
+    agent_pr = {"number": 1, "title": "t", "files": ["agent/planner.py"]}
+    assert review_pr(agent_pr, None, llm)["value_label"] == "perf:pending"
+    non_agent_pr = {"number": 2, "title": "t", "files": ["docs/x.md"]}
     assert review_pr(non_agent_pr, None, llm)["value_label"] == "mult:contribution"
 
 
