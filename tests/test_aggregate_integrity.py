@@ -519,8 +519,10 @@ def test_cli_without_strict_returns_zero_even_when_invalid(tmp_path):
 
 
 def test_cli_reports_clean_error_for_missing_file(tmp_path):
+    # Path failures exit 2 (via the shared loader), distinct from the gating exit 1 that
+    # --strict uses — so CI can tell a bad artifact path from a failed gate (#2101).
     result = _run_cli(str(tmp_path / "missing.json"), "--strict")
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "artifact not found" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -529,15 +531,18 @@ def test_cli_reports_clean_error_for_non_object(tmp_path):
     path = tmp_path / "array.json"
     path.write_text(json.dumps([1]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "must be a JSON object" in result.stderr
     assert "Traceback" not in result.stderr
 
 
 def test_cli_reports_clean_error_for_a_directory_path(tmp_path):
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
-    assert "artifact path is a directory, not a file" in result.stderr
+    assert result.returncode == 2
+    if os.name == "nt":
+        assert "not readable" in result.stderr
+    else:
+        assert "artifact path is a directory, not a file" in result.stderr
     assert "Traceback" not in result.stderr
 
 
@@ -551,7 +556,7 @@ def test_cli_reports_clean_error_for_an_unreadable_file(tmp_path):
         result = _run_cli(str(locked))
     finally:
         locked.chmod(0o600)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not readable" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -560,6 +565,20 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not valid JSON" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_broken_symlink_reports_the_dangling_target(tmp_path):
+    # Secondary gap in #2101: the old thin loader had no symlink arm, so a dangling symlink was
+    # reported as a plain "not found". The shared loader distinguishes it.
+    link = tmp_path / "broken.json"
+    try:
+        link.symlink_to(tmp_path / "nonexistent.json")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported on this platform/permission set")
+    result = _run_cli(str(link))
+    assert result.returncode == 2
+    assert "broken symlink" in result.stderr
     assert "Traceback" not in result.stderr

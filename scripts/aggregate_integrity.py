@@ -5,6 +5,9 @@
 
 ``--strict``: exit with code 1 when :func:`benchmark.aggregate_integrity.check_aggregate_integrity`
 reports ``passed: false``. Without ``--strict`` the JSON result is printed either way.
+
+Path / JSON failures exit 2 (via ``scripts.artifact_io``), distinct from the gating exit 1 —
+so ``--strict`` CI can tell "the gate failed" (1) from "the artifact path was bad" (2).
 """
 
 from __future__ import annotations
@@ -18,39 +21,9 @@ from benchmark.aggregate_integrity import (
     check_aggregate_integrity,
     integrity_headline,
 )
+from scripts.artifact_io import load_artifact  # re-exported for tests / callers
 
-
-def load_artifact(path: str) -> dict:
-    """Load a JSON-object artifact, exiting with a clear message on a bad path or bad JSON.
-
-    Each failure mode gets its own actionable message instead of a raw errno string: the path is
-    missing, unreadable, or a directory; the file is not valid JSON; or the root value is not an
-    object. Every case exits 1 via ``SystemExit`` so the caller needs no error handling.
-    """
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except FileNotFoundError:
-        print(f"artifact not found: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except PermissionError:
-        print(f"artifact is not readable (check file permissions): {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except IsADirectoryError:
-        print(f"artifact path is a directory, not a file: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except OSError:
-        print(f"cannot read artifact: {path}", file=sys.stderr)
-        raise SystemExit(1) from None
-    except ValueError as exc:
-        # json.load raises JSONDecodeError (a ValueError) for malformed JSON, and a plain
-        # ValueError for an integer literal beyond the int-string-conversion limit (py3.11+).
-        print(f"artifact is not valid JSON ({path}): {exc}", file=sys.stderr)
-        raise SystemExit(1) from None
-    if not isinstance(data, dict):
-        print(f"artifact must be a JSON object: {path}", file=sys.stderr)
-        raise SystemExit(1)
-    return data
+__all__ = ["load_artifact", "main"]
 
 
 def main() -> None:
