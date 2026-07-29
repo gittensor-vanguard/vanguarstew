@@ -75,6 +75,34 @@ def test_non_utf8_transcript_exits_two(tmp_path, capsys):
     assert "cannot read transcript" in capsys.readouterr().err
 
 
+def test_transcript_detail_preserves_earlier_failures(tmp_path, capsys):
+    """With --transcript, detail must list every failing check, not only transcript_digest (#2065)."""
+    artifact = {"composite_mean": 0.7}
+    evidence = build_evidence(artifact, {"transcript_digest": "deadbeef" * 8})
+    evidence["artifact_digest"] = "tampered"
+    art_path = tmp_path / "artifact.json"
+    ev_path = tmp_path / "evidence.json"
+    art_path.write_text(json.dumps(artifact), encoding="utf-8")
+    ev_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    verify_attestation.run(["--artifact", str(art_path), "--evidence", str(ev_path)])
+    without = json.loads(capsys.readouterr().out)
+    assert without["detail"] == "artifact_digest FAILED"
+
+    tpath = tmp_path / "transcript.json"
+    store = TranscriptStore()
+    store.record("system", "hi")
+    store.save(str(tpath))
+
+    verify_attestation.run(
+        ["--artifact", str(art_path), "--evidence", str(ev_path), "--transcript", str(tpath)])
+    with_transcript = json.loads(capsys.readouterr().out)
+    assert "artifact_digest FAILED" in with_transcript["detail"]
+    assert "transcript_digest FAILED" in with_transcript["detail"]
+    assert with_transcript["checks"]["artifact_digest"] is False
+    assert with_transcript["checks"]["transcript_digest"] is False
+
+
 def test_valid_transcript_still_runs_and_reports(tmp_path, capsys):
     # The guard must not disturb the happy path: a readable transcript is loaded, its digest
     # compared, and the report printed (here the digests differ, so the check is False but run()

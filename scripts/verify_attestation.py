@@ -72,9 +72,21 @@ def run(argv=None) -> int:
         claimed = (evidence.get("inputs") or {}).get("transcript_digest")
         report["checks"]["transcript_digest"] = recorded == claimed
         report["ok"] = all(report["checks"].values())
-        if recorded != claimed:
-            report["detail"] = f"transcript_digest FAILED (recorded {recorded[:12]}, "
-            report["detail"] += f"bound {str(claimed)[:12]})"
+        if report["ok"]:
+            report["detail"] = "all checks passed"
+        else:
+            parts = []
+            for name, passed in report["checks"].items():
+                if passed:
+                    continue
+                if name == "transcript_digest":
+                    parts.append(
+                        f"transcript_digest FAILED (recorded {recorded[:12]}, "
+                        f"bound {str(claimed)[:12]})"
+                    )
+                else:
+                    parts.append(f"{name} FAILED")
+            report["detail"] = "; ".join(parts)
 
     print(json.dumps(report, indent=2, sort_keys=True))
     for name, passed in sorted(report["checks"].items()):
