@@ -220,15 +220,35 @@ def test_enforce_closes_identity_mismatch(monkeypatch):
     ]
 
 
-def test_enforce_does_not_mutate_closed_pr(monkeypatch):
+def test_enforce_records_mismatch_if_another_policy_closed_first(monkeypatch):
+    comments = []
     monkeypatch.setattr(
         policy,
         "_pull",
-        lambda repo, number: {"state": "closed", "user": {"login": "contributor"}},
+        lambda repo, number: {"state": "closed", "user": {"login": "RealDiligent"}},
     )
-    monkeypatch.setattr(policy, "_paginate", lambda *args: pytest.fail("no data expected"))
-    monkeypatch.setattr(policy, "_gh", lambda *args: pytest.fail("no mutation expected"))
-    assert policy.enforce("owner/repo", 9)["allowed"] is True
+    monkeypatch.setattr(
+        policy,
+        "_paginate",
+        lambda repo, number, resource: [
+            _commit(
+                "1e08d0838de4487d1a70cf333d5043c8381a863b",
+                git_author="RealDiligent",
+                github_author="RealDiligent",
+                git_committer="RealDiligent",
+                github_committer="jak-glitch",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        policy,
+        "_sync_close_comment",
+        lambda repo, number, body: comments.append((repo, number, body)),
+    )
+    monkeypatch.setattr(policy, "_gh", lambda *args: pytest.fail("must not close twice"))
+
+    assert policy.enforce("owner/repo", 9)["allowed"] is False
+    assert "@jak-glitch" in comments[0][2]
 
 
 def test_close_comment_does_not_trust_a_contributor_marker(monkeypatch):
