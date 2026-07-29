@@ -9,9 +9,31 @@ caller-supplied deterministic stub so the loop can be exercised without a networ
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import urllib.request
+
+_DEFAULT_TIMEOUT = 120.0
+
+
+def _coerce_timeout(value, default: float = _DEFAULT_TIMEOUT) -> float:
+    """Coerce a timeout to a positive finite float, else ``default``.
+
+    Malformed env values (``TAU_AGENT_TIMEOUT_SECONDS=bogus``) must not crash
+    ``LLM`` / ``solve()`` construction (#2183). Bool is rejected the same way
+    other untrusted scalars in ``agent/`` reject it (``True`` is an ``int``
+    subclass and would otherwise become ``1.0``).
+    """
+    if isinstance(value, bool) or value is None:
+        return float(default)
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if not math.isfinite(timeout) or timeout <= 0:
+        return float(default)
+    return timeout
 
 
 class LLM:
@@ -19,8 +41,13 @@ class LLM:
         self.model = model or "validator-managed-model"
         self.api_base = (api_base or "").rstrip("/")
         self.api_key = api_key
-        env_timeout = os.environ.get("TAU_AGENT_TIMEOUT_SECONDS")
-        self.timeout = float(timeout or env_timeout or 120)
+        if timeout is not None:
+            self.timeout = _coerce_timeout(timeout)
+        else:
+            self.timeout = _coerce_timeout(
+                os.environ.get("TAU_AGENT_TIMEOUT_SECONDS"),
+                default=_DEFAULT_TIMEOUT,
+            )
         self.offline = (
             os.environ.get("VANGUARSTEW_OFFLINE") == "1"
             or not self.api_base

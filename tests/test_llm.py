@@ -91,6 +91,27 @@ def test_timeout_constructor_overrides_env(monkeypatch):
     assert LLM(timeout=10).timeout == 10.0
 
 
+def test_timeout_malformed_env_falls_back_to_120(monkeypatch):
+    """#2183: non-numeric / blank TAU_AGENT_TIMEOUT_SECONDS must not crash construction."""
+    for bad in ("bogus", "  ", "NaN", "inf", "-inf", "0", "-1", "true"):
+        monkeypatch.setenv("TAU_AGENT_TIMEOUT_SECONDS", bad)
+        assert LLM().timeout == 120.0, bad
+
+
+def test_timeout_malformed_constructor_falls_back_to_120(monkeypatch):
+    monkeypatch.delenv("TAU_AGENT_TIMEOUT_SECONDS", raising=False)
+    for bad in ("bogus", 0, -5, float("nan"), float("inf"), True, False, None):
+        # None means "use default/env", not a bad constructor value — skip.
+        if bad is None:
+            continue
+        assert LLM(timeout=bad).timeout == 120.0, bad
+
+
+def test_timeout_unset_env_defaults_to_120(monkeypatch):
+    monkeypatch.delenv("TAU_AGENT_TIMEOUT_SECONDS", raising=False)
+    assert LLM().timeout == 120.0
+
+
 def test_chat_passes_timeout_to_urlopen(monkeypatch):
     monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
     monkeypatch.delenv("TAU_AGENT_TIMEOUT_SECONDS", raising=False)
