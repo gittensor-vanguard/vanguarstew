@@ -21,7 +21,8 @@ def _cfg():
         "repos": [
             {"name": "o/a", "source": "https://github.com/o/a", "tier": "recent",
              "freeze_window": {"after": "2023-01-01", "before": "2023-12-31",
-                               "recent_bias": True, "rotation_seed": 7, "min_history": 5}},
+                               "recent_bias": True, "rotation_seed": 7, "min_history": 5,
+                               "horizon_days": 30}},
             {"name": "o/b", "source": "https://github.com/o/b", "tier": "obscure", "held_out": True},
         ],
     }
@@ -42,7 +43,8 @@ def test_replay_kwargs_forwards_present_hints():
     rs = validate_repo_set(_cfg())
     kw = replay_kwargs(rs.tuned()[0])
     assert kw == {"after": "2023-01-01", "before": "2023-12-31",
-                  "recent_bias": True, "rotation_seed": 7, "min_history": 5}
+                  "recent_bias": True, "rotation_seed": 7, "min_history": 5,
+                  "horizon_days": 30}
     assert replay_kwargs(rs.held_out()[0]) == {}   # no freeze_window → no hints
 
 
@@ -79,6 +81,7 @@ def test_freeze_window_type_bounds_and_reversed_dates_are_rejected():
     _fw_error({"after": "2023-12-31", "before": "2023-01-01"}) # reversed bounds
     _fw_error({"rotation_seed": True})                         # bool is not an int
     _fw_error({"min_history": 0})                              # must be >= 1
+    _fw_error({"horizon_days": 0})                             # must be >= 1
     _fw_error({"recent_bias": 1})                              # int is not a bool
     # A well-formed window is accepted.
     validate_repo_set(_cfg())

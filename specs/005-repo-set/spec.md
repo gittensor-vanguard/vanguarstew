@@ -43,10 +43,13 @@ written down so the corpus stays trustworthy.
 ### Freeze-window hints (typed + bounded)
 
 - `freeze_window` SHALL be an object whose keys are limited to `after`/`before` (str),
-  `recent_bias` (bool), `rotation_seed`/`min_history` (int, **not** bool).
+  `recent_bias` (bool), `rotation_seed`/`min_history`/`horizon_days` (int, **not** bool).
+- WHEN `horizon_days` is truthy, task generation SHALL use **time-horizon** mode (the revealed
+  window is everything landing in the next N days); WHEN it is absent or falsy, task generation
+  SHALL use **commit-horizon** mode (the next N commits).
 - `after`/`before` SHALL be non-empty AND parse as an ISO date (`YYYY-MM-DD`); a non-empty but
   unparseable bound SHALL be rejected **at load**, not deferred to an opaque taskgen crash.
-- `min_history` SHALL be `>= 1`.
+- `min_history` and `horizon_days` SHALL each be `>= 1`.
 - **Reversed bounds SHALL be rejected:** WHEN both `after` and `before` are given, `after` SHALL
   be on or before `before` — a window that can contain no commit (silently zero tasks, repo
   quietly dropped) is a `RepoSetError`.
@@ -58,7 +61,8 @@ written down so the corpus stays trustworthy.
 - Held-out repos SHALL be reserved for a separate generalization pass — never mixed into the
   tuned pass (per `AGENTS.md` → *Benchmark integrity*).
 - `replay_kwargs(entry)` SHALL map only the present `freeze_window` hints onto `run_replay`
-  keyword args (`recent_bias`, `rotation_seed`, `min_history`, `after`, `before`).
+  keyword args (`recent_bias`, `rotation_seed`, `min_history`, `horizon_days`, `after`,
+  `before`).
 
 ## Out of scope
 
@@ -71,6 +75,6 @@ written down so the corpus stays trustworthy.
 Ships `tests/test_spec_005_repo_set.py`, asserting the criteria against the loader: a valid config
 yields the correct tuned/held-out split; unknown top-level and entry keys, a missing/blank
 `name`/`source`, and a bad `tier` are each rejected; `freeze_window` type checks (bool-not-int),
-an unparseable `after`, a reversed `after > before`, and `min_history < 1` all raise
-`RepoSetError`; and `replay_kwargs` maps hints through. Complements `tests/test_repo_set.py`. The
-spec changes no product code.
+an unparseable `after`, a reversed `after > before`, and `min_history < 1` or `horizon_days < 1`
+all raise `RepoSetError`; and `replay_kwargs` maps hints through. Complements
+`tests/test_repo_set.py`. The spec changes no product code.
