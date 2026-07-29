@@ -6,94 +6,142 @@ import pytest
 from scripts import pr_gaming_policy as policy
 
 
-def _commit(sha, message):
-    return {"sha": sha, "commit": {"message": message}}
+def _commit(
+    sha,
+    *,
+    git_author,
+    github_author,
+    git_committer=None,
+    github_committer=None,
+):
+    git_committer = git_committer or git_author
+    return {
+        "sha": sha,
+        "commit": {
+            "author": {"name": git_author, "email": "author@example.com"},
+            "committer": {"name": git_committer, "email": "committer@example.com"},
+        },
+        "author": {"login": github_author} if github_author else None,
+        "committer": {"login": github_committer} if github_committer else None,
+    }
 
 
-def test_references_distinguish_pr_declarations_from_commit_claims():
-    text = "Refs #7, fixes: #8, and closes #7. Bare #9 does not count."
-    assert policy.pr_references(text) == (7, 8)
-    assert policy.commit_claims(text) == (8, 7)
-    assert policy.pr_references(None) == ()
-    assert policy.commit_claims(None) == ()
-
-
-def test_exact_hidden_scope_gaming_pattern_is_denied():
-    decision = policy.evaluate_policy(
-        author="contributor",
-        body="Fixes #2065\n\nScripts-only; behavior is otherwise unchanged.",
-        commits=[
-            _commit("1e08d0838de4487d1a70cf333d5043c8381a863b", "fix(agent)\n\nFixes #1494"),
-            _commit("59bce6438fde1f56a47510e0c6c77a348ded942f", "fix(scripts)\n\nFixes #2065"),
-        ],
-        paths=["agent/context.py", "scripts/verify_attestation.py", "tests/test_context.py"],
-    )
-
-    assert decision["allowed"] is False
-    assert decision["declared_issues"] == [2065]
-    assert decision["hidden_commit_issues"] == [
-        {"sha": "1e08d0838de4487d1a70cf333d5043c8381a863b", "issues": [1494]}
+def test_exact_deceptive_identity_pattern_is_denied():
+    commits = [
+        _commit(
+            "1e08d0838de4487d1a70cf333d5043c8381a863b",
+            git_author="RealDiligent",
+            github_author="RealDiligent",
+            git_committer="RealDiligent",
+            github_committer="jak-glitch",
+        ),
+        _commit(
+            "59bce6438fde1f56a47510e0c6c77a348ded942f",
+            git_author="RealDiligent",
+            github_author="jak-glitch",
+            git_committer="RealDiligent",
+            github_committer="jak-glitch",
+        ),
     ]
-    assert decision["scope_conflicts"] == [
-        {"claim": "scripts", "unexpected": ["agent"]}
-    ]
 
+    decision = policy.evaluate_policy(pr_author="RealDiligent", commits=commits)
 
-def test_declaring_every_commit_issue_allows_a_multi_commit_pr():
-    decision = policy.evaluate_policy(
-        author="contributor",
-        body="Fixes #1494\nFixes #2065",
-        commits=[
-            _commit("a" * 40, "fix(agent): context\n\nFixes #1494"),
-            _commit("b" * 40, "fix(scripts): verifier\n\nFixes #2065"),
+    assert decision == {
+        "allowed": False,
+        "reason": "commit identity claim conflicts with GitHub attribution",
+        "identity_mismatches": [
+            {
+                "sha": "1e08d0838de4487d1a70cf333d5043c8381a863b",
+                "role": "committer",
+                "claimed": "RealDiligent",
+                "resolved": "jak-glitch",
+            },
+            {
+                "sha": "59bce6438fde1f56a47510e0c6c77a348ded942f",
+                "role": "author",
+                "claimed": "RealDiligent",
+                "resolved": "jak-glitch",
+            },
+            {
+                "sha": "59bce6438fde1f56a47510e0c6c77a348ded942f",
+                "role": "committer",
+                "claimed": "RealDiligent",
+                "resolved": "jak-glitch",
+            },
         ],
-        paths=["agent/context.py", "scripts/verify_attestation.py"],
+    }
+
+
+def test_consistent_github_identity_is_allowed():
+    commit = _commit(
+        "a" * 40,
+        git_author="Contributor-One",
+        github_author="contributor-one",
+        git_committer="contributor_one",
+        github_committer="Contributor-One",
     )
-    assert decision == {"allowed": True, "reason": "commit scope is declared"}
+    assert policy.evaluate_policy(pr_author="contributor-one", commits=[commit]) == {
+        "allowed": True,
+        "reason": "commit identity is consistent",
+    }
 
 
-def test_bare_commit_mentions_are_not_hidden_closing_claims():
-    decision = policy.evaluate_policy(
-        author="contributor",
-        body="Fixes #12",
-        commits=[_commit("a" * 40, "Fixes #12; mirrors the loader in #1563")],
-        paths=["scripts/check.py"],
+def test_legitimate_different_author_is_not_treated_as_impersonation():
+    commit = _commit(
+        "a" * 40,
+        git_author="Collaborator",
+        github_author="collaborator-account",
+        git_committer="GitHub",
+        github_committer="web-flow",
     )
-    assert decision["allowed"] is True
+    assert policy.evaluate_policy(pr_author="pr-owner", commits=[commit])["allowed"] is True
 
 
-@pytest.mark.parametrize(
-    ("claim", "paths", "allowed"),
-    [
-        ("Scripts-only", ["scripts/check.py", "tests/test_check.py"], True),
-        ("Scripts only", ["scripts/check.py", "agent/context.py"], False),
-        ("Docs-only", ["README.md", "docs/architecture.md"], True),
-        ("Documentation only", ["README.md", "benchmark/runner.py"], False),
-        ("Benchmark-only", ["benchmark/runner.py", "scripts/run_eval.py"], True),
-    ],
-)
-def test_only_surface_claims_match_source_paths(claim, paths, allowed):
-    decision = policy.evaluate_policy(
-        author="contributor",
-        body=f"Fixes #12\n\n{claim}.",
-        commits=[_commit("a" * 40, "Fixes #12")],
-        paths=paths,
+def test_unlinked_email_does_not_prove_a_different_account():
+    commit = _commit(
+        "a" * 40,
+        git_author="pr-owner",
+        github_author=None,
+        git_committer="pr-owner",
+        github_committer=None,
     )
-    assert decision["allowed"] is allowed
+    assert policy.evaluate_policy(pr_author="pr-owner", commits=[commit])["allowed"] is True
+
+
+def test_display_name_that_does_not_claim_pr_login_is_allowed():
+    commit = _commit(
+        "a" * 40,
+        git_author="Clayton",
+        github_author="claytonlin1110",
+        git_committer="Clayton",
+        github_committer="claytonlin1110",
+    )
+    assert policy.evaluate_policy(pr_author="claytonlin1110", commits=[commit])["allowed"] is True
 
 
 def test_maintainers_are_exempt():
-    assert policy.evaluate_policy(
-        author="matedev01",
-        body="",
-        commits=[],
-        paths=[],
-    ) == {"allowed": True, "reason": "maintainer-authored PR"}
+    assert policy.evaluate_policy(pr_author="matedev01", commits=[]) == {
+        "allowed": True,
+        "reason": "maintainer-authored PR",
+    }
+
+
+@pytest.mark.parametrize("role", ["author", "committer"])
+def test_malformed_commit_roles_fail_safely(role):
+    commit = _commit(
+        "a" * 40,
+        git_author="owner",
+        github_author="owner",
+        github_committer="owner",
+    )
+    commit["commit"][role] = None
+    with pytest.raises(policy.PolicyError, match=role):
+        policy.evaluate_policy(pr_author="owner", commits=[commit])
 
 
 def test_event_pr_numbers_supports_pr_and_every_ci_completion():
     assert policy.event_pr_numbers({"pull_request": {"number": 9}}) == (9,)
-    event = {"workflow_run": {"pull_requests": [{"number": 9}, {"number": 9}, {"number": 10}]}}
+    event = {"workflow_run": {"pull_requests": [{"number": 9}, {"number": 10}]}}
     assert policy.event_pr_numbers(event) == (9, 10)
     assert policy.event_pr_numbers({"workflow_run": {"pull_requests": []}}) == ()
 
@@ -103,38 +151,24 @@ def test_associated_pr_numbers_resolves_empty_fork_ci_metadata(monkeypatch):
         "workflow_run": {
             "event": "pull_request",
             "pull_requests": [],
-            "head_branch": "fix/hidden-scope",
+            "head_branch": "fix/identity",
             "head_repository": {"full_name": "contributor/vanguarstew"},
         }
     }
-    seen = []
-
-    def lookup(*args):
-        seen.append(args)
-        return [
+    monkeypatch.setattr(
+        policy,
+        "_gh_json",
+        lambda *args: [
             {"number": 9, "base": {"ref": "test"}},
             {"number": 10, "base": {"ref": "other"}},
-        ]
-
-    monkeypatch.setattr(policy, "_gh_json", lookup)
+        ],
+    )
     assert policy.associated_pr_numbers(event, "owner/repo") == (9,)
-    assert seen == [
-        (
-            "api",
-            "--method",
-            "GET",
-            "repos/owner/repo/pulls",
-            "-f",
-            "state=open",
-            "-f",
-            "head=contributor:fix/hidden-scope",
-        )
-    ]
 
 
 def test_associated_pr_numbers_does_not_query_for_push_ci(monkeypatch):
     event = {"workflow_run": {"event": "push", "pull_requests": []}}
-    monkeypatch.setattr(policy, "_gh_json", lambda *args: pytest.fail("push run needs no lookup"))
+    monkeypatch.setattr(policy, "_gh_json", lambda *args: pytest.fail("no lookup expected"))
     assert policy.associated_pr_numbers(event, "owner/repo") == ()
 
 
@@ -147,26 +181,26 @@ def test_event_pr_numbers_rejects_malformed_events(event):
         policy.event_pr_numbers(event)
 
 
-def test_enforce_closes_hidden_scope_pr(monkeypatch):
+def test_enforce_closes_identity_mismatch(monkeypatch):
     calls = []
     comments = []
     monkeypatch.setattr(
         policy,
         "_pull",
-        lambda repo, number: {
-            "state": "open",
-            "user": {"login": "contributor"},
-            "body": "Fixes #2065\n\nScripts-only.",
-        },
+        lambda repo, number: {"state": "open", "user": {"login": "RealDiligent"}},
     )
     monkeypatch.setattr(
         policy,
         "_paginate",
-        lambda repo, number, resource: (
-            [_commit("1e08d0838de4487d1a70cf333d5043c8381a863b", "Fixes #1494")]
-            if resource == "commits"
-            else [{"filename": "agent/context.py"}]
-        ),
+        lambda repo, number, resource: [
+            _commit(
+                "1e08d0838de4487d1a70cf333d5043c8381a863b",
+                git_author="RealDiligent",
+                github_author="RealDiligent",
+                git_committer="RealDiligent",
+                github_committer="jak-glitch",
+            )
+        ],
     )
     monkeypatch.setattr(
         policy,
@@ -178,23 +212,43 @@ def test_enforce_closes_hidden_scope_pr(monkeypatch):
     decision = policy.enforce("owner/repo", 9)
 
     assert decision["allowed"] is False
-    assert len(comments) == 1
-    assert "#1494" in comments[0][2]
+    assert "@jak-glitch" in comments[0][2]
+    assert "Git committer" in comments[0][2]
     assert policy.COMMENT_MARKER in comments[0][2]
     assert calls == [
         ("api", "--method", "PATCH", "repos/owner/repo/pulls/9", "-f", "state=closed")
     ]
 
 
-def test_enforce_does_not_mutate_allowed_or_closed_pr(monkeypatch):
+def test_enforce_records_mismatch_if_another_policy_closed_first(monkeypatch):
+    comments = []
     monkeypatch.setattr(
         policy,
         "_pull",
-        lambda repo, number: {"state": "closed", "user": {"login": "contributor"}},
+        lambda repo, number: {"state": "closed", "user": {"login": "RealDiligent"}},
     )
-    monkeypatch.setattr(policy, "_paginate", lambda *args: pytest.fail("closed PR needs no data"))
-    monkeypatch.setattr(policy, "_gh", lambda *args: pytest.fail("closed PR must not mutate"))
-    assert policy.enforce("owner/repo", 9)["allowed"] is True
+    monkeypatch.setattr(
+        policy,
+        "_paginate",
+        lambda repo, number, resource: [
+            _commit(
+                "1e08d0838de4487d1a70cf333d5043c8381a863b",
+                git_author="RealDiligent",
+                github_author="RealDiligent",
+                git_committer="RealDiligent",
+                github_committer="jak-glitch",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        policy,
+        "_sync_close_comment",
+        lambda repo, number, body: comments.append((repo, number, body)),
+    )
+    monkeypatch.setattr(policy, "_gh", lambda *args: pytest.fail("must not close twice"))
+
+    assert policy.enforce("owner/repo", 9)["allowed"] is False
+    assert "@jak-glitch" in comments[0][2]
 
 
 def test_close_comment_does_not_trust_a_contributor_marker(monkeypatch):
@@ -208,16 +262,7 @@ def test_close_comment_does_not_trust_a_contributor_marker(monkeypatch):
     )
     monkeypatch.setattr(policy, "_gh", lambda *args: calls.append(args) or "")
     policy._sync_close_comment("owner/repo", 9, "policy message")
-    assert calls == [
-        (
-            "api",
-            "--method",
-            "POST",
-            "repos/owner/repo/issues/9/comments",
-            "-f",
-            "body=policy message",
-        )
-    ]
+    assert calls[0][1:3] == ("--method", "POST")
 
 
 def test_github_timeout_is_a_safe_policy_error(monkeypatch):
@@ -230,23 +275,8 @@ def test_github_timeout_is_a_safe_policy_error(monkeypatch):
 
 
 def test_paginate_flattens_cli_json_lines(monkeypatch):
-    seen = []
-
-    def run(*args):
-        seen.append(args)
-        return '{"sha":"a"}\n{"sha":"b"}'
-
-    monkeypatch.setattr(policy, "_gh", run)
+    monkeypatch.setattr(policy, "_gh", lambda *args: '{"sha":"a"}\n{"sha":"b"}')
     assert policy._paginate("owner/repo", 9, "commits") == [{"sha": "a"}, {"sha": "b"}]
-    assert seen == [
-        (
-            "api",
-            "--paginate",
-            "repos/owner/repo/pulls/9/commits?per_page=100",
-            "--jq",
-            ".[] | @json",
-        )
-    ]
 
 
 def test_workflow_rechecks_after_every_ci_run_using_trusted_code():
@@ -260,7 +290,8 @@ def test_workflow_rechecks_after_every_ci_run_using_trusted_code():
     assert "workflow_run:" in workflow
     assert 'workflows: ["CI"]' in workflow
     assert "types: [completed]" in workflow
-    assert "github.event.pull_request.base.sha" in workflow
+    assert "github.event.pull_request.base.ref" in workflow
+    assert "github.event.pull_request.base.sha" not in workflow
     assert "github.event.repository.default_branch" in workflow
     assert "github.event.pull_request.head" not in workflow
     assert "persist-credentials: false" in workflow

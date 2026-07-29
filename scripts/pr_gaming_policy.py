@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Close contributor PRs that hide commit scope from the PR declaration."""
+"""Close contributor PRs with deceptive commit identity metadata."""
 
 from __future__ import annotations
 
@@ -12,125 +12,89 @@ from pathlib import Path
 
 MAINTAINERS = frozenset({"matedev01", "vanguarstew"})
 COMMENT_MARKER = "<!-- vanguarstew:pr-gaming-policy -->"
-_PR_REF_RE = re.compile(
-    r"\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?|refs?)\s*:?[ \t]*#([1-9][0-9]*)\b",
-    re.IGNORECASE,
-)
-_COMMIT_CLAIM_RE = re.compile(
-    r"\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s*:?[ \t]*#([1-9][0-9]*)\b",
-    re.IGNORECASE,
-)
-_ONLY_SURFACE_RE = re.compile(
-    r"\b(agent|benchmark|scripts?|docs?|documentation|tests?)[ -]only\b",
-    re.IGNORECASE,
-)
 
 
 class PolicyError(RuntimeError):
     """The event or GitHub response could not be evaluated safely."""
 
 
-def pr_references(body) -> tuple[int, ...]:
-    """Return issue references explicitly declared in a PR body."""
-    if not isinstance(body, str):
-        return ()
-    return tuple(dict.fromkeys(int(value) for value in _PR_REF_RE.findall(body)))
+def _normalized_account(value) -> str:
+    """Normalize a public account claim for a conservative comparison."""
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
 
 
-def commit_claims(message) -> tuple[int, ...]:
-    """Return issues a commit explicitly claims to fix, close, or resolve."""
-    if not isinstance(message, str):
-        return ()
-    return tuple(dict.fromkeys(int(value) for value in _COMMIT_CLAIM_RE.findall(message)))
-
-
-def only_surface_claims(body) -> tuple[str, ...]:
-    """Return normalized source surfaces that the PR explicitly calls exclusive."""
-    if not isinstance(body, str):
-        return ()
-    aliases = {
-        "script": "scripts",
-        "scripts": "scripts",
-        "doc": "docs",
-        "docs": "docs",
-        "documentation": "docs",
-        "test": "tests",
-        "tests": "tests",
-    }
-    claims = []
-    for value in _ONLY_SURFACE_RE.findall(body):
-        normalized = aliases.get(value.lower(), value.lower())
-        if normalized not in claims:
-            claims.append(normalized)
-    return tuple(claims)
-
-
-def source_surface(path) -> str | None:
-    """Map a changed path onto a source surface relevant to an only-scope claim."""
-    if not isinstance(path, str):
-        return None
-    normalized = path.strip()
-    while normalized.startswith("./"):
-        normalized = normalized[2:]
-    if normalized == "agent.py" or normalized.startswith("agent/"):
-        return "agent"
-    if normalized.startswith("benchmark/"):
-        return "benchmark"
-    if normalized.startswith("scripts/"):
-        return "scripts"
-    return None
-
-
-def _commit_record(commit) -> tuple[str, str]:
+def _commit_record(commit) -> tuple[str, dict]:
     if not isinstance(commit, dict):
         raise PolicyError("GitHub commit metadata is malformed")
     sha = commit.get("sha")
-    message = (commit.get("commit") or {}).get("message")
-    if not isinstance(sha, str) or not sha or not isinstance(message, str):
+    raw_commit = commit.get("commit")
+    if not isinstance(sha, str) or not sha or not isinstance(raw_commit, dict):
         raise PolicyError("GitHub commit metadata is incomplete")
-    return sha, message
+    return sha, raw_commit
 
 
-def evaluate_policy(*, author, body, commits, paths) -> dict:
-    """Return a deterministic allow/close decision from fetched PR metadata."""
-    if author in MAINTAINERS:
+def _role_identity(commit: dict, raw_commit: dict, role: str) -> tuple[str, str | None]:
+    raw_role = raw_commit.get(role)
+    if not isinstance(raw_role, dict):
+        raise PolicyError(f"Git {role} metadata is incomplete")
+    claimed_name = raw_role.get("name")
+    if not isinstance(claimed_name, str) or not claimed_name.strip():
+        raise PolicyError(f"Git {role} name is incomplete")
+
+    github_role = commit.get(role)
+    if github_role is None:
+        return claimed_name, None
+    if not isinstance(github_role, dict):
+        raise PolicyError(f"GitHub {role} metadata is malformed")
+    resolved_login = github_role.get("login")
+    if not isinstance(resolved_login, str) or not resolved_login:
+        raise PolicyError(f"GitHub {role} login is incomplete")
+    return claimed_name, resolved_login
+
+
+def evaluate_policy(*, pr_author, commits) -> dict:
+    """Return a deterministic allow/close decision from public commit attribution."""
+    if pr_author in MAINTAINERS:
         return {"allowed": True, "reason": "maintainer-authored PR"}
-    if not isinstance(author, str) or not author:
+    if not isinstance(pr_author, str) or not pr_author:
         raise PolicyError("pull request author is malformed")
-    if not isinstance(commits, list) or not isinstance(paths, list):
-        raise PolicyError("pull request commit or path metadata is malformed")
+    if not isinstance(commits, list):
+        raise PolicyError("pull request commit metadata is malformed")
 
-    declared = set(pr_references(body))
-    hidden = []
+    claimed_account = _normalized_account(pr_author)
+    if not claimed_account:
+        raise PolicyError("pull request author cannot be compared safely")
+
+    mismatches = []
     for commit in commits:
-        sha, message = _commit_record(commit)
-        missing = sorted(set(commit_claims(message)) - declared)
-        if missing:
-            hidden.append({"sha": sha, "issues": missing})
+        sha, raw_commit = _commit_record(commit)
+        for role in ("author", "committer"):
+            claimed_name, resolved_login = _role_identity(commit, raw_commit, role)
+            if resolved_login is None:
+                # An unlinked email does not prove that another GitHub account owns the commit.
+                continue
+            if (
+                _normalized_account(claimed_name) == claimed_account
+                and resolved_login.casefold() != pr_author.casefold()
+            ):
+                mismatches.append(
+                    {
+                        "sha": sha,
+                        "role": role,
+                        "claimed": claimed_name,
+                        "resolved": resolved_login,
+                    }
+                )
 
-    source_surfaces = {surface for path in paths if (surface := source_surface(path))}
-    scope_conflicts = []
-    allowed_by_claim = {
-        "agent": {"agent"},
-        "benchmark": {"benchmark", "scripts"},
-        "scripts": {"scripts"},
-        "docs": set(),
-        "tests": set(),
-    }
-    for claim in only_surface_claims(body):
-        unexpected = sorted(source_surfaces - allowed_by_claim[claim])
-        if unexpected:
-            scope_conflicts.append({"claim": claim, "unexpected": unexpected})
-
-    if hidden or scope_conflicts:
+    if mismatches:
         return {
             "allowed": False,
-            "reason": "PR declaration omits commit scope",
-            "declared_issues": sorted(declared),
-            "hidden_commit_issues": hidden,
-            "scope_conflicts": scope_conflicts,
+            "reason": "commit identity claim conflicts with GitHub attribution",
+            "identity_mismatches": mismatches,
         }
-    return {"allowed": True, "reason": "commit scope is declared"}
+    return {"allowed": True, "reason": "commit identity is consistent"}
 
 
 def event_pr_numbers(event) -> tuple[int, ...]:
@@ -286,55 +250,50 @@ def _sync_close_comment(repo: str, number: int, body: str) -> None:
 
 def _close_comment(decision: dict) -> str:
     details = []
-    for item in decision.get("hidden_commit_issues", []):
-        issues = ", ".join(f"#{number}" for number in item["issues"])
-        details.append(f"- commit `{item['sha'][:12]}` claims {issues}, absent from the PR body")
-    for item in decision.get("scope_conflicts", []):
-        surfaces = ", ".join(f"`{name}/`" for name in item["unexpected"])
-        details.append(f"- `{item['claim']}-only` conflicts with changed source under {surfaces}")
+    for item in decision.get("identity_mismatches", []):
+        details.append(
+            f"- commit `{item['sha'][:12]}` declares `{item['claimed']}` as its Git "
+            f"{item['role']}, but GitHub attributes that role to `@{item['resolved']}`"
+        )
     findings = "\n".join(details)
     return (
-        "Closing automatically: this PR contains commit scope that its public declaration omits. "
-        "Every issue a commit claims to fix, close, or resolve must also be referenced in the PR "
-        "body, and an `*-only` scope claim must match the changed source surfaces.\n\n"
+        "Closing automatically: this PR contains deceptive commit identity metadata. Git metadata "
+        "claims the PR author's account name, while GitHub attributes the same commit role to a "
+        "different account.\n\n"
         f"{findings}\n\n"
-        "Split unrelated work into focused PRs or correct the declaration before reopening. This "
-        "policy is checked on PR updates and again after every CI run completes.\n\n"
+        "Use accurate Git author and committer identity before reopening. This policy is checked "
+        "on PR updates and again after every CI run completes.\n\n"
         f"{COMMENT_MARKER}"
     )
 
 
 def enforce(repo: str, number: int) -> dict:
-    """Evaluate and, when required, close one open pull request."""
+    """Evaluate one pull request and close it when required."""
     pr = _pull(repo, number)
-    if pr.get("state") != "open":
-        return {"allowed": True, "reason": "PR is not open"}
-    author = (pr.get("user") or {}).get("login")
+    state = pr.get("state")
+    if state not in {"open", "closed"}:
+        raise PolicyError("pull request state is malformed")
+    was_open = state == "open"
+    pr_author = (pr.get("user") or {}).get("login")
     commits = _paginate(repo, number, "commits")
-    files = _paginate(repo, number, "files")
-    paths = [item.get("filename") for item in files if isinstance(item, dict)]
-    if any(not isinstance(path, str) or not path for path in paths):
-        raise PolicyError("GitHub PR file metadata is incomplete")
-    decision = evaluate_policy(
-        author=author,
-        body=pr.get("body") or "",
-        commits=commits,
-        paths=paths,
-    )
+    decision = evaluate_policy(pr_author=pr_author, commits=commits)
     if decision["allowed"]:
         print(f"PR gaming policy: allowed PR #{number} ({decision['reason']})")
         return decision
 
     _sync_close_comment(repo, number, _close_comment(decision))
-    _gh(
-        "api",
-        "--method",
-        "PATCH",
-        f"repos/{repo}/pulls/{number}",
-        "-f",
-        "state=closed",
-    )
-    print(f"PR gaming policy: closed PR #{number}")
+    if was_open:
+        _gh(
+            "api",
+            "--method",
+            "PATCH",
+            f"repos/{repo}/pulls/{number}",
+            "-f",
+            "state=closed",
+        )
+        print(f"PR gaming policy: closed PR #{number}")
+    else:
+        print(f"PR gaming policy: recorded identity mismatch on closed PR #{number}")
     return decision
 
 

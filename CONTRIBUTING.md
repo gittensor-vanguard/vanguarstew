@@ -73,16 +73,15 @@ CI must be green before a PR can merge. See [REVIEW.md](REVIEW.md) for exactly h
 contributions are gated, reviewed, and scored — the process is designed to be predictable and
 reproducible.
 
-### Declare every commit's scope
+### Use an accurate commit identity
 
-Keep one public declaration consistent across the PR body, its commits, and its changed files.
-Every issue that any commit claims to `Fix`, `Close`, or `Resolve` must also be referenced in the
-PR body. Do not hide an unrelated commit behind a narrower PR title/body, and do not call a change
-`scripts-only`, `docs-only`, or similar when it edits another source surface.
+Do not make Git author or committer metadata claim the PR author's account name when GitHub
+attributes that same commit role to a different account. Legitimate commits from collaborators are
+allowed when their Git metadata identifies them accurately, and an email that GitHub cannot link to
+an account is not treated as evidence of another identity.
 
 CI evaluates this rule on each PR update and again whenever the normal CI workflow completes.
-Violations are automatically closed; split unrelated work into focused PRs or correct the public
-declaration before reopening.
+Identity mismatches are automatically closed; correct the commit attribution before reopening.
 
 ## Benchmark, scripts, and documentation changes
 
