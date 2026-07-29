@@ -153,14 +153,23 @@ def _per_repo_deltas(baseline: dict, candidate: dict) -> list[dict]:
         base_row = base_by_key.get(key)
         if base_row is None:
             continue
-        out.append({
+        entry = {
             "repo": key,
             "composite_mean": _metric_triplet(base_row, row, "composite_mean"),
             "tasks": {
                 "baseline": base_row.get("tasks"),
                 "candidate": row.get("tasks"),
             },
-        })
+        }
+        base_parts = _effective_composite_parts(base_row)
+        cand_parts = _effective_composite_parts(row)
+        parts = {}
+        for axis in ("judge_mean", "objective_mean"):
+            if axis in base_parts or axis in cand_parts:
+                parts[axis] = _metric_triplet(base_parts, cand_parts, axis)
+        if parts:
+            entry["composite_parts"] = parts
+        out.append(entry)
     return out
 
 

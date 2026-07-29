@@ -150,15 +150,35 @@ def test_compare_eval_artifacts_reports_per_repo_deltas():
     baseline = {
         "composite_mean": 0.5,
         "per_repo": [
-            {"repo_path": "/a", "composite_mean": 0.4, "tasks": 2},
-            {"repo_path": "/b", "composite_mean": 0.6, "tasks": 2},
+            {
+                "repo_path": "/a",
+                "composite_mean": 0.4,
+                "tasks": 2,
+                "composite_parts": {"judge_mean": 0.5, "objective_mean": 0.3},
+            },
+            {
+                "repo_path": "/b",
+                "composite_mean": 0.6,
+                "tasks": 2,
+                "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.5},
+            },
         ],
     }
     candidate = {
         "composite_mean": 0.55,
         "per_repo": [
-            {"repo_path": "/a", "composite_mean": 0.5, "tasks": 2},
-            {"repo_path": "/b", "composite_mean": 0.6, "tasks": 3},
+            {
+                "repo_path": "/a",
+                "composite_mean": 0.5,
+                "tasks": 2,
+                "composite_parts": {"judge_mean": 0.6, "objective_mean": 0.4},
+            },
+            {
+                "repo_path": "/b",
+                "composite_mean": 0.6,
+                "tasks": 3,
+                "composite_parts": {"judge_mean": 0.7, "objective_mean": 0.55},
+            },
         ],
     }
     diff = compare_eval_artifacts(baseline, candidate)
@@ -166,6 +186,9 @@ def test_compare_eval_artifacts_reports_per_repo_deltas():
     by_repo = {row["repo"]: row for row in diff["per_repo"]}
     assert by_repo["/a"]["composite_mean"]["delta"] == 0.1
     assert by_repo["/b"]["composite_mean"]["delta"] == 0.0
+    assert by_repo["/a"]["composite_parts"]["judge_mean"]["delta"] == 0.1
+    assert by_repo["/a"]["composite_parts"]["objective_mean"]["delta"] == 0.1
+    assert by_repo["/b"]["composite_parts"]["objective_mean"]["delta"] == 0.05
 
 
 def test_per_repo_skipped_repo_tasks_zero_is_not_a_real_score():
@@ -187,9 +210,12 @@ def test_per_repo_skipped_repo_tasks_zero_is_not_a_real_score():
 def test_per_repo_both_skipped_reports_no_delta():
     # Two placeholders must not net to a real delta: 0.0 == None here, not delta 0.0.
     art = {"composite_mean": 0.5, "per_repo": [{"repo_path": "/b", "composite_mean": 0.0,
-                                                "tasks": 0}]}
+                                                "tasks": 0,
+                                                "composite_parts": {"judge_mean": 0.0,
+                                                                    "objective_mean": 0.0}}]}
     row = compare_eval_artifacts(art, art)["per_repo"][0]
     assert row["composite_mean"] == {"baseline": None, "candidate": None, "delta": None}
+    assert "composite_parts" not in row
 
 
 def test_per_repo_non_numeric_tasks_is_unavailable():
