@@ -61,6 +61,9 @@ report's two partitions.
 
 - For each entry, a dict with a `_is_number` `tasks` SHALL add to `total`, and to `scored` when
   `tasks > 0` else to `skipped`.
+- A **dict without a usable `tasks` value** (missing key, non-numeric, or non-finite) SHALL count as
+  one `total` and one `skipped` repo — the same treatment as a corrupt string row, so a producer bug
+  or partial write cannot evade `max_skipped`.
 - A **non-empty string** entry SHALL count as one `total` and one `skipped` repo (a corrupt row is a
   real repo that produced no scored tasks, so it must not be silently dropped and inflate the pass
   rate); empty/whitespace strings and other non-dict/non-string entries SHALL be ignored.

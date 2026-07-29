@@ -115,17 +115,36 @@ def test_generalization_with_skipped_across_partitions():
 def test_corrupt_string_row_counts_as_skipped_others_ignored():
     # A non-empty string per_repo row is a corrupt/errored repo: it counts as a skipped repo
     # (into repos_total and repos_skipped), not silently dropped — mirroring error_repo_share
-    # (#1362) and freeze_coverage (#1386). A dict row with a non-numeric tasks count carries no
-    # usable task signal and is still ignored, and empty/whitespace strings carry no repo signal.
+    # (#1362) and freeze_coverage (#1386). A dict row with a non-numeric tasks count is treated
+    # the same way (#2147); empty/whitespace strings carry no repo signal.
     multi = _multi(_repo(2), _repo(3))
     multi["per_repo"].append("errored-repo")     # corrupt string -> counts as skipped
-    multi["per_repo"].append({"tasks": "many"})  # non-numeric tasks -> ignored
+    multi["per_repo"].append({"tasks": "many"})  # non-numeric tasks -> skipped
     multi["per_repo"].append("   ")              # whitespace -> ignored
     result = check_coverage(multi)
     assert result["repos_scored"] == 2
-    assert result["repos_skipped"] == 1
-    assert result["repos_total"] == 3
+    assert result["repos_skipped"] == 2
+    assert result["repos_total"] == 4
     assert result["total_tasks"] == 5
+
+
+def test_malformed_dict_rows_count_as_skipped_for_max_skipped_gate():
+    # Repro from #2147: one scored repo plus two unclassifiable dict rows must not report 0 skips.
+    result = check_coverage(
+        {"per_repo": [{"tasks": 3}, {"repo": "no-tasks-key"}, {"tasks": "x"}]},
+        min_repos=2,
+        max_skipped=1,
+        min_tasks=3,
+    )
+    assert result["repos_scored"] == 1
+    assert result["repos_skipped"] == 2
+    assert result["repos_total"] == 3
+    assert result["total_tasks"] == 3
+    checks = {c["name"]: c for c in result["checks"]}
+    assert checks["min_repos_scored"]["passed"] is False
+    assert checks["max_skipped"]["passed"] is False
+    assert checks["min_tasks"]["passed"] is True
+    assert checks["max_skipped"]["detail"] == "2 skipped repo(s) <= max_skipped 1"
 
 
 def test_corrupt_string_rows_trip_max_skipped_gate():
@@ -375,7 +394,7 @@ def test_non_finite_per_repo_tasks_fail_coverage_instead_of_raising():
     result = check_coverage({"per_repo": [{"tasks": float("nan")}], "composite_mean": 0.5})
     assert result["passed"] is False
 
-    # a NaN-task repo reads as unscored/taskless, exactly like a wrong-typed tasks field:
+    # a NaN-task repo reads as skipped (malformed dict row), not scored:
     # it drops out of the scored count and the task total instead of crashing the gate
     art = _multi(_repo(name="a"), _repo(name="b", tasks=4))
     art["per_repo"][0]["tasks"] = float("nan")

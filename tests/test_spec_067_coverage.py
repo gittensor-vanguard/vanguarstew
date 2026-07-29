@@ -108,10 +108,11 @@ def test_collect_none():
 # --- Counting ------------------------------------------------------------------------------------
 
 def test_partition_counts_dicts_and_corrupt_strings():
-    entries = [{"tasks": 3}, {"tasks": 0}, "corrupt", "   ", 42, {"tasks": "x"}]
+    entries = [{"tasks": 3}, {"tasks": 0}, "corrupt", "   ", 42, {"tasks": "x"}, {}]
     total, scored, skipped = _partition_counts(entries)
-    # 3->scored, 0->skipped, "corrupt"->skipped; whitespace/int/non-numeric-tasks ignored.
-    assert (total, scored, skipped) == (3, 1, 2)
+    # 3->scored, 0->skipped, "corrupt"->skipped, non-numeric/missing-tasks dicts->skipped;
+    # whitespace/int ignored.
+    assert (total, scored, skipped) == (5, 1, 4)
 
 
 def test_total_scored_tasks():

@@ -15,7 +15,8 @@ artifact against named criteria:
 4. ``min_tasks`` - the scored repos produced at least ``min_tasks`` tasks in total.
 
 Per-repo entries are pulled from a multi-repo ``per_repo`` list **and** from both generalization
-partitions; malformed entries are ignored.
+partitions; dict rows without a usable ``tasks`` value and non-empty corrupt string rows count as
+skipped repos, while other non-dict/non-string entries are ignored.
 
 The companion ``scripts/repo_coverage.py`` exits non-zero when coverage is insufficient, so
 breadth can be gated in CI alongside ``--fail-under`` and the acceptance/promotion gates.
@@ -154,12 +155,12 @@ def _partition_counts(entries: list) -> tuple[int, int, int]:
     """Return ``(total, scored, skipped)`` over per-repo entries.
 
     A dict row with a numeric ``tasks`` count is scored (``tasks > 0``) or skipped (``tasks == 0``).
-    A non-empty string row is a corrupt/malformed entry — a real repo that produced no scored
-    tasks — so it counts as a *skipped* repo (into ``total`` and ``skipped``) rather than being
-    silently dropped and inflating the pass rate; that under-count is what let too many corrupt
-    repos slip past the ``max_skipped`` gate. Mirrors how #1362 (``error_repo_share``) and #1386
-    (``freeze_coverage``) count such a row in the bad bucket. Empty/whitespace strings and other
-    non-dict/non-string entries carry no repo signal and are ignored.
+    A dict row with no usable ``tasks`` value (missing, non-numeric, or non-finite) is a corrupt
+    per-repo entry — a real repo that produced no scored tasks — so it counts as *skipped* rather
+    than being silently dropped and letting ``max_skipped`` under-count. A non-empty string row is
+    treated the same way. Mirrors how #1362 (``error_repo_share``) and #1386 (``freeze_coverage``)
+    count such rows in the bad bucket. Empty/whitespace strings and other non-dict/non-string
+    entries carry no repo signal and are ignored.
     """
     total = scored = skipped = 0
     for entry in entries:
@@ -170,6 +171,9 @@ def _partition_counts(entries: list) -> tuple[int, int, int]:
                 scored += 1
             else:
                 skipped += 1
+        elif isinstance(entry, dict):
+            total += 1
+            skipped += 1
         elif isinstance(entry, str) and entry.strip():
             total += 1
             skipped += 1
