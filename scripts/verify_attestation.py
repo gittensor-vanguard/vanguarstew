@@ -40,6 +40,25 @@ def _load(path: str, what: str):
         raise SystemExit(2) from exc
 
 
+def _detail_from_checks(checks: dict, *, transcript_note: str | None = None) -> str:
+    """Human-readable summary of every failing check — never a single overwritten finding.
+
+    ``verify_evidence`` already joins every failure into ``detail``. The optional transcript
+    branch must rebuild the same way once it adds ``transcript_digest``, otherwise a later
+    transcript mismatch silently hides an earlier ``artifact_digest`` / ``report_data`` /
+    ``quote_binding`` failure (#2065).
+    """
+    parts = []
+    for name, passed in checks.items():
+        if passed:
+            continue
+        if name == "transcript_digest" and transcript_note is not None:
+            parts.append(transcript_note)
+        else:
+            parts.append(f"{name} FAILED")
+    return "all checks passed" if not parts else "; ".join(parts)
+
+
 def run(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--artifact", required=True, help="the published run_eval result")
@@ -72,9 +91,16 @@ def run(argv=None) -> int:
         claimed = (evidence.get("inputs") or {}).get("transcript_digest")
         report["checks"]["transcript_digest"] = recorded == claimed
         report["ok"] = all(report["checks"].values())
+        transcript_note = None
         if recorded != claimed:
-            report["detail"] = f"transcript_digest FAILED (recorded {recorded[:12]}, "
-            report["detail"] += f"bound {str(claimed)[:12]})"
+            transcript_note = (
+                f"transcript_digest FAILED (recorded {recorded[:12]}, "
+                f"bound {str(claimed)[:12]})"
+            )
+        # Rebuild from *every* failing check — do not overwrite verify_evidence's detail (#2065).
+        report["detail"] = _detail_from_checks(
+            report["checks"], transcript_note=transcript_note,
+        )
 
     print(json.dumps(report, indent=2, sort_keys=True))
     for name, passed in sorted(report["checks"].items()):

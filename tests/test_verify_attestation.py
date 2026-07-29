@@ -87,3 +87,113 @@ def test_valid_transcript_still_runs_and_reports(tmp_path, capsys):
     assert code == 0
     out = json.loads(capsys.readouterr().out)
     assert "transcript_digest" in out["checks"]
+
+
+def _transcript_store(tag: str) -> TranscriptStore:
+    store = TranscriptStore()
+    store.record(
+        {"model": "m", "temperature": 0,
+         "messages": [{"role": "user", "content": f"prompt-{tag}"}]},
+        '{"winner":"tie"}',
+    )
+    return store
+
+
+def test_detail_from_checks_lists_every_failure():
+    # Pure helper contract: every False check appears, True checks do not, and a rich
+    # transcript note replaces the bare "transcript_digest FAILED" label when supplied.
+    detail = verify_attestation._detail_from_checks(
+        {"artifact_digest": False, "report_data": True, "transcript_digest": False},
+        transcript_note="transcript_digest FAILED (recorded abc, bound def)",
+    )
+    assert "artifact_digest FAILED" in detail
+    assert "report_data FAILED" not in detail
+    assert "transcript_digest FAILED (recorded abc, bound def)" in detail
+    assert verify_attestation._detail_from_checks(
+        {"artifact_digest": True, "report_data": True},
+    ) == "all checks passed"
+
+
+def test_transcript_failure_does_not_hide_earlier_artifact_digest_failure(tmp_path, capsys):
+    # #2065: tampered published artifact PLUS mismatched transcript used to overwrite detail
+    # with only "transcript_digest FAILED", hiding the artifact_digest finding.
+    artifact = {"composite_mean": 0.7, "per_repo": []}
+    bound_store = _transcript_store("bound")
+    evidence = build_evidence(artifact, {"transcript_digest": bound_store.digest()})
+    evidence["artifact_digest"] = "tampered"  # published score edited after the fact
+
+    art_path = tmp_path / "a.json"
+    ev_path = tmp_path / "e.json"
+    tr_path = tmp_path / "t.json"
+    art_path.write_text(json.dumps(artifact), encoding="utf-8")
+    ev_path.write_text(json.dumps(evidence), encoding="utf-8")
+    _transcript_store("published").save(str(tr_path))
+
+    without = verify_attestation.run(["--artifact", str(art_path), "--evidence", str(ev_path)])
+    without_out = json.loads(capsys.readouterr().out)
+    assert without == 0
+    assert without_out["ok"] is False
+    assert "artifact_digest FAILED" in without_out["detail"]
+
+    with_tr = verify_attestation.run([
+        "--artifact", str(art_path), "--evidence", str(ev_path),
+        "--transcript", str(tr_path),
+    ])
+    with_out = json.loads(capsys.readouterr().out)
+    assert with_tr == 0
+    assert with_out["ok"] is False
+    assert with_out["checks"]["artifact_digest"] is False
+    assert with_out["checks"]["transcript_digest"] is False
+    assert "artifact_digest FAILED" in with_out["detail"]
+    assert "transcript_digest FAILED" in with_out["detail"]
+
+
+def test_transcript_only_failure_keeps_rich_detail(tmp_path, capsys):
+    # Control: binding is otherwise consistent — detail should mention only the transcript miss,
+    # still with the recorded/bound digest prefixes.
+    artifact = {"composite_mean": 0.7, "per_repo": []}
+    bound_store = _transcript_store("bound")
+    evidence = build_evidence(artifact, {"transcript_digest": bound_store.digest()})
+
+    art_path = tmp_path / "a.json"
+    ev_path = tmp_path / "e.json"
+    tr_path = tmp_path / "t.json"
+    art_path.write_text(json.dumps(artifact), encoding="utf-8")
+    ev_path.write_text(json.dumps(evidence), encoding="utf-8")
+    published = _transcript_store("published")
+    published.save(str(tr_path))
+
+    code = verify_attestation.run([
+        "--artifact", str(art_path), "--evidence", str(ev_path),
+        "--transcript", str(tr_path),
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert out["ok"] is False
+    assert out["checks"]["artifact_digest"] is True
+    assert out["checks"]["transcript_digest"] is False
+    assert out["detail"].startswith("transcript_digest FAILED (recorded ")
+    assert "artifact_digest FAILED" not in out["detail"]
+
+
+def test_matching_transcript_preserves_all_checks_passed_detail(tmp_path, capsys):
+    artifact = {"composite_mean": 0.7, "per_repo": []}
+    store = _transcript_store("same")
+    evidence = build_evidence(artifact, {"transcript_digest": store.digest()})
+
+    art_path = tmp_path / "a.json"
+    ev_path = tmp_path / "e.json"
+    tr_path = tmp_path / "t.json"
+    art_path.write_text(json.dumps(artifact), encoding="utf-8")
+    ev_path.write_text(json.dumps(evidence), encoding="utf-8")
+    store.save(str(tr_path))
+
+    code = verify_attestation.run([
+        "--artifact", str(art_path), "--evidence", str(ev_path),
+        "--transcript", str(tr_path), "--strict",
+    ])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert out["ok"] is True
+    assert out["checks"]["transcript_digest"] is True
+    assert out["detail"] == "all checks passed"
