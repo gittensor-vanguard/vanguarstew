@@ -1,5 +1,6 @@
 """Tests for partition task share summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import sys
@@ -195,28 +196,25 @@ def test_cli_missing_file_exits_two(capsys):
 
 
 def test_cli_directory_path_exits_two(tmp_path, capsys):
-    # A real directory raises IsADirectoryError from open(); name it distinctly rather than
-    # letting the generic OSError arm print "[Errno 21] Is a directory".
+    # A real directory raises IsADirectoryError from open() (PermissionError on Windows).
     assert cli.run([str(tmp_path)]) == 2
     err = capsys.readouterr().err
-    assert "artifact path is a directory, not a file" in err and str(tmp_path) in err
+    assert ("directory" in err or "not readable" in err) and str(tmp_path) in err
     assert "Errno" not in err and "Traceback" not in err
 
 
-@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
-                    reason="root bypasses file-permission bits")
-def test_cli_unreadable_file_exits_two(tmp_path, capsys):
-    # A real chmod-0 file raises PermissionError -> its own message naming the path.
-    path = tmp_path / "locked.json"
-    path.write_text("{}", encoding="utf-8")
-    os.chmod(path, 0)
-    try:
-        rc = cli.run([str(path)])
-    finally:
-        os.chmod(path, 0o644)
-    assert rc == 2
+def test_cli_unreadable_file_exits_two(tmp_path, capsys, monkeypatch):
+    # PermissionError must name the permission problem distinctly (Windows ignores chmod bits,
+    # so drive the arm via monkeypatch rather than a real mode-0 file).
+    path = str(tmp_path / "locked.json")
+
+    def _raise(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
     err = capsys.readouterr().err
-    assert "artifact is not readable" in err and str(path) in err
+    assert "artifact is not readable" in err and path in err
     assert "Errno" not in err and "Traceback" not in err
 
 
@@ -224,22 +222,76 @@ def test_cli_broken_symlink_exits_two(tmp_path, capsys):
     # A dangling symlink would otherwise surface as FileNotFoundError ("artifact not found"),
     # blaming the path instead of the missing link target.
     link = tmp_path / "link.json"
-    link.symlink_to(tmp_path / "gone.json")
+    try:
+        link.symlink_to(tmp_path / "gone.json")
+    except OSError as exc:
+        pytest.skip(f"symlink not available on this platform: {exc}")
     assert cli.run([str(link)]) == 2
     err = capsys.readouterr().err
-    assert "broken symlink" in err and str(link) in err
-    assert "Errno" not in err and "Traceback" not in err
+    assert err == f"artifact is a broken symlink (target does not exist): {link}\n"
+    assert "Traceback" not in err
 
 
-def test_cli_symlink_loop_exits_two(tmp_path, capsys):
-    # A self-referential symlink never resolves (os.path.exists is False for it), so it is
-    # reported as a broken link too -- still a clean, actionable message, never an ELOOP dump.
-    loop = tmp_path / "loop.json"
-    loop.symlink_to(loop)
-    assert cli.run([str(loop)]) == 2
+def test_cli_symlink_loop_is_named_not_leaked(tmp_path, capsys, monkeypatch):
+    # A symlink loop raises OSError(ELOOP); name it, do not leak a raw errno / traceback.
+    # (#2113 — previously the pre-open exists() probe crashed or mislabeled this as broken.)
+    path = str(tmp_path / "loop.json")
+
+    def _raise(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {path}\n"
+
+
+def test_cli_not_a_directory_path_component_is_named(tmp_path, capsys, monkeypatch):
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
+
+
+def test_cli_non_utf8_exits_two(tmp_path, capsys):
+    path = tmp_path / "bin.json"
+    path.write_bytes(b"\xff\xfe{not utf-8")
+    assert cli.run([str(path)]) == 2
     err = capsys.readouterr().err
-    assert "broken symlink" in err and str(loop) in err
-    assert "Errno" not in err and "Traceback" not in err
+    assert "UTF-8" in err
+    assert "Traceback" not in err
+
+
+def test_islink_probe_is_not_reachable_before_open_or_on_a_symlink_loop(
+    tmp_path, capsys, monkeypatch,
+):
+    # Broken-symlink classification must run only after open() fails with FileNotFoundError:
+    # never on a successful open (no pre-open TOCTOU probe) and never on the ELOOP path.
+    calls = []
+    real_islink = os.path.islink
+    monkeypatch.setattr(os.path, "islink", lambda p: (calls.append(p), real_islink(p))[1])
+
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    assert cli.load_artifact(str(good)) == {"ok": True}
+    assert calls == []
+
+    loop_path = str(tmp_path / "loop.json")
+
+    def _eloop(*args, **kwargs):
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", loop_path)
+
+    monkeypatch.setattr("builtins.open", _eloop)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.load_artifact(loop_path)
+    assert excinfo.value.code == 2
+    assert calls == []
+    assert capsys.readouterr().err == f"artifact path is a symlink loop: {loop_path}\n"
 
 
 def test_cli_generic_oserror_exits_two(capsys, monkeypatch):
