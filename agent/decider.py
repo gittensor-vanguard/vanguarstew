@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from agent.context import context_for_agent
 from agent.planner import _release_cadence_signal, _release_timing_state
-from benchmark.score import base_from_releases
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,110 @@ _ACTION_SYNONYMS = {
 
 _BUMP_LEVELS = frozenset({"major", "minor", "patch"})
 _NULL_BUMPS = frozenset({"null", "none", "n/a"})
+
+# A semver core (major.minor[.patch]) with an optional leading v; any pre-release/build suffix
+# is ignored. Mirrors `benchmark/score.py::_SEMVER` — ``agent/`` must not import ``benchmark/``
+# (a miner-only split is planned; agent/context.py and agent/planner.py state the same rule),
+# so the version shapes the anchor parses are mirrored here and locked by an equivalence test.
+_SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)(?:\.(\d+))?", re.I)
+
+
+
+def _parse_semver(text) -> tuple | None:
+    """First semver core in ``text`` -> (major, minor, patch), or None.
+
+    Mirrors ``benchmark/score.py::parse_semver``: tolerant of a leading ``v`` and a missing
+    patch (``1.2`` -> (1, 2, 0)); non-string input carries no version.
+    """
+    if not isinstance(text, str):
+        return None
+    m = _SEMVER_RE.search(text)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+
+
+def _base_from_releases(releases) -> str | None:
+    """The current version at freeze T: the highest tag among frozen releases.
+
+    Mirrors ``benchmark/score.py::base_from_releases``, which the objective anchor feeds as
+    ``base_version``: each release resolves to a single representative version (``tag``
+    authoritative, display ``name`` only a fallback) *before* comparing across releases, and
+    malformed rows contribute nothing rather than corrupting the base.
+    """
+    best_tag, best_ver = None, None
+    rows = releases if isinstance(releases, list) else []
+    for rel in rows:
+        if not isinstance(rel, dict):
+            continue
+        raw, ver = None, None
+        for candidate in (rel.get("tag"), rel.get("name")):
+            if not candidate:
+                continue
+            parsed = _parse_semver(str(candidate))
+            if parsed is not None:
+                raw, ver = candidate, parsed
+                break
+        if ver is not None and (best_ver is None or ver > best_ver):
+            best_tag, best_ver = raw, ver
+    return best_tag
+
+
+def _release_versions(releases) -> list:
+    """Distinct parsed versions across frozen releases, ascending.
+
+    Each release contributes one version (``tag`` authoritative, display ``name`` a
+    fallback — the same per-release resolution as ``_base_from_releases``); malformed rows
+    contribute nothing. Ordering is by version, not list position: frozen ``releases`` may
+    arrive oldest-first (git builders) or newest-first (GitHub API).
+    """
+    rows = releases if isinstance(releases, list) else []
+    versions = []
+    for rel in rows:
+        if not isinstance(rel, dict):
+            continue
+        for candidate in (rel.get("tag"), rel.get("name")):
+            if not candidate:
+                continue
+            ver = _parse_semver(str(candidate))
+            if ver is not None:
+                versions.append(ver)
+                break
+    return sorted(set(versions))
+
+
+def _step_class(old: tuple, new: tuple) -> str:
+    """Classify one version step by its highest differing component."""
+    if new[0] != old[0]:
+        return "major"
+    if new[1] != old[1]:
+        return "minor"
+    return "patch"
+
+
+def _fmt_version(version: tuple) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def _recent_bump_class(context: dict) -> str | None:
+    """The bump class of the repo's most recent version step, else None.
+
+    A bump prediction is only ever compared against a window that actually contains a cut,
+    where no prediction can never match — abstaining forfeits that comparison with certainty
+    while a wrong class scores no worse. The latest step (the two highest distinct versions,
+    classified by their highest differing component) tracks the repo's *current* cadence
+    regime, where an all-history mode lags it: a repo that spent years on 0.x minors and now
+    ships patch releases is asked about the next cut, not its median era. A lone versioned
+    release falls back to "patch" (the common mature-repo step); no versioned releases at
+    all means no basis to predict, so None.
+    """
+    ctx = context_for_agent(context) if isinstance(context, dict) else {}
+    ordered = _release_versions(ctx.get("releases"))
+    if not ordered:
+        return None
+    if len(ordered) < 2:
+        return "patch"
+    return _step_class(ordered[-2], ordered[-1])
 
 
 def _normalize_action(action) -> str:
@@ -256,6 +360,17 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     out["rationale"] = _normalize_rationale(out.get("rationale"))
     out["patch"] = _normalize_patch(out.get("patch"))
     out["version_bump"] = _normalize_version_bump(out.get("version_bump"))
+    # A planning request that leaves version_bump null forfeits the bump comparison outright
+    # whenever the revealed window does contain a cut, while a wrong class scores no worse —
+    # so the repo's own modal cadence class weakly dominates abstaining. Backfill only fills
+    # a hole: an explicit prediction from the LLM always stands, and just after a cut
+    # (suppress) no bump is coming, so none is invented.
+    if (
+        out["version_bump"] is None
+        and _is_planning_request(request)
+        and _release_timing_state(context) != "suppress"
+    ):
+        out["version_bump"] = _recent_bump_class(context)
     # Just after a cut, a version_bump prediction matches nothing (bump_actual is None when the
     # revealed window has no release) — clear it the same way the planner suppresses release items.
     if _release_timing_state(context) == "suppress":
@@ -303,7 +418,8 @@ def _release_context_note(context: dict) -> str:
     Frozen ``releases`` may be oldest-first (git builders) or newest-first (GitHub API),
     so a positional slice labeled "newest first" is wrong for one of the two producers and
     can point ``version_bump`` at a stale base. Report the highest parsed version instead —
-    the same tag ``benchmark.score.base_from_releases`` feeds the objective anchor.
+    the same tag the objective anchor's ``base_from_releases`` feeds bump scoring (mirrored
+    locally as ``_base_from_releases``; ``agent/`` must not import ``benchmark/``).
     """
     if not isinstance(context, dict):
         return ""
@@ -311,14 +427,25 @@ def _release_context_note(context: dict) -> str:
     releases = ctx.get("releases")
     if not isinstance(releases, list) or not releases:
         return ""
-    base = base_from_releases(releases)
+    base = _base_from_releases(releases)
     if not base:
         return ""
-    return (
-        f"\nCurrent release at freeze (highest frozen version): {base}\n"
+    note = f"\nCurrent release at freeze (highest frozen version): {base}\n"
+    # The most recent version step is observed evidence the bump reasoning can condition on:
+    # "1.4.1 -> 1.5.0" states the current cadence regime where the bare base version alone
+    # says nothing about whether this repo is cutting patches or minors right now.
+    ordered = _release_versions(releases)
+    if len(ordered) >= 2:
+        old, new = ordered[-2], ordered[-1]
+        note += (
+            f"Most recent version step: {_fmt_version(old)} -> {_fmt_version(new)} "
+            f"(a {_step_class(old, new)} bump).\n"
+        )
+    note += (
         "When action is release or version_bump is set, infer major/minor/patch from "
         "maintainer cadence relative to this base.\n"
     )
+    return note
 
 
 def _render(context: dict) -> str:
