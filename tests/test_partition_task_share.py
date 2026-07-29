@@ -1,5 +1,6 @@
 """Tests for partition task share summary and CLI (deterministic, offline)."""
 
+import errno
 import json
 import os
 import sys
@@ -232,14 +233,26 @@ def test_cli_broken_symlink_exits_two(tmp_path, capsys):
 
 
 def test_cli_symlink_loop_exits_two(tmp_path, capsys):
-    # A self-referential symlink never resolves (os.path.exists is False for it), so it is
-    # reported as a broken link too -- still a clean, actionable message, never an ELOOP dump.
+    # A symlink loop raises OSError(ELOOP); name it, do not leak a raw errno / traceback.
     loop = tmp_path / "loop.json"
     loop.symlink_to(loop)
     assert cli.run([str(loop)]) == 2
     err = capsys.readouterr().err
-    assert "broken symlink" in err and str(loop) in err
+    assert "symlink loop" in err and str(loop) in err
     assert "Errno" not in err and "Traceback" not in err
+
+
+def test_cli_not_a_directory_path_component_is_named(tmp_path, capsys, monkeypatch):
+    path = str(tmp_path / "run.json" / "child.json")
+
+    def _raise(*args, **kwargs):
+        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+
+    monkeypatch.setattr("builtins.open", _raise)
+    assert cli.run([path]) == 2
+    assert capsys.readouterr().err == (
+        f"artifact path is not a file (a parent component is not a directory): {path}\n"
+    )
 
 
 def test_cli_generic_oserror_exits_two(capsys, monkeypatch):
