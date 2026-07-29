@@ -20,7 +20,9 @@ SYSTEM = (
     "project's rubric, in priority order: (1) correctness and tests, (2) scope fit — does it "
     "address a referenced issue without unrelated churn, (3) non-redundancy — does it duplicate "
     "existing analysis over the same data shape rather than extending what is already there, "
-    "(4) quality and clarity. Be specific, and decisive about the action. Respond ONLY with JSON."
+    "(4) quality and clarity, (5) real-behavior proof — does the PR show it actually works "
+    "(a run, output, or command), not just a claim. Be specific, and decisive about the action. "
+    "Respond ONLY with JSON."
 )
 
 # Prompt fragment for the High Non-redundancy rubric axis (REVIEW.md, #1753). Kept as a named
@@ -32,6 +34,17 @@ NON_REDUNDANCY_GUIDANCE = (
     "Prefer extending or parametrizing the existing code over a parallel module. When the diff "
     "looks like parallel analysis over the same shape, name the existing module it should "
     "extend instead in concerns and recommendation."
+)
+
+# Prompt fragment for the Medium Real-behavior proof rubric axis (REVIEW.md, #2111). Same
+# pattern as NON_REDUNDANCY_GUIDANCE: name the axis and ask the model to surface a gap —
+# no deterministic downgrade of ``action`` (that path has regressed live scores elsewhere).
+REAL_BEHAVIOR_GUIDANCE = (
+    "Real-behavior proof is a Medium rubric axis: a PR that only claims the change works "
+    "(a description, a checklist tick, or unexecuted commands) is weaker than one that shows "
+    "a run, pasted output, or a command the reviewer can trust was executed. When the diff "
+    "looks claim-only — no verification evidence in the description or linked checks — say so "
+    "in concerns and recommendation rather than treating the claim as proof."
 )
 
 ACTIONS = ["merge", "request-changes", "reject", "comment"]
@@ -203,6 +216,7 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + f"changed files: {', '.join(files[:30])}\n\n"
         + f"diff (truncated):\n{_clip_text(pr.get('diff'), 6000)}\n\n"
         + f"{NON_REDUNDANCY_GUIDANCE}\n\n"
+        + f"{REAL_BEHAVIOR_GUIDANCE}\n\n"
         + "Return JSON with keys:\n"
         + f'  "action": one of {ACTIONS},\n'
         + f'  "value_label": one of {VALUE_LABELS} — "perf:pending" ONLY if the PR touches '
@@ -212,7 +226,9 @@ def review_pr(pr: dict, philosophy: dict | None, llm) -> dict:
         + '  "tests_present": boolean — does it add or update tests,\n'
         + '  "summary": one sentence on what the PR does,\n'
         + '  "concerns": list of specific, actionable concerns (empty list if none) — include '
-        + "a non-redundancy finding when the PR re-derives existing analysis,\n"
+        + "a non-redundancy finding when the PR re-derives existing analysis, and a "
+        + "real-behavior finding when the PR only claims it works without a shown run or "
+        + "output,\n"
         + '  "recommendation": one or two sentences of advice to the maintainer.'
     )
     stub = {

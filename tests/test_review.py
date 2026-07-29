@@ -14,6 +14,7 @@ from agent.llm import LLM  # noqa: E402
 from agent.review import (  # noqa: E402
     ACTIONS,
     NON_REDUNDANCY_GUIDANCE,
+    REAL_BEHAVIOR_GUIDANCE,
     SYSTEM,
     VALUE_LABELS,
     _clip_text,
@@ -350,3 +351,21 @@ def test_review_pr_prompt_includes_non_redundancy_guidance():
     assert "same data shape" in NON_REDUNDANCY_GUIDANCE
     assert "conceptual duplication" in NON_REDUNDANCY_GUIDANCE.lower()
     assert "a non-redundancy finding" in llm.last_user
+
+
+# --- #2111: review prompt names Real-behavior proof as a Medium REVIEW.md axis ------------
+
+def test_system_prompt_names_real_behavior_proof_as_medium_rubric_axis():
+    # REVIEW.md Medium axes after the High three: quality & clarity, then Real-behavior proof.
+    assert "(4) quality and clarity" in SYSTEM.lower()
+    assert "(5) real-behavior proof" in SYSTEM.lower()
+
+
+def test_review_pr_prompt_includes_real_behavior_guidance():
+    llm = _CaptureUserLLM()
+    review_pr({"number": 2, "title": "Fix loader", "author": "a", "files": ["agent/context.py"]},
+              None, llm)
+    assert llm.last_system == SYSTEM
+    assert REAL_BEHAVIOR_GUIDANCE in llm.last_user
+    assert "claim-only" in REAL_BEHAVIOR_GUIDANCE.lower()
+    assert "shown run" in llm.last_user or "real-behavior finding" in llm.last_user
