@@ -520,7 +520,7 @@ def test_cli_without_strict_returns_zero_even_when_invalid(tmp_path):
 
 def test_cli_reports_clean_error_for_missing_file(tmp_path):
     result = _run_cli(str(tmp_path / "missing.json"), "--strict")
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "artifact not found" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -529,14 +529,14 @@ def test_cli_reports_clean_error_for_non_object(tmp_path):
     path = tmp_path / "array.json"
     path.write_text(json.dumps([1]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "must be a JSON object" in result.stderr
     assert "Traceback" not in result.stderr
 
 
 def test_cli_reports_clean_error_for_a_directory_path(tmp_path):
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "artifact path is a directory, not a file" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -551,7 +551,7 @@ def test_cli_reports_clean_error_for_an_unreadable_file(tmp_path):
         result = _run_cli(str(locked))
     finally:
         locked.chmod(0o600)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not readable" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -560,6 +560,39 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not valid JSON" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_path_failure_and_gate_failure_use_distinct_exit_codes(tmp_path):
+    """`--strict` exit 1 (gate failed) must not collide with an unreadable artifact.
+
+    Both used to exit 1, so CI could not tell an aggregate-integrity regression from a bad
+    path. Path failures now exit 2 via ``scripts.artifact_io``; the gate keeps exit 1.
+    """
+    path = tmp_path / "inconsistent.json"
+    path.write_text(json.dumps({
+        "repos": 2, "scored_repos": 2, "skipped": 0, "composite_mean": 0.9,
+        "per_repo": [{"composite_mean": 0.1}, {"composite_mean": 0.2}],
+    }), encoding="utf-8")
+
+    gate = _run_cli(str(path), "--strict")
+    assert gate.returncode == 1, gate.stderr
+    assert "Traceback" not in gate.stderr
+
+    missing = _run_cli(str(tmp_path / "nope.json"), "--strict")
+    assert missing.returncode == 2, missing.stderr
+    assert "artifact not found" in missing.stderr
+
+    assert gate.returncode != missing.returncode
+
+
+def test_cli_reports_a_broken_symlink_it_previously_could_not(tmp_path):
+    """The old hand-rolled loader had no dangling-symlink arm; artifact_io does."""
+    link = tmp_path / "dangling.json"
+    link.symlink_to(tmp_path / "absent.json")
+    result = _run_cli(str(link), "--strict")
+    assert result.returncode == 2
+    assert "broken symlink" in result.stderr
     assert "Traceback" not in result.stderr
