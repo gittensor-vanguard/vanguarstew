@@ -268,10 +268,12 @@ def _close_comment(decision: dict) -> str:
 
 
 def enforce(repo: str, number: int) -> dict:
-    """Evaluate and, when required, close one open pull request."""
+    """Evaluate one pull request and close it when required."""
     pr = _pull(repo, number)
-    if pr.get("state") != "open":
-        return {"allowed": True, "reason": "PR is not open"}
+    state = pr.get("state")
+    if state not in {"open", "closed"}:
+        raise PolicyError("pull request state is malformed")
+    was_open = state == "open"
     pr_author = (pr.get("user") or {}).get("login")
     commits = _paginate(repo, number, "commits")
     decision = evaluate_policy(pr_author=pr_author, commits=commits)
@@ -280,15 +282,18 @@ def enforce(repo: str, number: int) -> dict:
         return decision
 
     _sync_close_comment(repo, number, _close_comment(decision))
-    _gh(
-        "api",
-        "--method",
-        "PATCH",
-        f"repos/{repo}/pulls/{number}",
-        "-f",
-        "state=closed",
-    )
-    print(f"PR gaming policy: closed PR #{number}")
+    if was_open:
+        _gh(
+            "api",
+            "--method",
+            "PATCH",
+            f"repos/{repo}/pulls/{number}",
+            "-f",
+            "state=closed",
+        )
+        print(f"PR gaming policy: closed PR #{number}")
+    else:
+        print(f"PR gaming policy: recorded identity mismatch on closed PR #{number}")
     return decision
 
 
