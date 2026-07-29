@@ -518,9 +518,12 @@ def test_cli_without_strict_returns_zero_even_when_invalid(tmp_path):
     assert json.loads(result.stdout)["passed"] is False
 
 
+# Path / JSON load failures exit 2 (via the shared scripts.artifact_io loader), distinct from
+# the gating exit 1 (--strict) above, so CI can tell "bad artifact path" from "the gate failed"
+# (#2101).
 def test_cli_reports_clean_error_for_missing_file(tmp_path):
     result = _run_cli(str(tmp_path / "missing.json"), "--strict")
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "artifact not found" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -529,14 +532,14 @@ def test_cli_reports_clean_error_for_non_object(tmp_path):
     path = tmp_path / "array.json"
     path.write_text(json.dumps([1]), encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "must be a JSON object" in result.stderr
     assert "Traceback" not in result.stderr
 
 
 def test_cli_reports_clean_error_for_a_directory_path(tmp_path):
     result = _run_cli(str(tmp_path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "artifact path is a directory, not a file" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -551,7 +554,7 @@ def test_cli_reports_clean_error_for_an_unreadable_file(tmp_path):
         result = _run_cli(str(locked))
     finally:
         locked.chmod(0o600)
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not readable" in result.stderr
     assert "Traceback" not in result.stderr
 
@@ -560,6 +563,30 @@ def test_cli_reports_clean_error_for_invalid_json(tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("{not json", encoding="utf-8")
     result = _run_cli(str(path))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not valid JSON" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_reports_clean_error_for_a_broken_symlink(tmp_path):
+    # The shared loader names a dangling symlink distinctly (the old hand-rolled copy blamed it
+    # as merely "not found") and exits 2 (#2101).
+    link = tmp_path / "dangling.json"
+    link.symlink_to(tmp_path / "does-not-exist.json")
+    result = _run_cli(str(link))
+    assert result.returncode == 2
+    assert "broken symlink" in result.stderr
+    assert "artifact not found" not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_cli_reports_clean_error_for_a_symlink_loop(tmp_path):
+    # The old copy had no ELOOP arm and leaked a raw errno; the shared loader reports a loop and
+    # exits 2 (#2101).
+    loop = tmp_path / "loop.json"
+    loop.symlink_to(loop)
+    result = _run_cli(str(loop))
+    assert result.returncode == 2
+    assert "symlink loop" in result.stderr
+    assert "Errno" not in result.stderr
     assert "Traceback" not in result.stderr
