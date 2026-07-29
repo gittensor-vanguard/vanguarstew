@@ -146,6 +146,19 @@ def _release_versions(releases) -> list:
     return sorted(set(versions))
 
 
+def _step_class(old: tuple, new: tuple) -> str:
+    """Classify one version step by its highest differing component."""
+    if new[0] != old[0]:
+        return "major"
+    if new[1] != old[1]:
+        return "minor"
+    return "patch"
+
+
+def _fmt_version(version: tuple) -> str:
+    return ".".join(str(part) for part in version)
+
+
 def _recent_bump_class(context: dict) -> str | None:
     """The bump class of the repo's most recent version step, else None.
 
@@ -164,12 +177,7 @@ def _recent_bump_class(context: dict) -> str | None:
         return None
     if len(ordered) < 2:
         return "patch"
-    old, new = ordered[-2], ordered[-1]
-    if new[0] != old[0]:
-        return "major"
-    if new[1] != old[1]:
-        return "minor"
-    return "patch"
+    return _step_class(ordered[-2], ordered[-1])
 
 
 def _normalize_action(action) -> str:
@@ -422,11 +430,22 @@ def _release_context_note(context: dict) -> str:
     base = _base_from_releases(releases)
     if not base:
         return ""
-    return (
-        f"\nCurrent release at freeze (highest frozen version): {base}\n"
+    note = f"\nCurrent release at freeze (highest frozen version): {base}\n"
+    # The most recent version step is observed evidence the bump reasoning can condition on:
+    # "1.4.1 -> 1.5.0" states the current cadence regime where the bare base version alone
+    # says nothing about whether this repo is cutting patches or minors right now.
+    ordered = _release_versions(releases)
+    if len(ordered) >= 2:
+        old, new = ordered[-2], ordered[-1]
+        note += (
+            f"Most recent version step: {_fmt_version(old)} -> {_fmt_version(new)} "
+            f"(a {_step_class(old, new)} bump).\n"
+        )
+    note += (
         "When action is release or version_bump is set, infer major/minor/patch from "
         "maintainer cadence relative to this base.\n"
     )
+    return note
 
 
 def _render(context: dict) -> str:

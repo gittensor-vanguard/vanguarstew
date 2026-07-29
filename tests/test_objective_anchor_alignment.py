@@ -289,3 +289,22 @@ def test_decide_no_backfill_without_release_history():
     ctx = {"recent_commits": [{"subject": "improve parser"}]}
     out = decide(ctx, {}, _PLANNING_REQUEST, _DecisionLLM({"action": "plan"}))
     assert out["version_bump"] is None
+
+
+# ── decider: recent-version-step evidence in the release context note ─────────────────────
+
+
+def test_release_context_note_states_the_most_recent_version_step():
+    from agent.decider import _release_context_note
+
+    note = _release_context_note(_CADENCE_CTX)
+    assert "Current release at freeze" in note
+    assert "Most recent version step: 1.0.1 -> 1.0.2 (a patch bump)." in note
+
+
+def test_release_context_note_omits_step_with_a_single_version():
+    from agent.decider import _release_context_note
+
+    note = _release_context_note({"releases": [{"tag": "v1.2.0"}]})
+    assert "Current release at freeze" in note
+    assert "Most recent version step" not in note
