@@ -299,7 +299,7 @@ wheels = [
 
 [[package]]
 name = "vanguarstew"
-version = "0.3.0"
+version = "0.8.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
