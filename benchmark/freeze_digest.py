@@ -13,23 +13,13 @@ from __future__ import annotations
 import logging
 
 from benchmark.comparability import artifact_kind
+from benchmark.repo_key import repo_key as _repo_key
 
 logger = logging.getLogger(__name__)
 
 
 def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
-
-
-def _repo_key(entry: dict) -> str:
-    for key in ("repo_path", "url", "repo", "name", "repo_name"):
-        value = entry.get(key)
-        if value:
-            return str(value)
-    freeze = entry.get("freeze_commit")
-    if isinstance(freeze, str) and freeze:
-        return freeze[:10]
-    return repr(sorted(entry.keys()))
 
 
 def _freeze_commit(entry: dict) -> str | None:

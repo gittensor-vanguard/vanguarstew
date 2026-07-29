@@ -10,6 +10,8 @@ import json
 import math
 import sys
 
+from benchmark.repo_key import repo_key as _repo_key
+
 
 def _numeric(value) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -119,17 +121,6 @@ def _metric_triplet(baseline: dict, candidate: dict, key: str) -> dict:
         "candidate": cand,
         "delta": _delta(cand, base),
     }
-
-
-def _repo_key(entry: dict) -> str:
-    for key in ("repo_path", "url", "repo", "name"):
-        value = entry.get(key)
-        if value:
-            return str(value)
-    freeze = entry.get("freeze_commit")
-    if isinstance(freeze, str) and freeze:
-        return freeze[:10]
-    return repr(sorted(entry.keys()))
 
 
 def _repo_rows(artifact: dict) -> list:

@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import logging
 
+from benchmark.repo_key import repo_key as _repo_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -109,18 +111,6 @@ def artifact_kind(artifact) -> str:
     if "per_repo" in artifact:
         return "multi"
     return "single"
-
-
-def _repo_key(entry: dict) -> str:
-    """Stable identity for a per-repo row (mirrors ``scripts.compare_eval``)."""
-    for key in ("repo_path", "url", "repo", "name"):
-        value = entry.get(key)
-        if value:
-            return str(value)
-    freeze = entry.get("freeze_commit")
-    if isinstance(freeze, str) and freeze:
-        return freeze[:10]
-    return repr(sorted(entry.keys()))
 
 
 def _repo_keys_from_per_repo(per_repo, field: str = "per_repo") -> frozenset[str]:
