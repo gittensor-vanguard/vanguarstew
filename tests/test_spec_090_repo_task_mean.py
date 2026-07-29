@@ -1,4 +1,4 @@
-"""Contract tests for specs/048-benchmark-repo-task-mean.
+"""Contract tests for specs/090-benchmark-repo-task-mean.
 
 These tests document the as-built EARS contract for benchmark.repo_task_mean:
 input coercion, task-count semantics, artifact-kind branches, headline output,

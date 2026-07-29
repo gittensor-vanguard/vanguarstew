@@ -1,4 +1,4 @@
-"""Contract tests for specs/042-benchmark-tie-order-share — assert tie_order_share.py
+"""Contract tests for specs/087-benchmark-tie-order-share — assert tie_order_share.py
 satisfies the spec's EARS criteria: count parsing, slice summary, artifact-kind branches
 (including the generalization partition split), headline branches, and pure evaluation.
 Offline, deterministic.
