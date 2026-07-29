@@ -44,6 +44,7 @@ from agent.planner import (  # noqa: E402
     _pr_number,
     _pr_queue_note,
     _pr_title,
+    _queue_item_kind,
     _recent_kinds_note,
     _release_cadence_note,
     _release_cadence_signal,
@@ -54,7 +55,7 @@ from agent.planner import (  # noqa: E402
     plan_next_actions,
     reconcile_plan_with_queue,
 )
-from benchmark.score import commit_kind, plan_kind  # noqa: E402
+from benchmark.score import commit_kind, kind_recall, plan_kind  # noqa: E402
 
 CTX = {"open_prs": [{"number": 7, "title": "Add streaming export"}]}
 
@@ -1373,3 +1374,90 @@ def test_planner_prompt_omits_kind_note_without_conventional_commits():
     ctx = {"open_prs": [], "recent_commits": [{"subject": "Add streaming export"}]}
     plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
     assert "Recent maintainer activity by kind" not in captured["user"]
+
+
+# --- queue items carry the kind their own merge lands as ------------------------------------
+
+
+def test_queue_item_kind_reads_the_pr_title_prefix():
+    assert _queue_item_kind({"number": 7, "title": "fix: handle loader race"}) == "bugfix"
+    assert _queue_item_kind({"number": 7, "title": "feat(export): stream rows"}) == "feature"
+    assert _queue_item_kind({"number": 7, "title": "docs: document retries"}) == "docs"
+    assert _queue_item_kind({"number": 7, "title": "Add streaming export"}) == "triage"
+    assert _queue_item_kind({"number": 7, "title": ""}) == "triage"
+    assert _queue_item_kind("not-a-dict") == "triage"
+
+
+def test_queue_item_kind_never_inherits_release():
+    # Release predictions are gated by _calibrate_release_prediction, which has already run
+    # by the time the queue lane builds items -- inheriting "release" here would re-arm a
+    # prediction behind that gate (the #1561 suppress case). A plain chore stays dep-family.
+    assert _queue_item_kind({"number": 7, "title": "chore(release): 1.4.0"}) == "triage"
+    assert _queue_item_kind({"number": 7, "title": "build(release): 2.0.0"}) == "triage"
+    assert _queue_item_kind({"number": 7, "title": "chore: bump dev deps"}) == "dep"
+
+
+def test_downweighted_duplicate_inherits_the_pr_title_kind():
+    prs = [{"number": 7, "title": "fix: handle the loader race condition"}]
+    plan = [{"title": "Handle the loader race condition", "kind": "feature",
+             "rationale": "users hit it"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": prs}, 5)
+    assert out[0]["restates_pr"] == 7
+    assert out[0]["kind"] == "bugfix"      # from the PR title, not a blanket "triage"
+    assert "review" in out[0]["rationale"].lower()
+
+
+def test_downweighted_duplicate_of_an_unprefixed_pr_still_becomes_triage():
+    plan = [{"title": "Implement streaming export for reports", "kind": "feature"}]
+    out = reconcile_plan_with_queue(plan, CTX, 5)   # CTX's PR title has no CC prefix
+    assert out[0]["kind"] == "triage"
+    assert out[0]["restates_pr"] == 7
+
+
+def test_review_framed_triage_item_is_upgraded_to_the_pr_kind():
+    prs = [{"number": 7, "title": "fix: handle the loader race condition"}]
+    plan = [{"title": "Review and merge PR #7", "kind": "triage"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": prs}, 5)
+    assert out[0]["kind"] == "bugfix"
+    assert "restates_pr" not in out[0]     # review-framed items keep their shape otherwise
+
+
+def test_review_framed_item_with_a_real_kind_is_not_rewritten():
+    prs = [{"number": 7, "title": "docs: document the retry policy"}]
+    plan = [{"title": "Review and merge PR #7", "kind": "test"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": prs}, 5)
+    assert out[0]["kind"] == "test"        # the model's explicit non-triage kind wins
+
+
+def test_queue_fallback_inherits_the_top_pr_kind():
+    prs = [{"number": 9, "title": "ci: cache the toolchain between runs"}]
+    plan = [{"title": "Write user documentation", "kind": "docs"}]
+    out = reconcile_plan_with_queue(plan, {"open_prs": prs}, 5)
+    assert out[0]["restates_pr"] == 9
+    assert out[0]["kind"] == "ci"
+    assert "cache the toolchain" in out[0]["title"]
+
+
+def test_queue_fallback_for_an_unprefixed_pr_stays_triage():
+    plan = [{"title": "Write user documentation", "kind": "docs"}]
+    out = reconcile_plan_with_queue(plan, CTX, 5)
+    assert out[0]["restates_pr"] == 7
+    assert out[0]["kind"] == "triage"
+
+
+def test_inherited_queue_kind_round_trips_through_the_anchor():
+    # The end-to-end mismatch this closes: the queued fix PR merges inside the revealed
+    # window as a squash commit titled with the PR subject. The anchor reads `fix` out of
+    # that subject -- and now reads `bugfix` -> fix out of the reconciled plan too, where
+    # the blanket "triage" rewrite used to leave kind_recall at 0.0 on this window.
+    prs = [{"number": 7, "title": "fix: handle the loader race condition"}]
+    plan = reconcile_plan_with_queue(
+        [{"title": "Handle the loader race condition", "kind": "feature"}],
+        {"open_prs": prs}, 5)
+    revealed = [{"subject": "fix: handle the loader race condition (#7)",
+                 "files": ["src/loader.py"]}]
+    assert commit_kind(revealed[0]["subject"]) == "fix"
+    assert plan_kind(plan[0]["kind"]) == "fix"
+    result = kind_recall(plan, revealed)
+    assert result["kind_recall"] == 1.0
+    assert result["matched_kinds"] == ["fix"]

@@ -275,6 +275,29 @@ def _commit_plan_kind(subject):
     return _CC_TYPE_TO_PLAN_KIND.get(cc_type)
 
 
+def _queue_item_kind(pr) -> str:
+    """The plan-vocabulary kind reviewing/merging a queued PR lands as, or ``"triage"``.
+
+    The objective anchor scores a queue item's ``kind`` field like any other plan item's, and
+    ``triage`` deliberately maps to no commit kind there. But the maintainer action a queue
+    item plans — review, then merge — reaches the revealed window as the PR's own squash/merge
+    commit, whose subject GitHub takes from the PR title. When that title carries a
+    Conventional-Commit prefix (``fix: handle loader race``), the kind of the very commit this
+    action produces is already knowable at T from the frozen queue; stamping ``triage`` over it
+    erases a prediction the anchor's ``commit_kind`` will read back out of the same string.
+
+    ``release`` is deliberately **not** inherited: release predictions are gated by
+    ``_calibrate_release_prediction``, which runs before reconciliation, and the queue lane
+    must not reintroduce a release prediction behind that gate (a ``chore(release): 1.4.0``
+    queue entry under freeze-T suppress would otherwise re-arm exactly the false positive
+    #1561 removed). A title with no recognized prefix stays ``triage``, unchanged.
+    """
+    kind = _commit_plan_kind(_pr_title(pr))
+    if kind is None or kind == "release":
+        return "triage"
+    return kind
+
+
 def _recent_commits(context: dict) -> list:
     """The frozen recent-commit list, or ``[]`` when absent or malformed."""
     if not isinstance(context, dict):
@@ -966,10 +989,16 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
 
     Guards three failure modes when an LLM disregards the provided queue:
     - **Duplicates in flight**: an item that restates an open PR's work is down-weighted to a
-      `triage` review item and flagged with `restates_pr`, instead of being planned as new work.
+      review item and flagged with `restates_pr`, instead of being planned as new work.
     - **Redundant items**: multiple items targeting the same PR are collapsed to the first.
     - **Ignored queue**: if no item addresses any open PR, a review item for the top PR is
       prepended so the queue is never silently skipped.
+
+    Every queue item produced or rewritten here carries the kind its own action lands as
+    (:func:`_queue_item_kind`): the PR title's Conventional-Commit kind when it has one,
+    else ``triage``. A matched item the model already framed as a review keeps its shape,
+    but a bare ``triage`` kind on it is upgraded the same way — the model named the right
+    action; the queue knows what commit that action produces.
 
     With no open PRs (or none matched) the plan passes through unchanged, capped to `n`.
     """
@@ -989,6 +1018,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
             if dedup_key is not None:
                 seen_prs.add(dedup_key)
             addressed = True
+            queue_kind = _queue_item_kind(pr)
             if not _is_review_item(item):
                 if number is not None:
                     rationale = (f"restates open PR #{number} already in flight; review it "
@@ -998,10 +1028,14 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
                                  "of duplicating the work")
                 item = {
                     **item,
-                    "kind": "triage",
+                    "kind": queue_kind,
                     "restates_pr": number,
                     "rationale": rationale,
                 }
+            elif item.get("kind") == "triage" and queue_kind != "triage":
+                # The model already framed this as a review of the queued PR but left the
+                # generic fallback kind; the PR title says what kind its merge lands as.
+                item = {**item, "kind": queue_kind}
         out.append(item)
 
     if not addressed:
@@ -1010,7 +1044,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
         out.insert(0, {
             "title": f"Review pull request #{top_number if top_number is not None else '?'}: "
                      f"{_pr_title(top)}",
-            "kind": "triage",
+            "kind": _queue_item_kind(top),
             "restates_pr": top_number,
             "rationale": (
                 "the open PR queue was omitted from the plan; a strong maintainer clears or "
