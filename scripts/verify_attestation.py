@@ -64,8 +64,20 @@ def run(argv=None) -> int:
         report["checks"]["transcript_digest"] = recorded == claimed
         report["ok"] = all(report["checks"].values())
         if recorded != claimed:
-            report["detail"] = f"transcript_digest FAILED (recorded {recorded[:12]}, "
-            report["detail"] += f"bound {str(claimed)[:12]})"
+            # Append to (not overwrite) the evidence detail, mirroring verify_evidence's
+            # "; "-joined "<name> FAILED" convention. Overwriting erased any artifact_digest /
+            # report_data / quote_binding failure verify_evidence had already reported, so a
+            # skeptic saw only the transcript mismatch and missed that the artifact itself was
+            # tampered. The "all checks passed" sentinel is replaced rather than appended to.
+            transcript_detail = (
+                f"transcript_digest FAILED (recorded {recorded[:12]}, "
+                f"bound {str(claimed)[:12]})"
+            )
+            prior = report.get("detail")
+            report["detail"] = (
+                transcript_detail if prior in (None, "", "all checks passed")
+                else f"{prior}; {transcript_detail}"
+            )
 
     print(json.dumps(report, indent=2, sort_keys=True))
     for name, passed in sorted(report["checks"].items()):
