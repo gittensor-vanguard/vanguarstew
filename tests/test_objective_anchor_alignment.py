@@ -30,8 +30,11 @@ from agent.decider import (  # noqa: E402
     decide,
 )
 from agent.planner import (  # noqa: E402
+    RELEASE_PRESSURE_GUIDANCE,
     _backfill_files_from_layout,
     _normalize_plan_item,
+    _release_cadence_note,
+    _release_surface_entries,
     plan_next_actions,
 )
 from benchmark.score import base_from_releases, parse_semver  # noqa: E402
@@ -91,16 +94,61 @@ def test_backfill_caps_at_two_entries_in_layout_order():
     assert out[0]["files"] == ["tox.ini", "src"]
 
 
-def test_backfill_skips_triage_release_and_already_filed_items():
+def test_backfill_skips_triage_and_already_filed_items():
     plan = [
         {"title": "Review pull request #7: src cleanup", "kind": "triage"},
-        {"title": "Cut the src release", "kind": "release"},
         {"title": "Refactor src loader", "kind": "refactor", "files": ["src/loader.py"]},
     ]
     out = _backfill_files_from_layout(plan, {"repo_layout": ["src"]})
     assert "files" not in out[0]
-    assert "files" not in out[1]
-    assert out[2]["files"] == ["src/loader.py"]
+    assert out[1]["files"] == ["src/loader.py"]
+
+
+def test_backfill_release_item_earns_changelog_by_its_own_words():
+    plan = [{"title": "Cut the next release and update the changelog", "kind": "release"}]
+    out = _backfill_files_from_layout(plan, {"repo_layout": ["CHANGELOG.rst", "src/"]})
+    assert out[0]["files"] == ["CHANGELOG.rst"]
+
+
+def test_backfill_release_item_without_surface_tokens_gets_nothing():
+    # "release" is a stopword for token matching, so a bare release title attaches nothing.
+    plan = [{"title": "Prepare the next release", "kind": "release"}]
+    out = _backfill_files_from_layout(plan, {"repo_layout": ["CHANGELOG.rst", "src/"]})
+    assert "files" not in out[0]
+
+
+# ── release surface: layout-derived entries in the pressure note ──────────────────────────
+
+
+def test_release_surface_picks_one_changelog_and_one_packaging_entry():
+    ctx = {"repo_layout": ["CHANGELOG.rst", "HISTORY.rst", "setup.py", "docs/", "src/"]}
+    assert _release_surface_entries(ctx) == ["CHANGELOG.rst", "setup.py"]
+
+
+def test_release_surface_matches_bare_stems_but_not_directories():
+    assert _release_surface_entries({"repo_layout": ["news"]}) == ["news"]
+    assert _release_surface_entries({"repo_layout": ["newsfragments/"]}) == []
+    assert _release_surface_entries({"repo_layout": []}) == []
+    assert _release_surface_entries({}) == []
+
+
+_PRESSURE_CTX_BASE = {
+    # >= 20 commits with no release subject and no dated releases => commit-count pressure.
+    "recent_commits": [{"subject": f"improve parser pass {i}"} for i in range(25)],
+}
+
+
+def test_pressure_note_names_the_repos_release_surface():
+    ctx = {**_PRESSURE_CTX_BASE, "repo_layout": ["CHANGELOG.rst", "setup.py", "src/"]}
+    note = _release_cadence_note(ctx)
+    assert RELEASE_PRESSURE_GUIDANCE in note
+    assert "`CHANGELOG.rst`" in note
+    assert "`setup.py`" in note
+
+
+def test_pressure_note_unchanged_when_no_release_surface_exists():
+    ctx = {**_PRESSURE_CTX_BASE, "repo_layout": ["src/", "docs/"]}
+    assert _release_cadence_note(ctx) == f"\n{RELEASE_PRESSURE_GUIDANCE}\n"
 
 
 def test_backfill_no_ops_on_missing_or_malformed_layout():

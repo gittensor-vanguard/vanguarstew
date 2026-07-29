@@ -444,15 +444,43 @@ def _release_cadence_signal(context: dict) -> bool:
     )
 
 
+# A top-level changelog-ish FILE (dirs carry a trailing `/` in repo_layout and never match):
+# the canonical stems with an optional common text extension. `newsfragments/`-style trees and
+# arbitrary "*notes*" names deliberately do not match — only entries a release cut actually edits.
+_RELEASE_LOG_RE = re.compile(r"^(changelog|changes|history|news)(\.(md|rst|txt))?$")
+_RELEASE_PACKAGING = frozenset({"setup.py", "setup.cfg", "pyproject.toml"})
+
+
+def _release_surface_entries(context: dict) -> list:
+    """The repo's own release surface: at most one changelog-ish file + one packaging file.
+
+    Read off ``_repo_layout`` only — entries that exist in the frozen checkout, never example
+    filenames — so the pressure note can point the release item's ``files`` at where a cut
+    really lands in THIS repo. Empty when the layout carries neither.
+    """
+    entries = _repo_layout(context)
+    logish = [e for e in entries if _RELEASE_LOG_RE.fullmatch(e.lower())]
+    packaging = [e for e in entries if e.lower() in _RELEASE_PACKAGING]
+    return logish[:1] + packaging[:1]
+
+
 def _release_cadence_note(context: dict) -> str:
     """Inject release-item guidance from freeze-T timing, not from cadence vibe (#1561).
 
-    Pressure → ask for a release item. Suppress / mid-cycle → stay silent (a just-cut release
-    subject in history must NOT re-trigger "include a release" — that was the over-predict).
+    Pressure → ask for a release item, pointing its ``files`` at the repo's real release
+    surface (changelog/packaging entries from the frozen layout) when one exists — a release
+    lands in exactly those modules, and a release item that names them is concretely, not
+    just nominally, right. Suppress / mid-cycle → stay silent (a just-cut release subject in
+    history must NOT re-trigger "include a release" — that was the over-predict).
     """
     if _release_timing_state(context) != "pressure":
         return ""
-    return f"\n{RELEASE_PRESSURE_GUIDANCE}\n"
+    note = f"\n{RELEASE_PRESSURE_GUIDANCE}\n"
+    surfaces = _release_surface_entries(context)
+    if surfaces:
+        listed = ", ".join(f"`{s}`" for s in surfaces)
+        note += f"The release item's `files` should name this repo's release surface: {listed}.\n"
+    return note
 
 
 def _is_release_subject(text) -> bool:
@@ -656,9 +684,12 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
     claims a module its text does not mention, and the plan stays exactly as specific as the
     model made it. Entries are attached in layout order, capped at ``_BACKFILL_MAX_FILES``.
 
-    `triage` items are maintainer actions, not commit work, and `release` items land under
-    release tooling paths rather than a source module — both pass through untouched, as does
-    any item that already carries `files` and any item on an empty/unreadable layout.
+    `triage` items are maintainer actions, not commit work, and pass through untouched, as
+    does any item that already carries `files` and any item on an empty/unreadable layout.
+    `release` items are backfilled like any other: a release lands in the changelog and
+    packaging surfaces, and those are scored modules on the very windows a release item is
+    right about — a release title naming the changelog earns that entry the same token-gated
+    way.
     """
     entries = _repo_layout(context)
     if not entries:
@@ -669,7 +700,7 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
         if (
             not isinstance(item, dict)
             or item.get("files")
-            or item.get("kind") in ("triage", "release")
+            or item.get("kind") == "triage"
         ):
             out.append(item)
             continue
