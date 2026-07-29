@@ -328,6 +328,43 @@ def test_repo_set_partition_default_is_still_tuned_without_held_out(monkeypatch,
     assert captured["partition"] == "tuned"
 
 
+def test_generalization_with_explicit_repo_set_partition_errors_instead_of_silently_ignoring(
+    monkeypatch, capsys,
+):
+    # #2095: --repo-set-partition <anything> --generalization parsed and ran successfully with
+    # zero effect -- run_generalization_report always replays BOTH partitions and never reads
+    # repo_set_partition. It must error instead of silently discarding the explicit choice.
+    monkeypatch.setattr(
+        sys, "argv",
+        _argv("--repo-set", "/some/config.json", "--repo-set-partition", "all",
+              "--generalization"),
+    )
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "--generalization" in capsys.readouterr().err
+
+
+def test_generalization_alone_still_works_without_an_explicit_partition(monkeypatch, capsys):
+    # Control: --generalization without an explicit --repo-set-partition must still run,
+    # unaffected by the new conflict check.
+    monkeypatch.setattr(
+        sys, "argv", _argv("--repo-set", "/some/config.json", "--generalization"),
+    )
+    captured = {}
+
+    def fake_run_generalization_report(repo_set=None, **kw):
+        captured["called"] = True
+        return {"repo_set": repo_set, "tuned": {}, "held_out": {}, "generalization_gap": None}
+
+    with patch(
+        "scripts.run_eval.run_generalization_report", side_effect=fake_run_generalization_report,
+    ):
+        main()
+    capsys.readouterr()
+    assert captured["called"] is True
+
+
 def test_main_catches_repo_set_error_from_run_generalization_report(monkeypatch, capsys):
     monkeypatch.setattr(
         sys, "argv",

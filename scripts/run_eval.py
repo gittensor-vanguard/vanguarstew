@@ -188,6 +188,13 @@ def main() -> None:
         # `--repo-set-partition tuned --held-out` silently overrode the explicit `tuned`.
         ap.error("--held-out already selects the held-out partition; "
                  "do not combine it with an explicit --repo-set-partition")
+    if args.generalization and args.repo_set_partition is not None:
+        # --generalization always replays BOTH partitions (run_generalization_report hardcodes
+        # "tuned" and "held_out"); it never reads repo_set_partition. An explicit choice here
+        # was silently a no-op -- no error, no effect -- instead of being rejected like the
+        # equivalent --held-out combination above.
+        ap.error("--generalization already runs both partitions; do not combine it with an "
+                 "explicit --repo-set-partition")
 
     common = dict(
         agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
