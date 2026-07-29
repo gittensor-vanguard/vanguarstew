@@ -86,7 +86,8 @@ Every result SHALL include exactly the keys: `kind`, `dual_order_tasks`, `disagr
 - `verdict` SHALL be `stable` when `disagreement_rate <= stable_threshold`, `unstable` when it
   exceeds the threshold, and `None` when the rate is not a finite number.
 - `stable_threshold` SHALL be `float(stable_threshold)` when it is a finite number, otherwise the
-  `DEFAULT_STABLE_THRESHOLD` of `0.3`; the coerced value SHALL be echoed in the result.
+  `DEFAULT_STABLE_THRESHOLD` (`benchmark.judge_gate.DEFAULT_MAX_DISAGREEMENT`, `0.3`); the coerced
+  value SHALL be echoed in the result.
 - The function SHALL NOT raise for any input; a missing, non-finite, negative, or non-int telemetry
   value SHALL yield `None` fields, never an exception.
 

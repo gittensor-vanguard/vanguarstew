@@ -98,8 +98,9 @@ The result SHALL always include: `passed`, `checks`, `composite_mean`, `decisive
   `rate <= max_disagreement` (inclusive), and a non-numeric rate SHALL fail it.
 - `passed` SHALL be `True` iff every check passed.
 - The default thresholds SHALL be `min_composite = 0.5` (`DEFAULT_MIN_COMPOSITE`),
-  `min_decisive_margin = 1` (`DEFAULT_MIN_DECISIVE_MARGIN`), and `max_disagreement = 0.5`
-  (`DEFAULT_MAX_DISAGREEMENT`), and all three SHALL be overridable per call.
+  `min_decisive_margin = 1` (`DEFAULT_MIN_DECISIVE_MARGIN`), and `max_disagreement = 0.3`
+  (`DEFAULT_MAX_DISAGREEMENT`, imported from `benchmark.judge_gate` so promotion and the judge
+  robustness gate share one ceiling), and all three SHALL be overridable per call.
 
 ### Checks-row sanitization (`_check_rows_list`)
 

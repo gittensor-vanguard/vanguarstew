@@ -20,7 +20,8 @@ its merits instead of failing every check vacuously. The criteria:
    agent that does not actually out-decide the reference does not pass;
 4. ``judge_trustworthy`` - the pairwise judge's order-``disagreement_rate`` is at most
    ``max_disagreement`` (a run whose verdicts flip on presentation order isn't a trustworthy
-   basis for promotion). The rate is recomputed from ``judge_order_stats`` when available
+   basis for promotion). The default ceiling is ``benchmark.judge_gate.DEFAULT_MAX_DISAGREEMENT``
+   so promotion and the judge-robustness gate share one source of truth. The rate is recomputed from ``judge_order_stats`` when available
    (``disagree`` / ``dual_order_tasks``), falling back to ``judge_report.disagreement_rate``
    only when stats are absent — mirroring ``check_judge`` and ``check_regression`` — so a stale report field cannot
    false-pass the gate. A run judged single-order carries no disagreement rate and passes this
@@ -39,13 +40,12 @@ import logging
 import math
 
 from benchmark.acceptance import _partition_error
-from benchmark.judge_gate import _disagreement_rate
+from benchmark.judge_gate import DEFAULT_MAX_DISAGREEMENT, _disagreement_rate
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MIN_COMPOSITE = 0.5
 DEFAULT_MIN_DECISIVE_MARGIN = 1
-DEFAULT_MAX_DISAGREEMENT = 0.5
 
 
 def _is_number(value) -> bool:

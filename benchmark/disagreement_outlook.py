@@ -1,9 +1,10 @@
 """Report pairwise judge disagreement outlook from a replay artifact.
 
 ``judge_gate`` pass/fails judge robustness; this read-only utility exposes ``disagreement_rate``
-and ``dual_order_tasks`` for CI dashboards with a simple stable/unstable verdict. Rates are
-derived from ``judge_order_stats`` when available (``disagree`` / ``dual_order_tasks``), falling
-back to ``judge_report`` only when stats are absent — mirroring ``check_judge``, ``check_regression``,
+and ``dual_order_tasks`` for CI dashboards with a simple stable/unstable verdict. The default
+stable threshold is ``benchmark.judge_gate.DEFAULT_MAX_DISAGREEMENT`` so outlook labels match the
+judge-robustness ceiling. Rates are derived from ``judge_order_stats`` when available
+(``disagree`` / ``dual_order_tasks``), falling back to ``judge_report`` only when stats are absent — mirroring ``check_judge``, ``check_regression``,
 and ``check_promotion``.
 
 Pure analysis: no I/O, never mutates its input, and non-finite or missing telemetry yields
@@ -16,11 +17,14 @@ import logging
 import math
 
 from benchmark.comparability import artifact_kind
-from benchmark.judge_gate import _disagreement_rate_from_telemetry
+from benchmark.judge_gate import (
+    DEFAULT_MAX_DISAGREEMENT as DEFAULT_STABLE_THRESHOLD,
+)
+from benchmark.judge_gate import (
+    _disagreement_rate_from_telemetry,
+)
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_STABLE_THRESHOLD = 0.3
 
 _EMPTY_SLICE = {
     "dual_order_tasks": None,

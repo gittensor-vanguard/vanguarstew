@@ -16,6 +16,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from benchmark.judge_gate import DEFAULT_MAX_DISAGREEMENT as JUDGE_GATE_MAX_DISAGREEMENT
+from benchmark.judge_gate import check_judge
 from benchmark.promotion import (  # noqa: E402
     DEFAULT_MAX_DISAGREEMENT,
     DEFAULT_MIN_COMPOSITE,
@@ -265,11 +267,28 @@ def test_bounds_are_inclusive():
 def test_default_thresholds():
     assert DEFAULT_MIN_COMPOSITE == 0.5
     assert DEFAULT_MIN_DECISIVE_MARGIN == 1
-    assert DEFAULT_MAX_DISAGREEMENT == 0.5
+    assert DEFAULT_MAX_DISAGREEMENT == 0.3
     out = check_promotion(_result())
     assert out["min_composite"] == 0.5
     assert out["min_decisive_margin"] == 1
-    assert out["max_disagreement"] == 0.5
+    assert out["max_disagreement"] == 0.3
+
+
+def test_default_judge_ceiling_matches_judge_gate():
+    """Promotion and judge_gate must agree at default thresholds (#2151)."""
+    assert DEFAULT_MAX_DISAGREEMENT == JUDGE_GATE_MAX_DISAGREEMENT
+    art = {
+        "composite_mean": 0.7,
+        "decisive_margin": 2,
+        "judge_dual_order": True,
+        "judge_order_stats": {"agree": 5, "disagree": 4, "tie": 1, "dual_order_tasks": 10},
+    }
+    judge = check_judge(art)
+    promo = check_promotion(art)
+    assert judge["passed"] is False
+    assert "low_disagreement" in failed_checks(judge)
+    assert promo["passed"] is False
+    assert "judge_trustworthy" in failed_checks(promo)
 
 
 def test_thresholds_are_configurable():
