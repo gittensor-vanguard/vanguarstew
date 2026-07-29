@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 import urllib.error
 import urllib.request
@@ -36,6 +37,10 @@ from benchmark.transcript import TranscriptStore
 _COMPLETION_PATHS = ("/chat/completions", "/v1/chat/completions")
 
 MAX_BODY_BYTES = 32 * 1024 * 1024
+
+
+def _stop_server(_signum, _frame):
+    raise KeyboardInterrupt
 
 
 def _completion_envelope(content: str) -> dict:
@@ -111,8 +116,13 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def build_server(mode: str, port: int, upstream: str = "", store: TranscriptStore = None):
+    # `store if store is not None`, NOT `store or ...`: a TranscriptStore defines __len__, so an
+    # EMPTY one is falsy -- and record mode always starts empty. `store or TranscriptStore()` would
+    # therefore bind a throwaway store to the handler while main() saved the original, so record
+    # mode recorded into one object and persisted another (i.e. never recorded anything).
     handler = type("_BoundHandler", (_Handler,), {
-        "mode": mode, "upstream": upstream, "store": store or TranscriptStore(),
+        "mode": mode, "upstream": upstream,
+        "store": store if store is not None else TranscriptStore(),
     })
     return ThreadingHTTPServer(("127.0.0.1", port), handler)
 
@@ -135,16 +145,27 @@ def main(argv=None) -> int:
     server = build_server(args.mode, args.port, args.upstream, store)
     print(f"transcript_proxy: {args.mode} on http://127.0.0.1:{args.port}/v1 "
           f"({len(store)} recorded call(s))", file=sys.stderr)
+    # Non-interactive shells start background jobs with SIGINT ignored. Explicitly installing the
+    # handler here makes the launcher's `kill -INT` a reliable flush-and-stop boundary instead of
+    # leaving the proxy alive forever after evaluation. SIGTERM uses the same graceful path.
+    previous_handlers = {
+        signum: signal.signal(signum, _stop_server)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
-        if args.mode == "record":
-            store.save(args.out)
-            print(f"transcript_proxy: wrote {len(store)} call(s) to {args.out} "
-                  f"(digest {store.digest()[:12]})", file=sys.stderr)
+        try:
+            server.server_close()
+            if args.mode == "record":
+                store.save(args.out)
+                print(f"transcript_proxy: wrote {len(store)} call(s) to {args.out} "
+                      f"(digest {store.digest()[:12]})", file=sys.stderr)
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
     return 0
 
 

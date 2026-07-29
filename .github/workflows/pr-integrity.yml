@@ -44,8 +44,11 @@ jobs:
               return r.stdout.strip()
 
           # 4) code changes should ship tests
-          files = [f for f in gh("pr", "view", num, "--json", "files",
-                                 "--jq", ".files[].path").splitlines() if f]
+          # `gh pr view --json files` is capped at 100 paths.  Use the paginated REST endpoint so
+          # a large PR cannot hide its test files (or code files) beyond that first page.
+          files = [f for f in gh("api", "--paginate",
+                                 f"repos/{os.environ['GH_REPO']}/pulls/{num}/files",
+                                 "--jq", ".[].filename").splitlines() if f]
           code = [f for f in files if f.endswith(".py")
                   and (f.startswith("agent/") or f.startswith("benchmark/") or f == "agent.py")]
           tests = [f for f in files if f.startswith("tests/")]
