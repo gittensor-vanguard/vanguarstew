@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import math
 import sys
@@ -298,7 +299,12 @@ class ArtifactError(Exception):
 
 
 def load_artifact(path: str) -> dict:
-    """Load a JSON-object artifact, raising ArtifactError on bad input."""
+    """Load a JSON-object artifact, raising ArtifactError on bad input.
+
+    A symlink loop raises ``OSError(ELOOP)``, which would otherwise fall through to the generic
+    arm and leak a raw ``[Errno 40] Too many levels of symbolic links`` errno string; it is named
+    instead, matching the sibling artifact CLIs.
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -309,6 +315,9 @@ def load_artifact(path: str) -> dict:
     except IsADirectoryError:
         raise ArtifactError(f"artifact path is a directory, not a file: {path}") from None
     except OSError as exc:
+        # A symlink loop raises OSError(ELOOP), which none of the arms above catch.
+        if getattr(exc, "errno", None) == errno.ELOOP:
+            raise ArtifactError(f"artifact path is a symlink loop: {path}") from None
         raise ArtifactError(f"cannot read artifact ({path}): {exc}") from exc
     except ValueError as exc:
         # json.load raises JSONDecodeError for malformed JSON and ValueError for an integer

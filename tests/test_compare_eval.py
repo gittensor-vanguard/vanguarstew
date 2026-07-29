@@ -328,6 +328,20 @@ def test_cli_reports_a_clean_error_for_an_unreadable_file(tmp_path):
     assert "Traceback" not in result.stderr
 
 
+def test_cli_symlink_loop_is_named_not_leaked_as_errno(tmp_path):
+    # #2092: a symlink loop fell through to the generic OSError arm and leaked a raw
+    # "[Errno 40] Too many levels of symbolic links"; it must be named instead.
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
+    link = tmp_path / "loop.json"
+    link.symlink_to(link)
+    result = _run_cli(str(good), str(link))
+    assert result.returncode == 1
+    assert "symlink loop" in result.stderr
+    assert "Errno" not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_cli_reports_a_clean_error_for_a_non_object_artifact(tmp_path):
     good = tmp_path / "good.json"
     good.write_text(json.dumps({"composite_mean": 0.5}), encoding="utf-8")
