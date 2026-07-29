@@ -29,12 +29,15 @@ from benchmark.intel_dcap import (
 from benchmark.polaris import PolarisError, PolarisReceipt, verify_attested_envelope
 
 
-def _load(path: str):
+def _load(path: str, what: str = "receipt"):
+    # ``what`` names which of the three JSON inputs (receipt / DCAP policy / DCAP collateral)
+    # failed, so a skeptic diagnosing a verification locally is pointed at the file that is
+    # actually broken instead of always being told "cannot read receipt".
     try:
         with open(path, "r", encoding="utf-8") as handle:
             return json.load(handle)
     except (OSError, ValueError) as exc:
-        print(f"verify_polaris: cannot read receipt ({path}): {exc}", file=sys.stderr)
+        print(f"verify_polaris: cannot read {what} ({path}): {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
 
@@ -95,7 +98,7 @@ def run(argv=None) -> int:
     intel_verifier = None
     if args.dcap_policy:
         try:
-            loaded_policy = _load(args.dcap_policy)
+            loaded_policy = _load(args.dcap_policy, "DCAP policy")
             policy_value = loaded_policy
             if (
                 isinstance(loaded_policy, dict)
@@ -113,7 +116,7 @@ def run(argv=None) -> int:
         if intel_verifier is None:
             print("verify_polaris: --dcap-collateral requires --dcap-policy", file=sys.stderr)
             return 2
-        loaded_collateral = _load(args.dcap_collateral)
+        loaded_collateral = _load(args.dcap_collateral, "DCAP collateral")
         collateral = (
             loaded_collateral.get("collateral")
             if isinstance(loaded_collateral, dict)
