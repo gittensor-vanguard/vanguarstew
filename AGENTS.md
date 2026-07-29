@@ -33,8 +33,8 @@ Edit this file when policy changes; code, tests, and CI follow.
 - WHEN a contributor PR changes `benchmark/`, `scripts/`, `docs/`, `blog/`, or Markdown
   documentation THEN CI SHALL close it unless a referenced open issue carries the
   `benchmark-change-approved` label.
-- IF a contributor commit claims to fix, close, or resolve an issue absent from the PR body, or
-  an `*-only` scope claim contradicts the changed source surfaces, THEN CI SHALL close the PR on
+- IF Git metadata claims the contributor PR author's account name for a commit role but GitHub
+  attributes that author or committer role to a different account, THEN CI SHALL close the PR on
   each PR update and after every CI completion.
 
 ## Scoring (gittensor SN74)
