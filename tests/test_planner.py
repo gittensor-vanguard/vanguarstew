@@ -44,6 +44,7 @@ from agent.planner import (  # noqa: E402
     _pr_number,
     _pr_queue_note,
     _pr_title,
+    _queue_plan_kind,
     _recent_kinds_note,
     _release_cadence_note,
     _release_cadence_signal,
@@ -54,7 +55,7 @@ from agent.planner import (  # noqa: E402
     plan_next_actions,
     reconcile_plan_with_queue,
 )
-from benchmark.score import commit_kind, plan_kind  # noqa: E402
+from benchmark.score import commit_kind, kind_recall, plan_kind  # noqa: E402
 
 CTX = {"open_prs": [{"number": 7, "title": "Add streaming export"}]}
 
@@ -98,6 +99,46 @@ def test_duplicate_of_open_pr_is_downweighted_and_flagged():
     assert out[0]["kind"] == "triage"      # down-weighted from "feature"
     assert out[0]["restates_pr"] == 7      # flagged as restating PR #7
     assert "review" in out[0]["rationale"].lower()
+
+
+def test_queue_plan_kind_inherits_conventional_commit_prefix():
+    pr = {"number": 7, "title": "fix: handle the loader race condition"}
+    assert _queue_plan_kind(pr) == "bugfix"
+    assert _queue_plan_kind({"title": "Add streaming export"}) == "triage"
+    assert _queue_plan_kind({"title": "release: 2.0.0"}) == "triage"
+    assert _queue_plan_kind({"title": "chore(release): 1.4.0"}) == "triage"
+
+
+def test_reconcile_inherits_kind_from_cc_pr_title_not_triage():
+    # #2139: stamping triage over a CC-prefixed PR title is a kind_recall miss against the
+    # squash-merge commit the review action produces.
+    ctx = {"open_prs": [{"number": 7, "title": "fix: handle the loader race condition"}]}
+    plan = [{"title": "Handle the loader race condition", "kind": "feature"}]
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    assert out[0]["kind"] == "bugfix"
+    assert out[0]["restates_pr"] == 7
+
+    revealed = [{"subject": "fix: handle the loader race condition (#7)"}]
+    assert commit_kind(revealed[0]["subject"]) == "fix"
+    assert plan_kind("triage") is None
+    assert plan_kind(out[0]["kind"]) == "fix"
+    assert kind_recall(out, revealed)["kind_recall"] == 1.0
+
+
+def test_reconcile_fallback_inherits_cc_kind_from_top_pr():
+    ctx = {"open_prs": [{"number": 7, "title": "feat: add streaming export"}]}
+    plan = [{"title": "Write user documentation", "kind": "docs"}]
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    assert out[0]["kind"] == "feature"
+    assert out[0]["restates_pr"] == 7
+
+
+def test_reconcile_leaves_review_item_with_non_triage_kind():
+    ctx = {"open_prs": [{"number": 7, "title": "fix: handle the loader race condition"}]}
+    plan = [{"title": "Review and merge PR #7", "kind": "feature"}]
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    assert out[0]["kind"] == "feature"
+    assert "restates_pr" not in out[0]
 
 
 def test_review_markers_match_on_word_boundaries_not_substrings():

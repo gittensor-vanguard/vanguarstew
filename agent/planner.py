@@ -1034,12 +1034,25 @@ def _normalize_plan(plan) -> list:
     return out
 
 
+def _queue_plan_kind(pr: dict) -> str:
+    """Plan kind for queue-lane items from an open PR's Conventional-Commit title prefix.
+
+    Unprefixed titles and ``release`` read as ``triage`` so the queue lane does not re-arm a
+    release prediction behind the freeze-T suppress gate (#1561 / #2139).
+    """
+    kind = _commit_plan_kind(_pr_title(pr))
+    if not kind or kind == "release":
+        return "triage"
+    return kind
+
+
 def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
     """Make the plan honor the open-PR queue, deterministically and independent of the LLM.
 
     Guards three failure modes when an LLM disregards the provided queue:
     - **Duplicates in flight**: an item that restates an open PR's work is down-weighted to a
-      `triage` review item and flagged with `restates_pr`, instead of being planned as new work.
+      review item (``triage`` when the PR title carries no Conventional-Commit prefix, else the
+      prefix's plan kind) and flagged with `restates_pr`, instead of being planned as new work.
     - **Redundant items**: multiple items targeting the same PR are collapsed to the first.
     - **Ignored queue**: if no item addresses any open PR, a review item for the top PR is
       prepended so the queue is never silently skipped.
@@ -1071,7 +1084,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
                                  "of duplicating the work")
                 item = {
                     **item,
-                    "kind": "triage",
+                    "kind": _queue_plan_kind(pr),
                     "restates_pr": number,
                     "rationale": rationale,
                 }
@@ -1083,7 +1096,7 @@ def reconcile_plan_with_queue(plan, context: dict, n: int) -> list:
         out.insert(0, {
             "title": f"Review pull request #{top_number if top_number is not None else '?'}: "
                      f"{_pr_title(top)}",
-            "kind": "triage",
+            "kind": _queue_plan_kind(top),
             "restates_pr": top_number,
             "rationale": (
                 "the open PR queue was omitted from the plan; a strong maintainer clears or "
