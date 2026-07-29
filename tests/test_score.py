@@ -342,9 +342,33 @@ def test_is_release_subject_rejects_incidental_versions():
 
 
 def test_is_release_subject_rejects_native_git_revert_titles():
+    # Git's default revert subject (`Revert "<original subject>"`) carries no CC prefix, so the
+    # `_CC_PREFIX`-gated guard that blocks `revert: release X` (#431/#941) doesn't apply to it;
+    # it must still be rejected regardless of what the reverted subject looked like (#1979).
     assert not is_release_subject('Revert "Release v1.2.0"')
     assert not is_release_subject("Revert v2.0")
+    assert not is_release_subject('Revert "chore(release): 1.2.0"')
+    assert not is_release_subject('Revert "bump version to 2.0"')
     assert is_release_subject("v1.2.0-rc.1")
+
+
+def test_commit_kind_of_native_git_revert_is_not_release():
+    assert commit_kind('Revert "Release v1.2.0"') != "release"
+    assert commit_kind('Revert "chore(release): 1.2.0"') != "release"
+
+
+def test_native_git_revert_does_not_credit_the_release_axis():
+    # Same ground-truth-inversion mechanics as test_revert_release_commit_does_not_credit_the_
+    # release_axis (#431/#941), but for the subject form git itself writes on `git revert`
+    # instead of the Conventional-Commit `revert:` form (#1979).
+    revealed = [{"subject": 'Revert "Release v2.0.0"', "files": ["CHANGELOG.md"]}]
+    assert release_signaled(revealed) is False
+    assert released_version(revealed) is None
+    plan = [{"title": "hold the release, stabilize first", "kind": "bugfix"}]
+    score = objective_score(plan, revealed, base_version="1.9.0")
+    assert score["release_signaled"] is False
+    assert score["bump_actual"] is None
+    assert "release" not in score["actual_kinds"]
 
 
 def test_is_release_subject_accepts_two_component_tags():
