@@ -12,6 +12,7 @@ import logging
 import math
 
 from benchmark.comparability import artifact_kind
+from benchmark.scored_slice import slice_reports_unscored
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +80,20 @@ def _mix_from_parts(parts) -> dict:
     }
 
 
+def _empty_mix() -> dict:
+    return {
+        "judge_mean": None,
+        "objective_mean": None,
+        "judge_fraction": None,
+        "objective_fraction": None,
+    }
+
+
 def _slice_mix(slice_) -> dict:
-    return _mix_from_parts(_dict(slice_).get("composite_parts"))
+    slice_ = _dict(slice_)
+    if slice_reports_unscored(slice_):
+        return _empty_mix()
+    return _mix_from_parts(slice_.get("composite_parts"))
 
 
 def summarize_component_mix(artifact) -> dict:

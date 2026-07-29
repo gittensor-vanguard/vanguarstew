@@ -41,6 +41,53 @@ def test_zero_sum_yields_none_fractions():
     assert out["judge_fraction"] is None
 
 
+def test_unscored_aggregate_masks_placeholder_component_means():
+    # scored_repos: 0 carries _mean([]) placeholders in composite_parts — mask as absent.
+    art = {
+        "repos": 2,
+        "scored_repos": 0,
+        "skipped": 2,
+        "composite_mean": 0.0,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] is None
+    assert out["judge_fraction"] is None
+    assert out["objective_fraction"] is None
+
+
+def test_scored_aggregate_keeps_genuine_zero_component_means():
+    art = {
+        "repos": 2,
+        "scored_repos": 2,
+        "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_mean"] == 0.0
+    assert out["objective_mean"] == 0.0
+    assert out["judge_fraction"] is None
+
+
+def test_generalization_unscored_partition_masks_placeholder_means():
+    art = {
+        "tuned": _single(0.8, 0.2),
+        "held_out": {
+            "error": "no held-out repos",
+            "scored_repos": 0,
+            "composite_mean": 0.0,
+            "composite_parts": {"judge_mean": 0.0, "objective_mean": 0.0},
+        },
+        "generalization_gap": None,
+    }
+    out = summarize_component_mix(art)
+    assert out["judge_fraction"] == 0.8
+    held = out["partitions"]["held_out"]
+    assert held["judge_mean"] is None
+    assert held["objective_mean"] is None
+    assert held["judge_fraction"] is None
+
+
 def test_missing_parts_yield_none():
     out = summarize_component_mix({"composite_mean": 0.5})
     assert out["judge_fraction"] is None
