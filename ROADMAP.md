@@ -58,7 +58,7 @@ A *general* maintainer, not one tuned to a single repo.
 - [x] Generalization report: `run_eval --generalization` replays tuned+held-out partitions, reports `generalization_gap`.
 - [x] Judge-robustness: disagreement tracking, pairwise judging, evidence anchoring.
 - [x] Spot-check / manual review of the top agent (as ninja does).
-- [x] **Acceptance run:** `run_eval --generalization` on curated set → `generalization_gap = 0.097`, zero crashes. Held-out performance does not collapse.
+- [x] **Acceptance run:** `run_eval --generalization` on the then-current curated set → `generalization_gap = 0.097`, zero crashes. Held-out performance did not collapse (historical figure — see note below).
 - **Status:** ✅ complete. Acceptance run passed. See `m3_acceptance_result.json` and `blog/m3-milestone.md`.
 
 > **⚠️ The recorded acceptance artifact predates the current repo set and is not reproducible
@@ -80,8 +80,8 @@ Close the crash-and-correctness gap so a full benchmark run completes clean.
 - [x] **Benchmark scoring:** module-recall farming fixed (#289), backlog threshold reachable for single-word titles (#308), composite-score wiring (#341).
 - [x] **Leakage lockout:** tag-creation-date filter for frozen releases (#332), release-tag scrubbing in `scrub_context` (#330), forward-reference masking in git-only fallback (#312).
 - [x] **Tooling:** `compare_eval` CLI for diffing replay artifacts (#306), `--fail-under` score floor for CI gating (#318, #367).
-- [x] **Acceptance run:** M3 acceptance completed clean with `generalization_gap = 0.097`, zero crashes across 5 repos (that artifact predates the current repo set — see the M3 note above).
-- **Status:** ✅ complete. Benchmark runs clean on 5 repos; no agent crashes from malformed LLM output; leakage audit clean; full test suite green (3659 passed).
+- [x] **Acceptance run:** M3 acceptance completed clean with `generalization_gap = 0.097`, zero crashes across the five repos in that historical artifact (see the M3 note above — the shipped curated set now has six repos).
+- **Status:** ✅ complete. Benchmark runs clean on the six-repo curated set; no agent crashes from malformed LLM output; leakage audit clean; full test suite green (3659 passed).
 
 ## M5 — Measured, anti-gaming contribution scoring ✅
 

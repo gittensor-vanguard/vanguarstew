@@ -2,6 +2,14 @@
 
 *July 7, 2026*
 
+> **Historical snapshot.** This post describes the M3 acceptance run as it stood on July 7,
+> 2026. The linked [`m3_acceptance_result.json`](/m3_acceptance_result.json) predates #1741's
+> replacement of `benchmark/repo_sets/curated.json` (five recent-tier repos including `hatch`
+> and `httpx`). The shipped config is now six all-`obscure` pre-2021 repos (`feedparser`,
+> `pluggy`, `pint`, `jsonpickle`, `hpack`, `h2`), so the recorded `generalization_gap = 0.097`
+> cannot be reproduced from the current tree until `run_eval --generalization` is re-run. See
+> the M3 note in [ROADMAP.md](/ROADMAP.md).
+
 We just closed the M3 milestone: a **general maintainer agent that scores on repos it has
 never been tuned against**. The acceptance run completed with **zero crashes** and a
 `generalization_gap` of **0.097** — held-out performance did not collapse. M3 is done.

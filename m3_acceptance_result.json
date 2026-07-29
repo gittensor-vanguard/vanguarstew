@@ -1,5 +1,10 @@
 {
   "repo_set": "benchmark/repo_sets/curated.json",
+  "repo_set_drift": {
+    "issue": 2058,
+    "status": "historical",
+    "note": "Produced against pre-#1741 curated.json (repos scored: hatch, pluggy, feedparser, httpx, hpack; recent-tier freeze windows with after 2025-09-01). Current benchmark/repo_sets/curated.json defines six obscure pre-2021 repos (feedparser, pluggy, pint, jsonpickle, hpack, h2) with per-repo horizon_days. generalization_gap is not reproducible from the shipped config until run_eval --generalization is re-run."
+  },
   "tuned": {
     "repos": 3,
     "scored_repos": 3,

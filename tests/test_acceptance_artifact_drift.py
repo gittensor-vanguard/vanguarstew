@@ -91,6 +91,16 @@ def test_acceptance_artifact_declares_the_repo_set_it_used():
     )
 
 
+def test_acceptance_artifact_marks_repo_set_drift_as_historical():
+    """#2058: the file must signal that its repo_set.path no longer describes what it scored."""
+    drift = _load_acceptance().get("repo_set_drift")
+    assert isinstance(drift, dict), "acceptance artifact must record repo_set_drift metadata"
+    assert drift.get("status") == "historical"
+    assert drift.get("issue") == 2058
+    note = drift.get("note")
+    assert isinstance(note, str) and note.strip(), "repo_set_drift must explain the supersession"
+
+
 @pytest.mark.xfail(
     strict=False,
     reason=(
