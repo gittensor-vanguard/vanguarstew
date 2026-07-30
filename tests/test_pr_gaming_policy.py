@@ -214,6 +214,7 @@ def test_enforce_closes_identity_mismatch(monkeypatch):
     assert decision["allowed"] is False
     assert "@jak-glitch" in comments[0][2]
     assert "Git committer" in comments[0][2]
+    assert "ask a maintainer to reopen" in comments[0][2]
     assert policy.COMMENT_MARKER in comments[0][2]
     assert calls == [
         ("api", "--method", "PATCH", "repos/owner/repo/pulls/9", "-f", "state=closed")
