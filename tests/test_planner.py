@@ -151,6 +151,9 @@ def test_redundant_items_targeting_same_pr_are_collapsed():
 
 def test_pr_number_normalizes_non_scalar_and_bool():
     assert _pr_number({"number": 7}) == 7
+    assert _pr_number({"number": "7"}) == 7
+    assert _pr_number({"number": " 7 "}) == 7
+    assert _pr_number({"number": 7.0}) is None
     assert _pr_number({"number": [7]}) is None      # unhashable list -> numberless
     assert _pr_number({"number": {"n": 7}}) is None  # unhashable dict -> numberless
     assert _pr_number({"number": True}) is None      # bool is never a real PR number
@@ -160,6 +163,15 @@ def test_pr_number_normalizes_non_scalar_and_bool():
     key = _pr_dedup_key({"number": [7], "title": "Add streaming export"})
     assert key == ("title", "Add streaming export")
     hash(key)  # must not raise
+
+
+def test_reconcile_coerces_digit_string_pr_number_without_duplicate():
+    plan = [{"title": "Review PR #7: Add streaming export", "kind": "feature", "rationale": "queue"}]
+    ctx = {"open_prs": [{"number": "7", "title": "Add streaming export"}]}
+    out = reconcile_plan_with_queue(plan, ctx, 5)
+    assert len(out) == 1
+    assert out[0] == plan[0]
+    assert "#?" not in out[0]["title"]
 
 
 def test_reconcile_tolerates_non_hashable_pr_number():
@@ -615,6 +627,9 @@ def test_pr_queue_note_uses_pr_number_not_raw_number_field():
     note = _pr_queue_note({"open_prs": [{"number": 7, "title": "Fix bug"}]})
     assert "#7: Fix bug" in note
     assert "#True" not in note
+    note = _pr_queue_note({"open_prs": [{"number": "7", "title": "Fix bug"}]})
+    assert "#7: Fix bug" in note
+    assert "#?" not in note
     bad = _pr_queue_note({"open_prs": [{"number": True, "title": "Fix bug"}]})
     assert "#?: Fix bug" in bad
     assert "#True" not in bad
