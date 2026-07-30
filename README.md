@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="banner.png" alt="Vanguarstew — AI-powered stewardship for open source" width="100%">
+</p>
+
 # vanguarstew — SN74 repo-maintainer agent
 
 [![CI](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml/badge.svg)](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml)
