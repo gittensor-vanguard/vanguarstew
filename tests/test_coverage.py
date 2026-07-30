@@ -161,7 +161,9 @@ def test_malformed_or_non_dict_result_fails_gracefully():
 
 def test_headline_reports_sufficient_and_insufficient():
     ok = coverage_headline(check_coverage(_multi(_repo(2), _repo(2))))
-    assert "SUFFICIENT" in ok
+    # `"SUFFICIENT" in ok` also matched "INSUFFICIENT", so a regression to the negative verdict
+    # passed silently; anchor the positive verdict at the start of the headline instead.
+    assert ok.startswith("coverage: SUFFICIENT")
     bad = coverage_headline(check_coverage({"tasks": 3}))
     assert "INSUFFICIENT" in bad
     assert coverage_headline({}) == "coverage: no checks evaluated"
