@@ -173,6 +173,42 @@ CONFIG_SURFACE_GUIDANCE = (
     "relevant config paths (e.g. `.github/workflows/`, `.pre-commit-config.yaml`)."
 )
 
+# Second, independent config-surface trigger (#2176). Deliberately worded from its OWN evidence
+# rather than reusing CONFIG_SURFACE_GUIDANCE: that string asserts "a steady stream of automation
+# churn", which is a false statement about a repo whose maintainers are simply doing their own
+# tooling work. Same ask, honest premise.
+CONFIG_VOCABULARY_GUIDANCE = (
+    "Recent maintainer history is dominated by tooling and packaging work — CI config, lint and "
+    "pre-commit setup, dependency pins, build/release scaffolding. That work lands under "
+    "config-surface modules (e.g. `.github`, `tox.ini`, `setup.py`, requirement files), which "
+    "the objective anchor scores by changed path just like source. Include one plan item "
+    "covering that surface, with `files` naming the relevant config paths."
+)
+
+# Config/tooling vocabulary a maintainer uses when the work is not product source. Matched
+# against recent commit subjects — the only per-commit signal a `git archive` freeze preserves.
+_CONFIG_VOCAB_RE = re.compile(
+    r"\b(ci|travis|appveyor|tox|lint|flake8|black|isort|mypy|pre-commit|coverage|codecov|"
+    r"packaging|setup\.py|pyproject|requirements|pin|pins|bump|deps|dependency|dependencies|"
+    r"workflow|workflows|actions|makefile|changelog|release notes)\b",
+    re.I,
+)
+
+# Share of recent subjects carrying config vocabulary before the directive fires. Measured over
+# the 18 tasks the curated set generates: this share correlates r=+0.798 with the fraction of the
+# revealed window that is actually config/tooling files (leave-one-repo-out r stays +0.73..+0.86).
+# The threshold sweep, holding #1640's stated philosophy that a wrong module costs more than a
+# missed one:
+#     t=0.15 -> 8 fire, 5 true / 3 false      t=0.25 -> 4 fire, 3 true / 1 false
+#     t=0.35 -> 3 fire, 3 true / 0 false, mean revealed config share when firing 98%
+# 0.35 is the first threshold with no false positives, and it leaves 15/18 tasks byte-identical.
+_CONFIG_VOCAB_SHARE_PRESSURE = 0.35
+
+# A share needs a denominator: below this many parseable commits one tooling subject reads as a
+# dominant theme. Real frozen contexts carry ~50 commits. Mirrors _RELEASE_DENSITY_MIN_WINDOW's
+# reasoning for the same class of rate.
+_CONFIG_VOCAB_MIN_WINDOW = 10
+
 # Markers that only automation tooling emits — used to gate the config-surface directive on real
 # evidence, not human vocabulary. Matched against a *case-folded* subject so BUILD(DEPS): and
 # build(deps): are treated identically (same for [pre-commit.ci] / Dependabot / Renovate).
@@ -592,15 +628,48 @@ def _automation_surface_signal(context: dict) -> bool:
     return False
 
 
-def _config_surface_note(context: dict) -> str:
-    """Inject config-surface guidance only when automation churn is evidenced (#1640).
+def _config_vocabulary_share(context: dict):
+    """Share of recent subjects using config/tooling vocabulary, or ``None``.
 
-    A source-driven repo (no automation markers) must see a byte-identical prompt, so this
-    returns the empty string there and never shifts that plan.
+    ``None`` when the window carries fewer than ``_CONFIG_VOCAB_MIN_WINDOW`` parseable commits
+    — a rate over a tiny denominator is noise, not a theme.
     """
-    if not _automation_surface_signal(context):
-        return ""
-    return f"\n{CONFIG_SURFACE_GUIDANCE}\n"
+    commits = [c for c in _recent_commits(context) if isinstance(c, dict)]
+    if len(commits) < _CONFIG_VOCAB_MIN_WINDOW:
+        return None
+    hits = sum(
+        1 for c in commits
+        if isinstance(c.get("subject"), str) and _CONFIG_VOCAB_RE.search(c["subject"])
+    )
+    return hits / len(commits)
+
+
+def _config_vocabulary_signal(context: dict) -> bool:
+    """True when recent history is dominated by tooling/packaging work (#2176)."""
+    share = _config_vocabulary_share(context)
+    return share is not None and share >= _CONFIG_VOCAB_SHARE_PRESSURE
+
+
+def _config_surface_note(context: dict) -> str:
+    """Inject config-surface guidance when the config surface is evidenced.
+
+    Two independent triggers, each with its own honest premise:
+
+    - **automation churn** (#1640) — bot markers in recent subjects. Unchanged.
+    - **tooling vocabulary** (#2176) — the maintainers' own subjects are dominated by CI /
+      packaging / lint / dependency work. Added because the automation gate fires on **0 of the
+      18** tasks the current curated set generates (its markers describe post-2021 conventions;
+      #1741 moved the set to all-``obscure`` pre-2021 freezes) while 6 of those 18 revealed
+      windows are >=50% config files — the payoff #1640 was built for, going uncollected.
+
+    Automation evidence wins when both hold, so an automation-driven repo keeps the exact
+    prompt it has today. A repo with neither signal still sees a byte-identical prompt.
+    """
+    if _automation_surface_signal(context):
+        return f"\n{CONFIG_SURFACE_GUIDANCE}\n"
+    if _config_vocabulary_signal(context):
+        return f"\n{CONFIG_VOCABULARY_GUIDANCE}\n"
+    return ""
 
 
 def _repo_layout(context: dict) -> list:

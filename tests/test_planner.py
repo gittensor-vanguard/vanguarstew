@@ -18,6 +18,7 @@ from agent.planner import (  # noqa: E402
     _CC_TYPE_TO_PLAN_KIND,
     _PLAN_KINDS,
     CONFIG_SURFACE_GUIDANCE,
+    CONFIG_VOCABULARY_GUIDANCE,
     OBJECTIVE_ANCHOR_GUIDANCE,
     PLAN_ITEM_SCHEMA,
     RELEASE_CADENCE_GUIDANCE,
@@ -28,6 +29,8 @@ from agent.planner import (  # noqa: E402
     _commit_plan_kind,
     _commits_since_last_release,
     _config_surface_note,
+    _config_vocabulary_share,
+    _config_vocabulary_signal,
     _days_since_last_release,
     _explicit_pr_number,
     _is_automation_subject,
@@ -1373,3 +1376,77 @@ def test_planner_prompt_omits_kind_note_without_conventional_commits():
     ctx = {"open_prs": [], "recent_commits": [{"subject": "Add streaming export"}]}
     plan_next_actions(ctx, {}, 3, CapturingLLM(api_key="offline"))
     assert "Recent maintainer activity by kind" not in captured["user"]
+
+
+# --- #2176: second config-surface trigger (tooling vocabulary) -----------------------------
+
+def _subjects(*subs):
+    return {"recent_commits": [{"subject": s} for s in subs]}
+
+
+def test_config_vocabulary_share_needs_a_real_denominator():
+    # Two commits, one tooling: 0.5 is noise, not a theme.
+    assert _config_vocabulary_share(_subjects("ci: bump actions", "feat: a")) is None
+    assert _config_vocabulary_share({}) is None
+    assert _config_vocabulary_share({"recent_commits": [7, None, "x"]}) is None
+    # Ten commits, four tooling -> a real rate.
+    ctx = _subjects("ci: tox matrix", "chore: pin requirements", "lint: flake8", "update tox.ini",
+                    *[f"feat: {i}" for i in range(6)])
+    assert _config_vocabulary_share(ctx) == 0.4
+
+
+def test_config_vocabulary_signal_fires_only_past_the_threshold():
+    below = _subjects(*(["ci: bump"] * 3 + [f"feat: {i}" for i in range(7)]))
+    assert _config_vocabulary_share(below) == 0.3
+    assert _config_vocabulary_signal(below) is False
+    at = _subjects(*(["ci: bump"] * 4 + [f"feat: {i}" for i in range(6)]))
+    assert _config_vocabulary_share(at) == 0.4
+    assert _config_vocabulary_signal(at) is True
+
+
+def test_config_note_fires_on_tooling_vocabulary_without_any_bot_markers():
+    # No (deps) scope, no dependabot/renovate/pre-commit.ci — the automation gate stays silent,
+    # but the maintainers' own subjects are dominated by tooling work (#2176).
+    ctx = _subjects("update tox.ini for py39", "fix travis matrix", "pin requirements",
+                    "add coverage config", "tidy setup.py", "bump flake8",
+                    *[f"feat: {i}" for i in range(4)])
+    assert _automation_surface_signal(ctx) is False
+    assert _config_vocabulary_signal(ctx) is True
+    note = _config_surface_note(ctx)
+    assert CONFIG_VOCABULARY_GUIDANCE in note
+    assert CONFIG_SURFACE_GUIDANCE not in note
+
+
+def test_automation_evidence_still_wins_when_both_signals_hold():
+    # An automation-driven repo must keep the exact prompt #1640 gave it.
+    ctx = _subjects("build(deps): bump urllib3", "build(deps): bump certifi",
+                    "ci: tox matrix", "chore: pin requirements", "lint: flake8",
+                    *[f"feat: {i}" for i in range(5)])
+    assert _automation_surface_signal(ctx) is True
+    assert _config_vocabulary_signal(ctx) is True
+    note = _config_surface_note(ctx)
+    assert CONFIG_SURFACE_GUIDANCE in note
+    assert CONFIG_VOCABULARY_GUIDANCE not in note
+
+
+def test_source_driven_history_keeps_a_byte_identical_prompt():
+    ctx = _subjects(*[f"feat: feature {i}" for i in range(20)])
+    assert _config_surface_note(ctx) == ""
+    assert _config_surface_note({}) == ""
+    assert _config_surface_note(None) == ""
+
+
+def test_config_vocabulary_note_reaches_the_planning_prompt():
+    captured = {}
+
+    class CapturingLLM(LLM):
+        def chat_json(self, system, user, stub=None):
+            captured["user"] = user
+            return [{"title": "Fix loader", "kind": "bugfix"}]
+
+    ctx = _subjects("update tox.ini", "fix travis matrix", "pin requirements",
+                    "add coverage config", "tidy setup.py", "bump flake8",
+                    *[f"feat: {i}" for i in range(4)])
+    ctx["open_prs"] = []
+    plan_next_actions(ctx, {}, 2, CapturingLLM(api_key="offline"))
+    assert CONFIG_VOCABULARY_GUIDANCE in captured["user"]
