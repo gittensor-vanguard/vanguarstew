@@ -21,6 +21,7 @@ from agent.philosophy import (  # noqa: E402  # noqa: E402
     _normalize_string_list,
     _normalize_text,
     infer_philosophy,
+    serialize_philosophy_for_prompt,
 )
 
 EXPECTED_KEYS = {"summary", "values", "merge_bar", "direction", "evidence"}
@@ -137,3 +138,64 @@ def test_infer_philosophy_non_dict_context_returns_fresh_copy():
     b = infer_philosophy(None, llm)
     a["summary"] = "mutated"
     assert b["summary"] != "mutated"
+
+
+def _oversized_philosophy(num_evidence: int = 13) -> dict:
+    """Shape sized like the #1706 instrumented run (4,237 chars full serialization)."""
+    return {
+        "summary": "A mature library prioritizing stability and a small dependency surface.",
+        "values": ["conservative", "stability-over-features", "docs-first"],
+        "merge_bar": (
+            "Merges well-justified fixes and incremental hardening; rejects churn, new "
+            "dependencies without payoff, and breaking changes outside a deprecation window."
+        ),
+        "direction": "Incremental hardening on the current major line with careful API evolution.",
+        "evidence": [f"signal {i}: " + ("x" * 300) for i in range(num_evidence)],
+    }
+
+
+def test_serialize_philosophy_for_prompt_is_byte_identical_when_it_fits():
+    philosophy = {"summary": "ship fast", "values": ["feature-first"], "merge_bar": "low",
+                  "direction": "expand", "evidence": ["recent feature flags"]}
+    rendered = serialize_philosophy_for_prompt(philosophy, 4000)
+    assert rendered == json.dumps(philosophy, indent=1)
+
+
+def test_serialize_philosophy_for_prompt_drops_trailing_evidence_to_stay_valid_json():
+    philosophy = _oversized_philosophy()
+    full = json.dumps(philosophy, indent=1)
+    assert len(full) > 4000
+
+    for budget in (4000, 3000):
+        rendered = serialize_philosophy_for_prompt(philosophy, budget)
+        assert len(rendered) <= budget
+        decoded = json.loads(rendered)
+        assert decoded["summary"] == philosophy["summary"]
+        assert decoded["values"] == philosophy["values"]
+        assert decoded["merge_bar"] == philosophy["merge_bar"]
+        assert decoded["direction"] == philosophy["direction"]
+        assert isinstance(decoded["evidence"], list)
+        assert decoded["evidence"] == philosophy["evidence"][: len(decoded["evidence"])]
+        if len(full) > budget:
+            assert len(decoded["evidence"]) < len(philosophy["evidence"])
+
+
+def test_serialize_philosophy_for_prompt_hard_slices_when_core_fields_exceed_budget():
+    philosophy = {
+        "summary": "p" * 5000,
+        "values": [],
+        "merge_bar": "high",
+        "direction": "forward",
+        "evidence": [],
+    }
+    full = json.dumps(philosophy, indent=1)
+    rendered = serialize_philosophy_for_prompt(philosophy, 3000)
+    assert rendered == full[:3000]
+    assert len(rendered) == 3000
+
+
+def test_serialize_philosophy_for_prompt_does_not_mutate_input():
+    philosophy = _oversized_philosophy()
+    original_evidence = list(philosophy["evidence"])
+    serialize_philosophy_for_prompt(philosophy, 3000)
+    assert philosophy["evidence"] == original_evidence

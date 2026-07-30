@@ -133,3 +133,28 @@ def _render(context: dict) -> str:
         "labels", "milestones", "releases", "readme_excerpt",
     )}
     return json.dumps(keep, indent=1)[:12000]
+
+
+def serialize_philosophy_for_prompt(philosophy: dict, budget: int) -> str:
+    """Serialize ``philosophy`` for agent prompts without breaking JSON syntax.
+
+    When the full ``json.dumps(..., indent=1)`` fits ``budget``, the result is
+    byte-identical. Otherwise whole trailing ``evidence`` entries are dropped so
+    ``summary``/``values``/``merge_bar``/``direction`` survive as valid JSON. A raw
+    string slice is used only when the object still cannot fit with ``evidence``
+    empty — the same last-resort behavior as before this helper existed.
+    """
+    full = json.dumps(philosophy, indent=1)
+    if len(full) <= budget:
+        return full
+
+    if isinstance(philosophy, dict) and isinstance(philosophy.get("evidence"), list):
+        evidence = list(philosophy["evidence"])
+        while evidence:
+            evidence.pop()
+            trimmed = {**philosophy, "evidence": evidence}
+            candidate = json.dumps(trimmed, indent=1)
+            if len(candidate) <= budget:
+                return candidate
+
+    return full[:budget]
