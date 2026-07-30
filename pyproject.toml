@@ -32,7 +32,7 @@ Repository = "https://github.com/gittensor-vanguard/vanguarstew"
 Issues = "https://github.com/gittensor-vanguard/vanguarstew/issues"
 
 [tool.setuptools]
-packages = ["agent", "benchmark"]
+packages = ["agent", "benchmark", "benchmark.judge_corpus", "benchmark.score_corpus", "scripts"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
