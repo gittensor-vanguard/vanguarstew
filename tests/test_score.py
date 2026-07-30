@@ -1341,8 +1341,14 @@ def test_foresight_breakdown_aggregates_real_objective_scores():
     assert breakdown["release_accuracy_n"] == 2
     # plan_hit predicted the release and the "core" module; plan_miss predicted neither.
     assert breakdown["release_accuracy"] == 0.5
-    assert 0.0 <= breakdown["module_recall_mean"] <= 1.0
-    assert 0.0 <= breakdown["kind_recall_mean"] <= 1.0
+    # These are real per-plan means, not just numbers in [0, 1]: plan_hit scores module_recall 0.25
+    # and kind_recall 1.0, plan_miss scores 0.0 on both, so foresight_breakdown must average them to
+    # 0.125 and 0.5. The prior `0.0 <= x <= 1.0` bounds passed for ANY aggregation -- a dropped data
+    # point, a sum instead of a mean, or a wrong denominator all still land in range -- so the test
+    # named "aggregates real objective scores" never actually pinned the aggregation. The exact
+    # means discriminate a correct mean-of-per-plan-recall from a broken one.
+    assert breakdown["module_recall_mean"] == 0.125
+    assert breakdown["kind_recall_mean"] == 0.5
 
 
 def test_foresight_breakdown_gates_kind_and_release_like_objective_component():

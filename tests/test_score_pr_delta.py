@@ -92,7 +92,11 @@ def test_goodhart_trade_off_is_blocked_even_though_composite_rose():
     baseline = _artifact(0.60, 0.55, 0.65)
     candidate = _artifact(0.63, 0.85, 0.30)
     report = score_pr_delta(baseline, candidate)
-    assert report["composite_deltas"]["composite_mean"] > 0  # composite really did rise
+    # composite rose by a real but small +0.03 (0.60 -> 0.63), and the Pareto floor blocks it
+    # anyway because objective_mean was sacrificed for a higher judge_mean. `> 0` passed for any
+    # positive delta and never pinned *how much* composite rose, so it could not distinguish "the
+    # floor blocks a genuine composite rise" (the case under test) from a near-zero rounding blip.
+    assert report["composite_deltas"]["composite_mean"] == 0.03  # composite really did rise
     assert report["band"] == "blocked"
     assert report["blocks_merge"] is True
     assert report["label"] is None
