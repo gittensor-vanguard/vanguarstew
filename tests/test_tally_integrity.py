@@ -100,6 +100,30 @@ def test_fractional_decisive_margin_cannot_truncate_to_expected_integer():
     assert "decisive_margin_matches" in failed_checks(result)
 
 
+def test_fractional_decisive_margin_near_miss_positive_fails():
+    # int(1.999) == 1 would false-pass; margin must equal challenger-baseline exactly.
+    art = {
+        "tasks": 9,
+        "tally": {"challenger": 5, "baseline": 4, "tie": 0},
+        "decisive_margin": 1.999,
+    }
+    result = check_tally_integrity(art)
+    assert result["passed"] is False
+    assert "decisive_margin_matches" in failed_checks(result)
+
+
+def test_fractional_decisive_margin_near_miss_negative_fails():
+    # int(-1.9) == -1 would false-pass when challenger-baseline is -1.
+    art = {
+        "tasks": 7,
+        "tally": {"challenger": 3, "baseline": 4, "tie": 0},
+        "decisive_margin": -1.9,
+    }
+    result = check_tally_integrity(art)
+    assert result["passed"] is False
+    assert "decisive_margin_matches" in failed_checks(result)
+
+
 def test_missing_tally_fails_tally_present():
     art = _artifact()
     del art["tally"]
