@@ -35,6 +35,7 @@ def _issue(*, approved=True, state="open", pull_request=False):
         ("src/README.md", True),
         (".github/workflows/benchmark-change-policy.yml", True),
         (".github/workflows/pr-integrity.yml", True),
+        (".github/workflows/pr-reopen-policy.yml", True),
         ("CONTRIBUTING.md", True),
         ("docs/polaris-benchmark-seal.md", True),
         ("REVIEW.md", True),
@@ -146,6 +147,7 @@ def test_enforce_closes_unapproved_guardrail_pr(monkeypatch, changed_path):
     assert decision["allowed"] is False
     assert len(comments) == 1
     assert policy.APPROVAL_LABEL in comments[0][2]
+    assert "ask a maintainer to reopen" in comments[0][2]
     assert policy.COMMENT_MARKER in comments[0][2]
     assert calls == (
         [
