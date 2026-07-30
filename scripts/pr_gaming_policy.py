@@ -261,8 +261,8 @@ def _close_comment(decision: dict) -> str:
         "claims the PR author's account name, while GitHub attributes the same commit role to a "
         "different account.\n\n"
         f"{findings}\n\n"
-        "Use accurate Git author and committer identity before reopening. This policy is checked "
-        "on PR updates and again after every CI run completes.\n\n"
+        "Use accurate Git author and committer identity, then ask a maintainer to reopen the PR. "
+        "This policy is checked on PR updates and again after every CI run completes.\n\n"
         f"{COMMENT_MARKER}"
     )
 
