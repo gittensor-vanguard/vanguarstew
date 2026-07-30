@@ -28,6 +28,7 @@ from benchmark.repeatability import (
     DEFAULT_MAX_CV,
     DEFAULT_MIN_RUNS,
     _effective_min_runs,
+    _is_number,
     _repeatability_artifacts,
     assess_repeatability,
 )
@@ -35,10 +36,6 @@ from benchmark.repeatability import (
 logger = logging.getLogger(__name__)
 
 _CHECK_ROW_KEYS = ("name", "passed")
-
-
-def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _dict(value) -> dict:

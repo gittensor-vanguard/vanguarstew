@@ -96,6 +96,19 @@ def test_gate_headline_stable_and_unstable():
     assert repeatability_gate_headline(unstable).startswith("repeatability gate: UNSTABLE")
 
 
+def test_gate_headline_tolerates_a_non_finite_or_oversized_cv():
+    # A hand-built/deserialized result can carry a cv that json round-trips (NaN/Infinity) or an
+    # oversized int; `f"{cv:.1%}"` renders `nan%`/`inf%` or raises OverflowError. The gate headline
+    # now routes cv through the finite-safe `_is_number` (shared with benchmark.repeatability), so a
+    # non-finite/oversized cv renders `cv n/a`; a finite cv is still formatted as a percentage.
+    checks = [{"name": "spread_acceptable", "passed": True}]
+    for bad in (float("nan"), float("inf"), float("-inf"), 10**400):
+        line = repeatability_gate_headline({"passed": True, "runs": 2, "cv": bad, "checks": checks})
+        assert line.endswith("cv n/a)"), bad
+    assert "cv 2.0%" in repeatability_gate_headline(
+        {"passed": True, "runs": 2, "cv": 0.02, "checks": checks})
+
+
 def test_gate_headline_no_checks():
     assert repeatability_gate_headline({}) == "repeatability gate: no checks evaluated"
 
