@@ -305,6 +305,10 @@ def test_review_pr_omits_none_philosophy():
 
 def test_pr_number_normalizes_non_scalar_and_bool():
     assert _pr_number({"number": 7}) == 7
+    assert _pr_number({"number": "7"}) == 7
+    assert _pr_number({"number": " 7 "}) == 7
+    assert _pr_number({"number": 7.0}) is None
+    assert _pr_number({"number": "7.0"}) is None
     assert _pr_number({"number": [7]}) is None
     assert _pr_number({"number": {"n": 7}}) is None
     assert _pr_number({"number": True}) is None
@@ -317,6 +321,11 @@ def test_review_pr_prompt_uses_pr_number_not_raw_number_field():
     review_pr({"number": 7, "title": "Fix bug", "author": "a", "files": []}, None, llm)
     assert llm.last_user.startswith("PULL REQUEST #7: Fix bug")
     assert "#True" not in llm.last_user
+
+    llm = _CaptureUserLLM()
+    review_pr({"number": "7", "title": "Fix bug", "author": "a", "files": []}, None, llm)
+    assert llm.last_user.startswith("PULL REQUEST #7: Fix bug")
+    assert "#?" not in llm.last_user
 
     llm = _CaptureUserLLM()
     review_pr({"number": True, "title": "Fix bug", "author": "a", "files": []}, None, llm)

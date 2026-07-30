@@ -212,16 +212,26 @@ def _pr_number(pr: dict):
     (a list or dict). Such a value is *unhashable*, and both queue-reconciliation keyings —
     the ``by_number`` lookup in ``_matched_pr`` and the ``seen_prs`` set via
     ``_pr_dedup_key`` — would raise ``TypeError: unhashable type`` and abort the whole plan
-    step. Treat a non-int ``number`` as numberless (dedup falls back to title), mirroring the
-    existing numberless handling rather than crashing. ``bool`` is rejected too: it is never a
-    real PR number and would alias 0/1.
+    step. Treat unusable ``number`` values as numberless (dedup falls back to title) rather
+    than crashing. ``bool`` is rejected too: it is never a real PR number and would alias 0/1.
+
+    Digit-only strings (after strip) coerce to ``int`` so a re-serialized ``"7"`` still
+    keys queue matching, notes, and review prompts (#2203). Non-int numeric forms (e.g.
+    floats) stay numberless.
     """
     if not isinstance(pr, dict):
         return None
     number = pr.get("number")
-    if isinstance(number, bool) or not isinstance(number, int):
+    if isinstance(number, bool):
         return None
-    return number
+    if isinstance(number, int):
+        return number
+    if isinstance(number, str):
+        text = number.strip()
+        if text.isdigit():
+            return int(text)
+        return None
+    return None
 
 
 def _pr_dedup_key(pr: dict):
