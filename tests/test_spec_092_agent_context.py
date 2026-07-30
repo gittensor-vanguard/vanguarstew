@@ -195,6 +195,19 @@ def test_with_repo_layout_new_dict_and_override(tmp_path):
 
 # --- Context loading (load_context) --------------------------------------------------------
 
+def test_load_context_non_string_repo_path_degrades(caplog):
+    # Fail-before (#2259): load_context(None) / load_context(123) raised TypeError on
+    # os.path.join, while sibling repo_layout already degraded to [].
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        for bad in (None, 123, True, ""):
+            out = load_context(bad)
+            assert out == {"repo_layout": []}
+    assert any(
+        "load_context: repo_path is" in m and "continuing with empty context" in m
+        for m in (r.getMessage() for r in caplog.records)
+    )
+
+
 def test_load_context_valid_file_with_derived_layout(tmp_path):
     repo = _repo(str(tmp_path / "r"))
     payload = {"open_issues": [{"number": 1, "title": "t"}], "readme_excerpt": "hello"}
