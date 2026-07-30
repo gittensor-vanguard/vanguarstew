@@ -105,12 +105,50 @@ def _mask_forward_refs(text: str) -> str:
     return text
 
 
+def _git_env(repo_path: str) -> dict:
+    """Env for git calls that must not discover an enclosing repository (#2252).
+
+    Frozen checkouts from ``export_tree`` have no ``.git`` of their own. Without a ceiling,
+    ``git -C repo_path`` walks upward and can read a parent work tree — including commits
+    after T. Cap discovery at ``repo_path``'s parent and drop inherited ``GIT_DIR`` /
+    ``GIT_WORK_TREE`` overrides that would point at a foreign repository.
+    """
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")}
+    try:
+        abs_repo = os.path.realpath(repo_path)
+        parent = os.path.dirname(abs_repo)
+        if parent and parent != abs_repo:
+            env["GIT_CEILING_DIRECTORIES"] = parent
+    except OSError:
+        pass
+    return env
+
+
 def _git(repo_path, *args):
     out = subprocess.run(
         ["git", "-C", repo_path, *args],
         capture_output=True, text=True, check=False,
+        env=_git_env(repo_path),
     )
     return out.stdout.strip()
+
+
+def _git_toplevel_matches(repo_path: str) -> bool:
+    """True only when git's discovered toplevel is ``repo_path`` itself.
+
+    Defense in depth on top of ``GIT_CEILING_DIRECTORIES``: refuse any fallback that would
+    read an enclosing repository's history (#2252).
+    """
+    if not isinstance(repo_path, str) or not repo_path:
+        return False
+    toplevel = _git(repo_path, "rev-parse", "--show-toplevel")
+    if not toplevel:
+        return False
+    try:
+        return os.path.realpath(toplevel) == os.path.realpath(repo_path)
+    except OSError:
+        return False
 
 
 def repo_layout(repo_path: str, limit: int = REPO_LAYOUT_LIMIT) -> list:
@@ -274,6 +312,15 @@ def context_for_agent(context: dict) -> dict:
 
 
 def _context_from_git(repo_path: str) -> dict:
+    # Fail closed when discovery would read an enclosing repository (frozen trees from
+    # export_tree have no .git; without a ceiling / toplevel check, git walks upward and
+    # leaks post-T history from the parent work tree — #2252). Same RuntimeError class as
+    # the empty-repo path below so load_context does not silently invent foreign context.
+    if not _git_toplevel_matches(repo_path):
+        raise RuntimeError(
+            f"git-only context fallback: {repo_path} is not its own git toplevel "
+            f"(missing .git or nested inside another repository)"
+        )
     # --verify --quiet suppresses the "fatal: ambiguous argument 'HEAD'" stderr message and
     # yields empty stdout on failure, instead of the literal word "HEAD" that a plain
     # `rev-parse HEAD` prints to stdout on an empty repo (rc 128) -- which `_git`'s

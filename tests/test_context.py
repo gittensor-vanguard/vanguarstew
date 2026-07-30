@@ -553,6 +553,31 @@ def test_context_from_git_raises_clean_error_on_empty_repo():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_refuses_enclosing_repository_history():
+    # Frozen trees from export_tree have no .git. Nested under another checkout, bare
+    # `git -C` walks upward and would hand the agent the outer repo's post-T commits
+    # (#2252). Fail closed: recent_commits must stay empty of the outer subject.
+    outer = tempfile.mkdtemp()
+    try:
+        _init_repo(outer)
+        _write(outer, "outer.txt")
+        _git(outer, "add", "-A", date="2030-01-01T12:00:00+00:00")
+        _git(outer, "commit", "-q", "-m", "FUTURE: ship v9.9.0 rewrite",
+             date="2030-01-01T12:00:00+00:00")
+        nested = os.path.join(outer, "frozen_export")
+        os.makedirs(nested)
+        _write(nested, "past.txt", "fix: past work at T\n")
+        assert not os.path.exists(os.path.join(nested, ".git"))
+        with pytest.raises(RuntimeError, match="not its own git toplevel"):
+            _context_from_git(nested)
+        # load_context must not quietly invent foreign history either
+        with pytest.raises(RuntimeError, match="not its own git toplevel"):
+            load_context(nested)
+    finally:
+        shutil.rmtree(outer, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_enrich_context_proceeds_for_git_fallback_context(monkeypatch):
     repo = tempfile.mkdtemp()
     try:
