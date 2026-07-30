@@ -82,6 +82,9 @@ def test_commit_kind_non_release_scoped_stays_non_release():
         "refactor: release the lock at 3.0",
         "chore(deps): bump lodash to 4.17.21",
         "test(release): cover the release-notes generator",
+        "revert: release 2.0.0",
+        'Revert "Release v1.2.0"',
+        'Revert "chore(release): 1.2.0"',
     ):
         assert not is_release_subject(subj), subj
         assert commit_kind(subj) != "release", subj

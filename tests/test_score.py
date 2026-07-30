@@ -342,8 +342,17 @@ def test_is_release_subject_rejects_incidental_versions():
 
 
 def test_is_release_subject_rejects_native_git_revert_titles():
-    assert not is_release_subject('Revert "Release v1.2.0"')
-    assert not is_release_subject("Revert v2.0")
+    # Git's default revert subject has no CC prefix; without an early guard the quoted
+    # original subject would match _RELEASE_KW / _RELEASE_TAG_SUBJECT (#1979).
+    for subj in (
+        'Revert "Release v1.2.0"',
+        'Revert "chore(release): 1.2.0"',
+        'Revert "bump version to 2.0"',
+        "Revert v2.0",
+        'REVERT "Release v1.2.0"',
+    ):
+        assert not is_release_subject(subj), subj
+        assert commit_kind(subj) != "release", subj
     assert is_release_subject("v1.2.0-rc.1")
 
 
@@ -470,19 +479,22 @@ def test_revert_release_commit_does_not_credit_the_release_axis():
     # Downstream: a window whose only release-ish commit REVERTS a release must not score the
     # release axis. Before the fix, is_release_subject("revert: release X") was True, corrupting
     # release_signaled / released_version / bump_actual and kind_recall's 'release'.
-    revealed = [{"subject": "revert: release 2.0.0", "files": ["CHANGELOG.md"]}]
-    assert release_signaled(revealed) is False
-    assert released_version(revealed) is None
-    plan = [{"title": "cut the 2.0.0 release", "kind": "release"}]
-    score = objective_score(plan, revealed, base_version="1.9.0")
-    assert score["release_signaled"] is False
-    assert score["bump_actual"] is None
-    assert "release" not in score["actual_kinds"]
+    for subject in ("revert: release 2.0.0", 'Revert "Release v2.0.0"'):
+        revealed = [{"subject": subject, "files": ["CHANGELOG.md"]}]
+        assert release_signaled(revealed) is False, subject
+        assert released_version(revealed) is None, subject
+        plan = [{"title": "cut the 2.0.0 release", "kind": "release"}]
+        score = objective_score(plan, revealed, base_version="1.9.0")
+        assert score["release_signaled"] is False, subject
+        assert score["bump_actual"] is None, subject
+        assert "release" not in score["actual_kinds"], subject
     # Contrast: a genuine chore(release) cut in the same slot DOES credit the release axis.
     cut = [{"subject": "chore(release): 2.0.0", "files": ["CHANGELOG.md"]}]
     assert release_signaled(cut) is True
     assert released_version(cut) == (2, 0, 0)
-    assert "release" in objective_score(plan, cut, base_version="1.9.0")["actual_kinds"]
+    assert "release" in objective_score(
+        [{"title": "cut the 2.0.0 release", "kind": "release"}], cut, base_version="1.9.0",
+    )["actual_kinds"]
 
 
 def test_release_scoped_non_cuts_stay_non_release():

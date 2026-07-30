@@ -389,7 +389,9 @@ def is_release_subject(text: str) -> bool:
     - a version body under any **non-tooling** CC prefix — ``fix: 2.0.0``, ``ci: 3.0.0``,
       ``docs: 1.4.0``, and especially ``revert: release 1.2.0`` (the *opposite* of a cut).
       Outside chore/build the prefix is authoritative, and neither an incidental
-      ``release``/``changelog`` word (#431) nor a version body makes it a cut.
+      ``release``/``changelog`` word (#431) nor a version body makes it a cut; and
+    - a git-native revert subject — ``Revert "Release v1.2.0"`` — which has no CC prefix and
+      would otherwise fall through to the release-keyword / tag fallback (#1979).
 
     A non-string value (an LLM may emit a list/dict/number for a plan title) is never a
     release, so it returns False instead of raising inside `re`.

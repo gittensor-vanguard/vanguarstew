@@ -926,7 +926,8 @@ def test_is_release_subject_mirrors_the_anchor():
         assert _is_release_subject(good) is True, good
     # NOT cuts — a version under a non-tooling prefix, an incidental version, a revert, plain work:
     for bad in ("fix: 2.0.0", "ci: 3.0.0", "docs: 1.4.0", "revert: release 1.2.0",
-                'Revert "Release v1.2.0"', "Revert v2.0",
+                'Revert "Release v1.2.0"', 'Revert "chore(release): 1.2.0"',
+                'Revert "bump version to 2.0"', "Revert v2.0",
                 "bump lodash to v4.17.21", "fix crash in v1.2.0 parser", "Fix the loader",
                 "test: tighten release assertions", None, 42, "", "   "):
         assert _is_release_subject(bad) is False, bad
