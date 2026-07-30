@@ -1318,8 +1318,14 @@ def test_bump_level_handles_non_tuple():
 
 def test_composite_score_handles_non_numeric_weights():
     from benchmark.score import composite_score
-    assert composite_score("tie", {"module_recall": 0.5}, w_judge=None) >= 0
-    assert composite_score("tie", {"module_recall": 0.5}, w_objective="str") >= 0
+    # A non-numeric weight must fall back to the 0.6/0.4 defaults, not silently drop the term.
+    # With winner "A" (judge term = 1.0) and module_recall 0.5: 0.6*1.0 + 0.4*0.5 = 0.8. The prior
+    # assertions used winner "tie" (judge term == objective term == 0.5), so the result was 0.5 for
+    # ANY weights and the `>= 0` bound could never fail -- the default-weight fallback the test name
+    # claims to cover was never actually exercised. Asserting the exact 0.8 discriminates a fallback
+    # that instead dropped a weight to 0 (which would give a different value).
+    assert composite_score("A", {"module_recall": 0.5}, w_judge=None) == 0.8
+    assert composite_score("A", {"module_recall": 0.5}, w_objective="str") == 0.8
 
 
 # ---- foresight_breakdown / combine_foresight_breakdowns (M7 legible foresight metric) ----
