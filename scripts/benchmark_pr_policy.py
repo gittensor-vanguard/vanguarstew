@@ -17,6 +17,7 @@ GUARDRAIL_FILES = frozenset(
     {
         ".github/workflows/benchmark-change-policy.yml",
         ".github/workflows/pr-integrity.yml",
+        ".github/workflows/pr-reopen-policy.yml",
     }
 )
 COMMENT_MARKER = "<!-- vanguarstew:benchmark-change-policy -->"
@@ -215,7 +216,7 @@ def enforce(event: dict, repo: str) -> dict:
         "Closing automatically: changes to the benchmark, scripts, and documentation are "
         "maintainer-directed. Please open an issue first, agree the scope with a maintainer, "
         f"and wait for the `{APPROVAL_LABEL}` label before submitting a PR. Then reference that "
-        "open issue with `Refs #<number>` and reopen this PR. See "
+        "open issue with `Refs #<number>` and ask a maintainer to reopen this PR. See "
         "[CONTRIBUTING.md](https://github.com/gittensor-vanguard/vanguarstew/blob/main/"
         "CONTRIBUTING.md#benchmark-scripts-and-documentation-changes).\n\n"
         f"{COMMENT_MARKER}"

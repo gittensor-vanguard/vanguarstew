@@ -68,6 +68,9 @@ full loop without an inference endpoint.
 2. Make sure `ruff check .` and the offline test suite pass locally.
 3. Reference the issue you're addressing (e.g. `Fixes #12`).
 4. Fill in the PR template; describe what you changed and how you verified it.
+5. If a PR is closed, do not reopen it yourself. Correct the problem and ask a maintainer to
+   reopen it, or open a corrected replacement PR when directed. Contributor reopen attempts are
+   automatically re-closed.
 
 CI must be green before a PR can merge. See [REVIEW.md](REVIEW.md) for exactly how
 contributions are gated, reviewed, and scored — the process is designed to be predictable and
@@ -81,7 +84,8 @@ allowed when their Git metadata identifies them accurately, and an email that Gi
 an account is not treated as evidence of another identity.
 
 CI evaluates this rule on each PR update and again whenever the normal CI workflow completes.
-Identity mismatches are automatically closed; correct the commit attribution before reopening.
+Identity mismatches are automatically closed; correct the commit attribution and ask a maintainer
+to reopen the PR.
 
 ## Benchmark, scripts, and documentation changes
 
