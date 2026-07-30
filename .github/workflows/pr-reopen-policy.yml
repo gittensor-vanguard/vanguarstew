@@ -1,0 +1,35 @@
+name: PR reopen policy
+
+# A contributor cannot unilaterally reverse a maintainer or automation close decision.
+# pull_request_target supplies a write token for fork PRs while running trusted base code only.
+on:
+  pull_request_target:
+    types: [reopened]
+    branches: [test, main]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-reopen-policy-${{ github.event.pull_request.number }}
+  # If a maintainer reopens immediately after a contributor attempt, the newer authorized event
+  # cancels the stale close run before it can reverse the maintainer's decision.
+  cancel-in-progress: true
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted base policy
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Enforce reopen authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/pr_reopen_policy.py

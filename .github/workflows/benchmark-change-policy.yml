@@ -17,6 +17,7 @@ on:
       - "**/*.md"
       - ".github/workflows/benchmark-change-policy.yml"
       - ".github/workflows/pr-integrity.yml"
+      - ".github/workflows/pr-reopen-policy.yml"
 
 permissions:
   contents: read
