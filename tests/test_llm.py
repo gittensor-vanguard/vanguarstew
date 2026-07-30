@@ -71,6 +71,26 @@ def test_offline_when_no_api_base():
     assert LLM(api_base="").offline is True
 
 
+def test_api_base_true_degrades_to_offline():
+    # Fail-before (#2214): api_base=True crashed on .rstrip before offline detection.
+    llm = LLM(api_base=True, api_key="offline")
+    assert llm.api_base == ""
+    assert llm.offline is True
+
+
+def test_api_base_bytes_degrades_to_offline():
+    llm = LLM(api_base=b"https://api.example.com/", api_key="offline")
+    assert llm.api_base == ""
+    assert llm.offline is True
+
+
+def test_api_base_string_url_rstrips_trailing_slash(monkeypatch):
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    llm = LLM(api_base="https://api.example.com/", api_key="secret")
+    assert llm.api_base == "https://api.example.com"
+    assert llm.offline is False
+
+
 # ---- Timeout ----------------------------------------------------------------
 
 def test_timeout_defaults_to_120():
