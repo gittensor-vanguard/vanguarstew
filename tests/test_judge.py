@@ -422,7 +422,13 @@ def test_offline_rank_tolerates_non_list_plan_container():
         "philosophy": {"summary": "ship fixes"},
         "rationale": "because",
     })
-    assert good[0] > 0
+    # _offline_rank returns (plan_substance, philosophy_score, rationale_score). `good[0] > 0`
+    # only checked the substantive plan beat the non-list one on the FIRST axis and never pinned
+    # the other two, so a rank that silently dropped the philosophy or rationale contribution
+    # would still pass. The exact tuple ties each axis to its input: plan substance 2 (a titled,
+    # kinded item -- equal to _plan_substance), philosophy 1 (a summary is present), and rationale
+    # 1 (a non-empty string), versus (0, 0, 1) for the non-list plan above.
+    assert good == (2, 1, 1)
 
 
 # --- #350: _offline_rank must tolerate a non-string top-level rationale (no crash) --------
