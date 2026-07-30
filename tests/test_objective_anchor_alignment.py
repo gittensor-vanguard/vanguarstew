@@ -84,12 +84,68 @@ def test_backfill_never_attaches_unmentioned_modules():
     assert "files" not in out[0]
 
 
-def test_backfill_caps_at_two_entries_in_layout_order():
+def test_backfill_caps_at_two_entries():
     plan = [{"title": "Modernize tox, src and setup packaging", "kind": "refactor"}]
     out = _backfill_files_from_layout(
         plan, {"repo_layout": ["tox.ini", "src", "setup.py"]},
     )
-    assert out[0]["files"] == ["tox.ini", "src"]
+    assert len(out[0]["files"]) == 2
+    assert set(out[0]["files"]) <= {"tox.ini", "src", "setup.py"}
+
+
+# ── files backfill: layout-appropriate token vocabulary (#2188) ───────────────────────────
+
+
+@pytest.mark.parametrize("title,layout,expected", [
+    # Words that are noise in a PR title but are real module names in a layout.
+    ("Update CHANGES for the upcoming cut", ["CHANGES", "pint/"], ["CHANGES"]),
+    ("Refresh the docs examples", ["docs/", "pint/"], ["docs/"]),
+    ("Land the queued feature work", ["feature/", "pint/"], ["feature/"]),
+    # A single trailing extension is stripped, so the stem still matches.
+    ("Update the changelog", ["CHANGELOG.rst", "pint/"], ["CHANGELOG.rst"]),
+])
+def test_backfill_matches_entries_whose_names_are_pr_title_stopwords(title, layout, expected):
+    out = _backfill_files_from_layout([{"title": title, "kind": "docs"}],
+                                      {"repo_layout": layout})
+    assert out[0]["files"] == expected
+
+
+def test_backfill_still_requires_the_items_own_text_to_name_the_entry():
+    # The looser vocabulary must not become a licence to attach unmentioned modules.
+    out = _backfill_files_from_layout([{"title": "Improve error messages", "kind": "bugfix"}],
+                                      {"repo_layout": ["docs/", "src/", "CHANGES"]})
+    assert "files" not in out[0]
+
+
+# ── files backfill: ranked selection under the cap (#2193) ────────────────────────────────
+
+
+def test_backfill_prefers_entries_named_in_recent_commit_subjects():
+    # repo_layout is alphabetical, so without ranking the cap would keep bench/ and
+    # examples/ and drop pint/ — the package directory carrying the changed-file weight.
+    ctx = {
+        "repo_layout": ["bench/", "examples/", "pint/"],
+        "recent_commits": [{"subject": "fix: pint parser edge case"}] * 3,
+    }
+    plan = [{"title": "Speed up pint unit parsing", "kind": "perf",
+             "rationale": "bench harness and examples exercise the slow path"}]
+    out = _backfill_files_from_layout(plan, ctx)
+    assert out[0]["files"][0] == "pint/"
+
+
+def test_backfill_ranks_directories_ahead_of_docs_surfaces():
+    ctx = {"repo_layout": ["CHANGES", "docs/", "loader/"], "recent_commits": []}
+    plan = [{"title": "Rework loader docs and CHANGES wording", "kind": "docs"}]
+    out = _backfill_files_from_layout(plan, ctx)
+    assert out[0]["files"][0] == "loader/"
+
+
+def test_backfill_ranking_is_deterministic_without_activity_signal():
+    ctx = {"repo_layout": ["bench/", "examples/", "pint/"]}
+    plan = [{"title": "Touch pint, bench and examples", "kind": "refactor"}]
+    first = _backfill_files_from_layout(plan, ctx)[0]["files"]
+    second = _backfill_files_from_layout(plan, ctx)[0]["files"]
+    assert first == second and len(first) == 2
 
 
 def test_backfill_skips_triage_and_already_filed_items():

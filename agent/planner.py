@@ -674,6 +674,64 @@ _BACKFILL_MAX_FILES = 2
 # what tips it over: backfill only fires while the compact-serialized plan stays under this.
 _JUDGE_PLAN_COMPACT_BUDGET = 1300
 
+# Connective noise only. Layout matching needs its own vocabulary: ``_STOPWORDS`` exists to
+# strip the framing off a PR title ("review the PR to fix the loader race") and so discards
+# `docs`, `changes`, `release`, `feature` — words that are noise in that job and are exactly
+# the module names that matter in a repository layout. Reusing it here made an entry like
+# `docs/` or `CHANGES` unmatchable even by an item naming it verbatim.
+_LAYOUT_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "this", "that", "from", "into", "via", "our",
+})
+
+# A single trailing extension is dropped when tokenizing a layout entry, so `CHANGES.rst`
+# matches an item that says "changes" — mirroring how the objective anchor derives a
+# top-level module name from a top-level file.
+_LAYOUT_EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,8}$")
+
+
+def _layout_tokens(text: str) -> set:
+    """Content tokens for layout matching: no domain words dropped, one extension stripped."""
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
+    stem = _LAYOUT_EXT_RE.sub("", text.strip().rstrip("/"))
+    return {
+        t for t in re.findall(r"[a-z0-9]+", stem.lower())
+        if len(t) > 1 and t not in _LAYOUT_STOPWORDS
+    }
+
+
+def _activity_tokens(context: dict) -> set:
+    """Tokens appearing in recent commit subjects — where the repo has actually been working."""
+    tokens = set()
+    for commit in _recent_commits(context):
+        if isinstance(commit, dict):
+            tokens |= _layout_tokens(commit.get("subject") or "")
+    return tokens
+
+
+def _backfill_rank(entry: str, activity: set) -> tuple:
+    """Sort key for a matched layout entry: where near-term work most plausibly lands.
+
+    Only two signals, both read off the frozen context. An entry named in recent commit
+    subjects ranks first — the repository stating where it has been working beats any
+    guess from the filename. Directories then rank ahead of single files, since a tree is
+    where a module's work concentrates while a top-level file is usually incidental; docs
+    and changelog-style surfaces rank last, being the ones the plan tends to name anyway.
+
+    Without this the cap fell on whatever sorted first alphabetically (``repo_layout`` is
+    sorted), so an item naming three real entries could keep `bench/` and `examples/` and
+    drop the package directory that carries most of the changed-file weight.
+    """
+    tokens = _layout_tokens(entry)
+    is_dir = entry.endswith("/")
+    docs_like = bool(tokens & {"docs", "doc", "documentation", "changelog", "changes",
+                               "history", "news", "readme", "authors", "license"})
+    return (
+        0 if tokens & activity else 1,
+        1 if docs_like else 0,
+        0 if is_dir else 1,
+    )
+
 
 def _backfill_files_from_layout(plan: list, context: dict) -> list:
     """Attach `files` to items whose own text names a real top-level entry but left it empty.
@@ -682,9 +740,11 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
     tokens, and `files` is also where a plan states concretely where work lands — an item
     like "Harden the loader in src" that omits `files` is less specific than its own title.
     The repair is strictly token-gated: a layout entry is attached only when the item's own
-    title/theme/rationale shares a significant token with the entry's name, so an item never
+    title/theme/rationale shares a content token with the entry's name, so an item never
     claims a module its text does not mention, and the plan stays exactly as specific as the
-    model made it. Entries are attached in layout order, capped at ``_BACKFILL_MAX_FILES``.
+    model made it. When more entries match than ``_BACKFILL_MAX_FILES`` allows, the survivors
+    are chosen by ``_backfill_rank`` — recent-commit activity first — rather than by whichever
+    filename happened to sort first.
 
     `triage` items are maintainer actions, not commit work, and pass through untouched, as
     does any item that already carries `files` and any item on an empty/unreadable layout.
@@ -701,7 +761,8 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
     entries = _repo_layout(context)
     if not entries:
         return plan
-    entry_tokens = [(entry, _significant_tokens(entry)) for entry in entries]
+    entry_tokens = [(entry, _layout_tokens(entry)) for entry in entries]
+    activity = _activity_tokens(context)
     out = []
     for i, item in enumerate(plan):
         if (
@@ -712,14 +773,14 @@ def _backfill_files_from_layout(plan: list, context: dict) -> list:
             out.append(item)
             continue
         text_tokens = (
-            _significant_tokens(item.get("title", ""))
-            | _significant_tokens(item.get("theme", ""))
-            | _significant_tokens(item.get("rationale", ""))
+            _layout_tokens(item.get("title", ""))
+            | _layout_tokens(item.get("theme", ""))
+            | _layout_tokens(item.get("rationale", ""))
         )
-        matched = [
-            entry for entry, tokens in entry_tokens
-            if tokens and tokens & text_tokens
-        ][:_BACKFILL_MAX_FILES]
+        matched = sorted(
+            (entry for entry, tokens in entry_tokens if tokens and tokens & text_tokens),
+            key=lambda entry: _backfill_rank(entry, activity),
+        )[:_BACKFILL_MAX_FILES]
         if matched:
             candidate = {**item, "files": matched}
             trial = out + [candidate] + plan[i + 1:]
