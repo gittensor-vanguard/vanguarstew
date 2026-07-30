@@ -69,7 +69,17 @@ def run(argv=None) -> int:
             print(f"verify_attestation: cannot read transcript ({args.transcript}): {exc}",
                   file=sys.stderr)
             raise SystemExit(2) from exc
-        claimed = (evidence.get("inputs") or {}).get("transcript_digest")
+        # Mirror build_evidence: a non-mapping `inputs` is survivable (list/str/etc. are
+        # truthy, so `or {}` does not protect `.get`). Treat as empty and warn, same as the writer.
+        bound_inputs = evidence.get("inputs")
+        if not isinstance(bound_inputs, dict):
+            print(
+                f"verify_attestation: inputs is {type(bound_inputs).__name__}, "
+                "not a dict; treating as empty",
+                file=sys.stderr,
+            )
+            bound_inputs = {}
+        claimed = bound_inputs.get("transcript_digest")
         report["checks"]["transcript_digest"] = recorded == claimed
         report["ok"] = all(report["checks"].values())
         if recorded != claimed:

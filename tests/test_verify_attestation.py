@@ -87,3 +87,35 @@ def test_valid_transcript_still_runs_and_reports(tmp_path, capsys):
     assert code == 0
     out = json.loads(capsys.readouterr().out)
     assert "transcript_digest" in out["checks"]
+
+
+def test_non_mapping_inputs_warns_and_reports_digest_mismatch(tmp_path, capsys):
+    # #2251: a truthy non-dict `inputs` (e.g. a list) used to raise AttributeError on `.get`
+    # inside the --transcript branch. Mirror build_evidence: warn, treat as empty, and let the
+    # digest check report False / exit 0 (without --strict) instead of crashing.
+    #
+    # Shape mirrors a published bundle that still passes verify_evidence: digests were computed
+    # as if inputs were empty (the writer's tolerant path), then `inputs` was stored as a list.
+    artifact = {"composite_mean": 0.5, "per_repo": []}
+    evidence = build_evidence(artifact, ["not", "a", "mapping"])
+    evidence["inputs"] = ["not", "a", "mapping"]
+    art_path = tmp_path / "artifact.json"
+    ev_path = tmp_path / "evidence.json"
+    art_path.write_text(json.dumps(artifact), encoding="utf-8")
+    ev_path.write_text(json.dumps(evidence), encoding="utf-8")
+    tpath = tmp_path / "transcript.json"
+    TranscriptStore([{"key": "k", "response": "r"}]).save(str(tpath))
+
+    # Without --transcript the same bundle already verifies (baseline from the issue).
+    assert verify_attestation.run(
+        ["--artifact", str(art_path), "--evidence", str(ev_path)]) == 0
+    capsys.readouterr()
+
+    code = verify_attestation.run(
+        ["--artifact", str(art_path), "--evidence", str(ev_path),
+         "--transcript", str(tpath)])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "inputs is list, not a dict; treating as empty" in captured.err
+    out = json.loads(captured.out)
+    assert out["checks"]["transcript_digest"] is False
