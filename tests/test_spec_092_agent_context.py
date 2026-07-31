@@ -395,9 +395,14 @@ def test_fallback_commit_rows_shape_and_scrub(tmp_path):
     out = _context_from_git(repo)
     newest = out["recent_commits"][0]  # newest first (git log order)
     assert len(newest["sha"]) == 10
+    assert "date" in newest and newest["date"]  # ISO committer date (#2253)
     assert newest["subject"] == "part of #ref, see <link>"
     assert out["frozen_at"]["commit"] == newest["sha"]
-    assert out["frozen_at"]["date"]  # ISO committer date of T
+    assert out["frozen_at"]["date"] == newest["date"]
+    # Parity with freeze.build_context commit row keys on the same repo.
+    from benchmark.freeze import build_context
+    frozen = build_context(repo, "HEAD")["recent_commits"][0]
+    assert set(newest) == set(frozen) == {"sha", "date", "subject"}
 
 
 def test_fallback_commit_cap_50(tmp_path):
