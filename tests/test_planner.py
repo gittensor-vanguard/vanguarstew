@@ -548,9 +548,28 @@ def test_bare_hash_still_matches_when_content_overlaps_the_pr():
 def test_qualified_pr_reference_is_still_authoritative_even_when_stale():
     prs = [{"number": 7, "title": "Add streaming export"}]
     # "PR #9" is qualified and stale (no PR 9) -> matches None, suppressing fallback matching.
+    # Rationale token stuffing must not rescue a stale number (#83); only a title-quoted
+    # subject phrase may (#2238).
     stale = {"title": "PR #9: something unrelated", "kind": "triage",
              "rationale": "streaming export export export"}
     assert _matched_pr(stale, prs) is None
+
+
+def test_stale_number_with_verbatim_subject_still_matches():
+    """#2238: a hallucinated #N must not suppress a verbatim title match.
+
+    The item cites #99 (absent) but quotes open PR #7's subject exactly. Without the
+    subject rescue, ``_matched_pr`` returns None and ``reconcile_plan_with_queue``
+    prepends a second review for the same PR.
+    """
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    item = {"title": "Review #99: Add streaming export", "kind": "triage"}
+    assert _matched_pr(item, prs) == prs[0]
+    out = reconcile_plan_with_queue([item], {"open_prs": prs}, 5)
+    # Matched -> queue honored; no duplicate "Review pull request #7" prepended.
+    assert len(out) == 1
+    assert out[0]["title"] == item["title"]
+    assert "restates_pr" not in out[0]  # already a triage review item
 
 
 def test_qualified_reference_wins_over_an_earlier_bare_ordinal():

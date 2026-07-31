@@ -880,8 +880,9 @@ def _matched_pr(item: dict, prs: list):
     matching title when several nested titles are quoted), then significant-token
     overlap. One-word PR titles never match on overlap alone — they are too
     ambiguous when the queue grows. An explicit ``#N`` that names a PR no longer in the
-    queue is treated as stale: the item is **not** matched against a different open PR
-    via fallback, since the author already committed to a specific number.
+    queue is stale: do **not** reattach via token overlap (#83). If the item's title
+    still quotes an open PR's subject verbatim, accept that subject match (#2238) so
+    reconciliation does not prepend a duplicate review for the same PR.
     """
     by_number = {_pr_number(p): p for p in prs if _pr_number(p) is not None}
 
@@ -896,12 +897,22 @@ def _matched_pr(item: dict, prs: list):
             if governed is not None:
                 lookup = governed
         pr = by_number.get(lookup)
-        # A qualified "PR #N" is authoritative (even when stale -> None, which suppresses
-        # fallback matching). A bare "#N" is trusted only when the item actually reads as a PR
-        # reference or its content matches the PR; otherwise "#N" is an ordinal ("the #1
-        # feature") and must not hijack an unrelated open PR — fall through to content matching.
+        # A qualified "PR #N" / review-governed bare "#N" is authoritative when it resolves.
+        # When it is stale, allow a title-only subject-phrase rescue (#2238) but never the
+        # weaker token-overlap path (#83). A bare "#N" that is only an ordinal falls through.
         if qualified or _reads_as_pr_reference(item) or (pr is not None and _pr_content_matches(item, pr)):
-            return pr
+            if pr is not None:
+                return pr
+            title_blob = (item.get("title") or "").lower()
+            subject_matches = [
+                candidate
+                for candidate in prs
+                if len(_pr_title(candidate)) >= _MIN_SUBJECT_PHRASE
+                and _pr_title(candidate).lower() in title_blob
+            ]
+            if subject_matches:
+                return max(subject_matches, key=lambda candidate: len(_pr_title(candidate)))
+            return None
 
     # Full-subject phrase match. Nested titles ("Add streaming export" is a substring of
     # "Add streaming export docs") can both appear in the plan text; prefer the longest
