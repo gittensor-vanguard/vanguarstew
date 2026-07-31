@@ -292,6 +292,26 @@ def test_generalization_report_computes_gap_from_both_partitions(monkeypatch):
     assert result["generalization_gap"] == 0.11
 
 
+def test_partial_generalization_report_retains_error(monkeypatch):
+    def fake_run_multi_replay(repo_set=None, repo_set_partition=None, **kwargs):
+        assert repo_set == "repo-set.json"
+        assert kwargs == {"seed": 5}
+        if repo_set_partition == "held_out":
+            raise RepoSetError("no held_out repos")
+        return {"scored_repos": 4, "composite_mean": 0.6}
+
+    monkeypatch.setattr("benchmark.runner.run_multi_replay", fake_run_multi_replay)
+    result = run_generalization_report("repo-set.json", seed=5)
+
+    assert result["tuned"] == {"scored_repos": 4, "composite_mean": 0.6}
+    assert result["held_out"] == {
+        "error": "no held_out repos",
+        "scored_repos": 0,
+        "composite_mean": 0.0,
+    }
+    assert result["generalization_gap"] is None
+
+
 # ---- load_solve error handling ----------------------------------------------
 
 def test_load_solve_rejects_missing_file():
