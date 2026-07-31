@@ -380,6 +380,17 @@ def test_normalize_plan_item_coerces_non_string_fields():
     assert _normalize_plan_item({"title": "work", "kind": "mystery"})["kind"] == "triage"
 
 
+def test_normalize_plan_item_drops_model_supplied_reconciliation_metadata():
+    # restates_pr is derived by queue reconciliation, not an LLM plan field. A malformed
+    # model response must not smuggle a list/object into the public plan shape.
+    out = _normalize_plan_item({
+        "title": "work",
+        "kind": "bugfix",
+        "restates_pr": [7],
+    })
+    assert out == {"title": "work", "kind": "bugfix"}
+
+
 def test_normalize_files_coerces_scalar_and_list_shapes():
     assert _normalize_files(None) == []
     assert _normalize_files("core/loader.py") == ["core/loader.py"]
