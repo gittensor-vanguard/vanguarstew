@@ -364,17 +364,15 @@ def decide(context: dict, philosophy: dict, request: str, llm) -> dict:
     # whenever the revealed window does contain a cut, while a wrong class scores no worse —
     # so the repo's own modal cadence class weakly dominates abstaining. Backfill only fills
     # a hole: an explicit prediction from the LLM always stands, and just after a cut
-    # (suppress) no bump is coming, so none is invented.
+    # (suppress) no bump is invented. Do not clear a model-supplied bump under suppress —
+    # the backfill guard already prevents invention there, and an unconditional clear would
+    # discard the only scoreable signal when suppress was misclassified (#2237).
     if (
         out["version_bump"] is None
         and _is_planning_request(request)
         and _release_timing_state(context) != "suppress"
     ):
         out["version_bump"] = _recent_bump_class(context)
-    # Just after a cut, a version_bump prediction matches nothing (bump_actual is None when the
-    # revealed window has no release) — clear it the same way the planner suppresses release items.
-    if _release_timing_state(context) == "suppress":
-        out["version_bump"] = None
     return out
 
 

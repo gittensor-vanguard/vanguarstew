@@ -401,7 +401,8 @@ def test_planning_version_bump_note_on_pressure():
     assert "version_bump" in note
 
 
-def test_decide_clears_version_bump_when_just_cut():
+def test_decide_keeps_explicit_version_bump_when_just_cut():
+    """#2237: suppress must not erase a model-supplied bump; backfill already skips suppress."""
     class FixedLLM:
         offline = False
 
@@ -415,6 +416,23 @@ def test_decide_clears_version_bump_when_just_cut():
 
     ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}]}
     out = decide(ctx, {}, "plan the next 5 maintainer actions", FixedLLM())
+    assert out["version_bump"] == "minor"
+
+
+def test_decide_does_not_backfill_version_bump_under_suppress():
+    class NullBumpLLM:
+        offline = False
+
+        def chat_json(self, system, user, stub=None):
+            if system == SYSTEM:
+                return {
+                    "action": "plan", "labels": [], "reviewer": None,
+                    "version_bump": None, "patch": None, "rationale": "cadence",
+                }
+            return {"verdict": "ok", "reasoning": "because"}
+
+    ctx = {"recent_commits": [{"subject": "chore(release): 2.0.0"}]}
+    out = decide(ctx, {}, "plan the next 5 maintainer actions", NullBumpLLM())
     assert out["version_bump"] is None
 
 
