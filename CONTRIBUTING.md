@@ -66,6 +66,17 @@ full loop without an inference endpoint.
 
 ## Pull requests
 
+### Choose the contribution route before coding
+
+| Changed files | Required before opening a PR | Review route |
+| --- | --- | --- |
+| `agent/**` or `agent.py`, optionally with companion `tests/**` | Open or claim the issue you are addressing | Agent benchmark and Polaris TEE verification |
+| Any other path, a tests-only change, or a mixed agent/non-agent change | Open an issue and wait for the `benchmark-change-approved` label | Protected-change review and manual merge decision |
+
+The second row applies if even one changed file is outside the agent-plus-companion-tests surface.
+Adding an agent file does not turn a mixed PR into an agent submission. Maintainer-authored PRs are
+exempt from the admission close, but not from CI or manual review for protected changes.
+
 1. Branch off **`test`** and **target `test`** — never `main` (see [Branches](#branches) below). Keep the change focused and small.
 2. Make sure `ruff check .` and the offline test suite pass locally.
 3. Reference the issue you're addressing (e.g. `Fixes #12`).
@@ -99,8 +110,9 @@ PR is not an agent submission.
 Every project path outside that exact surface is maintainer-directed, including `benchmark/**`,
 `.github/**`, standalone `tests/**`, tools, scripts, configuration, documentation, and root files.
 A mixed PR is protected too: adding a trivial agent change does not exempt changes elsewhere.
-Contributor PRs with protected changes are automatically closed unless they were discussed and
-approved before the PR was opened:
+This includes changes to the contribution policy and PR template themselves. Contributor PRs with
+protected changes are automatically closed unless they were discussed and approved before the PR
+was opened:
 
 1. Open an issue describing the proposed change, its trust impact, and how it will be tested.
 2. Wait for a maintainer to apply the `benchmark-change-approved` label to that **open** issue.
