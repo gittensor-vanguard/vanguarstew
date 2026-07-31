@@ -1003,8 +1003,6 @@ def _normalize_plan_item(item) -> dict | None:
     files = _normalize_files(item.get("files"))
     if files:
         normalized["files"] = files
-    if "restates_pr" in item:
-        normalized["restates_pr"] = item["restates_pr"]
     return normalized
 
 

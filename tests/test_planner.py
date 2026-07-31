@@ -403,6 +403,17 @@ def test_normalize_plan_item_drops_empty_or_invalid_files():
     assert "files" not in _normalize_plan_item({"title": "work", "kind": "docs", "files": 42})
 
 
+def test_normalize_plan_item_drops_model_supplied_restates_pr():
+    # restates_pr is reconciliation metadata from queue matching, not LLM plan schema.
+    for bad in ([7], {"n": 7}, 7):
+        item = _normalize_plan_item({
+            "title": "work",
+            "kind": "feature",
+            "restates_pr": bad,
+        })
+        assert "restates_pr" not in item
+
+
 def test_normalize_files_logs_warning_for_non_list_scalar_object(caplog):
     import logging
     with caplog.at_level(logging.WARNING):
