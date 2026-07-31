@@ -383,7 +383,9 @@ def test_every_check_reported_when_several_fail():
 
 
 def test_integrity_headline_reports_consistent_and_inconsistent():
-    assert "CONSISTENT" in integrity_headline(check_tally_integrity(_artifact()))
+    # Anchor at the start: "CONSISTENT" is a substring of "INCONSISTENT".
+    ok = integrity_headline(check_tally_integrity(_artifact()))
+    assert ok.startswith("tally integrity: CONSISTENT")
     art = _artifact()
     art["tally"]["challenger"] = 99
     assert "INCONSISTENT" in integrity_headline(check_tally_integrity(art))
