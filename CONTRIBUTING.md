@@ -26,9 +26,10 @@ Two halves with different rules:
 - **`benchmark/` — the evaluation harness.** Freeze a repo at a point in time, generate
   replay tasks from GitHub history, run agents, and judge them pairwise. This is
   validator-owned; changes here affect how *everyone* is scored, so they get extra scrutiny.
-- **`tests/`, `tools/`, `scripts/`, `docs/`, and `blog/` — maintainer-directed validation,
-  operations, and documentation.** These surfaces define how the system is validated and run and
-  how its public guarantees are presented.
+- **Everything outside the agent submission surface — maintainer-directed.** A contributor agent
+  PR may combine `agent/**` or `agent.py` with companion `tests/**` changes. All other paths,
+  including `.github/**`, benchmark code, standalone tests, tools, scripts, configuration, and
+  documentation, define how the system is evaluated, operated, or presented.
 
 See [README.md](README.md) for the architecture and [ROADMAP.md](ROADMAP.md) for milestones.
 
@@ -88,15 +89,17 @@ CI evaluates this rule on each PR update and again whenever the normal CI workfl
 Identity mismatches are automatically closed; correct the commit attribution and ask a maintainer
 to reopen the PR.
 
-## Benchmark, tests, tools, scripts, and documentation changes
+## Agent submissions and protected project changes
 
-The benchmark, tests, tools, scripts, and documentation surfaces are maintainer-directed. Benchmark
-and test changes can change how contributor work is evaluated; tools and scripts control validation
-or operational behavior; documentation defines the project's public contracts and claims. The
-protected paths are `benchmark/**`, `tests/**`, `tools/**`, `scripts/**`, `docs/**`, `blog/**`,
-Markdown files anywhere in the repository, and the CI policy protecting them.
+The direct contributor surface is deliberately narrow: a PR must change `agent/**` or `agent.py`,
+and every other changed file in that PR must be a companion test under `tests/**`. Eligible agent
+submissions proceed through the agent benchmark and Polaris TEE verification route. A tests-only
+PR is not an agent submission.
 
-Contributor PRs touching this surface are automatically closed unless they were discussed and
+Every project path outside that exact surface is maintainer-directed, including `benchmark/**`,
+`.github/**`, standalone `tests/**`, tools, scripts, configuration, documentation, and root files.
+A mixed PR is protected too: adding a trivial agent change does not exempt changes elsewhere.
+Contributor PRs with protected changes are automatically closed unless they were discussed and
 approved before the PR was opened:
 
 1. Open an issue describing the proposed change, its trust impact, and how it will be tested.
@@ -104,8 +107,8 @@ approved before the PR was opened:
 3. Reference it explicitly in the PR body with `Refs #<number>` and target `test`.
 
 An approval is scoped to its linked issue; a closed issue, a PR number, or an unrelated issue does
-not satisfy the gate. Maintainer-authored changes are exempt from automatic closure, but all
-benchmark-integrity changes still require normal CI and manual review before merge.
+not satisfy the gate. Maintainer-authored changes are exempt from automatic closure, but protected
+changes still require normal CI and manual review before merge.
 
 ## Branches
 
