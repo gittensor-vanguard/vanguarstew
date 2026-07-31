@@ -264,6 +264,14 @@ def test_load_solve_rejects_directory():
         load_solve("/tmp")
 
 
+def test_load_solve_rejects_unsupported_file_type(tmp_path):
+    unsupported = tmp_path / "agent.txt"
+    unsupported.write_text("not a Python agent\n")
+
+    with pytest.raises(RuntimeError, match="unsupported file type or missing loader"):
+        load_solve(str(unsupported))
+
+
 def test_load_solve_rejects_syntax_error(tmp_path):
     bad = tmp_path / "bad.py"
     bad.write_text("def solve():\n")
