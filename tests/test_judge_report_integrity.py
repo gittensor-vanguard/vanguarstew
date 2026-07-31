@@ -315,7 +315,7 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
         cwd=ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "CONSISTENT" in proc.stderr
+    assert "judge report integrity: CONSISTENT" in proc.stderr
 
 
 # --- bad artifact paths get an actionable message, never a raw errno or a traceback ----------
