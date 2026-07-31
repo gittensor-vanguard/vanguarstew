@@ -242,7 +242,10 @@ def test_failed_checks_integration_with_check_rows_list(caplog):
 
 
 def test_headline_reports_covered_and_under_covered():
-    assert "COVERED" in skip_budget_headline(check_skip_budget(_multi(8, 8), min_scored=3))
+    # Anchor at the start: "COVERED" is a substring of "UNDER-COVERED".
+    assert skip_budget_headline(
+        check_skip_budget(_multi(8, 8), min_scored=3)
+    ).startswith("skip budget: COVERED")
     under = skip_budget_headline(check_skip_budget(_multi(6, 1), min_scored=3))
     assert "UNDER-COVERED" in under
     # No bare "None" even when the accounting is missing.
