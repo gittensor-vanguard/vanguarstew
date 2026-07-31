@@ -499,6 +499,36 @@ def test_load_context_attaches_repo_layout_on_the_git_fallback_path_too():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_commit_shape_matches_build_context():
+    # The git-only fallback and benchmark/freeze.build_context must emit the same record
+    # shapes so date-driven planner paths (_freeze_dt, _last_release_dt) work on both.
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        d1 = "2024-01-10T12:00:00+00:00"
+        d2 = "2024-01-11T12:00:00+00:00"
+        _write(repo, "a.txt")
+        _git(repo, "add", "-A", date=d1)
+        _git(repo, "commit", "-q", "-m", "first", date=d1)
+        _write(repo, "b.txt")
+        _git(repo, "add", "-A", date=d2)
+        _git(repo, "commit", "-q", "-m", "release v1.0.0", date=d2)
+
+        fallback = _context_from_git(repo)
+        harness = build_context(repo, "HEAD")
+
+        assert set(fallback["frozen_at"]) == set(harness["frozen_at"])
+        assert fallback["frozen_at"]["date"] == harness["frozen_at"]["date"]
+        assert fallback["recent_commits"]
+        for fb_row, hz_row in zip(fallback["recent_commits"], harness["recent_commits"]):
+            assert set(fb_row) == set(hz_row) == {"sha", "date", "subject"}
+            assert fb_row["sha"] == hz_row["sha"]
+            assert fb_row["date"] == hz_row["date"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_sets_frozen_at_date():
     repo = tempfile.mkdtemp()
     try:

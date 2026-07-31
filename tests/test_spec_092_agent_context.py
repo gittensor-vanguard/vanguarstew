@@ -394,7 +394,9 @@ def test_fallback_commit_rows_shape_and_scrub(tmp_path):
     ))
     out = _context_from_git(repo)
     newest = out["recent_commits"][0]  # newest first (git log order)
+    assert set(newest) == {"sha", "date", "subject"}
     assert len(newest["sha"]) == 10
+    assert newest["date"]
     assert newest["subject"] == "part of #ref, see <link>"
     assert out["frozen_at"]["commit"] == newest["sha"]
     assert out["frozen_at"]["date"]  # ISO committer date of T
