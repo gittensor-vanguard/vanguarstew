@@ -24,6 +24,11 @@ SPECS = os.path.join(ROOT, "specs")
 # `NNN-slug`: a zero-padded number, a hyphen, then the spec's slug.
 _SPEC_DIR_RE = re.compile(r"^(\d+)-(.+)$")
 
+# `# Spec 042 — ...` / `# Plan 042 — ...`: the document's own number, from its first heading.
+_DOC_HEADING_RE = re.compile(r"^#\s+(?:Spec|Plan)\s+(\d+)\b")
+
+DOCS = ("spec.md", "plan.md")
+
 
 def _spec_dirs_by_number() -> dict:
     by_number = defaultdict(list)
@@ -56,4 +61,35 @@ def test_spec_numbers_are_unique():
         "spec numbers used by more than one spec: "
         + "; ".join(f"{number}: {names}" for number, names in sorted(collisions.items()))
         + " — allocate the next unused number instead of reusing one"
+    )
+
+
+def test_spec_documents_declare_their_directory_number():
+    """Each spec.md / plan.md heading carries the number of the directory it lives in.
+
+    Renumbering a directory without rewriting its headings leaves the document announcing a
+    number another spec now owns, which is the same ambiguity a duplicate directory number
+    creates — and it is invisible to the uniqueness check above.
+    """
+    mismatches = []
+    for name, number in sorted(
+        (name, number)
+        for number, names in _spec_dirs_by_number().items()
+        for name in names
+    ):
+        for doc in DOCS:
+            path = os.path.join(SPECS, name, doc)
+            if not os.path.isfile(path):
+                continue
+            with open(path, encoding="utf-8") as handle:
+                heading = handle.readline().strip()
+            match = _DOC_HEADING_RE.match(heading)
+            if match is None:
+                mismatches.append(f"{name}/{doc}: heading does not start with a number: {heading!r}")
+            elif match.group(1) != number:
+                mismatches.append(f"{name}/{doc}: heading says {match.group(1)}, directory says {number}")
+    assert not mismatches, (
+        "spec documents whose number disagrees with their directory: "
+        + "; ".join(mismatches)
+        + " — rewrite the heading when a spec is renumbered"
     )

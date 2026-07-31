@@ -1,4 +1,4 @@
-# Spec 047 — partition task share summary
+# Spec 089 — partition task share summary
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** benchmark

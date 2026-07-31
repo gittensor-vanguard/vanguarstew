@@ -1,4 +1,4 @@
-# Plan 011 — agent knowable-at-T context
+# Plan 092 — agent knowable-at-T context
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #2007

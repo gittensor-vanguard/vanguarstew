@@ -1,4 +1,4 @@
-# Spec 011 — agent knowable-at-T context
+# Spec 092 — agent knowable-at-T context
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** agent

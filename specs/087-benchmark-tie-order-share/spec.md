@@ -1,4 +1,4 @@
-# Spec 042 — tie-order share summary
+# Spec 087 — tie-order share summary
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** benchmark

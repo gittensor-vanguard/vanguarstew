@@ -1,4 +1,4 @@
-# Plan 048 — repo task mean summary
+# Plan 090 — repo task mean summary
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1138
