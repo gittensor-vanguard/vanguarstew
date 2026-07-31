@@ -220,10 +220,18 @@ def test_headline_reports_stable_unstable_and_inconclusive():
     # Anchor at the start: "STABLE over N runs" is a substring of "UNSTABLE over N runs".
     assert repeatability_headline(stable).startswith("repeatability: STABLE")
     unstable = assess_repeatability([_run(0.4), _run(0.8)])
-    assert "UNSTABLE" in repeatability_headline(unstable)
+    assert repeatability_headline(unstable).startswith("repeatability: UNSTABLE")
     assert "inconclusive" in repeatability_headline(assess_repeatability([_run(0.6)]))
     assert repeatability_headline({}) == "repeatability: no scored runs"
     assert DEFAULT_MAX_CV == 0.05
+
+
+def test_unstable_headline_cannot_satisfy_stable_prefix():
+    unstable = assess_repeatability([_run(0.4), _run(0.8)])
+    headline = repeatability_headline(unstable)
+    assert "STABLE over 2 runs" in headline  # demonstrates why substring checks are unsafe
+    assert not headline.startswith("repeatability: STABLE")
+    assert headline.startswith("repeatability: UNSTABLE over 2 runs")
 
 
 def test_headline_masks_non_finite_cv():
