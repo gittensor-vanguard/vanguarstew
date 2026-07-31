@@ -22,6 +22,10 @@ def _issue(*, approved=True, state="open", pull_request=False):
     [
         ("benchmark/score.py", True),
         ("./benchmark/score.py", True),
+        ("tests/test_agent.py", True),
+        ("./tests/nested/test_policy.py", True),
+        ("tools/codex_llm.py", True),
+        ("tools/nested/adapter.py", True),
         ("scripts/score_pr_delta.py", True),
         ("scripts/compare_eval.py", True),
         ("scripts/leaderboard_feed.py", True),
@@ -45,6 +49,8 @@ def _issue(*, approved=True, state="open", pull_request=False):
         ("scripts/verify_polaris_benchmark.py", True),
         ("benchmarking/readme.md", True),
         ("benchmarking/data.json", False),
+        ("test/test_agent.py", False),
+        ("tool/helper.py", False),
         ("agent/planner.py", False),
         ("notes.txt", False),
         (42, False),
@@ -117,6 +123,8 @@ def test_policy_requires_matching_open_approved_issue():
     "changed_path",
     [
         "benchmark/score.py",
+        "tests/test_agent.py",
+        "tools/codex_llm.py",
         "scripts/helper.py",
         "docs/architecture.md",
         "blog/update.md",
@@ -255,6 +263,8 @@ def test_workflow_uses_only_the_trusted_base_policy():
     assert "persist-credentials: false" in workflow
     assert "branches: [test, main]" in workflow
     assert '"benchmark/**"' in workflow
+    assert '"tests/**"' in workflow
+    assert '"tools/**"' in workflow
     assert '"scripts/**"' in workflow
     assert '"docs/**"' in workflow
     assert '"blog/**"' in workflow

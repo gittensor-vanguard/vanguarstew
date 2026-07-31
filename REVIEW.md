@@ -29,8 +29,8 @@ VANGUARSTEW_OFFLINE=1 python -m pytest -q --cov=agent --cov=benchmark --cov-fail
   contributor PRs touching the benchmark/contribution-integrity surface are auto-closed unless
   they reference an open issue carrying the `benchmark-change-approved` label. Maintainer-authored
   changes bypass automatic closure but still require CI and manual review. See
-  [CONTRIBUTING.md](CONTRIBUTING.md#benchmark-scripts-and-documentation-changes) for the exact
-  paths and approval process.
+  [CONTRIBUTING.md](CONTRIBUTING.md#benchmark-tests-tools-scripts-and-documentation-changes) for
+  the exact paths and approval process.
 - **Reopen authority** — a contributor cannot reverse a close decision by reopening the PR.
   The `PR reopen policy` workflow immediately re-closes it; only `matedev01` or `vanguarstew`
   may reopen a closed PR.
