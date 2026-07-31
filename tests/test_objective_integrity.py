@@ -198,6 +198,12 @@ def test_kind_recall_problems_helper():
     assert "bool" in _kind_recall_problems({
         "module_recall": 1.0, "actual_kinds": ["feat"], "kind_recall": False,
     })[0]
+    # Mirror the sibling _recall_field_problems coverage: a non-dict objective and an
+    # out-of-range kind_recall must each be reported, not silently pass.
+    assert _kind_recall_problems("nope") == ["objective is not a dict"]
+    assert "not a ratio" in _kind_recall_problems({
+        "actual_kinds": ["feat"], "kind_recall": 2.0,
+    })[0]
 
 
 def test_headline_valid_and_invalid():
