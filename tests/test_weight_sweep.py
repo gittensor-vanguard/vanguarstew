@@ -29,9 +29,23 @@ ROWS = [
 def test_weight_sweep_default_grid_shape():
     sweep = weight_sweep(ROWS)
     assert [(r["w_judge"], r["w_objective"]) for r in sweep] == list(WEIGHT_SWEEP_GRID)
+    winners = {"challenger": "A", "baseline": "B", "tie": "tie"}
     for row in sweep:
         assert set(row) == {"w_judge", "w_objective", "composite_mean"}
-        assert 0.0 <= row["composite_mean"] <= 1.0
+        expected = round(
+            sum(
+                composite_score(
+                    winners[r["winner"]],
+                    r["objective"],
+                    row["w_judge"],
+                    row["w_objective"],
+                )
+                for r in ROWS
+            )
+            / len(ROWS),
+            3,
+        )
+        assert row["composite_mean"] == expected
 
 
 def test_weight_sweep_matches_composite_score_at_each_grid_point():
