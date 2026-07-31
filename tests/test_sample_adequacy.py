@@ -302,7 +302,10 @@ def test_a_non_dict_tally_is_treated_as_missing():
 
 
 def test_headline_reports_adequate_and_inadequate():
-    assert "ADEQUATE" in sample_adequacy_headline(check_sample_adequacy(_run(8, 8, 0, 0), min_tasks=3))
+    # Anchor at the start: "ADEQUATE" is a substring of "INADEQUATE".
+    assert sample_adequacy_headline(
+        check_sample_adequacy(_run(8, 8, 0, 0), min_tasks=3)
+    ).startswith("sample adequacy: ADEQUATE")
     small = sample_adequacy_headline(check_sample_adequacy(_run(1, 1, 0, 0), min_tasks=3))
     assert "INADEQUATE" in small
     # No bare "None" even when the task total is unknown.
