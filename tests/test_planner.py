@@ -553,6 +553,29 @@ def test_qualified_pr_reference_is_still_authoritative_even_when_stale():
     assert _matched_pr(stale, prs) is None
 
 
+def test_stale_review_colon_subject_matches_exact_open_pr_title():
+    """#2238 / #2358: only ``Review #N: <exact title>`` rescues a stale number.
+
+    Loose subject-substring fallthrough over-matched on live scoring; keep the rescue
+    to an exact colon-quoted subject so reconcile does not prepend a duplicate.
+    """
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    item = {"title": "Review #99: Add streaming export", "kind": "triage"}
+    assert _matched_pr(item, prs) == prs[0]
+    out = reconcile_plan_with_queue([item], {"open_prs": prs}, 5)
+    assert len(out) == 1
+    assert out[0]["title"] == item["title"]
+
+
+def test_stale_review_does_not_rescue_on_subject_substring():
+    """A subject mentioned without the colon-title shape must stay unmatched (#2358)."""
+    prs = [{"number": 7, "title": "Add streaming export"}]
+    loose = {"title": "Review #99 covering Add streaming export work", "kind": "triage"}
+    assert _matched_pr(loose, prs) is None
+    partial = {"title": "Review #99: Add streaming", "kind": "triage"}  # not exact title
+    assert _matched_pr(partial, prs) is None
+
+
 def test_qualified_reference_wins_over_an_earlier_bare_ordinal():
     prs = [{"number": 7, "title": "Add streaming export"}]
     # A bare ordinal ("our #1 priority") in the title precedes a genuine "PR #7" reference in

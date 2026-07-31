@@ -54,6 +54,11 @@ _PR_NUMBER = re.compile(
 )
 # Minimum PR-subject phrase length for substring matching — shorter titles are ambiguous.
 _MIN_SUBJECT_PHRASE = 8
+# Stale ``#N`` rescue (#2238): only the colon-subject review shape
+# ``Review #99: <exact open PR title>`` — never a loose substring / token overlap (#83).
+_STALE_REVIEW_COLON_SUBJECT_RE = re.compile(
+    r"(?is)^\s*(?:review|triage|merge|approve)\b[^:]*#\s*\d+\s*:\s*(.+?)\s*$",
+)
 
 # Plan-item `kind` vocabulary. Every entry except "triage" maps to a normalized commit kind in
 # the objective anchor's `benchmark/score.py::_PLAN_KIND`, so a plan can name any kind the
@@ -873,6 +878,25 @@ def _pr_content_matches(item: dict, pr: dict) -> bool:
     return len(itoks & ptoks) >= 2
 
 
+def _verbatim_subject_after_stale_ref(item: dict, prs: list):
+    """Rescue a stale ``#N`` only when the title is ``Review #N: <exact open PR title>``.
+
+    Broader subject-substring fallthrough over-matches on live replay (#2358). Keep #83's
+    ban on token-overlap reattachment; accept only an exact colon-quoted subject.
+    """
+    title = item.get("title") or ""
+    match = _STALE_REVIEW_COLON_SUBJECT_RE.match(title)
+    if match is None:
+        return None
+    quoted = match.group(1).strip().lower()
+    if len(quoted) < _MIN_SUBJECT_PHRASE:
+        return None
+    exact = [pr for pr in prs if _pr_title(pr).lower() == quoted]
+    if not exact:
+        return None
+    return max(exact, key=lambda pr: len(_pr_title(pr)))
+
+
 def _matched_pr(item: dict, prs: list):
     """The open PR a plan item is about, or None.
 
@@ -880,8 +904,8 @@ def _matched_pr(item: dict, prs: list):
     matching title when several nested titles are quoted), then significant-token
     overlap. One-word PR titles never match on overlap alone — they are too
     ambiguous when the queue grows. An explicit ``#N`` that names a PR no longer in the
-    queue is treated as stale: the item is **not** matched against a different open PR
-    via fallback, since the author already committed to a specific number.
+    queue is stale: do **not** reattach via token overlap (#83). The only rescue is an
+    exact colon-quoted subject in a review-shaped title (#2238 / #2358).
     """
     by_number = {_pr_number(p): p for p in prs if _pr_number(p) is not None}
 
@@ -896,12 +920,14 @@ def _matched_pr(item: dict, prs: list):
             if governed is not None:
                 lookup = governed
         pr = by_number.get(lookup)
-        # A qualified "PR #N" is authoritative (even when stale -> None, which suppresses
-        # fallback matching). A bare "#N" is trusted only when the item actually reads as a PR
-        # reference or its content matches the PR; otherwise "#N" is an ordinal ("the #1
-        # feature") and must not hijack an unrelated open PR — fall through to content matching.
+        # A qualified "PR #N" / review-governed bare "#N" is authoritative when it resolves.
+        # When stale, allow only an exact ``Review #N: <title>`` rescue (#2238), never the
+        # weaker subject-substring or token-overlap paths (#83 / #2358).
         if qualified or _reads_as_pr_reference(item) or (pr is not None and _pr_content_matches(item, pr)):
-            return pr
+            if pr is not None:
+                return pr
+            rescued = _verbatim_subject_after_stale_ref(item, prs)
+            return rescued
 
     # Full-subject phrase match. Nested titles ("Add streaming export" is a substring of
     # "Add streaming export docs") can both appear in the plan text; prefer the longest
