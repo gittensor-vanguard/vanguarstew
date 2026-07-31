@@ -23,6 +23,7 @@ from benchmark.runner import (  # noqa: E402
     CLONE_TIMEOUT_SECONDS,
     _materialize_repo_source,
     load_solve,
+    run_generalization_report,
     run_multi_replay,
     run_replay,
 )
@@ -275,6 +276,20 @@ def test_run_multi_replay_rejects_empty_repo_set_partition(tmp_path):
     }))
     with pytest.raises(RepoSetError, match="no held_out repos"):
         run_multi_replay(repo_set=str(config), repo_set_partition="held_out", agent_file=AGENT)
+
+
+def test_generalization_report_computes_gap_from_both_partitions(monkeypatch):
+    def fake_run_multi_replay(repo_set=None, repo_set_partition=None, **kwargs):
+        assert repo_set == "repo-set.json"
+        assert kwargs == {"seed": 11}
+        if repo_set_partition == "tuned":
+            return {"scored_repos": 2, "composite_mean": 0.82}
+        return {"scored_repos": 3, "composite_mean": 0.71}
+
+    monkeypatch.setattr("benchmark.runner.run_multi_replay", fake_run_multi_replay)
+    result = run_generalization_report("repo-set.json", seed=11)
+
+    assert result["generalization_gap"] == 0.11
 
 
 # ---- load_solve error handling ----------------------------------------------
