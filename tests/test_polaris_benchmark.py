@@ -20,9 +20,11 @@ from benchmark.polaris import (  # noqa: E402
 )
 from benchmark.polaris_benchmark import (  # noqa: E402
     POLARIS_BENCHMARK_SEAL_CONTRACT,
+    PUBLIC_BENCHMARK_EVIDENCE_SCHEMA,
     PolarisBenchmarkClient,
     PolarisBenchmarkError,
     PolarisBenchmarkSealPlan,
+    build_public_benchmark_evidence,
     validate_benchmark_report,
     verify_benchmark_seal,
 )
@@ -190,8 +192,10 @@ def _receipt(plan=None, **overrides):
             "binding_version": 2,
             "files_sha256": plan.files_sha256,
             "collateral_b64": "Y29sbGF0ZXJhbA==",
+            "kind": "tdx-1.5",
         },
-        "verification": {"intel_verified": True},
+        "verification": {"intel_verified": True, "report_data_match": True},
+        "started_at": "2026-07-31T00:00:00Z",
         "stdout": plan.stdout,
         "cost_usd": 0.01,
     }
@@ -224,6 +228,12 @@ def test_plan_validates_report_evidence_and_emits_only_fixed_decision():
     output = json.loads(plan.stdout)
     assert output["band"] == "xs"
     assert output["blocks_merge"] is False
+    assert output["pr_number"] == 2042
+    assert output["base_ref"] == "test"
+    assert output["base_sha"] == BASE_SHA
+    assert output["head_sha"] == HEAD_SHA
+    assert output["public_band"] == "s"
+    assert output["public_blocks_merge"] is False
     assert output["challenge"] == NONCE
     assert output["contract"] == POLARIS_BENCHMARK_SEAL_CONTRACT
     assert output["evidence_report_data"] == _report()["evidence"]["report_data"]
@@ -355,6 +365,60 @@ def test_receipt_verifier_checks_report_files_workload_and_exact_stdout():
     changed = verify_benchmark_seal(_receipt(plan, stdout="changed"), plan=plan)
     assert changed["ok"] is False
     assert changed["stdout_exact"] is False
+
+
+def test_public_evidence_is_pr_bound_and_excludes_protected_inputs():
+    plan = _plan()
+    proof = build_public_benchmark_evidence(_receipt(plan), plan=plan)
+
+    assert proof["schema"] == PUBLIC_BENCHMARK_EVIDENCE_SCHEMA
+    assert proof["contract"] == POLARIS_BENCHMARK_SEAL_CONTRACT
+    assert proof["pr"] == {
+        "number": 2042,
+        "base_ref": "test",
+        "base_sha": BASE_SHA,
+        "head_sha": HEAD_SHA,
+    }
+    assert proof["benchmark"] == {
+        "band": "xs",
+        "blocks_merge": False,
+        "public_band": "s",
+        "public_blocks_merge": False,
+    }
+    assert proof["tee"]["verification_level"] == "polaris-verified"
+    assert proof["tee"]["intel_verified"] is True
+    assert proof["tee"]["report_data_match"] is True
+    assert len(proof["tee"]["validator_sha256"]) == 64
+    assert proof["tee"]["workload_sha256"].startswith("sha256:")
+    assert len(proof["tee"]["result_sha256"]) == 64
+
+    rendered = json.dumps(proof, sort_keys=True)
+    assert "baseline_public" not in rendered
+    assert "candidate_public" not in rendered
+    assert "baseline_private" not in rendered
+    assert "candidate_private" not in rendered
+    assert "repo_set" not in rendered
+    assert "transcript" not in rendered
+    assert "quote_b64" not in rendered
+    assert "collateral" not in rendered
+    assert NONCE not in rendered
+    assert PUBKEY not in rendered
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda receipt: receipt["verification"].update(report_data_match=False),
+        lambda receipt: receipt["tee_attestation"].update(kind="unknown"),
+        lambda receipt: receipt.update(started_at="not-a-time"),
+    ],
+)
+def test_public_evidence_fails_closed_on_unverifiable_metadata(mutate):
+    plan = _plan()
+    receipt = _receipt(plan)
+    mutate(receipt)
+    with pytest.raises(PolarisBenchmarkError, match="public verification metadata"):
+        build_public_benchmark_evidence(receipt, plan=plan)
 
 
 def test_blocked_benchmark_is_a_valid_attestable_execution():
