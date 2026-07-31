@@ -1,6 +1,6 @@
 # Spec 041 — tie order share summary
 
-- **Status:** draft (SDD Phase 1 — Specify)
+- **Status:** superseded by [`specs/087-benchmark-tie-order-share`](../087-benchmark-tie-order-share/spec.md) (#2143)
 - **Owner:** benchmark
 - **Issue:** #1098
 - **Constitution:** [`AGENTS.md`](../../AGENTS.md) → *Benchmark integrity (M1–M3)*
@@ -8,6 +8,13 @@
 - **Related:** [`benchmark/comparability.py`](../../benchmark/comparability.py) (artifact kind classification),
   [`benchmark/decisive_rate.py`](../../benchmark/decisive_rate.py) (tally-based tie share),
   [`benchmark/order_agree_rate.py`](../../benchmark/order_agree_rate.py) (dual-order agree rate)
+
+> **Superseded.** `benchmark/tie_order_share.py` was specified twice; spec 087 is the canonical
+> document and is what a change to the module is reviewed against (#2143). This spec is kept, not
+> deleted, because `tests/test_spec_041_tie_order_share.py` asserts the criteria below and still
+> runs. Where a clause here disagrees with spec 087, spec 087 governs — in particular the headline
+> clause below, which the module does not satisfy for a negative `total` (see the *Canonical spec*
+> section of spec 087).
 
 This spec makes the **existing, implicit** tie-order-share contract explicit. It describes the
 as-built behavior of `benchmark/tie_order_share.py`; it introduces **no behavior change**.

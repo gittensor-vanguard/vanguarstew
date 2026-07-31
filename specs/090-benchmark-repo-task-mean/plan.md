@@ -1,6 +1,6 @@
 # Plan 090 — repo task mean summary
 
-- **Status:** draft (SDD Phase 2 — Plan)
+- **Status:** superseded by [`specs/088-benchmark-repo-task-mean`](../088-benchmark-repo-task-mean/plan.md) (#2143)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1138
 
 Maps the [spec](./spec.md) onto `benchmark/repo_task_mean.py` as-built. No product code changes.

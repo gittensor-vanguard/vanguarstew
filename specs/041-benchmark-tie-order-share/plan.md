@@ -1,6 +1,6 @@
 # Plan 041 — tie order share summary
 
-- **Status:** draft (SDD Phase 2 — Plan)
+- **Status:** superseded by [`specs/087-benchmark-tie-order-share`](../087-benchmark-tie-order-share/plan.md) (#2143)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1098
 
 Maps the [spec](./spec.md) onto `benchmark/tie_order_share.py` as-built. No product code.
