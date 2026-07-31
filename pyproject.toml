@@ -34,6 +34,10 @@ Issues = "https://github.com/gittensor-vanguard/vanguarstew/issues"
 [tool.setuptools]
 packages = ["agent", "benchmark", "benchmark.judge_corpus", "benchmark.score_corpus", "scripts"]
 
+[tool.setuptools.package-data]
+"benchmark.judge_corpus" = ["manifest.json", "scenarios/*.json"]
+"benchmark.score_corpus" = ["manifest.json", "scenarios/*.json"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
