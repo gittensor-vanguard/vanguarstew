@@ -37,6 +37,11 @@ _TEST_REF_RE = re.compile(r"test_spec_(\d+)_")
 # asserts. The number is the claim; the spec it names has to agree.
 _TEST_FILE_RE = re.compile(r"^test_spec_(\d+)_.+\.py$")
 
+# `tests/test_spec_087_tie_order_share.py` as it appears *inside* a spec's prose. The reference
+# guard above checks the number such a mention carries; this form is matched to the filename so
+# the file it promises can be looked for on disk.
+_TEST_FILE_REF_RE = re.compile(r"test_spec_\d+_[A-Za-z0-9_]+\.py")
+
 # `- **Status:** superseded by [`specs/088-benchmark-repo-task-mean`](...)`: a spec that has been
 # retired in favor of another one, naming the directory that replaced it.
 _SUPERSEDED_RE = re.compile(r"^-\s+\*\*Status:\*\*\s+superseded by \[`specs/([^`]+)`\]")
@@ -251,4 +256,30 @@ def test_contract_test_files_are_claimed_by_their_spec():
         "contract-test files no spec claims: "
         + "; ".join(unclaimed)
         + " — rename the test file alongside the spec it asserts, and name it in that spec"
+    )
+
+
+def test_spec_documents_name_test_files_that_exist():
+    """Every ``test_spec_NNN_*.py`` a spec names is actually present in ``tests/``.
+
+    The guard above reads the test files on disk and asks which spec claims each one, so it can
+    only see files that still exist. Deleting or renaming one away leaves nothing for it to
+    inspect while the spec's *Verification* section keeps promising a contract test that is no
+    longer there — a reader following the reference lands on a missing file, and the number guards
+    stay green because the surviving reference still carries the spec's own number. Checking the
+    promise from the document side is what closes that direction.
+    """
+    dangling = []
+    for name in sorted(
+        name
+        for names in _spec_dirs_by_number().values()
+        for name in names
+    ):
+        for ref in sorted(set(_TEST_FILE_REF_RE.findall(_spec_documents_text(name)))):
+            if not os.path.isfile(os.path.join(TESTS, ref)):
+                dangling.append(f"{name} names {ref}, which is not in tests/")
+    assert not dangling, (
+        "specs naming a contract-test file that does not exist: "
+        + "; ".join(dangling)
+        + " — repoint the reference when a test file is renamed, and drop it when one is removed"
     )
