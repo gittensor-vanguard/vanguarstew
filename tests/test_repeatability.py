@@ -217,7 +217,8 @@ def test_falsy_per_repo_error_values_do_not_fail_repeatability():
 
 def test_headline_reports_stable_unstable_and_inconclusive():
     stable = assess_repeatability([_run(0.6), _run(0.61)])
-    assert "STABLE over 2 runs" in repeatability_headline(stable)
+    # Anchor at the start: "STABLE over N runs" is a substring of "UNSTABLE over N runs".
+    assert repeatability_headline(stable).startswith("repeatability: STABLE")
     unstable = assess_repeatability([_run(0.4), _run(0.8)])
     assert "UNSTABLE" in repeatability_headline(unstable)
     assert "inconclusive" in repeatability_headline(assess_repeatability([_run(0.6)]))
@@ -263,7 +264,8 @@ def test_a_realistic_five_repeat_acceptance_run():
     assert result["stable"] is True
     assert result["min"] == 0.6 and result["max"] == 0.62
     assert result["range"] == 0.02
-    assert "STABLE over 5 runs" in repeatability_headline(result)
+    # Anchor: "STABLE over N runs" is a substring of "UNSTABLE over N runs".
+    assert repeatability_headline(result).startswith("repeatability: STABLE")
 
 
 def test_assess_does_not_mutate_inputs():
