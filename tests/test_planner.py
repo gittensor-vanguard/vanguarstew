@@ -1317,12 +1317,22 @@ def test_commit_plan_kind_release_tooling_cut_reads_as_release_not_dep_or_build(
 
 
 def test_commit_plan_kind_drops_unknown_subjects():
-    # Merge commits, prefix-less subjects, and non-strings carry no kind.
+    # Merge commits, non-release prefix-less subjects, and non-strings carry no kind.
     assert _commit_plan_kind("Merge pull request from fork/branch") is None
     assert _commit_plan_kind("Add streaming export") is None
     assert _commit_plan_kind("cleanup: tidy") is None   # not a Conventional-Commit type
     assert _commit_plan_kind(None) is None
     assert _commit_plan_kind(123) is None
+
+
+def test_commit_plan_kind_recognizes_prefixless_release_subjects_the_anchor_scores():
+    # Non-CC release cuts must classify as release so recent-kind notes and timing see them.
+    assert _commit_plan_kind("Release 1.2.0") == "release"
+    assert _commit_plan_kind("v1.2.0") == "release"
+    assert _commit_plan_kind("Bump version to 1.2.0") == "release"
+    # Anchor does not treat "Version 1.2.0" as a cut — keep the planner mirror exact.
+    assert _commit_plan_kind("Version 1.2.0") is None
+    assert _is_release_subject("Version 1.2.0") is False
 
 
 def test_recent_kinds_note_orders_by_frequency_then_name():
