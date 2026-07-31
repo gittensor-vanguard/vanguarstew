@@ -238,8 +238,9 @@ def test_non_dict_artifact_fails_without_raising():
 # --- headline / failed_checks helpers -------------------------------------------------------------
 
 def test_headline_valid_invalid_and_no_checks():
+    # Anchor at the start: "VALID" is a substring of "INVALID".
     valid = check_weight_integrity(_slice({"judge": 0.6, "objective": 0.4}))
-    assert "VALID" in integrity_headline(valid)
+    assert integrity_headline(valid).startswith("weight integrity: VALID")
     invalid = check_weight_integrity(_slice({"judge": -1, "objective": 0.4}))
     assert "INVALID" in integrity_headline(invalid)
     assert integrity_headline({}) == "weight integrity: no checks evaluated"

@@ -318,7 +318,7 @@ def test_integrity_headline_consistent_and_inconsistent():
     ok = check_row_integrity(_artifact())
     bad = _artifact()
     bad["rows"][0]["composite"] = 0.0
-    assert "CONSISTENT" in integrity_headline(ok)
+    assert integrity_headline(ok).startswith("row integrity: CONSISTENT")
     assert "INCONSISTENT" in integrity_headline(check_row_integrity(bad))
 
 
