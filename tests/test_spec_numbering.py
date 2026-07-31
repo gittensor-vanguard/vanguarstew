@@ -20,6 +20,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 SPECS = os.path.join(ROOT, "specs")
+TESTS = os.path.join(ROOT, "tests")
 
 # `NNN-slug`: a zero-padded number, a hyphen, then the spec's slug.
 _SPEC_DIR_RE = re.compile(r"^(\d+)-(.+)$")
@@ -31,6 +32,10 @@ _DOC_HEADING_RE = re.compile(r"^#\s+(?:Spec|Plan)\s+(\d+)\b")
 # be the spec's own — a renumbered spec that keeps the old reference sends the reader to a file
 # that no longer exists (or that now belongs to a different spec).
 _TEST_REF_RE = re.compile(r"test_spec_(\d+)_")
+
+# `test_spec_042_tie_order_share.py`: a contract-test file, named for the spec whose contract it
+# asserts. The number is the claim; the spec it names has to agree.
+_TEST_FILE_RE = re.compile(r"^test_spec_(\d+)_.+\.py$")
 
 # `- **Status:** superseded by [`specs/088-benchmark-repo-task-mean`](...)`: a spec that has been
 # retired in favor of another one, naming the directory that replaced it.
@@ -78,6 +83,17 @@ def _superseded_by(name: str):
                 match = _SUPERSEDED_RE.match(line)
                 return match.group(1) if match else None
     return None
+
+
+def _spec_documents_text(name: str) -> str:
+    """The spec directory's prose, both documents concatenated."""
+    parts = []
+    for doc in DOCS:
+        path = os.path.join(SPECS, name, doc)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as handle:
+                parts.append(handle.read())
+    return "\n".join(parts)
 
 
 def test_spec_directories_are_numbered():
@@ -206,4 +222,33 @@ def test_superseded_specs_point_at_a_canonical_spec():
         "superseded specs that do not point at a canonical spec: "
         + "; ".join(dangling)
         + " — point at the directory that replaced it"
+    )
+
+
+def test_contract_test_files_are_claimed_by_their_spec():
+    """Every ``tests/test_spec_NNN_*.py`` is named by the spec whose number it carries.
+
+    The reference guard above reads spec → test: a number a spec *mentions* must be its own. This
+    reads test → spec, the direction nothing else covers. A renumber that renames the directory
+    but leaves the old contract-test file on disk — ``test_spec_042_tie_order_share.py`` still
+    present after ``042`` became ``087`` — leaves a file asserting a contract under a number
+    ``042-benchmark-offline-share`` now owns, which is the #2143 ambiguity arriving from the test
+    side. Requiring the spec to *name the file* is what catches that: merely checking that
+    ``specs/042-*`` still exists would not, because after a renumber it does.
+    """
+    by_number = {int(number): names for number, names in _spec_dirs_by_number().items()}
+    unclaimed = []
+    for name in sorted(os.listdir(TESTS)):
+        match = _TEST_FILE_RE.match(name)
+        if match is None:
+            continue
+        owners = by_number.get(int(match.group(1)), [])
+        if not owners:
+            unclaimed.append(f"{name}: no spec directory carries number {match.group(1)}")
+        elif not any(name in _spec_documents_text(owner) for owner in owners):
+            unclaimed.append(f"{name}: {', '.join(owners)} does not name it")
+    assert not unclaimed, (
+        "contract-test files no spec claims: "
+        + "; ".join(unclaimed)
+        + " — rename the test file alongside the spec it asserts, and name it in that spec"
     )
