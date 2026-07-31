@@ -71,6 +71,16 @@ def test_offline_when_no_api_base():
     assert LLM(api_base="").offline is True
 
 
+def test_non_string_api_base_degrades_to_offline_not_crash():
+    # #2214: a truthy non-string api_base (a bool/bytes/etc. from a malformed config) used to hit
+    # `(api_base or "").rstrip("/")` and raise AttributeError/TypeError, aborting construction
+    # before offline detection. It must coerce to no api_base -> offline, like None/"".
+    for bad in (True, b"http://x/", 42, ["http://x"]):
+        llm = LLM(api_base=bad, api_key="offline")
+        assert llm.api_base == ""
+        assert llm.offline is True
+
+
 # ---- Timeout ----------------------------------------------------------------
 
 def test_timeout_defaults_to_120():

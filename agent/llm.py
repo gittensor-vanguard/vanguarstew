@@ -17,7 +17,12 @@ import urllib.request
 class LLM:
     def __init__(self, model=None, api_base=None, api_key=None, timeout=None):
         self.model = model or "validator-managed-model"
-        self.api_base = (api_base or "").rstrip("/")
+        # Coerce a non-string api_base to "" (which selects offline below) rather than crash:
+        # `(api_base or "").rstrip("/")` assumed a string, so a truthy non-string — e.g. a bool or
+        # bytes from a malformed/hand-edited config — raised AttributeError/TypeError here, before
+        # the offline flag could catch it, aborting construction (and solve()). A valid string
+        # api_base from managed inference is unchanged (#2214).
+        self.api_base = api_base.rstrip("/") if isinstance(api_base, str) else ""
         self.api_key = api_key
         env_timeout = os.environ.get("TAU_AGENT_TIMEOUT_SECONDS")
         self.timeout = float(timeout or env_timeout or 120)
