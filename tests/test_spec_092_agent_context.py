@@ -195,6 +195,18 @@ def test_with_repo_layout_new_dict_and_override(tmp_path):
 
 # --- Context loading (load_context) --------------------------------------------------------
 
+@pytest.mark.parametrize("bad_path, kind", [(None, "None"), (123, "int")])
+def test_load_context_degrades_on_non_string_repo_path(bad_path, kind, caplog):
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        out = load_context(bad_path)
+    assert out == {"repo_layout": []}
+    assert any(
+        r.getMessage()
+        == f"load_context: repo_path is {kind}, not a non-empty str; returning empty context"
+        for r in caplog.records
+    )
+
+
 def test_load_context_valid_file_with_derived_layout(tmp_path):
     repo = _repo(str(tmp_path / "r"))
     payload = {"open_issues": [{"number": 1, "title": "t"}], "readme_excerpt": "hello"}

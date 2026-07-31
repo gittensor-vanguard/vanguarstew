@@ -173,7 +173,16 @@ def load_context(repo_path: str) -> dict:
     The GitHub-derived content of ``CONTEXT_FILE`` is returned as written; ``repo_layout`` is
     derived from the checkout on every load (see :func:`_with_repo_layout`), on both the
     frozen-file and git-fallback paths, so the plan can name paths that actually exist.
+
+    A missing, non-string, or empty ``repo_path`` degrades to an empty context with
+    ``repo_layout: []`` rather than raising — the same posture as :func:`repo_layout`.
     """
+    if not isinstance(repo_path, str) or not repo_path:
+        logger.warning(
+            "load_context: repo_path is %s, not a non-empty str; returning empty context",
+            type(repo_path).__name__ if repo_path is not None else "None",
+        )
+        return _with_repo_layout({}, "")
     path = os.path.join(repo_path, CONTEXT_FILE)
     if os.path.exists(path):
         try:

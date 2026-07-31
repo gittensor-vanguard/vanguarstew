@@ -1,6 +1,7 @@
 """Tests for the agent-facing frozen-context view."""
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -32,6 +33,8 @@ from agent.philosophy import _render as render_philosophy_context  # noqa: E402
 from agent.planner import _render as render_planner_context  # noqa: E402
 from benchmark.freeze import build_context  # noqa: E402
 from benchmark.leakage import scrub_context  # noqa: E402
+
+LOGGER = "agent.context"
 
 
 def test_context_for_agent_omits_unknown_issue_labels():
@@ -429,6 +432,19 @@ def test_repo_layout_caps_the_entry_count():
         assert len(repo_layout(repo)) == 6      # default limit leaves a normal repo intact
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.parametrize("bad_path, kind", [(None, "None"), (123, "int"), ("", "str")])
+def test_load_context_degrades_on_malformed_repo_path(bad_path, kind, caplog):
+    # Malformed constructor kwargs must not abort solve() before philosophy/plan/decide.
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        out = load_context(bad_path)
+    assert out == {"repo_layout": []}
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        m == f"load_context: repo_path is {kind}, not a non-empty str; returning empty context"
+        for m in messages
+    ), messages
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
