@@ -183,7 +183,8 @@ def test_failed_checks_skips_non_dict_and_malformed_rows():
 def test_comparability_headline_pass_and_fail():
     ok = check_comparability([_multi("a"), _multi("a")])
     bad = check_comparability([_multi("a"), _multi("b")])
-    assert "COMPARABLE" in comparability_headline(ok)
+    # Anchor at the start: "COMPARABLE" is a substring of "NOT COMPARABLE".
+    assert comparability_headline(ok).startswith("comparability: COMPARABLE")
     assert "NOT COMPARABLE" in comparability_headline(bad)
 
 

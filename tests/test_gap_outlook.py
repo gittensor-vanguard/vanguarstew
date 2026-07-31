@@ -70,7 +70,10 @@ def test_non_generalization_returns_none_verdict():
 
 def test_headline():
     assert "unfavorable" in gap_outlook_headline(summarize_gap_outlook(_gen(0.65, 0.60, 0.05)))
-    assert "favorable" in gap_outlook_headline(summarize_gap_outlook(_gen(0.60, 0.65, -0.05)))
+    # Anchor at the start: "favorable" is a substring of "unfavorable".
+    assert gap_outlook_headline(
+        summarize_gap_outlook(_gen(0.60, 0.65, -0.05))
+    ).startswith("gap outlook: favorable")
 
 
 @pytest.fixture

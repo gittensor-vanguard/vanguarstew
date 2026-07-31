@@ -142,7 +142,8 @@ def test_non_dict_per_repo_rows_are_skipped():
 def test_comparability_headline_pass_and_fail():
     ok = check_comparability([_multi("a"), _multi("a")])
     bad = check_comparability([_multi("a"), _multi("b")])
-    assert "COMPARABLE" in comparability_headline(ok)
+    # Anchor at the start: "COMPARABLE" is a substring of "NOT COMPARABLE".
+    assert comparability_headline(ok).startswith("comparability: COMPARABLE")
     assert "NOT COMPARABLE" in comparability_headline(bad)
 
 
@@ -358,7 +359,8 @@ def test_cli_strict_passes_for_comparable_artifacts(tmp_artifacts, capsys):
     a = tmp_artifacts("a.json", _multi("r1", "r2"))
     b = tmp_artifacts("b.json", _multi("r1", "r2"))
     assert cli.run([a, b, "--strict"]) == 0
-    assert "COMPARABLE" in capsys.readouterr().err
+    # Anchor: "COMPARABLE" is a substring of "NOT COMPARABLE".
+    assert "comparability: COMPARABLE" in capsys.readouterr().err
 
 
 def test_cli_missing_file_exits_two(tmp_artifacts, capsys):

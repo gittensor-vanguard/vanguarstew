@@ -179,7 +179,8 @@ def test_thresholds_are_configurable():
 
 
 def test_readiness_headline_reports_ready_and_not_ready():
-    assert "READY" in readiness_headline(check_readiness(VALID))
+    # Anchor at the start: "READY" is a substring of "NOT READY".
+    assert readiness_headline(check_readiness(VALID)).startswith("readiness: READY")
     assert "NOT READY" in readiness_headline(check_readiness({"repos": []}))
 
 
@@ -312,7 +313,8 @@ def test_cli_passes_for_curated_json():
         cwd=ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "READY" in proc.stderr
+    # Anchor: "READY" is a substring of "NOT READY".
+    assert "readiness: READY" in proc.stderr
 
 
 # --- #1698: load_config reports actionable errors instead of a raw errno / traceback ------
