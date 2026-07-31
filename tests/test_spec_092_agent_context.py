@@ -15,8 +15,17 @@ import sys
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TESTS = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+if TESTS not in sys.path:
+    sys.path.insert(0, TESTS)
+
+from frozen_checkout import (  # noqa: E402
+    make_frozen_checkout,
+    make_nested_frozen_checkout,
+    needs_git,
+)
 
 import benchmark.freeze as freeze  # noqa: E402
 from agent.context import (  # noqa: E402
@@ -195,31 +204,34 @@ def test_with_repo_layout_new_dict_and_override(tmp_path):
 
 # --- Context loading (load_context) --------------------------------------------------------
 
+@needs_git
 def test_load_context_valid_file_with_derived_layout(tmp_path):
-    repo = _repo(str(tmp_path / "r"))
+    frozen, _head, _src = make_frozen_checkout(tmp_path)
     payload = {"open_issues": [{"number": 1, "title": "t"}], "readme_excerpt": "hello"}
-    with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+    with open(os.path.join(frozen, CONTEXT_FILE), "w", encoding="utf-8") as f:
         json.dump(payload, f)
-    out = load_context(repo)
+    out = load_context(frozen)
     assert out["open_issues"] == payload["open_issues"]
     assert out["readme_excerpt"] == "hello"
     assert "feat0.py" in out["repo_layout"]
 
 
+@needs_git
 def test_load_context_overrides_file_repo_layout(tmp_path):
-    repo = _repo(str(tmp_path / "r"))
-    with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+    frozen, _head, _src = make_frozen_checkout(tmp_path)
+    with open(os.path.join(frozen, CONTEXT_FILE), "w", encoding="utf-8") as f:
         json.dump({"repo_layout": ["TAMPERED/"]}, f)
-    assert "TAMPERED/" not in load_context(repo)["repo_layout"]
+    assert "TAMPERED/" not in load_context(frozen)["repo_layout"]
 
 
+@needs_git
 def test_load_context_non_dict_json_passthrough(tmp_path):
     # A valid-JSON non-object context file is passed through as-is (no layout attached);
     # context_for_agent's non-dict guard owns the degradation downstream.
-    repo = _repo(str(tmp_path / "r"))
-    with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
+    frozen, _head, _src = make_frozen_checkout(tmp_path)
+    with open(os.path.join(frozen, CONTEXT_FILE), "w", encoding="utf-8") as f:
         f.write("[1, 2]")
-    assert load_context(repo) == [1, 2]
+    assert load_context(frozen) == [1, 2]
 
 
 def _assert_rebuilt_from_git(out, caplog, exc_name):
@@ -242,6 +254,20 @@ def test_load_context_invalid_json_warns_and_rebuilds(tmp_path, caplog):
     _assert_rebuilt_from_git(out, caplog, "JSONDecodeError")
 
 
+@needs_git
+def test_load_context_invalid_json_degrades_on_frozen_checkout(tmp_path, caplog):
+    frozen, _head, _src = make_frozen_checkout(tmp_path)
+    with open(os.path.join(frozen, CONTEXT_FILE), "w", encoding="utf-8") as f:
+        f.write("{not json")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        out = load_context(frozen)
+    assert out["_source"] == "degraded"
+    assert out["recent_commits"] == []
+    assert "feat0.py" in out["repo_layout"]
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("frozen checkout has no .git — degrading" in m for m in messages)
+
+
 def test_load_context_binary_content_warns_and_rebuilds(tmp_path, caplog):
     repo = _repo(str(tmp_path / "r"))
     with open(os.path.join(repo, CONTEXT_FILE), "wb") as f:
@@ -249,6 +275,17 @@ def test_load_context_binary_content_warns_and_rebuilds(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         out = load_context(repo)
     _assert_rebuilt_from_git(out, caplog, "UnicodeDecodeError")
+
+
+@needs_git
+def test_load_context_binary_content_degrades_on_frozen_checkout(tmp_path, caplog):
+    frozen, _head, _src = make_frozen_checkout(tmp_path)
+    with open(os.path.join(frozen, CONTEXT_FILE), "wb") as f:
+        f.write(b"\xff\xfe\x00\x01binary")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        out = load_context(frozen)
+    assert out["_source"] == "degraded"
+    assert out["recent_commits"] == []
 
 
 def test_load_context_oserror_warns_and_rebuilds(tmp_path, caplog, monkeypatch):
@@ -270,11 +307,53 @@ def test_load_context_oserror_warns_and_rebuilds(tmp_path, caplog, monkeypatch):
     _assert_rebuilt_from_git(out, caplog, "PermissionError")
 
 
+@needs_git
+def test_load_context_oserror_degrades_on_frozen_checkout(tmp_path, caplog, monkeypatch):
+    frozen, _head, _src = make_frozen_checkout(tmp_path)
+    target = os.path.join(frozen, CONTEXT_FILE)
+    real_open = builtins.open
+
+    def _open(file, *args, **kwargs):
+        if file == target:
+            raise PermissionError(13, "Permission denied")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", _open)
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        out = load_context(frozen)
+    assert out["_source"] == "degraded"
+    assert out["recent_commits"] == []
+
+
 def test_load_context_absent_file_uses_git_fallback(tmp_path):
     repo = _repo(str(tmp_path / "r"))
     out = load_context(repo)
     assert out["_source"] == "git"
     assert "feat0.py" in out["repo_layout"]
+
+
+@needs_git
+def test_load_context_absent_file_degrades_on_frozen_checkout(tmp_path):
+    frozen, _head, _src = make_frozen_checkout(tmp_path)
+    os.remove(os.path.join(frozen, CONTEXT_FILE))
+    out = load_context(frozen)
+    assert out["_source"] == "degraded"
+    assert out["recent_commits"] == []
+    assert "feat0.py" in out["repo_layout"]
+
+
+@needs_git
+def test_load_context_nested_frozen_does_not_discover_parent_history(tmp_path):
+    # #2252: a frozen checkout nested inside the benchmark's enclosing git repo must not let
+    # git's upward discovery surface the parent's post-T commits.
+    nested, _child_head, _child_src, _parent = make_nested_frozen_checkout(tmp_path)
+    os.remove(os.path.join(nested, CONTEXT_FILE))
+    out = load_context(nested)
+    assert out["_source"] == "degraded"
+    subjects = [row["subject"] for row in out.get("recent_commits", [])]
+    assert "parent commit AFTER freeze" not in subjects
+    with pytest.raises(RuntimeError):
+        _context_from_git(nested)
 
 
 # --- Agent list guard (_agent_context_list) ------------------------------------------------

@@ -10,8 +10,17 @@ import tempfile
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TESTS = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+if TESTS not in sys.path:
+    sys.path.insert(0, TESTS)
+
+from frozen_checkout import (  # noqa: E402
+    make_frozen_checkout,
+    make_nested_frozen_checkout,
+    needs_git,
+)
 
 import benchmark.github_context as gc  # noqa: E402
 from agent.context import (  # noqa: E402
@@ -330,9 +339,7 @@ def _repo_with_commit():
     b"not json at all",           # plain text
 ])
 def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
-    # A present-but-unreadable context file (truncated / empty / binary / non-JSON) must not
-    # crash solve(): load_context rebuilds the knowable-at-T context from the frozen git
-    # checkout instead, and logs loudly (with the byte size) so the degrade is never silent.
+    # A present-but-unreadable context file on a live git checkout must rebuild from git.
     import logging
     repo = _repo_with_commit()
     try:
@@ -345,6 +352,31 @@ def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
         assert any("unreadable" in r.message and "bytes" in r.message for r in caplog.records)
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+@needs_git
+@pytest.mark.parametrize("payload", [
+    b'{"open_prs": [',
+    b"",
+    b"\xff\xfe\x00\x01\x02\x80",
+    b"not json at all",
+])
+def test_load_context_degrades_on_unreadable_frozen_file(payload, tmp_path, caplog):
+    # Production passes a write_frozen checkout with no .git; unreadable context must degrade
+    # instead of calling git (no HEAD) or discovering an enclosing repository (#2240).
+    import logging
+    frozen, _head, _src = make_frozen_checkout(
+        tmp_path,
+        commits=(("f.txt", "c1"),),
+    )
+    with open(os.path.join(frozen, CONTEXT_FILE), "wb") as f:
+        f.write(payload)
+    with caplog.at_level(logging.WARNING, logger="agent.context"):
+        ctx = load_context(frozen)
+    assert ctx["_source"] == "degraded"
+    assert ctx["recent_commits"] == []
+    assert "f.txt" in ctx["repo_layout"]
+    assert any("frozen checkout has no .git" in r.message for r in caplog.records)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
@@ -364,6 +396,21 @@ def test_load_context_falls_back_to_git_on_permission_denied():
     finally:
         os.chmod(path, 0o644)
         shutil.rmtree(repo, ignore_errors=True)
+
+
+@needs_git
+def test_load_context_degrades_on_permission_denied_frozen_checkout(tmp_path):
+    frozen, _head, _src = make_frozen_checkout(tmp_path, commits=(("f.txt", "c1"),))
+    path = os.path.join(frozen, CONTEXT_FILE)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('{"open_prs": []}')
+    os.chmod(path, 0o000)
+    try:
+        ctx = load_context(frozen)
+        assert ctx["_source"] == "degraded"
+        assert ctx["recent_commits"] == []
+    finally:
+        os.chmod(path, 0o644)
 
 
 def test_repo_layout_surfaces_dotfile_trees_and_top_level_files():
@@ -432,57 +479,54 @@ def test_repo_layout_caps_the_entry_count():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
-def test_load_context_derives_repo_layout_and_never_trusts_the_context_file():
+def test_load_context_derives_repo_layout_and_never_trusts_the_context_file(tmp_path):
     # `build_context` never emits `repo_layout`, so a value in the file could only come from a
     # hand-authored or tampered artifact. It must be overwritten by the real checkout listing,
     # or invented paths would reach the plan's `files` from untrusted JSON.
-    repo = _repo_with_commit()
-    try:
-        payload = {"_source": "github-api", "repo_layout": ["invented/", "not-real.py"]}
-        with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        out = load_context(repo)
-        assert out["repo_layout"] == ["f.txt"]           # derived from the checkout
-        assert "invented/" not in out["repo_layout"]     # the tampered value is discarded
-        assert out["_source"] == "github-api"            # the rest of the file still survives
-    finally:
-        shutil.rmtree(repo, ignore_errors=True)
+    frozen, _head, _src = make_frozen_checkout(
+        tmp_path,
+        commits=(("f.txt", "c1"),),
+    )
+    payload = {"_source": "github-api", "repo_layout": ["invented/", "not-real.py"]}
+    with open(os.path.join(frozen, CONTEXT_FILE), "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    out = load_context(frozen)
+    assert out["repo_layout"] == ["f.txt"]           # derived from the checkout
+    assert "invented/" not in out["repo_layout"]     # the tampered value is discarded
+    assert out["_source"] == "github-api"            # the rest of the file still survives
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
-def test_load_context_reads_a_valid_file_from_the_file_not_git():
+def test_load_context_reads_a_valid_file_from_the_file_not_git(tmp_path):
     # Happy path: a well-formed context file's GitHub-derived content is returned as written,
     # and it is read from the FILE (its `_source` marker survives) rather than being rebuilt
     # from git. `repo_layout` is derived from the checkout and added on top.
-    repo = _repo_with_commit()
-    try:
-        payload = {"_source": "github-api", "open_prs": [{"number": 1, "title": "x"}]}
-        with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        out = load_context(repo)
-        assert {k: v for k, v in out.items() if k != "repo_layout"} == payload
-        assert out["_source"] == "github-api"  # from the file, not the git rebuild ("git")
-        assert out["repo_layout"] == ["f.txt"]  # .git and the freeze artifact stay out
-    finally:
-        shutil.rmtree(repo, ignore_errors=True)
+    frozen, _head, _src = make_frozen_checkout(
+        tmp_path,
+        commits=(("f.txt", "c1"),),
+    )
+    payload = {"_source": "github-api", "open_prs": [{"number": 1, "title": "x"}]}
+    with open(os.path.join(frozen, CONTEXT_FILE), "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    out = load_context(frozen)
+    assert {k: v for k, v in out.items() if k != "repo_layout"} == payload
+    assert out["_source"] == "github-api"  # from the file, not the git rebuild ("git")
+    assert out["repo_layout"] == ["f.txt"]  # .git and the freeze artifact stay out
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 @pytest.mark.parametrize("payload", ["[]", '"a string"', "7", "null"])
-def test_load_context_passes_through_valid_json_that_is_not_an_object(payload):
+def test_load_context_passes_through_valid_json_that_is_not_an_object(payload, tmp_path):
     # A context file holding well-formed JSON that is not an object parses fine, so it never
     # reaches the JSONDecodeError fallback. Attaching the layout must not assume a dict and
     # `**`-explode a list/str/int (TypeError) -- the value passes through untouched, exactly as
     # before, and `context_for_agent` remains the guard that normalizes it to {}.
-    repo = _repo_with_commit()
-    try:
-        with open(os.path.join(repo, CONTEXT_FILE), "w", encoding="utf-8") as f:
-            f.write(payload)
-        out = load_context(repo)  # no raise
-        assert out == json.loads(payload)
-        assert context_for_agent(out) == {}
-    finally:
-        shutil.rmtree(repo, ignore_errors=True)
+    frozen, _head, _src = make_frozen_checkout(tmp_path)
+    with open(os.path.join(frozen, CONTEXT_FILE), "w", encoding="utf-8") as f:
+        f.write(payload)
+    out = load_context(frozen)  # no raise
+    assert out == json.loads(payload)
+    assert context_for_agent(out) == {}
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
@@ -496,6 +540,19 @@ def test_load_context_attaches_repo_layout_on_the_git_fallback_path_too():
         assert out["repo_layout"] == ["f.txt"]
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+@needs_git
+def test_load_context_nested_frozen_sees_child_not_parent_commits(tmp_path):
+    nested, _child_head, _child_src, _parent = make_nested_frozen_checkout(tmp_path)
+    os.remove(os.path.join(nested, CONTEXT_FILE))
+    out = load_context(nested)
+    assert out["_source"] == "degraded"
+    subjects = [row["subject"] for row in out.get("recent_commits", [])]
+    assert subjects == []
+    assert "parent commit AFTER freeze" not in subjects
+    with pytest.raises(RuntimeError):
+        _context_from_git(nested)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")

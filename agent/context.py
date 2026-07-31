@@ -105,12 +105,43 @@ def _mask_forward_refs(text: str) -> str:
     return text
 
 
+def _is_frozen_checkout(repo_path: str) -> bool:
+    """True when ``repo_path`` is a git-archive export (working tree, no ``.git``).
+
+    Production hands the agent a ``write_frozen`` checkout inside the benchmark sandbox.
+    Without a local ``.git``, ``git -C`` walks upward and can discover an enclosing
+    repository, leaking post-T history into context (#2252).
+    """
+    return not os.path.lexists(os.path.join(repo_path, ".git"))
+
+
 def _git(repo_path, *args):
+    env = os.environ.copy()
+    if _is_frozen_checkout(repo_path):
+        # A missing local .git would otherwise make git discover a parent repo. Point GIT_DIR
+        # at a sentinel under the checkout so discovery stops here (#2252).
+        env["GIT_DIR"] = os.path.join(repo_path, ".git")
     out = subprocess.run(
         ["git", "-C", repo_path, *args],
         capture_output=True, text=True, check=False,
+        env=env,
     )
     return out.stdout.strip()
+
+
+def _degraded_context() -> dict:
+    """Minimal knowable-at-T shell when neither the context file nor git can supply data."""
+    return {
+        "frozen_at": {"commit": None, "date": None},
+        "recent_commits": [],
+        "open_issues": [],
+        "open_prs": [],
+        "labels": [],
+        "milestones": [],
+        "releases": [],
+        "readme_excerpt": "",
+        "_source": "degraded",
+    }
 
 
 def repo_layout(repo_path: str, limit: int = REPO_LAYOUT_LIMIT) -> list:
@@ -195,10 +226,19 @@ def load_context(repo_path: str) -> dict:
                 size = os.path.getsize(path)
             except OSError:
                 size = -1
+            if _is_frozen_checkout(repo_path):
+                logger.warning(
+                    "load_context: %s unreadable (%s bytes, %s: %s); frozen checkout has no "
+                    ".git — degrading",
+                    path, size, type(exc).__name__, exc,
+                )
+                return _with_repo_layout(_degraded_context(), repo_path)
             logger.warning(
                 "load_context: %s unreadable (%s bytes, %s: %s); rebuilding from git",
                 path, size, type(exc).__name__, exc,
             )
+    if _is_frozen_checkout(repo_path):
+        return _with_repo_layout(_degraded_context(), repo_path)
     return _with_repo_layout(_context_from_git(repo_path), repo_path)
 
 
