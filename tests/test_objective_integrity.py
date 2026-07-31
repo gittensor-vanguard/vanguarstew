@@ -246,7 +246,7 @@ def test_cli_strict_exits_zero_on_valid_artifact():
             env={**os.environ, "VANGUARSTEW_OFFLINE": "1"},
         )
         assert proc.returncode == 0, proc.stderr
-        assert "VALID" in proc.stderr
+        assert proc.stderr.startswith("objective integrity: VALID")
     finally:
         os.unlink(path)
 

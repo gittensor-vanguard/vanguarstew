@@ -418,7 +418,7 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
         cwd=ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "CONSISTENT" in proc.stderr
+    assert proc.stderr.startswith("row integrity: CONSISTENT")
 
 
 # --- #1613 / #1906: clean, named path errors with exit 2 on a bad artifact path -----------

@@ -515,7 +515,7 @@ def test_cli_strict_passes_for_consistent_artifact(tmp_path):
     path.write_text(json.dumps(_artifact()), encoding="utf-8")
     result = _run_cli(str(path), "--strict")
     assert result.returncode == 0
-    assert "CONSISTENT" in result.stderr
+    assert result.stderr.startswith("tally integrity: CONSISTENT")
     assert json.loads(result.stdout)["passed"] is True
 
 
