@@ -101,7 +101,9 @@ def test_run_replay_composite_mean_in_range():
     try:
         res = run_replay(d, agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
         assert isinstance(res["composite_mean"], (int, float))
-        assert 0.0 <= res["composite_mean"] <= 1.0
+        # Pin the real aggregate — a 0..1 bound is vacuous for any mid-range wrong blend.
+        assert res["composite_mean"] == round(
+            sum(r["composite"] for r in res["rows"]) / len(res["rows"]), 3)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -126,8 +128,11 @@ def test_run_replay_composite_parts_match_rows():
         parts = res["composite_parts"]
         assert isinstance(parts["judge_mean"], (int, float))
         assert isinstance(parts["objective_mean"], (int, float))
-        assert 0.0 <= parts["judge_mean"] <= 1.0
-        assert 0.0 <= parts["objective_mean"] <= 1.0
+        w_judge = res["weights"]["judge"]
+        w_objective = res["weights"]["objective"]
+        # Pin the production blend — a 0..1 bound cannot catch a wrong weight pair.
+        assert res["composite_mean"] == round(
+            w_judge * parts["judge_mean"] + w_objective * parts["objective_mean"], 3)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -182,7 +187,10 @@ def test_run_multi_replay_produces_valid_composite_mean():
         res = run_multi_replay([a, b], agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
         assert res["scored_repos"] >= 1
         assert isinstance(res["composite_mean"], (int, float))
-        assert 0.0 <= res["composite_mean"] <= 1.0
+        # Pin the multi-repo aggregate to the mean of per-repo composites.
+        scored = [r for r in res["per_repo"] if "composite_mean" in r]
+        assert res["composite_mean"] == round(
+            sum(r["composite_mean"] for r in scored) / len(scored), 3)
     finally:
         shutil.rmtree(a, ignore_errors=True)
         shutil.rmtree(b, ignore_errors=True)
