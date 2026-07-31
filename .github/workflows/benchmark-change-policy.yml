@@ -1,8 +1,8 @@
 name: Benchmark change policy
 
-# The benchmark, tests, tools, scripts, and documentation are maintainer-directed contribution
-# surfaces.
-# Contributor changes to them require an explicitly approved open issue before a PR is opened.
+# Only agent/** or agent.py changes, with optional companion tests/** changes, enter the agent
+# contribution route directly. Every other project path is maintainer-directed and requires an
+# explicitly approved open issue before a contributor PR is opened.
 # pull_request_target is required to close fork PRs; the job checks out only the trusted base
 # commit and never executes or reads code from the contributor's head ref.
 
@@ -10,17 +10,6 @@ on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
     branches: [test, main]
-    paths:
-      - "benchmark/**"
-      - "tests/**"
-      - "tools/**"
-      - "scripts/**"
-      - "docs/**"
-      - "blog/**"
-      - "**/*.md"
-      - ".github/workflows/benchmark-change-policy.yml"
-      - ".github/workflows/pr-integrity.yml"
-      - ".github/workflows/pr-reopen-policy.yml"
 
 permissions:
   contents: read

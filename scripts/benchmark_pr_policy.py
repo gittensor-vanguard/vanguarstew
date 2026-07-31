@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Close unapproved contributor PRs that modify maintainer-directed surfaces."""
+"""Close unapproved contributor PRs outside the agent submission surface."""
 
 from __future__ import annotations
 
@@ -12,14 +12,6 @@ from pathlib import Path
 
 APPROVAL_LABEL = "benchmark-change-approved"
 MAINTAINERS = frozenset({"matedev01", "vanguarstew"})
-GUARDRAIL_PREFIXES = ("benchmark/", "tests/", "tools/", "scripts/", "docs/", "blog/")
-GUARDRAIL_FILES = frozenset(
-    {
-        ".github/workflows/benchmark-change-policy.yml",
-        ".github/workflows/pr-integrity.yml",
-        ".github/workflows/pr-reopen-policy.yml",
-    }
-)
 COMMENT_MARKER = "<!-- vanguarstew:benchmark-change-policy -->"
 _ISSUE_REF_RE = re.compile(
     r"\b(?:fixes|closes|resolves|refs)\s*:?[ \t]*#([1-9][0-9]*)\b",
@@ -31,24 +23,46 @@ class PolicyError(RuntimeError):
     """The event or GitHub response could not be evaluated safely."""
 
 
-def touches_guardrail(paths) -> bool:
-    """Whether a changed path belongs to a maintainer-directed surface."""
+def _normalized_paths(paths) -> tuple[str, ...] | None:
+    """Return safe repository-relative paths, or ``None`` for malformed input."""
     if not isinstance(paths, (list, tuple, set, frozenset)):
-        return False
+        return None
+    normalized_paths = []
     for path in paths:
         if not isinstance(path, str):
-            continue
-        normalized = path.strip()
+            return None
+        if path != path.strip() or any(ord(character) < 32 or ord(character) == 127 for character in path):
+            return None
+        normalized = path
         while normalized.startswith("./"):
             normalized = normalized[2:]
-        markdown = normalized.lower().endswith(".md")
+        parts = normalized.split("/")
         if (
-            markdown
-            or normalized in GUARDRAIL_FILES
-            or normalized.startswith(GUARDRAIL_PREFIXES)
+            not normalized
+            or normalized.startswith("/")
+            or any(part in {"", ".", ".."} for part in parts)
         ):
-            return True
-    return False
+            return None
+        normalized_paths.append(normalized)
+    return tuple(normalized_paths)
+
+
+def is_agent_submission(paths) -> bool:
+    """Whether every change is agent code or a companion test for that agent code."""
+    normalized = _normalized_paths(paths)
+    if not normalized:
+        return False
+    has_agent_change = any(path == "agent.py" or path.startswith("agent/") for path in normalized)
+    allowed = all(
+        path == "agent.py" or path.startswith(("agent/", "tests/"))
+        for path in normalized
+    )
+    return has_agent_change and allowed
+
+
+def touches_guardrail(paths) -> bool:
+    """Whether a change falls outside the narrowly defined agent submission surface."""
+    return not is_agent_submission(paths)
 
 
 def referenced_issues(body) -> tuple[int, ...]:
@@ -76,7 +90,7 @@ def issue_is_approved(issue) -> bool:
 def evaluate_policy(*, author, paths, body, issues) -> dict:
     """Return a deterministic allow/close decision from already-fetched metadata."""
     if not touches_guardrail(paths):
-        return {"allowed": True, "reason": "not a protected change"}
+        return {"allowed": True, "reason": "eligible agent submission"}
     if author in MAINTAINERS:
         return {"allowed": True, "reason": "maintainer-authored protected change"}
     refs = referenced_issues(body)
@@ -213,13 +227,14 @@ def enforce(event: dict, repo: str) -> dict:
         return decision
 
     comment = (
-        "Closing automatically: changes to the benchmark, tests, tools, scripts, and "
-        "documentation are maintainer-directed. Please open an issue first, agree the scope "
-        "with a maintainer, "
+        "Closing automatically: this PR changes files outside the agent submission surface. "
+        "Agent submissions are limited to `agent/**` or `agent.py`, with companion `tests/**` "
+        "changes allowed in the same PR. Every other project path, including `.github/**`, is "
+        "maintainer-directed. Please open an issue first, agree the scope with a maintainer, "
         f"and wait for the `{APPROVAL_LABEL}` label before submitting a PR. Then reference that "
         "open issue with `Refs #<number>` and ask a maintainer to reopen this PR. See "
         "[CONTRIBUTING.md](https://github.com/gittensor-vanguard/vanguarstew/blob/main/"
-        "CONTRIBUTING.md#benchmark-tests-tools-scripts-and-documentation-changes).\n\n"
+        "CONTRIBUTING.md#agent-submissions-and-protected-project-changes).\n\n"
         f"{COMMENT_MARKER}"
     )
     _sync_close_comment(repo, number, comment)
