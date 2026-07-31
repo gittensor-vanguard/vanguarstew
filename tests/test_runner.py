@@ -267,6 +267,15 @@ def test_load_solve_rejects_missing_file():
         load_solve("/tmp/vanguarstew-no-such-agent.py")
 
 
+def test_load_solve_rejects_unsupported_file_type(tmp_path):
+    # Existing files without an import loader must produce the dedicated clean error rather than
+    # falling through to a later attribute or import failure.
+    agent = tmp_path / "agent.txt"
+    agent.write_text("solve = lambda **kwargs: {}\n")
+    with pytest.raises(RuntimeError, match="unsupported file type"):
+        load_solve(str(agent))
+
+
 def test_load_solve_rejects_directory():
     with pytest.raises(RuntimeError, match="does not exist"):
         load_solve("/tmp")
