@@ -27,6 +27,11 @@ _SPEC_DIR_RE = re.compile(r"^(\d+)-(.+)$")
 # `# Spec 042 — ...` / `# Plan 042 — ...`: the document's own number, from its first heading.
 _DOC_HEADING_RE = re.compile(r"^#\s+(?:Spec|Plan)\s+(\d+)\b")
 
+# `test_spec_042_...`: a contract-test file a spec's prose points a reader at. Its number should
+# be the spec's own — a renumbered spec that keeps the old reference sends the reader to a file
+# that no longer exists (or that now belongs to a different spec).
+_TEST_REF_RE = re.compile(r"test_spec_(\d+)_")
+
 DOCS = ("spec.md", "plan.md")
 
 
@@ -92,4 +97,35 @@ def test_spec_documents_declare_their_directory_number():
         "spec documents whose number disagrees with their directory: "
         + "; ".join(mismatches)
         + " — rewrite the heading when a spec is renumbered"
+    )
+
+
+def test_spec_documents_reference_their_own_test_file():
+    """Each spec.md / plan.md points at its OWN ``tests/test_spec_NNN_*.py`` file.
+
+    The heading check above catches a renumbered directory whose *heading* was not rewritten;
+    this catches the same drift in the in-body ``test_spec_NNN`` cross-reference, which is exactly
+    what #2346 had to repair after the 087-092 renumbering (each spec still named the test file it
+    had before the renumber, a number another spec now owns).
+    """
+    mismatches = []
+    for name, number in sorted(
+        (name, number)
+        for number, names in _spec_dirs_by_number().items()
+        for name in names
+    ):
+        for doc in DOCS:
+            path = os.path.join(SPECS, name, doc)
+            if not os.path.isfile(path):
+                continue
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read()
+            for ref in _TEST_REF_RE.findall(text):
+                if int(ref) != int(number):
+                    mismatches.append(
+                        f"{name}/{doc}: references test_spec_{ref}_*, directory says {number}")
+    assert not mismatches, (
+        "spec documents referencing a test file whose number disagrees with their directory: "
+        + "; ".join(mismatches)
+        + " — repoint the reference when a spec is renumbered"
     )
