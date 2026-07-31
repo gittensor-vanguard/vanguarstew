@@ -129,3 +129,30 @@ def test_spec_documents_reference_their_own_test_file():
         + "; ".join(mismatches)
         + " — repoint the reference when a spec is renumbered"
     )
+
+
+# `tests/test_spec_042_...py`: a contract-test file, named for the spec it verifies.
+_TEST_FILE_RE = re.compile(r"^test_spec_(\d+)_")
+
+TESTS = os.path.join(ROOT, "tests")
+
+
+def test_spec_test_files_map_to_an_existing_spec_directory():
+    """Every ``tests/test_spec_NNN_*.py`` names a spec directory that still exists.
+
+    The reverse of the check above: that one guards a *spec* pointing at the wrong test; this
+    guards a *test file* left stranded when its spec is renumbered or removed — a ``test_spec_042``
+    still on disk after ``042`` became ``087`` announces a contract for a number no spec owns,
+    the same ambiguity from the other side.
+    """
+    numbered_dirs = set(_spec_dirs_by_number())
+    orphans = []
+    for name in sorted(os.listdir(TESTS)):
+        match = _TEST_FILE_RE.match(name)
+        if match and match.group(1) not in numbered_dirs:
+            orphans.append(name)
+    assert not orphans, (
+        "contract-test files with no matching spec directory: "
+        + ", ".join(orphans)
+        + " — rename or remove the test when its spec is renumbered or dropped"
+    )
