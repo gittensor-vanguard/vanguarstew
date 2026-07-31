@@ -26,8 +26,9 @@ Two halves with different rules:
 - **`benchmark/` — the evaluation harness.** Freeze a repo at a point in time, generate
   replay tasks from GitHub history, run agents, and judge them pairwise. This is
   validator-owned; changes here affect how *everyone* is scored, so they get extra scrutiny.
-- **`scripts/`, `docs/`, and `blog/` — maintainer-directed operations and documentation.**
-  These surfaces define how the system is run and how its public guarantees are presented.
+- **`tests/`, `tools/`, `scripts/`, `docs/`, and `blog/` — maintainer-directed validation,
+  operations, and documentation.** These surfaces define how the system is validated and run and
+  how its public guarantees are presented.
 
 See [README.md](README.md) for the architecture and [ROADMAP.md](ROADMAP.md) for milestones.
 
@@ -87,13 +88,13 @@ CI evaluates this rule on each PR update and again whenever the normal CI workfl
 Identity mismatches are automatically closed; correct the commit attribution and ask a maintainer
 to reopen the PR.
 
-## Benchmark, scripts, and documentation changes
+## Benchmark, tests, tools, scripts, and documentation changes
 
-The benchmark, scripts, and documentation surfaces are maintainer-directed. Benchmark changes can
-change how every contributor is evaluated; scripts control operational behavior; documentation
-defines the project's public contracts and claims. The protected paths are `benchmark/**`,
-`scripts/**`, `docs/**`, `blog/**`, Markdown files anywhere in the repository, and the CI policy
-protecting them.
+The benchmark, tests, tools, scripts, and documentation surfaces are maintainer-directed. Benchmark
+and test changes can change how contributor work is evaluated; tools and scripts control validation
+or operational behavior; documentation defines the project's public contracts and claims. The
+protected paths are `benchmark/**`, `tests/**`, `tools/**`, `scripts/**`, `docs/**`, `blog/**`,
+Markdown files anywhere in the repository, and the CI policy protecting them.
 
 Contributor PRs touching this surface are automatically closed unless they were discussed and
 approved before the PR was opened:
