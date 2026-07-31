@@ -84,7 +84,7 @@ jobs:
       contents: read
       issues: write
     env:
-      ANY_FAILED: ${{ needs.lint.result == 'failure' || needs.validate.result == 'failure' || needs.test.result == 'failure' }}
+      ANY_FAILED: ${{ needs.lint.result != 'success' || needs.validate.result != 'success' || needs.test.result != 'success' }}
     steps:
       - name: Open or update the base-branch-red tracking issue
         if: env.ANY_FAILED == 'true'
