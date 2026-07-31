@@ -1,6 +1,6 @@
 """Spec 068 contract tests for benchmark/improvement.py (improvement / adoption gate).
 
-Pins the as-built behavior described in specs/068-benchmark-improvement/spec.md with literal
+Pins the as-built behavior described in specs/091-benchmark-improvement/spec.md with literal
 expected check names, ``passed`` values and detail strings, using values whose ``repr`` is
 stable across platforms. The score-source and error-scan semantics the gate borrows
 (``_headline_source``, ``acceptance._partition_error``, ``trend.headline_score``) are pinned

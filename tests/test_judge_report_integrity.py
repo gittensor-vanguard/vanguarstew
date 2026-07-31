@@ -279,7 +279,9 @@ def test_non_list_per_repo_is_not_masked():
 
 
 def test_integrity_headline_reports_consistent_and_inconsistent():
-    assert "CONSISTENT" in integrity_headline(check_judge_report_integrity(_artifact()))
+    # Anchor at the start: "CONSISTENT" is a substring of "INCONSISTENT".
+    assert integrity_headline(check_judge_report_integrity(_artifact())).startswith(
+        "judge report integrity: CONSISTENT")
     art = _artifact()
     art["judge_report"]["losses"] = 0
     assert "INCONSISTENT" in integrity_headline(check_judge_report_integrity(art))
@@ -313,7 +315,7 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
         cwd=ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "CONSISTENT" in proc.stderr
+    assert "judge report integrity: CONSISTENT" in proc.stderr
 
 
 # --- bad artifact paths get an actionable message, never a raw errno or a traceback ----------

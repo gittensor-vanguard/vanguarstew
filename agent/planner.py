@@ -103,6 +103,15 @@ _RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?
 # the same way the objective anchor's `is_release_subject` does — a title-shaped release the
 # `_commit_plan_kind` (Conventional-Commit-prefix only) check alone would miss (#1561 follow-up).
 _RELEASE_KW_RE = re.compile(r"\b(release|changelog|version\s+bump|bump\s+version)\b", re.I)
+# Git-native revert subjects (`Revert "Release v1.2.0"`) are the opposite of a cut. Mirrors
+# benchmark/score.py `_NATIVE_REVERT_SUBJECT` so the planner backstop does not treat them as
+# release predictions (#2115).
+_NATIVE_REVERT_SUBJECT = re.compile(r"^\s*revert\b", re.I)
+
+# Plan kinds that name a maintainer action over existing work, not a release *prediction*.
+# Their titles may mention "release" (queue review of an open release PR; revert of a cut)
+# without predicting another version cut (#2115).
+_NON_RELEASE_PREDICTION_KINDS = frozenset({"triage", "revert"})
 
 SYSTEM = (
     "You are an experienced repository maintainer. Given the repo state and its inferred "
@@ -466,9 +475,12 @@ def _is_release_subject(text) -> bool:
 
     A version under any **non-tooling** CC prefix is NOT a cut (``fix: 2.0.0``, ``ci: 3.0.0``) —
     the prefix is authoritative there — matching the anchor so the backstop gates exactly what the
-    anchor would score as a release prediction. A non-string title never raises.
+    anchor would score as a release prediction. A git-native ``Revert ...`` subject is never a
+    cut (mirrors the anchor's ``_NATIVE_REVERT_SUBJECT``). A non-string title never raises.
     """
     if not isinstance(text, str):
+        return False
+    if _NATIVE_REVERT_SUBJECT.match(text):
         return False
     m = _CC_PREFIX_RE.match(text)
     if m:
@@ -492,12 +504,21 @@ def _is_planned_release(item) -> bool:
     the title half is :func:`_is_release_subject`, a full mirror of the anchor's
     ``is_release_subject`` — so a release-*titled* item under a non-release ``kind`` is gated too,
     not just ``kind == "release"`` (#1561 follow-up: openclaw task2 slipped the kind-only check).
+
+    ``triage`` / ``revert`` are never predictions (#2115): a queue review of an open release PR,
+    or a revert of a cut, may mention ``release`` in the title without forecasting another cut.
     """
     if not isinstance(item, dict):
         return False
     kind = item.get("kind")
-    if isinstance(kind, str) and kind.strip().lower() == "release":
+    if isinstance(kind, str):
+        kind = kind.strip().lower()
+    else:
+        kind = ""
+    if kind == "release":
         return True
+    if kind in _NON_RELEASE_PREDICTION_KINDS:
+        return False
     return _is_release_subject(item.get("title"))
 
 
@@ -512,7 +533,9 @@ def _calibrate_release_prediction(plan: list, context: dict) -> list:
       shows no release cut (openclaw-style philosophy over-predict); keep them when a cut is
       evidenced mid-history (not tip-just-cut).
 
-    Runs BEFORE queue reconciliation so a genuine open release *PR* is still merged back in.
+    Runs BEFORE queue reconciliation. Triage/revert items that mention ``release`` in the title
+    are not predictions (#2115), so they survive the strip and reconcile can still attach them
+    to an open release PR.
     """
     state = _release_timing_state(context)
     if state == "suppress":
@@ -638,6 +661,73 @@ def _repo_layout_note(context: dict) -> str:
         f"({len(entries)}): {', '.join(entries)}.\n"
         f"{REPO_LAYOUT_GUIDANCE}\n"
     )
+
+
+# Cap on backfilled `files` entries per plan item: enough to name where the work lands, few
+# enough that an item never carries more modules than its own text supports.
+_BACKFILL_MAX_FILES = 2
+
+# Margin under the judge renderer's 1400-char compact per-field budget (benchmark/judge.py
+# ``_render``; mirrored, not imported — ``agent/`` must not depend on ``benchmark/``). A plan
+# pushed past that budget is shown to the judge as a mangled ``{"truncated": true,
+# "json_prefix": ...}`` blob with its tail items invisible, so growing the plan must never be
+# what tips it over: backfill only fires while the compact-serialized plan stays under this.
+_JUDGE_PLAN_COMPACT_BUDGET = 1300
+
+
+def _backfill_files_from_layout(plan: list, context: dict) -> list:
+    """Attach `files` to items whose own text names a real top-level entry but left it empty.
+
+    Module credit is read off an item's `files` path segments alongside its title/theme
+    tokens, and `files` is also where a plan states concretely where work lands — an item
+    like "Harden the loader in src" that omits `files` is less specific than its own title.
+    The repair is strictly token-gated: a layout entry is attached only when the item's own
+    title/theme/rationale shares a significant token with the entry's name, so an item never
+    claims a module its text does not mention, and the plan stays exactly as specific as the
+    model made it. Entries are attached in layout order, capped at ``_BACKFILL_MAX_FILES``.
+
+    `triage` items are maintainer actions, not commit work, and pass through untouched, as
+    does any item that already carries `files` and any item on an empty/unreadable layout.
+    `release` items are backfilled like any other: a release lands in the changelog and
+    packaging surfaces, and those are scored modules on the very windows a release item is
+    right about — a release title naming the changelog earns that entry the same token-gated
+    way.
+
+    Backfill never grows the plan past ``_JUDGE_PLAN_COMPACT_BUDGET`` compact-serialized
+    chars: past the judge renderer's per-field budget the whole plan degrades to a truncated
+    prefix blob in the judge's view, so an attachment that would tip it over is skipped —
+    the item is kept verbatim, content is never trimmed to make room.
+    """
+    entries = _repo_layout(context)
+    if not entries:
+        return plan
+    entry_tokens = [(entry, _significant_tokens(entry)) for entry in entries]
+    out = []
+    for i, item in enumerate(plan):
+        if (
+            not isinstance(item, dict)
+            or item.get("files")
+            or item.get("kind") == "triage"
+        ):
+            out.append(item)
+            continue
+        text_tokens = (
+            _significant_tokens(item.get("title", ""))
+            | _significant_tokens(item.get("theme", ""))
+            | _significant_tokens(item.get("rationale", ""))
+        )
+        matched = [
+            entry for entry, tokens in entry_tokens
+            if tokens and tokens & text_tokens
+        ][:_BACKFILL_MAX_FILES]
+        if matched:
+            candidate = {**item, "files": matched}
+            trial = out + [candidate] + plan[i + 1:]
+            serialized = json.dumps(trial, ensure_ascii=True, separators=(",", ":"))
+            if len(serialized) <= _JUDGE_PLAN_COMPACT_BUDGET:
+                item = candidate
+        out.append(item)
+    return out
 
 
 def _pr_queue_note(context: dict) -> str:
@@ -893,6 +983,12 @@ def _normalize_plan_item(item) -> dict | None:
     else:
         kind = ""
     if kind not in _PLAN_KINDS:
+        # An answer in Conventional-Commit spelling ("fix", "feat", "chore", "deps") — the
+        # very spellings OBJECTIVE_ANCHOR_GUIDANCE offers — must keep its intended kind.
+        # Falling through to "triage" here silently zeroes that kind for `kind_recall`
+        # (triage names no commit kind), turning a correct answer into a scoring miss.
+        kind = _CC_TYPE_TO_PLAN_KIND.get(kind, kind)
+    if kind not in _PLAN_KINDS:
         kind = "triage"
     normalized = {
         "title": title,
@@ -1028,6 +1124,7 @@ def plan_next_actions(context: dict, philosophy: dict, n: int, llm) -> list:
             plan = _plan_list(plan.get("actions"), "actions")
     plan = _normalize_plan(plan if isinstance(plan, list) else [])
     plan = _calibrate_release_prediction(plan, context)
+    plan = _backfill_files_from_layout(plan, context)
     return reconcile_plan_with_queue(plan, context, n)
 
 

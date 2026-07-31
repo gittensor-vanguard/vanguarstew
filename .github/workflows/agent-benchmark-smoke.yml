@@ -42,8 +42,10 @@ jobs:
             --out /tmp/candidate.json
 
       - name: Run base-branch agent (offline stub) for comparison
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git worktree add /tmp/base-checkout origin/${{ github.event.pull_request.base.ref }}
+          git worktree add /tmp/base-checkout "origin/$BASE_REF"
           cd /tmp/base-checkout
           uv run --project "$GITHUB_WORKSPACE" python -m scripts.run_eval \
             --agent agent.py --repo-set benchmark/repo_sets/curated.json \
@@ -87,4 +89,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR_NUMBER" --body-file /tmp/comment.md

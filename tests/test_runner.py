@@ -23,6 +23,7 @@ from benchmark.runner import (  # noqa: E402
     CLONE_TIMEOUT_SECONDS,
     _materialize_repo_source,
     load_solve,
+    run_generalization_report,
     run_multi_replay,
     run_replay,
 )
@@ -101,7 +102,9 @@ def test_run_replay_composite_mean_in_range():
     try:
         res = run_replay(d, agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
         assert isinstance(res["composite_mean"], (int, float))
-        assert 0.0 <= res["composite_mean"] <= 1.0
+        # Pin the real aggregate — a 0..1 bound is vacuous for any mid-range wrong blend.
+        assert res["composite_mean"] == round(
+            sum(r["composite"] for r in res["rows"]) / len(res["rows"]), 3)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -126,8 +129,11 @@ def test_run_replay_composite_parts_match_rows():
         parts = res["composite_parts"]
         assert isinstance(parts["judge_mean"], (int, float))
         assert isinstance(parts["objective_mean"], (int, float))
-        assert 0.0 <= parts["judge_mean"] <= 1.0
-        assert 0.0 <= parts["objective_mean"] <= 1.0
+        w_judge = res["weights"]["judge"]
+        w_objective = res["weights"]["objective"]
+        # Pin the production blend — a 0..1 bound cannot catch a wrong weight pair.
+        assert res["composite_mean"] == round(
+            w_judge * parts["judge_mean"] + w_objective * parts["objective_mean"], 3)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -182,7 +188,10 @@ def test_run_multi_replay_produces_valid_composite_mean():
         res = run_multi_replay([a, b], agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
         assert res["scored_repos"] >= 1
         assert isinstance(res["composite_mean"], (int, float))
-        assert 0.0 <= res["composite_mean"] <= 1.0
+        # Pin the multi-repo aggregate to the mean of per-repo composites.
+        scored = [r for r in res["per_repo"] if "composite_mean" in r]
+        assert res["composite_mean"] == round(
+            sum(r["composite_mean"] for r in scored) / len(scored), 3)
     finally:
         shutil.rmtree(a, ignore_errors=True)
         shutil.rmtree(b, ignore_errors=True)
@@ -252,11 +261,71 @@ def test_run_multi_replay_disallows_ambiguous_args():
         shutil.rmtree(a, ignore_errors=True)
 
 
+def test_run_multi_replay_rejects_empty_repo_set_partition(tmp_path):
+    config = tmp_path / "repo-set.json"
+    config.write_text(json.dumps({
+        "name": "only-tuned",
+        "description": "test",
+        "strategy": "test",
+        "repos": [{
+            "name": "tuned",
+            "source": "/not-used",
+            "tier": "obscure",
+            "held_out": False,
+        }],
+    }))
+    with pytest.raises(RepoSetError, match="no held_out repos"):
+        run_multi_replay(repo_set=str(config), repo_set_partition="held_out", agent_file=AGENT)
+
+
+def test_generalization_report_computes_gap_from_both_partitions(monkeypatch):
+    def fake_run_multi_replay(repo_set=None, repo_set_partition=None, **kwargs):
+        assert repo_set == "repo-set.json"
+        assert kwargs == {"seed": 11}
+        if repo_set_partition == "tuned":
+            return {"scored_repos": 2, "composite_mean": 0.82}
+        return {"scored_repos": 3, "composite_mean": 0.71}
+
+    monkeypatch.setattr("benchmark.runner.run_multi_replay", fake_run_multi_replay)
+    result = run_generalization_report("repo-set.json", seed=11)
+
+    assert result["generalization_gap"] == 0.11
+
+
+def test_partial_generalization_report_retains_error(monkeypatch):
+    def fake_run_multi_replay(repo_set=None, repo_set_partition=None, **kwargs):
+        assert repo_set == "repo-set.json"
+        assert kwargs == {"seed": 5}
+        if repo_set_partition == "held_out":
+            raise RepoSetError("no held_out repos")
+        return {"scored_repos": 4, "composite_mean": 0.6}
+
+    monkeypatch.setattr("benchmark.runner.run_multi_replay", fake_run_multi_replay)
+    result = run_generalization_report("repo-set.json", seed=5)
+
+    assert result["tuned"] == {"scored_repos": 4, "composite_mean": 0.6}
+    assert result["held_out"] == {
+        "error": "no held_out repos",
+        "scored_repos": 0,
+        "composite_mean": 0.0,
+    }
+    assert result["generalization_gap"] is None
+
+
 # ---- load_solve error handling ----------------------------------------------
 
 def test_load_solve_rejects_missing_file():
     with pytest.raises(RuntimeError, match="does not exist"):
         load_solve("/tmp/vanguarstew-no-such-agent.py")
+
+
+def test_load_solve_rejects_unsupported_file_type(tmp_path):
+    # Existing files without an import loader must produce the dedicated clean error rather than
+    # falling through to a later attribute or import failure.
+    agent = tmp_path / "agent.txt"
+    agent.write_text("solve = lambda **kwargs: {}\n")
+    with pytest.raises(RuntimeError, match="unsupported file type"):
+        load_solve(str(agent))
 
 
 def test_load_solve_rejects_directory():

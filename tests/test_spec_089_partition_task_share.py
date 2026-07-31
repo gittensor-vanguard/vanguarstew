@@ -1,4 +1,4 @@
-"""Contract tests for specs/047-benchmark-partition-task-share — assert partition_task_share.py
+"""Contract tests for specs/089-benchmark-partition-task-share — assert partition_task_share.py
 satisfies the spec's EARS criteria: per-repo parsing, partition shares, artifact-kind branches,
 headline branches, and pure evaluation. Offline, deterministic.
 """

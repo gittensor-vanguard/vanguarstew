@@ -100,6 +100,30 @@ def test_fractional_decisive_margin_cannot_truncate_to_expected_integer():
     assert "decisive_margin_matches" in failed_checks(result)
 
 
+def test_fractional_decisive_margin_near_miss_positive_fails():
+    # int(1.999) == 1 would false-pass; margin must equal challenger-baseline exactly.
+    art = {
+        "tasks": 9,
+        "tally": {"challenger": 5, "baseline": 4, "tie": 0},
+        "decisive_margin": 1.999,
+    }
+    result = check_tally_integrity(art)
+    assert result["passed"] is False
+    assert "decisive_margin_matches" in failed_checks(result)
+
+
+def test_fractional_decisive_margin_near_miss_negative_fails():
+    # int(-1.9) == -1 would false-pass when challenger-baseline is -1.
+    art = {
+        "tasks": 7,
+        "tally": {"challenger": 3, "baseline": 4, "tie": 0},
+        "decisive_margin": -1.9,
+    }
+    result = check_tally_integrity(art)
+    assert result["passed"] is False
+    assert "decisive_margin_matches" in failed_checks(result)
+
+
 def test_missing_tally_fails_tally_present():
     art = _artifact()
     del art["tally"]
@@ -359,7 +383,9 @@ def test_every_check_reported_when_several_fail():
 
 
 def test_integrity_headline_reports_consistent_and_inconsistent():
-    assert "CONSISTENT" in integrity_headline(check_tally_integrity(_artifact()))
+    # Anchor at the start: "CONSISTENT" is a substring of "INCONSISTENT".
+    ok = integrity_headline(check_tally_integrity(_artifact()))
+    assert ok.startswith("tally integrity: CONSISTENT")
     art = _artifact()
     art["tally"]["challenger"] = 99
     assert "INCONSISTENT" in integrity_headline(check_tally_integrity(art))
@@ -489,7 +515,7 @@ def test_cli_strict_passes_for_consistent_artifact(tmp_path):
     path.write_text(json.dumps(_artifact()), encoding="utf-8")
     result = _run_cli(str(path), "--strict")
     assert result.returncode == 0
-    assert "CONSISTENT" in result.stderr
+    assert "tally integrity: CONSISTENT" in result.stderr
     assert json.loads(result.stdout)["passed"] is True
 
 

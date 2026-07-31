@@ -27,9 +27,14 @@ Edit this file when policy changes; code, tests, and CI follow.
 
 - WHILE a contributor has >2 open PRs THEN CI SHALL block new PRs from that author.
 - WHEN a contributor opens a PR against `main` THEN CI SHALL auto-close with a test-branch redirect.
+- Contributor PRs touching `benchmark/`, `tests/`, `tools/`, `scripts/`, `docs/`, `blog/`, or any
+  Markdown file SHALL require a linked open issue carrying `benchmark-change-approved`; CI SHALL
+  auto-close them otherwise.
 - PRs SHALL reference at least one issue (e.g. `Fixes #N`).
 - Commits SHALL NOT carry AI co-authorship or attribution markers.
 - Contributors SHALL target the `test` branch. The maintainer promotes `test` → `main`.
+- WHEN a closed PR is reopened by an actor other than `matedev01` or `vanguarstew` THEN CI
+  SHALL re-close it; contributors SHALL ask a maintainer to reopen a corrected PR.
 - WHEN a contributor PR changes `benchmark/`, `scripts/`, `docs/`, `blog/`, or Markdown
   documentation THEN CI SHALL close it unless a referenced open issue carries the
   `benchmark-change-approved` label.

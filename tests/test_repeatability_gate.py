@@ -177,7 +177,8 @@ def test_cli_strict_passes_on_stable_runs():
             env={**os.environ, "VANGUARSTEW_OFFLINE": "1"},
         )
         assert proc.returncode == 0, proc.stderr
-        assert "STABLE" in proc.stderr
+        # Anchor: "STABLE" is a substring of "UNSTABLE".
+        assert "repeatability gate: STABLE" in proc.stderr
     finally:
         for path in paths:
             os.unlink(path)

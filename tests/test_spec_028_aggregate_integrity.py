@@ -271,7 +271,7 @@ def test_integrity_headline_consistent_and_inconsistent():
     ok = check_aggregate_integrity(_multi(_repo(2, 0.6)))
     bad = _multi(_repo(2, 0.6))
     bad["composite_mean"] = 0.1
-    assert "CONSISTENT" in integrity_headline(ok)
+    assert integrity_headline(ok).startswith("aggregate integrity: CONSISTENT")
     assert "INCONSISTENT" in integrity_headline(check_aggregate_integrity(bad))
 
 

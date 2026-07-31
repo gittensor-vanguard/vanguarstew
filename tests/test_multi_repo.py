@@ -64,16 +64,19 @@ def test_single_run_reports_composite_mean_and_parts():
     try:
         res = run_replay(d, agent_file=AGENT, n_tasks=2, horizon=3, seed=0)
         # single-repo composite output contract: composite_mean PLUS its parts and weights
-        assert "composite_mean" in res and 0.0 <= res["composite_mean"] <= 1.0
+        assert "composite_mean" in res
         parts = res["composite_parts"]
         assert {"judge_mean", "objective_mean"} <= set(parts)
-        assert all(0.0 <= parts[k] <= 1.0 for k in ("judge_mean", "objective_mean"))
         assert res["weights"] == {"judge": 0.6, "objective": 0.4}
         # each task row carries both the objective anchor and the blended composite
         assert res["rows"] and all(
             "objective" in r and "composite" in r and "judge_order" in r for r in res["rows"])
         assert res["composite_mean"] == round(
             sum(r["composite"] for r in res["rows"]) / len(res["rows"]), 3)
+        # Pin the production blend — a 0..1 bound cannot catch a wrong weight pair.
+        assert res["composite_mean"] == round(
+            res["weights"]["judge"] * parts["judge_mean"]
+            + res["weights"]["objective"] * parts["objective_mean"], 3)
         assert res["judge_order_stats"]["offline"] == len(res["rows"])
         assert res["judge_order_stats"]["disagreement_rate"] is None
     finally:
@@ -96,7 +99,6 @@ def test_multi_repo_aggregates_and_is_deterministic():
         # overall composite_mean is exactly the mean of each repo's own composite_mean
         expected = round(sum(r["composite_mean"] for r in res["per_repo"]) / 2, 3)
         assert res["composite_mean"] == expected
-        assert 0.0 <= res["composite_mean"] <= 1.0
         # the aggregate also averages the parts across repos
         assert res["composite_parts"] == {
             "judge_mean": round(sum(r["composite_parts"]["judge_mean"]
@@ -104,6 +106,10 @@ def test_multi_repo_aggregates_and_is_deterministic():
             "objective_mean": round(sum(r["composite_parts"]["objective_mean"]
                                         for r in res["per_repo"]) / 2, 3),
         }
+        # Pin the aggregate blend with production defaults (multi-repo results omit weights).
+        assert res["composite_mean"] == round(
+            0.6 * res["composite_parts"]["judge_mean"]
+            + 0.4 * res["composite_parts"]["objective_mean"], 3)
         assert res["judge_order_stats"]["offline"] == sum(
             len(r["rows"]) for r in res["per_repo"])
 

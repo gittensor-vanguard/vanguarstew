@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vanguarstew"
-version = "0.3.0"
+version = "0.8.0"
 description = "A general repository-maintainer agent and its GitHub-history replay benchmark."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,7 +32,7 @@ Repository = "https://github.com/gittensor-vanguard/vanguarstew"
 Issues = "https://github.com/gittensor-vanguard/vanguarstew/issues"
 
 [tool.setuptools]
-packages = ["agent", "benchmark"]
+packages = ["agent", "benchmark", "benchmark.judge_corpus", "benchmark.score_corpus", "scripts"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

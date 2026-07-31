@@ -539,7 +539,9 @@ def test_failed_checks_logs_warning_for_skipped_rows(caplog):
 
 
 def test_integrity_headline_reports_consistent_and_inconsistent():
-    assert "CONSISTENT" in integrity_headline(check_score_integrity(_artifact()))
+    # Anchor at the start: "CONSISTENT" is a substring of "INCONSISTENT".
+    assert integrity_headline(check_score_integrity(_artifact())).startswith(
+        "score integrity: CONSISTENT")
     assert "INCONSISTENT" in integrity_headline(check_score_integrity(_artifact(composite=0.1)))
 
 
@@ -569,7 +571,7 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
         cwd=ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "CONSISTENT" in proc.stderr
+    assert "score integrity: CONSISTENT" in proc.stderr
 
 
 def test_cli_missing_artifact_reports_clean_error(tmp_path):

@@ -195,7 +195,9 @@ def test_every_check_is_reported_even_when_several_fail():
 
 
 def test_integrity_headline_reports_consistent_and_inconsistent():
-    assert "CONSISTENT" in integrity_headline(check_gap_integrity(_report()))
+    # Anchor at the start: "CONSISTENT" is a substring of "INCONSISTENT".
+    assert integrity_headline(check_gap_integrity(_report())).startswith(
+        "gap integrity: CONSISTENT")
     assert "INCONSISTENT" in integrity_headline(check_gap_integrity(_report(gap=0.99)))
 
 
@@ -296,7 +298,7 @@ def test_cli_strict_passes_for_consistent_artifact(tmp_path):
     path.write_text(json.dumps(_report()), encoding="utf-8")
     result = _run_cli(str(path), "--strict")
     assert result.returncode == 0
-    assert "CONSISTENT" in result.stderr
+    assert "gap integrity: CONSISTENT" in result.stderr
     assert json.loads(result.stdout)["passed"] is True
 
 

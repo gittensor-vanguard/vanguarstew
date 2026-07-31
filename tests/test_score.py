@@ -1318,8 +1318,14 @@ def test_bump_level_handles_non_tuple():
 
 def test_composite_score_handles_non_numeric_weights():
     from benchmark.score import composite_score
-    assert composite_score("tie", {"module_recall": 0.5}, w_judge=None) >= 0
-    assert composite_score("tie", {"module_recall": 0.5}, w_objective="str") >= 0
+    # A non-numeric weight must fall back to the 0.6/0.4 defaults, not silently drop the term.
+    # With winner "A" (judge term = 1.0) and module_recall 0.5: 0.6*1.0 + 0.4*0.5 = 0.8. The prior
+    # assertions used winner "tie" (judge term == objective term == 0.5), so the result was 0.5 for
+    # ANY weights and the `>= 0` bound could never fail -- the default-weight fallback the test name
+    # claims to cover was never actually exercised. Asserting the exact 0.8 discriminates a fallback
+    # that instead dropped a weight to 0 (which would give a different value).
+    assert composite_score("A", {"module_recall": 0.5}, w_judge=None) == 0.8
+    assert composite_score("A", {"module_recall": 0.5}, w_objective="str") == 0.8
 
 
 # ---- foresight_breakdown / combine_foresight_breakdowns (M7 legible foresight metric) ----
@@ -1335,8 +1341,14 @@ def test_foresight_breakdown_aggregates_real_objective_scores():
     assert breakdown["release_accuracy_n"] == 2
     # plan_hit predicted the release and the "core" module; plan_miss predicted neither.
     assert breakdown["release_accuracy"] == 0.5
-    assert 0.0 <= breakdown["module_recall_mean"] <= 1.0
-    assert 0.0 <= breakdown["kind_recall_mean"] <= 1.0
+    # These are real per-plan means, not just numbers in [0, 1]: plan_hit scores module_recall 0.25
+    # and kind_recall 1.0, plan_miss scores 0.0 on both, so foresight_breakdown must average them to
+    # 0.125 and 0.5. The prior `0.0 <= x <= 1.0` bounds passed for ANY aggregation -- a dropped data
+    # point, a sum instead of a mean, or a wrong denominator all still land in range -- so the test
+    # named "aggregates real objective scores" never actually pinned the aggregation. The exact
+    # means discriminate a correct mean-of-per-plan-recall from a broken one.
+    assert breakdown["module_recall_mean"] == 0.125
+    assert breakdown["kind_recall_mean"] == 0.5
 
 
 def test_foresight_breakdown_gates_kind_and_release_like_objective_component():

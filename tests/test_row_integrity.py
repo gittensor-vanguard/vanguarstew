@@ -251,7 +251,9 @@ def test_malformed_rows_are_skipped_with_warning(caplog):
 
 
 def test_integrity_headline_reports_consistent_and_inconsistent():
-    assert "CONSISTENT" in integrity_headline(check_row_integrity(_artifact()))
+    # Anchor at the start: "CONSISTENT" is a substring of "INCONSISTENT".
+    assert integrity_headline(check_row_integrity(_artifact())).startswith(
+        "row integrity: CONSISTENT")
     art = _artifact()
     art["rows"][0]["composite"] = 0.0
     assert "INCONSISTENT" in integrity_headline(check_row_integrity(art))
@@ -416,7 +418,7 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
         cwd=ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "CONSISTENT" in proc.stderr
+    assert "row integrity: CONSISTENT" in proc.stderr
 
 
 # --- #1613 / #1906: clean, named path errors with exit 2 on a bad artifact path -----------

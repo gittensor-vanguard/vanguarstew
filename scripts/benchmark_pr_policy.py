@@ -12,11 +12,12 @@ from pathlib import Path
 
 APPROVAL_LABEL = "benchmark-change-approved"
 MAINTAINERS = frozenset({"matedev01", "vanguarstew"})
-GUARDRAIL_PREFIXES = ("benchmark/", "scripts/", "docs/", "blog/")
+GUARDRAIL_PREFIXES = ("benchmark/", "tests/", "tools/", "scripts/", "docs/", "blog/")
 GUARDRAIL_FILES = frozenset(
     {
         ".github/workflows/benchmark-change-policy.yml",
         ".github/workflows/pr-integrity.yml",
+        ".github/workflows/pr-reopen-policy.yml",
     }
 )
 COMMENT_MARKER = "<!-- vanguarstew:benchmark-change-policy -->"
@@ -212,12 +213,13 @@ def enforce(event: dict, repo: str) -> dict:
         return decision
 
     comment = (
-        "Closing automatically: changes to the benchmark, scripts, and documentation are "
-        "maintainer-directed. Please open an issue first, agree the scope with a maintainer, "
+        "Closing automatically: changes to the benchmark, tests, tools, scripts, and "
+        "documentation are maintainer-directed. Please open an issue first, agree the scope "
+        "with a maintainer, "
         f"and wait for the `{APPROVAL_LABEL}` label before submitting a PR. Then reference that "
-        "open issue with `Refs #<number>` and reopen this PR. See "
+        "open issue with `Refs #<number>` and ask a maintainer to reopen this PR. See "
         "[CONTRIBUTING.md](https://github.com/gittensor-vanguard/vanguarstew/blob/main/"
-        "CONTRIBUTING.md#benchmark-scripts-and-documentation-changes).\n\n"
+        "CONTRIBUTING.md#benchmark-tests-tools-scripts-and-documentation-changes).\n\n"
         f"{COMMENT_MARKER}"
     )
     _sync_close_comment(repo, number, comment)

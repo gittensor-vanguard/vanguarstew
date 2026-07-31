@@ -14,7 +14,9 @@ on:
       - "scripts/__init__.py"
       - "scripts/prepare_attested_inputs.py"
       - "scripts/run_attested_eval.py"
+      - "scripts/run_eval.py"
       - "scripts/transcript_proxy.py"
+      - "scripts/verify_attestation.py"
       - "vanguarstew_agent_files.json"
 concurrency:
   group: validate-eval-image-${{ github.ref }}
@@ -51,6 +53,8 @@ jobs:
       - name: Audit the measured runtime surface
         run: |
           docker run --rm --network none --read-only "${IMAGE_NAME}:pr-${GITHUB_SHA}" \
-            python -c 'import json, os; from pathlib import Path; required=["/eval/scripts/prepare_attested_inputs.py", "/eval/scripts/run_attested_eval.py"]; forbidden=["/eval/.git", "/eval/.env", "/eval/receipts", "/eval/tests", "/eval/blog", "/eval/scripts/package_attested_inputs.py"]; result={"uid": os.getuid(), "required_present": all(Path(path).exists() for path in required), "forbidden_absent": all(not Path(path).exists() for path in forbidden)}; print(json.dumps(result, sort_keys=True)); raise SystemExit(0 if result == {"uid": 10001, "required_present": True, "forbidden_absent": True} else 1)'
-          docker run --rm --network none --read-only "${IMAGE_NAME}:pr-${GITHUB_SHA}" \
-            python -m scripts.run_attested_eval --help >/dev/null
+            python -c 'import json, os; from pathlib import Path; required=["/eval/scripts/prepare_attested_inputs.py", "/eval/scripts/run_attested_eval.py", "/eval/scripts/run_eval.py", "/eval/scripts/transcript_proxy.py", "/eval/scripts/verify_attestation.py"]; forbidden=["/eval/.git", "/eval/.env", "/eval/receipts", "/eval/tests", "/eval/blog", "/eval/scripts/package_attested_inputs.py"]; result={"uid": os.getuid(), "required_present": all(Path(path).exists() for path in required), "forbidden_absent": all(not Path(path).exists() for path in forbidden)}; print(json.dumps(result, sort_keys=True)); raise SystemExit(0 if result == {"uid": 10001, "required_present": True, "forbidden_absent": True} else 1)'
+          for module in transcript_proxy run_eval prepare_attested_inputs run_attested_eval verify_attestation; do
+            docker run --rm --network none --read-only "${IMAGE_NAME}:pr-${GITHUB_SHA}" \
+              python -m "scripts.${module}" --help >/dev/null
+          done
