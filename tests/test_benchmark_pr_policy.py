@@ -18,51 +18,63 @@ def _issue(*, approved=True, state="open", pull_request=False):
 
 
 @pytest.mark.parametrize(
-    ("path", "expected"),
+    "paths",
     [
-        ("benchmark/score.py", True),
-        ("./benchmark/score.py", True),
-        ("tests/test_agent.py", True),
-        ("./tests/nested/test_policy.py", True),
-        ("tools/codex_llm.py", True),
-        ("tools/nested/adapter.py", True),
-        ("scripts/score_pr_delta.py", True),
-        ("scripts/compare_eval.py", True),
-        ("scripts/leaderboard_feed.py", True),
-        ("scripts/benchmark_pr_policy.py", True),
-        ("scripts/unrelated_helper.py", True),
-        ("docs/architecture.md", True),
-        ("docs/nested/example.txt", True),
-        ("blog/release.md", True),
-        ("README.md", True),
-        ("roadmap.MD", True),
-        ("src/README.md", True),
-        (".github/workflows/benchmark-change-policy.yml", True),
-        (".github/workflows/pr-integrity.yml", True),
-        (".github/workflows/pr-reopen-policy.yml", True),
-        ("CONTRIBUTING.md", True),
-        ("docs/polaris-benchmark-seal.md", True),
-        ("REVIEW.md", True),
-        ("scripts/plan_polaris_benchmark.py", True),
-        ("scripts/run_polaris_benchmark.py", True),
-        ("scripts/sandbox_candidate_entry.py", True),
-        ("scripts/verify_polaris_benchmark.py", True),
-        ("benchmarking/readme.md", True),
-        ("benchmarking/data.json", False),
-        ("test/test_agent.py", False),
-        ("tool/helper.py", False),
-        ("agent/planner.py", False),
-        ("notes.txt", False),
-        (42, False),
+        ["agent/planner.py"],
+        ["./agent.py"],
+        ["agent/planner.py", "tests/test_planner.py"],
+        ("agent/decider.py", "./tests/nested/test_decider.py"),
     ],
 )
-def test_touches_guardrail_paths(path, expected):
-    assert policy.touches_guardrail([path]) is expected
+def test_agent_submission_surface_is_narrow(paths):
+    assert policy.is_agent_submission(paths) is True
+    assert policy.touches_guardrail(paths) is False
 
 
-def test_touches_guardrail_rejects_malformed_collections():
-    assert policy.touches_guardrail(None) is False
-    assert policy.touches_guardrail("benchmark/score.py") is False
+@pytest.mark.parametrize(
+    "paths",
+    [
+        ["tests/test_agent.py"],
+        ["benchmark/score.py"],
+        ["tools/codex_llm.py"],
+        ["scripts/score_pr_delta.py"],
+        ["docs/architecture.md"],
+        ["blog/release.md"],
+        ["README.md"],
+        ["pyproject.toml"],
+        ["Dockerfile"],
+        [".github/workflows/ci.yml"],
+        ["agent/planner.py", ".github/workflows/ci.yml"],
+        ["agent/planner.py", "scripts/helper.py"],
+        ["agent/planner.py", "README.md"],
+        ["agentic/planner.py"],
+    ],
+)
+def test_every_path_outside_agent_submission_is_protected(paths):
+    assert policy.is_agent_submission(paths) is False
+    assert policy.touches_guardrail(paths) is True
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        None,
+        "agent/planner.py",
+        [],
+        [42],
+        ["agent/planner.py", 42],
+        [""],
+        [" agent/planner.py"],
+        ["agent/planner.py "],
+        ["agent/planner.py\n"],
+        ["../agent/planner.py"],
+        ["agent/../.github/workflows/ci.yml"],
+        ["agent//planner.py"],
+    ],
+)
+def test_malformed_or_empty_paths_fail_closed(paths):
+    assert policy.is_agent_submission(paths) is False
+    assert policy.touches_guardrail(paths) is True
 
 
 def test_referenced_issues_requires_linking_verb_and_deduplicates():
@@ -79,14 +91,14 @@ def test_issue_approval_is_strict():
     assert policy.issue_is_approved({"state": "open", "labels": [policy.APPROVAL_LABEL]}) is False
 
 
-def test_policy_allows_non_guardrail_and_maintainer_changes():
+def test_policy_allows_agent_submission_and_maintainer_changes():
     ordinary = policy.evaluate_policy(
         author="contributor",
-        paths=["agent/planner.py"],
+        paths=["agent/planner.py", "tests/test_planner.py"],
         body="",
         issues={},
     )
-    assert ordinary == {"allowed": True, "reason": "not a protected change"}
+    assert ordinary == {"allowed": True, "reason": "eligible agent submission"}
 
     maintainer = policy.evaluate_policy(
         author="matedev01",
@@ -120,21 +132,24 @@ def test_policy_requires_matching_open_approved_issue():
 
 
 @pytest.mark.parametrize(
-    "changed_path",
+    "changed_paths",
     [
-        "benchmark/score.py",
-        "tests/test_agent.py",
-        "tools/codex_llm.py",
-        "scripts/helper.py",
-        "docs/architecture.md",
-        "blog/update.md",
-        "README.md",
+        ["benchmark/score.py"],
+        ["tests/test_agent.py"],
+        ["tools/codex_llm.py"],
+        ["scripts/helper.py"],
+        ["docs/architecture.md"],
+        ["blog/update.md"],
+        ["README.md"],
+        ["pyproject.toml"],
+        [".github/workflows/ci.yml"],
+        ["agent/planner.py", ".github/workflows/ci.yml"],
     ],
 )
-def test_enforce_closes_unapproved_guardrail_pr(monkeypatch, changed_path):
+def test_enforce_closes_unapproved_guardrail_pr(monkeypatch, changed_paths):
     calls = []
     comments = []
-    monkeypatch.setattr(policy, "_changed_files", lambda repo, number: [changed_path])
+    monkeypatch.setattr(policy, "_changed_files", lambda repo, number: changed_paths)
     monkeypatch.setattr(policy, "_issues", lambda repo, numbers: {12: _issue(approved=False)})
     monkeypatch.setattr(
         policy,
@@ -155,6 +170,7 @@ def test_enforce_closes_unapproved_guardrail_pr(monkeypatch, changed_path):
     assert decision["allowed"] is False
     assert len(comments) == 1
     assert policy.APPROVAL_LABEL in comments[0][2]
+    assert "including `.github/**`" in comments[0][2]
     assert "ask a maintainer to reopen" in comments[0][2]
     assert policy.COMMENT_MARKER in comments[0][2]
     assert calls == (
@@ -189,6 +205,37 @@ def test_enforce_approved_change_has_no_public_mutation(monkeypatch):
     }
 
     assert policy.enforce(event, "owner/repo")["allowed"] is True
+
+
+def test_enforce_agent_submission_has_no_issue_lookup_or_public_mutation(monkeypatch):
+    monkeypatch.setattr(
+        policy,
+        "_changed_files",
+        lambda repo, number: ["agent/planner.py", "tests/test_planner.py"],
+    )
+    monkeypatch.setattr(
+        policy,
+        "_issues",
+        lambda *args: pytest.fail("eligible agent PR must not need guardrail preapproval"),
+    )
+    monkeypatch.setattr(
+        policy,
+        "_sync_close_comment",
+        lambda *args: pytest.fail("eligible agent PR must not receive a close comment"),
+    )
+    monkeypatch.setattr(policy, "_gh", lambda *args: pytest.fail("eligible agent PR must not close"))
+    event = {
+        "pull_request": {
+            "number": 9,
+            "body": "Refs #12",
+            "user": {"login": "contributor"},
+        }
+    }
+
+    assert policy.enforce(event, "owner/repo") == {
+        "allowed": True,
+        "reason": "eligible agent submission",
+    }
 
 
 def test_issue_lookup_treats_missing_as_unapproved(monkeypatch):
@@ -262,15 +309,7 @@ def test_workflow_uses_only_the_trusted_base_policy():
     assert "github.event.pull_request.head" not in workflow
     assert "persist-credentials: false" in workflow
     assert "branches: [test, main]" in workflow
-    assert '"benchmark/**"' in workflow
-    assert '"tests/**"' in workflow
-    assert '"tools/**"' in workflow
-    assert '"scripts/**"' in workflow
-    assert '"docs/**"' in workflow
-    assert '"blog/**"' in workflow
-    assert '"**/*.md"' in workflow
-    for path in policy.GUARDRAIL_FILES:
-        assert f'"{path}"' in workflow
+    assert "\n    paths:" not in workflow
 
 
 def test_main_fails_closed_without_event_context(monkeypatch, capsys):
