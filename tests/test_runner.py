@@ -260,6 +260,23 @@ def test_run_multi_replay_disallows_ambiguous_args():
         shutil.rmtree(a, ignore_errors=True)
 
 
+def test_run_multi_replay_rejects_empty_repo_set_partition(tmp_path):
+    config = tmp_path / "repo-set.json"
+    config.write_text(json.dumps({
+        "name": "only-tuned",
+        "description": "test",
+        "strategy": "test",
+        "repos": [{
+            "name": "tuned",
+            "source": "/not-used",
+            "tier": "obscure",
+            "held_out": False,
+        }],
+    }))
+    with pytest.raises(RepoSetError, match="no held_out repos"):
+        run_multi_replay(repo_set=str(config), repo_set_partition="held_out", agent_file=AGENT)
+
+
 # ---- load_solve error handling ----------------------------------------------
 
 def test_load_solve_rejects_missing_file():
