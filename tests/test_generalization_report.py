@@ -59,7 +59,10 @@ def test_report_has_both_partitions_and_gap():
         assert res["tuned"]["scored_repos"] == 1
         assert res["held_out"]["scored_repos"] == 1
         for part in ("tuned", "held_out"):
-            assert 0.0 <= res[part]["composite_mean"] <= 1.0
+            # Pin each partition aggregate — a 0..1 bound cannot catch a wrong mean.
+            scored = [r for r in res[part]["per_repo"] if "composite_mean" in r]
+            assert res[part]["composite_mean"] == round(
+                sum(r["composite_mean"] for r in scored) / len(scored), 3)
         # the gap is exactly tuned minus held-out, computed once both sides scored
         assert res["generalization_gap"] == round(
             res["tuned"]["composite_mean"] - res["held_out"]["composite_mean"], 3)
