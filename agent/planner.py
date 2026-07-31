@@ -259,13 +259,20 @@ def _commit_plan_kind(subject):
 
     Reads the Conventional-Commit prefix; a version-cut subject under a release-tooling type
     ("chore(release): 1.4.0") reads as ``release`` rather than ``dep``. Merge commits and
-    prefix-less subjects carry no reliable kind, and a non-string subject (malformed frozen
-    context) is ignored rather than raising inside ``re``.
+    other non-release prefix-less subjects carry no reliable kind. Genuine prefix-less
+    release cuts (``Release 1.2.0``, ``v1.2.0``, ``Bump version to 1.2.0``) map to
+    ``release`` so recent-kind notes match the objective anchor (#2233), without treating
+    bare ``changelog``/``release`` mentions as a kind. A non-string subject is ignored.
     """
     if not isinstance(subject, str):
         return None
     m = _CC_PREFIX_RE.match(subject)
     if not m:
+        stripped = subject.strip()
+        if _RELEASE_CUT_BODY_RE.match(stripped):
+            return "release"
+        if _RELEASE_KW_RE.search(stripped) and re.search(r"\bv?\d+\.\d+", stripped):
+            return "release"
         return None
     cc_type = m.group(1).lower()
     if cc_type in _RELEASE_TOOLING_TYPES:
