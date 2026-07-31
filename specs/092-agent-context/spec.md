@@ -158,7 +158,7 @@ regressions in exactly the places past bugs lived (#493, #749, #916/#937, #1307)
 
 ## Verification
 
-- `tests/test_spec_011_agent_context.py` exercises each EARS block above: the constants and the
+- `tests/test_spec_092_agent_context.py` exercises each EARS block above: the constants and the
   freeze-import binding; every scrubber arm with literal expected strings; `repo_layout`
   path/limit coercion (bool/negative/zero), exclusion, sorting, directory suffixing, cap, and
   the warning via `caplog`; `_with_repo_layout` identity pass-through and file-value override;

@@ -94,5 +94,5 @@ Every summary SHALL include: `kind`, `total_tasks`, `partitions`.
 
 ## Verification
 
-- `tests/test_spec_047_partition_task_share.py` exercises each EARS block above.
+- `tests/test_spec_089_partition_task_share.py` exercises each EARS block above.
 - Broader coverage remains in `tests/test_partition_task_share.py`.
