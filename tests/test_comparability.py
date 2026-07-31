@@ -15,6 +15,7 @@ if ROOT not in sys.path:
 
 from benchmark.comparability import (  # noqa: E402
     _check_rows_list,
+    _repo_key,
     artifact_kind,
     check_comparability,
     comparability_headline,
@@ -137,6 +138,15 @@ def test_non_dict_per_repo_rows_are_skipped():
     result = check_comparability([art, art])
     assert result["passed"] is True
     assert result["repo_sets"]["multi"] == ["a"]
+
+
+def test_repo_key_prefers_identity_fields_then_freeze_then_sorted_keys():
+    # The identity fields win in order; a freeze_commit (no identity field) keys off its first 10
+    # chars; a row with NEITHER falls back to a stable repr(sorted(keys)) so two identity-less rows
+    # still get a deterministic key rather than colliding or raising.
+    assert _repo_key({"repo_path": "/a", "url": "u"}) == "/a"
+    assert _repo_key({"freeze_commit": "abcdef1234567890"}) == "abcdef1234"
+    assert _repo_key({"tasks": 2, "composite_mean": 0.5}) == "['composite_mean', 'tasks']"
 
 
 def test_comparability_headline_pass_and_fail():
