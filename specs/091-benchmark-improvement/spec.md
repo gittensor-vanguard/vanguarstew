@@ -156,7 +156,7 @@ pinning.
 
 ## Verification
 
-- `tests/test_spec_068_improvement.py` exercises each EARS block above with **literal**
+- `tests/test_spec_091_improvement.py` exercises each EARS block above with **literal**
   expected strings, including: the lone-`tuned`-without-`held_out` arm, all three
   `_partition_error` scan sites plus the ignored `held_out` failure and the falsy-error skip,
   the zero-`scored_repos` placeholder, non-finite and oversized composites, the **negative

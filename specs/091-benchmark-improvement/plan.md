@@ -7,7 +7,7 @@ Maps the [spec](./spec.md) onto `benchmark/improvement.py` as-built. No product 
 
 ## EARS → test mapping
 
-| Spec section | Test group in `test_spec_068_improvement.py` |
+| Spec section | Test group in `test_spec_091_improvement.py` |
 | ------------ | -------------------------------------------- |
 | Constants | `test_constants_are_pinned` |
 | Numeric helpers | `test_is_number_semantics`, `test_is_number_rejects_oversized_int`, `test_dict_helper`, `test_num_formats_three_decimals_or_na` |

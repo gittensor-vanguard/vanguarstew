@@ -90,5 +90,5 @@ Every summary SHALL include:
 
 ## Verification
 
-- `tests/test_spec_048_repo_task_mean.py` exercises each EARS block above.
+- `tests/test_spec_090_repo_task_mean.py` exercises each EARS block above.
 - Existing integration coverage remains in `tests/test_repo_task_mean.py`.
