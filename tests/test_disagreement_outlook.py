@@ -265,7 +265,8 @@ def test_non_dict_artifact_kind_invalid():
 def test_headline_with_finite_rate():
     out = summarize_disagreement_outlook(_run(0.2, 3))
     line = disagreement_outlook_headline(out)
-    assert "stable" in line
+    # Anchor at the start: "stable" is a substring of "unstable".
+    assert line.startswith("disagreement outlook: stable")
     assert "20.0%" in line
 
 
