@@ -393,5 +393,6 @@ def test_cli_still_reports_stable_for_well_formed_artifacts(tmp_path):
         paths.append(str(p))
     result = _run_cli(*paths, "--max-cv", "0.05")
     assert result.returncode == 0
-    assert "STABLE" in result.stderr
+    # Anchor: "STABLE" is a substring of "UNSTABLE".
+    assert "repeatability: STABLE" in result.stderr
     assert json.loads(result.stdout)["stable"] is True
