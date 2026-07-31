@@ -105,12 +105,75 @@ def _mask_forward_refs(text: str) -> str:
     return text
 
 
+def _git_ceiling_dir(repo_path: str) -> str:
+    """Parent of ``repo_path``; blocks git from discovering an enclosing repository."""
+    return os.path.dirname(os.path.realpath(repo_path))
+
+
+def _git_env(repo_path: str) -> dict:
+    env = os.environ.copy()
+    ceiling = _git_ceiling_dir(repo_path)
+    existing = env.get("GIT_CEILING_DIRECTORIES", "")
+    if existing:
+        env["GIT_CEILING_DIRECTORIES"] = f"{existing}{os.pathsep}{ceiling}"
+    else:
+        env["GIT_CEILING_DIRECTORIES"] = ceiling
+    return env
+
+
 def _git(repo_path, *args):
     out = subprocess.run(
         ["git", "-C", repo_path, *args],
         capture_output=True, text=True, check=False,
+        env=_git_env(repo_path),
     )
     return out.stdout.strip()
+
+
+def _git_repo_is_anchored(repo_path: str) -> bool:
+    """True when git's toplevel is ``repo_path`` itself, not an enclosing repository."""
+    if not isinstance(repo_path, str) or not repo_path:
+        return False
+    toplevel = _git(repo_path, "rev-parse", "--show-toplevel")
+    if not toplevel:
+        return False
+    return os.path.realpath(toplevel) == os.path.realpath(repo_path)
+
+
+def _readme_excerpt_from_tree(repo_path: str) -> str:
+    readme = ""
+    for name in README_PROBE_NAMES:
+        p = os.path.join(repo_path, name)
+        if not os.path.isfile(p):
+            continue
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        # An empty higher-priority README must not shadow a populated lower-priority one: skip
+        # it and keep probing, mirroring build_context's truthy ``if content`` check (freeze
+        # reads a missing *and* an empty file as an empty string alike). Otherwise the two
+        # git-only context builders diverge on the same repo -- freeze surfaces the lower
+        # README while this fallback stops at the empty one -- so philosophy/plan prompts and
+        # scoring inputs differ by code path (the #916/#937 alignment invariant).
+        if content:
+            readme = _mask_forward_refs(content[:4000])
+            break
+    return readme
+
+
+def _degraded_git_context(repo_path: str) -> dict:
+    """Shaped empty context when git cannot be anchored to the checkout itself."""
+    return {
+        "frozen_at": {"commit": None, "date": None},
+        "recent_commits": [],
+        "open_issues": [],
+        "open_prs": [],
+        "labels": [],
+        "milestones": [],
+        "releases": [],
+        "readme_excerpt": _readme_excerpt_from_tree(repo_path),
+        "_source": "git",
+        "_forward_signal_scrubbed": True,
+    }
 
 
 def repo_layout(repo_path: str, limit: int = REPO_LAYOUT_LIMIT) -> list:
@@ -274,6 +337,18 @@ def context_for_agent(context: dict) -> dict:
 
 
 def _context_from_git(repo_path: str) -> dict:
+    # A frozen checkout has no ``.git`` of its own (``export_tree`` writes a plain tree). When
+    # ``repo_path`` sits inside another repository, git's upward discovery would otherwise hand
+    # the agent that enclosing history -- including commits after T -- with no way for the
+    # leakage audit to detect it. Anchor discovery to ``repo_path`` itself and degrade to an
+    # empty git-shaped context when the toplevel check fails (#2252).
+    if not _git_repo_is_anchored(repo_path):
+        logger.warning(
+            "git-only context fallback: %s is not a git repository root; "
+            "degrading to empty git context",
+            repo_path,
+        )
+        return _degraded_git_context(repo_path)
     # --verify --quiet suppresses the "fatal: ambiguous argument 'HEAD'" stderr message and
     # yields empty stdout on failure, instead of the literal word "HEAD" that a plain
     # `rev-parse HEAD` prints to stdout on an empty repo (rc 128) -- which `_git`'s
@@ -308,22 +383,7 @@ def _context_from_git(repo_path: str) -> dict:
         if frozen_at is not None and ts.isdigit() and int(ts) > frozen_at:
             continue
         tags.append(name)
-    readme = ""
-    for name in README_PROBE_NAMES:
-        p = os.path.join(repo_path, name)
-        if not os.path.isfile(p):
-            continue
-        with open(p, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-        # An empty higher-priority README must not shadow a populated lower-priority one: skip
-        # it and keep probing, mirroring build_context's truthy ``if content`` check (freeze
-        # reads a missing *and* an empty file as an empty string alike). Otherwise the two
-        # git-only context builders diverge on the same repo -- freeze surfaces the lower
-        # README while this fallback stops at the empty one -- so philosophy/plan prompts and
-        # scoring inputs differ by code path (the #916/#937 alignment invariant).
-        if content:
-            readme = _mask_forward_refs(content[:4000])
-            break
+    readme = _readme_excerpt_from_tree(repo_path)
     return {
         "frozen_at": {"commit": head[:10], "date": freeze_date},
         "recent_commits": commits,

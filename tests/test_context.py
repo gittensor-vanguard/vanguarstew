@@ -499,6 +499,39 @@ def test_load_context_attaches_repo_layout_on_the_git_fallback_path_too():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_does_not_read_enclosing_repository(caplog):
+    # A frozen checkout (no ``.git``) nested inside another repository must not inherit that
+    # repository's commit history when the context file is absent and the git-only fallback
+    # runs — that would leak post-T commits with no forward-reference signal (#2252).
+    import logging
+
+    outer = tempfile.mkdtemp()
+    try:
+        frozen = os.path.join(outer, "frozen_task")
+        os.makedirs(frozen)
+        _init_repo(outer)
+        _write(outer, "outer.txt")
+        _git(outer, "add", "-A")
+        _git(outer, "commit", "-q", "-m", "FUTURE: ship v9.9.0 rewrite")
+
+        _write(frozen, "f.txt")
+        _write(frozen, "README.md", "fix: past work at T\n")
+        assert not os.path.isdir(os.path.join(frozen, ".git"))
+
+        with caplog.at_level(logging.WARNING, logger="agent.context"):
+            ctx = _context_from_git(frozen)
+            out = load_context(frozen)
+
+        assert [c.get("subject") for c in ctx["recent_commits"]] == []
+        assert out["recent_commits"] == []
+        assert "FUTURE" not in str(ctx["recent_commits"])
+        assert any("not a git repository root" in r.message for r in caplog.records)
+        assert out["readme_excerpt"] == "fix: past work at T\n"
+    finally:
+        shutil.rmtree(outer, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_sets_frozen_at_date():
     repo = tempfile.mkdtemp()
     try:
