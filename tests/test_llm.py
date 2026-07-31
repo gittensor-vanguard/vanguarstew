@@ -209,6 +209,14 @@ def test_chat_json_falls_back_to_stub_on_malformed_envelope(monkeypatch):
         assert llm.chat_json("s", "u", stub=stub) == stub
 
 
+def test_chat_json_falls_back_to_stub_on_non_json_content(monkeypatch):
+    stub = {"action": "plan", "labels": []}
+    llm = _online(monkeypatch)
+    body = '{"choices": [{"message": {"content": "I cannot return JSON"}}]}'
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp(body)):
+        assert llm.chat_json("s", "u", stub=stub) == stub
+
+
 def test_chat_json_falls_back_to_empty_dict_when_no_stub(monkeypatch):
     llm = _online(monkeypatch)
     with mock.patch("urllib.request.urlopen", return_value=_FakeResp("[]")):
