@@ -9,9 +9,34 @@ caller-supplied deterministic stub so the loop can be exercised without a networ
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import urllib.request
+
+_DEFAULT_TIMEOUT = 120.0
+
+
+def _resolve_timeout(timeout, env_timeout):
+    """Resolve HTTP timeout from constructor arg, then env, then the default.
+
+    Invalid or non-positive values fall back to ``_DEFAULT_TIMEOUT`` instead of
+    crashing or passing a zero/NaN timeout to ``urlopen``.
+    """
+    raw = timeout if timeout is not None else env_timeout
+    if raw is None:
+        return _DEFAULT_TIMEOUT
+    if isinstance(raw, bool):
+        return _DEFAULT_TIMEOUT
+    if isinstance(raw, str) and not raw.strip():
+        return _DEFAULT_TIMEOUT
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_TIMEOUT
+    if not math.isfinite(value) or value <= 0:
+        return _DEFAULT_TIMEOUT
+    return value
 
 
 class LLM:
@@ -20,7 +45,7 @@ class LLM:
         self.api_base = (api_base or "").rstrip("/")
         self.api_key = api_key
         env_timeout = os.environ.get("TAU_AGENT_TIMEOUT_SECONDS")
-        self.timeout = float(timeout or env_timeout or 120)
+        self.timeout = _resolve_timeout(timeout, env_timeout)
         self.offline = (
             os.environ.get("VANGUARSTEW_OFFLINE") == "1"
             or not self.api_base

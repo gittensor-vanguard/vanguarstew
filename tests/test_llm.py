@@ -91,6 +91,28 @@ def test_timeout_constructor_overrides_env(monkeypatch):
     assert LLM(timeout=10).timeout == 10.0
 
 
+@pytest.mark.parametrize(
+    "env_value",
+    ["bogus", "   ", "0", "NaN", "inf", "-5"],
+)
+def test_timeout_invalid_env_falls_back_to_120(monkeypatch, env_value):
+    monkeypatch.setenv("TAU_AGENT_TIMEOUT_SECONDS", env_value)
+    assert LLM().timeout == 120.0
+
+
+@pytest.mark.parametrize(
+    "timeout_value",
+    [0, "bogus", True, float("nan"), float("inf"), -1],
+)
+def test_timeout_invalid_constructor_falls_back_to_120(timeout_value):
+    assert LLM(timeout=timeout_value).timeout == 120.0
+
+
+def test_timeout_valid_env_override(monkeypatch):
+    monkeypatch.setenv("TAU_AGENT_TIMEOUT_SECONDS", "90")
+    assert LLM().timeout == 90.0
+
+
 def test_chat_passes_timeout_to_urlopen(monkeypatch):
     monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
     monkeypatch.delenv("TAU_AGENT_TIMEOUT_SECONDS", raising=False)
