@@ -1,4 +1,4 @@
-# Spec 046 — repo task mean summary
+# Spec 088 — repo task mean summary
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** benchmark

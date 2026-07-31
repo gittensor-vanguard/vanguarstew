@@ -1,4 +1,4 @@
-# Plan 047 — partition task share summary
+# Plan 089 — partition task share summary
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1133

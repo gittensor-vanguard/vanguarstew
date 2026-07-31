@@ -1,4 +1,4 @@
-# Plan 068 — improvement (adoption) gate
+# Plan 091 — improvement (adoption) gate
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1900
@@ -20,7 +20,7 @@ Maps the [spec](./spec.md) onto `benchmark/improvement.py` as-built. No product 
 ## Verification strategy
 
 One contract-test group per EARS section. This directly addresses each closure finding on the
-prior Spec 068 attempt (#1901): the `_headline_source`-without-`held_out` arm is **specified and
+prior attempt at this spec (#1901): the `_headline_source`-without-`held_out` arm is **specified and
 pinned** (a lone `tuned` dict is not the headline — the top level is), `_partition_error`'s
 three scan sites are specified with a test per site (partition `error`, `per_repo` dict-row
 `error`, malformed string row) plus the intentionally ignored `held_out` failure, the warning

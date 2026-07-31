@@ -1,4 +1,4 @@
-# Plan 042 — tie-order share summary
+# Plan 087 — tie-order share summary
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1100

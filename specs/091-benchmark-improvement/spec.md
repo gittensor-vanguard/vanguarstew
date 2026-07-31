@@ -1,4 +1,4 @@
-# Spec 068 — improvement (adoption) gate
+# Spec 091 — improvement (adoption) gate
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** benchmark
@@ -14,10 +14,6 @@
 
 This spec makes the **existing, implicit** improvement-gate contract explicit. It describes the
 as-built behavior of `benchmark/improvement.py`; it introduces **no behavior change**.
-
-> **Numbering note:** `specs/068-benchmark-disagree-order-share` also carries number 068 (its
-> issue assigned the number independently). Duplicate spec numbers with distinct topic slugs are
-> established practice in this tree (042 offline-share / tie-order-share, 046, 047, 048).
 
 ## Why
 
