@@ -81,6 +81,48 @@ def test_timeout_from_constructor():
     assert LLM(timeout=30).timeout == 30.0
 
 
+def test_chat_sends_validator_managed_request_contract(monkeypatch):
+    monkeypatch.delenv("VANGUARSTEW_OFFLINE", raising=False)
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["method"] = req.method
+        captured["headers"] = {
+            key.lower(): value for key, value in req.header_items()
+        }
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return _FakeResp('{"choices": [{"message": {"content": "ok"}}]}')
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    llm = LLM(
+        model="managed-model",
+        api_base="https://api.example.com/",
+        api_key="managed-key",
+        timeout=17,
+    )
+
+    assert llm.chat("system prompt", "user prompt") == "ok"
+    assert captured == {
+        "url": "https://api.example.com/chat/completions",
+        "method": "POST",
+        "headers": {
+            "content-type": "application/json",
+            "authorization": "Bearer managed-key",
+        },
+        "payload": {
+            "model": "managed-model",
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "user prompt"},
+            ],
+        },
+        "timeout": 17.0,
+    }
+
+
 def test_timeout_from_env(monkeypatch):
     monkeypatch.setenv("TAU_AGENT_TIMEOUT_SECONDS", "45")
     assert LLM().timeout == 45.0
@@ -164,6 +206,14 @@ def test_chat_json_falls_back_to_stub_on_malformed_envelope(monkeypatch):
     stub = {"action": "plan", "labels": []}
     llm = _online(monkeypatch)
     with mock.patch("urllib.request.urlopen", return_value=_FakeResp("{}")):
+        assert llm.chat_json("s", "u", stub=stub) == stub
+
+
+def test_chat_json_falls_back_to_stub_on_non_json_content(monkeypatch):
+    stub = {"action": "plan", "labels": []}
+    llm = _online(monkeypatch)
+    body = '{"choices": [{"message": {"content": "I cannot return JSON"}}]}'
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResp(body)):
         assert llm.chat_json("s", "u", stub=stub) == stub
 
 
