@@ -328,11 +328,16 @@ def _repo_with_commit():
     b"",                          # empty file
     b"\xff\xfe\x00\x01\x02\x80",  # binary / non-UTF-8 content
     b"not json at all",           # plain text
+    # #1494: byte-valid JSON except that one integer literal exceeds CPython's 4300-digit
+    # int-string-conversion limit, which json.load raises as a *plain* ValueError (not a
+    # JSONDecodeError) since 3.11 — it must take the same warn-and-fall-back path, not crash.
+    b'{"repo": "x", "open_issues": [], "tasks": ' + b"9" * 5000 + b"}",
 ])
 def test_load_context_falls_back_to_git_on_unreadable_file(payload, caplog):
-    # A present-but-unreadable context file (truncated / empty / binary / non-JSON) must not
-    # crash solve(): load_context rebuilds the knowable-at-T context from the frozen git
-    # checkout instead, and logs loudly (with the byte size) so the degrade is never silent.
+    # A present-but-unreadable context file (truncated / empty / binary / non-JSON / an
+    # oversized integer literal) must not crash solve(): load_context rebuilds the knowable-at-T
+    # context from the frozen git checkout instead, and logs loudly (with the byte size) so the
+    # degrade is never silent.
     import logging
     repo = _repo_with_commit()
     try:
