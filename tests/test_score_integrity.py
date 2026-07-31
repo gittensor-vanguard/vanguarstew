@@ -571,7 +571,7 @@ def test_cli_passes_for_consistent_artifact(tmp_path):
         cwd=ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "CONSISTENT" in proc.stderr
+    assert "score integrity: CONSISTENT" in proc.stderr
 
 
 def test_cli_missing_artifact_reports_clean_error(tmp_path):
