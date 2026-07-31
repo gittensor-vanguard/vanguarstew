@@ -10,9 +10,10 @@ The seal mounts the combined report, all four raw artifacts (baseline/candidate 
 second targets), and a deterministic 64 KiB Python validator archive. Inside the measured one-shot
 workload the validator runs every live integrity gate, recomputes each `score_pr_delta` report,
 recombines the conservative decision, and verifies the report evidence and PR bindings. Only then
-does it emit canonical aggregate-only JSON. The request uses `egress=none`. Local verification
-checks the caller and freshness binding, shell-workload digest, mounted-file digest, exact stdout,
-quote report data, and Polaris's Intel-verification result.
+does it emit canonical public-safe JSON containing the PR/base commit binding, public-target band,
+conservative final verdict, and opaque integrity commitments. The request uses `egress=none`.
+Local verification checks the caller and freshness binding, shell-workload digest, mounted-file
+digest, exact stdout, quote report data, and Polaris's Intel-verification result.
 
 This proves that the receipt-bound validator recomputed the decision from the exact mounted raw
 artifacts inside the measured TDX workload. It does **not** claim that hosted model inference ran in
@@ -69,6 +70,28 @@ decision from the unsealed report.
 Full reports, receipts, receipt URLs, requester material, and operational approval digests are
 private artifacts. Public review comments may use only the repository's separately defined
 aggregate disclosure policy; this tool never publishes anything.
+
+## Public verification evidence
+
+Contract `vanguarstew-benchmark-tee-v3` makes the fixed result envelope useful as public evidence
+without publishing protected evaluation inputs. The quote-bound stdout includes:
+
+- the PR number, base ref, base commit, and exact reviewed head commit;
+- the public target's policy band and merge-block flag;
+- the conservative final band and merge-block flag; and
+- opaque report, input-bundle, integrity-gate, and evidence commitments.
+
+After complete local receipt verification, `build_public_benchmark_evidence()` reduces that result
+again to a bounded review-comment summary: the public PR binding and outcome, Polaris TDX kind,
+verification level, provider Intel/report-data checks, UTC start time, and deterministic validator,
+workload, and result commitments. It deliberately omits target identities, per-target measurements,
+reports, artifacts, model transcripts, the raw quote/collateral, freshness values, request digest,
+requester material, billing data, and infrastructure details.
+
+The summary is verification evidence, not the complete receipt. `polaris-verified` means the local
+client verified the complete quote binding and Polaris reported Intel verification; it must not be
+described as an independently verified Intel chain unless the separate offline DCAP verifier also
+passes with complete collateral and the approved measurement policy.
 
 Re-run the same verification later with the privately retained report and freshness values:
 

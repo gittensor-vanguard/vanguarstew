@@ -15,7 +15,7 @@ from benchmark.live_gate import LIVE_ARTIFACT_KEYS, check_live_artifacts
 from benchmark.transcript import canonical_json
 from scripts.score_pr_delta import combine_dual_target, score_pr_delta
 
-TEE_BENCHMARK_CONTRACT = "vanguarstew-benchmark-tee-v2"
+TEE_BENCHMARK_CONTRACT = "vanguarstew-benchmark-tee-v3"
 TEE_BENCHMARK_BUNDLE_CONTRACT = "vanguarstew-benchmark-inputs-v1"
 MAX_UNCOMPRESSED_BUNDLE_BYTES = 16 * 1024 * 1024
 
@@ -97,7 +97,13 @@ def _validate_report_evidence(report: dict) -> str:
 
 
 def validate_input_bundle(compressed: bytes, *, challenge: str) -> str:
-    """Recompute the integrity gates and dual-target verdict; return canonical private stdout."""
+    """Recompute the integrity gates and emit a public-safe, PR-bound verdict.
+
+    The stdout is quote-bound public evidence.  It therefore contains only GitHub-public context,
+    the public target's policy band, the conservative final decision, and opaque commitments.
+    Raw reports, target identities, per-target measurements, and model evidence remain in the
+    mounted no-egress bundle and are never rendered here.
+    """
     if not isinstance(challenge, str) or not _SHA256_RE.fullmatch(challenge):
         raise TeeBenchmarkValidationError("challenge must be 64 lowercase hex characters")
     payload = _load_input_bundle(compressed)
@@ -130,11 +136,17 @@ def validate_input_bundle(compressed: bytes, *, challenge: str) -> str:
         {
             "artifacts_sha256": hashlib.sha256(compressed).hexdigest(),
             "band": combined["band"],
+            "base_ref": report["base_ref"],
+            "base_sha": report["base_sha"],
             "blocks_merge": combined["blocks_merge"],
             "challenge": challenge,
             "contract": TEE_BENCHMARK_CONTRACT,
             "evidence_report_data": report_data,
+            "head_sha": report["head_sha"],
             "integrity_gate_sha256": gate_digest,
+            "pr_number": report["pr_number"],
+            "public_band": public["band"],
+            "public_blocks_merge": public["blocks_merge"],
             "report_sha256": report_digest,
         }
     )

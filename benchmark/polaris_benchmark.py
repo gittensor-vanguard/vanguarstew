@@ -41,6 +41,7 @@ from benchmark.transcript import canonical_json
 from scripts.score_pr_delta import combine_dual_target
 
 POLARIS_BENCHMARK_SEAL_CONTRACT = TEE_BENCHMARK_CONTRACT
+PUBLIC_BENCHMARK_EVIDENCE_SCHEMA = "vanguarstew-public-tee-evidence-v1"
 POLARIS_BENCHMARK_REPORT_PREFIX = "/submission/inputs.part"
 POLARIS_BENCHMARK_MAX_REPORT_BYTES = (
     POLARIS_MAX_MOUNTED_FILES * POLARIS_MAX_MOUNTED_FILE_BYTES
@@ -51,6 +52,8 @@ _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 _NONCE_RE = re.compile(r"[0-9a-f]{64}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _BASE_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
+_TEE_KIND_RE = re.compile(r"tdx-[0-9]+(?:\.[0-9]+)?")
+_UTC_TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _DECISION_KEYS = ("band", "blocks_merge", "label", "multiplier", "reason")
 
 
@@ -150,8 +153,13 @@ def validate_benchmark_report(report) -> dict:
     evidence_report_data = _validate_evidence(report)
     return {
         "band": report["band"],
+        "blocks_merge": report["blocks_merge"],
+        "pr_number": report["pr_number"],
+        "base_ref": report["base_ref"],
         "base_sha": report["base_sha"],
         "head_sha": report["head_sha"],
+        "public_band": report["public"]["band"],
+        "public_blocks_merge": report["public"]["blocks_merge"],
         "evidence_report_data": evidence_report_data,
     }
 
@@ -317,4 +325,78 @@ def verify_benchmark_seal(receipt, *, plan: PolarisBenchmarkSealPlan) -> dict:
             if outer.get("ok") is True and stdout_exact
             else "benchmark seal verification failed"
         ),
+    }
+
+
+def build_public_benchmark_evidence(receipt, *, plan: PolarisBenchmarkSealPlan) -> dict:
+    """Return the bounded, public-safe proof summary for a verified benchmark seal.
+
+    The complete response remains private because it carries the raw quote, collateral, caller
+    freshness values, and commitments to undisclosed inputs.  This summary exposes only the
+    GitHub-public PR binding, public-target band, conservative policy verdict, provider verification
+    status, and deterministic code/result commitments.  It never copies a target identity, score,
+    report, raw artifact, transcript, quote, collateral, request digest, or requester value.
+    """
+    verification = verify_benchmark_seal(receipt, plan=plan)
+    if verification.get("ok") is not True or not isinstance(receipt, dict):
+        raise PolarisBenchmarkError("verified benchmark receipt response is required")
+    try:
+        stdout = json.loads(receipt["stdout"])
+        attestation = receipt["tee_attestation"]
+        provider_verification = receipt["verification"]
+        kind = attestation["kind"]
+        started_at = receipt["started_at"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PolarisBenchmarkError("benchmark receipt lacks public verification metadata") from exc
+    if not isinstance(stdout, dict) or stdout.get("contract") != TEE_BENCHMARK_CONTRACT:
+        raise PolarisBenchmarkError("benchmark receipt contract is not public-evidence capable")
+    expected = {
+        "band": plan._decision["band"],
+        "blocks_merge": plan._decision["blocks_merge"],
+        "pr_number": plan._decision["pr_number"],
+        "base_ref": plan._decision["base_ref"],
+        "base_sha": plan._decision["base_sha"],
+        "head_sha": plan._decision["head_sha"],
+        "public_band": plan._decision["public_band"],
+        "public_blocks_merge": plan._decision["public_blocks_merge"],
+    }
+    if any(stdout.get(key) != value for key, value in expected.items()):
+        raise PolarisBenchmarkError("benchmark receipt public binding is inconsistent")
+    if (
+        not isinstance(kind, str)
+        or not _TEE_KIND_RE.fullmatch(kind)
+        or not isinstance(started_at, str)
+        or not _UTC_TIMESTAMP_RE.fullmatch(started_at)
+        or provider_verification.get("intel_verified") is not True
+        or provider_verification.get("report_data_match") is not True
+    ):
+        raise PolarisBenchmarkError("benchmark receipt public verification metadata is invalid")
+    workload_sha256 = "sha256:" + hashlib.sha256(plan.workload.encode("utf-8")).hexdigest()
+    result_sha256 = hashlib.sha256(plan.stdout.encode("utf-8")).hexdigest()
+    return {
+        "schema": PUBLIC_BENCHMARK_EVIDENCE_SCHEMA,
+        "contract": TEE_BENCHMARK_CONTRACT,
+        "pr": {
+            "number": expected["pr_number"],
+            "base_ref": expected["base_ref"],
+            "base_sha": expected["base_sha"],
+            "head_sha": expected["head_sha"],
+        },
+        "benchmark": {
+            "band": expected["band"],
+            "blocks_merge": expected["blocks_merge"],
+            "public_band": expected["public_band"],
+            "public_blocks_merge": expected["public_blocks_merge"],
+        },
+        "tee": {
+            "provider": "Polaris",
+            "kind": kind,
+            "verification_level": verification.get("verification_level", "unverified"),
+            "intel_verified": True,
+            "report_data_match": True,
+            "started_at": started_at,
+            "validator_sha256": plan.validator_sha256,
+            "workload_sha256": workload_sha256,
+            "result_sha256": result_sha256,
+        },
     }
