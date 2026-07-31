@@ -66,6 +66,17 @@ def test_nan_parts_rejected():
     assert out["judge_fraction"] is None
 
 
+def test_oversized_int_parts_rejected():
+    # json.load yields a plain Python int from an oversized integer literal; it is finite-looking
+    # but overflows float(), so _is_number's OverflowError guard must reject it -- like nan/bool --
+    # rather than crash the summary on the float() conversion (the #1417 oversized-int guard class).
+    out = summarize_component_mix(_single(10**400, 0.4))
+    assert out["judge_mean"] is None
+    assert out["objective_mean"] == 0.4  # the guard is per-value; the finite objective is intact
+    assert out["judge_fraction"] is None
+    assert out["objective_fraction"] is None
+
+
 def test_overflowing_total_yields_none_fractions_not_fabricated_zero():
     # judge_mean and objective_mean are each individually finite, but their SUM overflows to
     # inf -- `total == 0` doesn't catch that, and dividing by inf used to silently produce a
