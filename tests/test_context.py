@@ -518,6 +518,32 @@ def test_context_from_git_sets_frozen_at_date():
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_recent_commits_include_date_like_freeze():
+    """#2253: git-only commits must carry ``date`` so release-timing sees freeze-parity evidence."""
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        d0, d1 = "2024-01-10T12:00:00+00:00", "2024-01-11T12:00:00+00:00"
+        _write(repo, "a.txt")
+        _git(repo, "add", "-A", date=d0)
+        _git(repo, "commit", "-q", "-m", "c0", date=d0)
+        _write(repo, "b.txt")
+        _git(repo, "add", "-A", date=d1)
+        _git(repo, "commit", "-q", "-m", "c1", date=d1)
+
+        fallback = _context_from_git(repo)
+        harness = build_context(repo, "HEAD")
+        assert all("date" in c for c in fallback["recent_commits"])
+        assert [c["date"] for c in fallback["recent_commits"]] == [
+            c["date"] for c in harness["recent_commits"]
+        ]
+        assert fallback["frozen_at"]["date"] == harness["frozen_at"]["date"]
+        assert fallback["frozen_at"]["date"] == fallback["recent_commits"][0]["date"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 def test_context_from_git_sets_forward_signal_scrubbed_flag():
     # The fallback masks forward refs inline (_mask_forward_refs) exactly like
     # benchmark/leakage.py::scrub_context does for the frozen path, but never recorded that
