@@ -97,7 +97,10 @@ _CC_TYPE_TO_PLAN_KIND = {
 # release actions, not dependency chores, so they must count toward "release" — exactly how
 # the anchor classifies them. The body regex matches benchmark/score.py `_RELEASE_TAG_SUBJECT`.
 _RELEASE_TOOLING_TYPES = frozenset({"chore", "build"})
-_RELEASE_CUT_BODY_RE = re.compile(r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?\b", re.I)
+_RELEASE_CUT_BODY_RE = re.compile(
+    r"^\s*(?:release[\s:_-]*)?v?\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\s*$",
+    re.I,
+)
 # Explicit release wording anywhere in a subject. Mirrors benchmark/score.py `_RELEASE_KW` so the
 # release backstop recognizes a release-titled plan item (`Cut the 1.0 release`, `bump version`)
 # the same way the objective anchor's `is_release_subject` does — a title-shaped release the

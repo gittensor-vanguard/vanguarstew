@@ -48,13 +48,14 @@ from agent.planner import (  # noqa: E402
     _release_cadence_note,
     _release_cadence_signal,
     _release_timing_state,
+    _RELEASE_CUT_BODY_RE,
     _repo_layout_note,
     _safe_prs,
     _significant_tokens,
     plan_next_actions,
     reconcile_plan_with_queue,
 )
-from benchmark.score import commit_kind, plan_kind  # noqa: E402
+from benchmark.score import commit_kind, is_release_subject, plan_kind  # noqa: E402
 
 CTX = {"open_prs": [{"number": 7, "title": "Add streaming export"}]}
 
@@ -930,6 +931,26 @@ def test_is_release_subject_mirrors_the_anchor():
                 "bump lodash to v4.17.21", "fix crash in v1.2.0 parser", "Fix the loader",
                 "test: tighten release assertions", None, 42, "", "   "):
         assert _is_release_subject(bad) is False, bad
+
+
+def test_release_cut_body_requires_end_anchor_like_the_scorer():
+    """#2232: version-led prose must not count as a cut (mirror lost its `$`)."""
+    # Body-only divergence vs the scorer's tag-subject pattern.
+    for body in ("1.4.0 and fix the parser", "v2.0 rewrite of everything", "release 1.2.3 notes"):
+        assert _RELEASE_CUT_BODY_RE.match(body) is None, body
+    # Keyword "release" still lights is_release_subject on both sides; the bug is the
+    # chore/build body path treating version-led prose as a cut.
+    assert is_release_subject("1.4.0 and fix the parser") is False
+    assert is_release_subject("v2.0 rewrite of everything") is False
+
+    assert _commit_plan_kind("chore: 1.4.0 and fix the parser regression") == "dep"
+    assert commit_kind("chore: 1.4.0 and fix the parser regression") == "chore"
+    # Pure version / tooling cut bodies still match both sides.
+    for good in ("1.4.0", "v2.0.0", "release 1.2.3", "2.0.0-rc1"):
+        assert _RELEASE_CUT_BODY_RE.match(good), good
+        assert is_release_subject(good) is True, good
+    assert _commit_plan_kind("chore: 2.0.0") == "release"
+    assert _commit_plan_kind("chore(release): 1.4.0") == "release"
 
 
 def test_is_planned_release_detects_kind_and_title():
