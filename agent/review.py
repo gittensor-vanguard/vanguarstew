@@ -2,7 +2,7 @@
 
 This applies the agent's maintainer judgment to real, current work — which is the whole point
 of the benchmark: to make that judgment trustworthy. The output maps to the project's review
-rubric (see REVIEW.md). ``value_label`` is advisory only: this module reads a diff, it never
+rubric. ``value_label`` is advisory only: this module reads a diff, it never
 runs a benchmark, so it can only ever flag whether a PR is on the measured (`agent/`) surface
 or the flat-rate one — it can NOT predict a `perf:*` band, since that requires an actual
 before/after `scripts/score_pr_delta.py` run this code has no access to.
@@ -23,7 +23,7 @@ SYSTEM = (
     "(4) quality and clarity. Be specific, and decisive about the action. Respond ONLY with JSON."
 )
 
-# Prompt fragment for the High Non-redundancy rubric axis (REVIEW.md, #1753). Kept as a named
+# Prompt fragment for the high non-redundancy rubric axis. Kept as a named
 # constant so tests can lock the language without parsing the full LLM user message.
 NON_REDUNDANCY_GUIDANCE = (
     "Non-redundancy is a High rubric axis: a PR that re-derives a helper, metric, or report "

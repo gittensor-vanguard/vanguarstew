@@ -24,6 +24,7 @@ from contextlib import contextmanager
 
 from benchmark.attestation import build_evidence
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
+from benchmark.memory import BenchmarkMemoryProvider, MemoryError, MemoryStore
 from benchmark.polaris import build_stdout_envelope
 from benchmark.runner import run_replay
 from benchmark.transcript import TranscriptStore
@@ -121,6 +122,35 @@ def _positive(value: int, label: str) -> int:
     return value
 
 
+def _benchmark_memory(args):
+    """Open the optional trusted local memory controller for a public replay.
+
+    The store is never serialized into the workload result.  The provider itself emits only a
+    public, task-scoped benchmark view, and the runner binds its digest-only commitment.
+    """
+    mode = getattr(args, "memory_mode", "disabled")
+    store_path = getattr(args, "memory_store", None)
+    if mode == "disabled":
+        if store_path:
+            raise AttestedEvalError("memory store requires --memory-mode benchmark")
+        return None, None
+    if mode != "benchmark" or not store_path:
+        raise AttestedEvalError("benchmark memory requires a local controller store")
+    store = None
+    try:
+        store = MemoryStore(store_path).open()
+        provider = BenchmarkMemoryProvider(
+            store,
+            repository_id=args.public_repo.lower(),
+            public_only=True,
+        )
+    except (MemoryError, OSError) as exc:
+        if store is not None:
+            store.close()
+        raise AttestedEvalError("cannot open the benchmark memory controller") from exc
+    return store, provider
+
+
 def run(args) -> str:
     """Return the canonical public-run envelope described by parsed CLI ``args``."""
     repo_identity = _public_repo_identity(args.repo, args.public_repo)
@@ -145,18 +175,25 @@ def run(args) -> str:
         "rotation_seed": args.rotation_seed,
         "baseline": args.baseline,
     }
-    if args.offline_stub:
-        with _offline_mode(True):
-            artifact = run_replay(api_base=None, api_key="offline", **common)
-        transcript_digest = _OFFLINE_TRANSCRIPT
-    else:
-        with _replay_endpoint(args.transcript) as (api_base, transcript_digest):
-            with _offline_mode(False):
-                artifact = run_replay(
-                    api_base=api_base,
-                    api_key="transcript-replay",
-                    **common,
-                )
+    memory_store, memory_provider = _benchmark_memory(args)
+    if memory_provider is not None:
+        common["memory_provider"] = memory_provider
+    try:
+        if args.offline_stub:
+            with _offline_mode(True):
+                artifact = run_replay(api_base=None, api_key="offline", **common)
+            transcript_digest = _OFFLINE_TRANSCRIPT
+        else:
+            with _replay_endpoint(args.transcript) as (api_base, transcript_digest):
+                with _offline_mode(False):
+                    artifact = run_replay(
+                        api_base=api_base,
+                        api_key="transcript-replay",
+                        **common,
+                    )
+    finally:
+        if memory_store is not None:
+            memory_store.close()
 
     tasks = artifact.get("tasks") if isinstance(artifact, dict) else None
     if isinstance(tasks, bool) or not isinstance(tasks, int) or tasks <= 0:
@@ -173,6 +210,10 @@ def run(args) -> str:
             "agent_commit": args.agent_commit.lower(),
             "eval_image": args.eval_image,
             "transcript_digest": transcript_digest,
+            # The replay may run with the trusted time-safe memory provider.  Only its
+            # aggregate digest commitment is bound into the receipt; no view or store content
+            # is included in this CLI envelope.
+            "memory_commitment": artifact.get("memory_commitment"),
         },
     )
     return build_stdout_envelope(artifact, evidence)
@@ -195,6 +236,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--rotation-seed", type=int, default=0)
     parser.add_argument("--baseline", choices=sorted(BASELINES), default=DEFAULT_BASELINE)
+    parser.add_argument(
+        "--memory-mode",
+        choices=("disabled", "benchmark"),
+        default="disabled",
+        help="explicit memory mode; disabled keeps the historical replay stateless",
+    )
+    parser.add_argument(
+        "--memory-store",
+        help="trusted local SQLite controller path; required only for --memory-mode benchmark",
+    )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--transcript", help="recorded model transcript to replay on loopback")
     mode.add_argument(

@@ -33,6 +33,8 @@ import datetime
 import json
 import math
 
+from benchmark.attestation import safe_memory_commitment
+
 
 def _round(value):
     """A published scalar rounded to 4dp, or ``None`` when it is not a finite number.
@@ -190,7 +192,7 @@ def _composite_delta(report) -> float | None:
 # machine, and a field added upstream must never start being published just because it appeared.
 # Anything not listed here is dropped, so widening the published surface stays a decision made here.
 _EVIDENCE_INPUT_FIELDS = ("repo_set", "repo_set_partition", "seed", "rotation_seed", "model",
-                          "agent_commit", "eval_image", "transcript_digest")
+                          "agent_commit", "eval_image", "transcript_digest", "memory_commitment")
 
 
 def _safe_evidence(evidence) -> dict | None:
@@ -212,8 +214,14 @@ def _safe_evidence(evidence) -> dict | None:
     if not evidence:
         return None
     inputs = _dict(evidence.get("inputs"))
+    published_inputs = {field: inputs.get(field) for field in _EVIDENCE_INPUT_FIELDS}
+    # Treat any direct caller as untrusted.  The public-feed boundary independently keeps only
+    # the fixed, digest-only commitment shape, even if the caller bypassed build_evidence().
+    published_inputs["memory_commitment"] = safe_memory_commitment(
+        published_inputs["memory_commitment"]
+    )
     return {
-        "inputs": {field: inputs.get(field) for field in _EVIDENCE_INPUT_FIELDS},
+        "inputs": published_inputs,
         "artifact_digest": evidence.get("artifact_digest"),
         "report_data": evidence.get("report_data"),
     }

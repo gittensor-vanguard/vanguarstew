@@ -2,24 +2,25 @@
   <img src="banner.png" alt="Vanguarstew — AI-powered stewardship for open source" width="100%">
 </p>
 
-# vanguarstew — SN74 repo-maintainer agent
+# Vanguarstew — OpenVang maintainer-intelligence component
 
-[![CI](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml/badge.svg)](https://github.com/gittensor-vanguard/vanguarstew/actions/workflows/ci.yml)
+[![CI](https://github.com/openvang/vanguarstew/actions/workflows/ci.yml/badge.svg)](https://github.com/openvang/vanguarstew/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Powered by Gittensor](https://img.shields.io/badge/Powered%20by-Gittensor-6E56CF)](https://gittensor.io)
-
-> **⚡ Powered by [Gittensor](https://gittensor.io).** This repository is built and continuously
-> improved through **Gittensor** — a [Bittensor](https://bittensor.com) subnet (**SN74**) that rewards a
-> network of contributors for making real, merged improvements to open-source software. The reviews,
-> fixes, and features that land here are produced and incentivized through Gittensor. **Want to help
-> build it (and earn)?** See [how Gittensor OSS contributions work](https://docs.gittensor.io/oss-contributions.html).
-
-`vanguarstew` is an **SN74 repo-maintainer agent** and the **benchmark** that optimizes it, built to live as a repo on gittensor. It borrows the agentic-workflow + history-derived-benchmark approach of SN66 "ninja" (the coding-agent subnet) and retargets it from *"reproduce the code change"* to *"make the maintainer decisions a strong maintainer would have made."*
+`vanguarstew` is OpenVang's maintainer-intelligence component: a repository-maintainer agent,
+history-derived benchmark, private review runtime, and verifiable-compute foundation. It is designed
+to be one specialist inside a Bittensor subnet owner workflow—not a subnet-specific contribution or
+reward program.
 
 The core question it answers is not *"did the agent write good code?"* but *"does the agent understand where this repository is going, and would it have steered it the way the real maintainers did?"*
 
-See [ROADMAP.md](ROADMAP.md) for milestones and [docs/architecture.md](docs/architecture.md) for the architecture (module layout, agent contract, topology, leakage defenses).
+See [ROADMAP.md](ROADMAP.md) for the product sequence,
+[docs/architecture.md](docs/architecture.md) for the component architecture, and the
+[OpenVang agent-factory design](docs/openvang-agent-factory.md) for role and owner-action boundaries.
+The optional, controller-owned [persistent-memory design](docs/persistent-memory.md) documents live
+and time-safe benchmark modes.
+The local [memory ablation protocol](docs/memory-ablation.md) defines how to test memory against
+matched frozen tasks without fabricating a performance claim.
 
 The first verifiable-compute milestone is a fixed, public, non-secret
 [Polaris TEE receipt pilot](docs/polaris-public-tee-pilot.md). It validates execution-integrity
@@ -59,8 +60,8 @@ The agent is judged on **direction/theme match** (not exact-PR match), with an *
 
 ## The agent — what it actually does
 
-The agent is the part contributors improve (it lives in [`agent/`](agent/)). Given a repo
-frozen at a moment in time, it decides what a strong maintainer would do next — in four steps:
+The maintainer agent lives in [`agent/`](agent/). Given a repository frozen at a moment in time,
+it decides what a strong maintainer would do next — in four steps:
 
 1. **Infer the "maintainer philosophy."** Before deciding anything, it reads the repo's
    history, README, and recent activity to work out the project's values and direction —
@@ -74,18 +75,21 @@ frozen at a moment in time, it decides what a strong maintainer would do next �
    writing code is only one of the actions a maintainer takes.
 
 The benchmark then scores those decisions against what the maintainers **actually did next**.
-So a better agent = better philosophy inference, planning, and judgment — that's what you
-improve.
 
 > New here? The module layout and the full agent contract are in
-> [docs/architecture.md](docs/architecture.md). The friendliest place to start is a
-> [`good first issue`](https://github.com/gittensor-vanguard/vanguarstew/labels/good%20first%20issue).
+> [docs/architecture.md](docs/architecture.md) and
+> [docs/openvang-agent-factory.md](docs/openvang-agent-factory.md).
 
 ## Quickstart
 
 ```bash
 # offline dry-run: no network, deterministic stub LLM — proves the loop wiring
 VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo /path/to/some/git/repo --tasks 2 --horizon 5
+
+# opt-in time-safe memory: controller-owned store, single repo, no raw memory in the artifact
+VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval --repo /path/to/some/git/repo \
+    --memory-mode benchmark --memory-store /controlled/memory.sqlite \
+    --memory-repository-id owner/repo --tasks 2 --horizon 5
 
 # live run against a managed-inference endpoint (ninja-style contract)
 python -m scripts.run_eval --repo /path/to/repo --tasks 5 --horizon 5 \
@@ -115,6 +119,24 @@ python -m scripts.report result.json
 # rank several saved --out artifacts (pick the best candidate agent)
 python -m scripts.leaderboard agent_a=run_a.json agent_b=run_b.json
 ```
+
+## Run as a private service
+
+The benchmark loop and live maintainer-assist runtime are separate. For a
+simple local, restart-safe service that keeps review material private:
+
+```bash
+cp .env.example .env
+cp vanguarstew.json.example vanguarstew.json
+python -m pip install -e .
+vanguarstew doctor
+vanguarstew serve
+```
+
+The initial configuration is safe and inert: no polling, inference, GitHub
+mutation, or public reviewer output. See the [product runtime plan](docs/product-runtime-plan.md)
+for the deliberate live-pilot opt-in, Docker Compose/systemd operation, and the
+private-review boundary.
 
 > **Dev-only backend:** [`tools/codex_llm.py`](tools/codex_llm.py) can drive the benchmark and
 > maintenance tooling from a locally-authenticated `codex` CLI (ChatGPT / OAuth, e.g. gpt-5.5)
@@ -162,21 +184,8 @@ The `--repos` aggregate result shape is:
 
 ## Status
 
-**Active development.** The core loop runs end-to-end and is **live-verified against a real
-model** (see the demo above). Shipped so far (M0–M3): history-derived replay, an objective
-scoring anchor plus a decision-process judge, leakage defenses, knowable-at-T GitHub context,
-and **generalization** — multi-repo replay with an aggregated cross-repo composite and a
-leakage-safe, versioned repo-set config. Open source (MIT), CI green on Python 3.10–3.12, and
-registered on gittensor. Next: held-out generalization scoring (finishing M3) and the fully
-agentic loop (M4). See [ROADMAP.md](ROADMAP.md).
-
-## Contributing
-
-Contributions are welcome — the surface is open. **Open PRs against the `test` branch, not `main`** — `main` is maintainer-promoted from `test` (see [CONTRIBUTING → Branches](CONTRIBUTING.md#branches)). Start with [CONTRIBUTING.md](CONTRIBUTING.md)
-for setup, and [REVIEW.md](REVIEW.md) for exactly how contributions are gated, reviewed, and
-scored (the process is designed to be predictable and reproducible). Browse open
-[issues](https://github.com/gittensor-vanguard/vanguarstew/issues) — especially
-[`good first issue`](https://github.com/gittensor-vanguard/vanguarstew/labels/good%20first%20issue)
-and [`help wanted`](https://github.com/gittensor-vanguard/vanguarstew/labels/help%20wanted).
-
-The module layout and full agent contract live in [docs/architecture.md](docs/architecture.md).
+**Active development.** The current foundation includes history-derived replay, objective and
+judged scoring, leakage defenses, time-safe persistent memory, Polaris-backed execution-integrity
+receipts, and a private restart-safe maintainer runtime. OpenVang's next layer is a role-separated
+subnet agent factory. It has no automatic owner key, on-chain action, GitHub write, or public review
+publication path. See [ROADMAP.md](ROADMAP.md).

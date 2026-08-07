@@ -12,6 +12,7 @@ import math
 import sys
 
 from benchmark.baselines import BASELINES, DEFAULT_BASELINE
+from benchmark.memory import BenchmarkMemoryProvider, MemoryError, MemoryStore
 from benchmark.repo_set import RepoSetError
 from benchmark.runner import (
     run_generalization_report,
@@ -127,6 +128,35 @@ def _weight_sweep_rows(result: dict) -> list:
     return []
 
 
+def open_benchmark_memory(mode: str, store_path: str | None, repository_id: str | None):
+    """Return an explicit public, time-safe memory provider and its local store.
+
+    Stateless replay is the default.  A memory-enabled replay is deliberately limited to a
+    single repository because every view has to bind one repository identity before it can be
+    filtered, snapshotted, and committed.  Multi-repository callers must configure one trusted
+    provider per repository instead of accidentally sharing state.
+    """
+    if mode == "disabled":
+        if store_path or repository_id:
+            raise ValueError("memory store and repository id require --memory-mode benchmark")
+        return None, None
+    if mode != "benchmark" or not store_path or not repository_id:
+        raise ValueError("benchmark memory requires --memory-store and --memory-repository-id")
+    store = None
+    try:
+        store = MemoryStore(store_path).open()
+        provider = BenchmarkMemoryProvider(
+            store,
+            repository_id=repository_id,
+            public_only=True,
+        )
+    except (MemoryError, OSError) as exc:
+        if store is not None:
+            store.close()
+        raise ValueError("cannot open the benchmark memory controller") from exc
+    return store, provider
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="vanguarstew time-travel replay eval")
     src = ap.add_mutually_exclusive_group(required=True)
@@ -146,6 +176,22 @@ def main() -> None:
     ap.add_argument("--model", default=None)
     ap.add_argument("--api-base", default=None)
     ap.add_argument("--api-key", default=None)
+    ap.add_argument(
+        "--memory-mode",
+        choices=("disabled", "benchmark"),
+        default="disabled",
+        help="explicit memory mode; disabled keeps historical replay stateless",
+    )
+    ap.add_argument(
+        "--memory-store",
+        default=None,
+        help="trusted local SQLite controller path; required for --memory-mode benchmark",
+    )
+    ap.add_argument(
+        "--memory-repository-id",
+        default=None,
+        help="controller repository identity; required for --memory-mode benchmark",
+    )
     ap.add_argument("--work-dir", default=None, help="keep frozen checkouts here (else temp)")
     ap.add_argument("--out", default=None, help="write the full JSON result artifact to this path")
     ap.add_argument("--fail-under", type=float, default=None,
@@ -188,6 +234,8 @@ def main() -> None:
         # `--repo-set-partition tuned --held-out` silently overrode the explicit `tuned`.
         ap.error("--held-out already selects the held-out partition; "
                  "do not combine it with an explicit --repo-set-partition")
+    if args.memory_mode == "benchmark" and not args.repo:
+        ap.error("--memory-mode benchmark currently requires a single --repo replay")
 
     common = dict(
         agent_file=args.agent, n_tasks=args.tasks, horizon=args.horizon,
@@ -197,6 +245,14 @@ def main() -> None:
         w_judge=args.w_judge, w_objective=args.w_objective,
         dual_order_judge=not args.single_order_judge,
     )
+    try:
+        memory_store, memory_provider = open_benchmark_memory(
+            args.memory_mode, args.memory_store, args.memory_repository_id
+        )
+    except ValueError as exc:
+        ap.error(str(exc))
+    if memory_provider is not None:
+        common["memory_provider"] = memory_provider
     try:
         if args.repo_set and args.generalization:
             result = run_generalization_report(args.repo_set, **common)
@@ -212,6 +268,9 @@ def main() -> None:
     except (RuntimeError, RepoSetError) as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
+    finally:
+        if memory_store is not None:
+            memory_store.close()
     if args.sweep_weights:
         rows = result.get("rows")
         if rows:

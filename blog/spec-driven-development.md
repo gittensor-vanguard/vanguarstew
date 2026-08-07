@@ -2,7 +2,7 @@
 
 *July 6, 2026*
 
-vanguarstew — the SN74 repo-maintainer agent benchmarked against real GitHub
+vanguarstew — the maintainer-intelligence component benchmarked against real GitHub
 history — is adopting **spec-driven development (SDD)** as its methodology. Here's
 what that means, why we're doing it, and how it maps to a project whose benchmark
 was already spec-driven by construction.
@@ -43,7 +43,7 @@ implementation. No phase is skipped.
 
 We've added `AGENTS.md` at the repo root — a project constitution written in
 **EARS** (Easy Approach to Requirements Syntax) notation. It contains durable
-project-wide rules that every agent, contributor, and CI check operates under:
+project-wide rules that every agent, operator, and CI check operates under:
 
 - **Agent contract**: `solve()` is the single entrypoint. Offline stubs.
   Managed-inference parameters.
@@ -51,8 +51,8 @@ project-wide rules that every agent, contributor, and CI check operates under:
   Forward-looking signals are stripped. Held-out repos score separately.
 - **Code quality**: 75% coverage floor. Tests required with code changes.
   Ruff and pytest must pass.
-- **Contributor rules**: max 2 open PRs. Target `test`, not `main`. No AI
-  co-authorship markers.
+- **Factory authority**: roles are least-privilege, private review stays
+  role-scoped, and owner effects require external approval.
 
 These aren't new rules — they're existing CI and convention written as
 unambiguous statements an agent can parse and act on.
@@ -72,11 +72,11 @@ vanguarstew's evaluation pipeline maps onto SDD naturally:
 **is** the specification. `score.py` checks whether the agent's output matches
 that spec. This is SDD by construction — we're now making it explicit.
 
-## What changes for contributors
+## What changes for operators
 
-Nothing. The existing CI gates, test-branch workflow, and PR template remain
-unchanged. The constitution documents what was already enforced. If you're
-opening PRs, your workflow is the same.
+The active constitution now defines component, benchmark, factory-authority,
+and runtime boundaries. The OpenVang factory does not turn a change request
+into an owner action; external approval remains mandatory.
 
 ## What changes for agent development
 
@@ -91,9 +91,9 @@ specs/001-solve-contract/
 ```
 
 The first formal spec will be the `solve()` output contract — the exact fields,
-types, and validation rules a miner must satisfy. This is the interface between
-agent and benchmark, and having it as an EARS spec makes subnet onboarding
-unambiguous.
+types, and validation rules the maintainer component must satisfy. This is the
+interface between agent and benchmark, and having it as an EARS spec keeps the
+component boundary unambiguous.
 
 ## What's next
 
@@ -102,8 +102,8 @@ blocks the M3 generalization acceptance run. Once those land and the benchmark
 completes a clean multi-repo replay against the curated repo set, the M3
 acceptance signal (`generalization_gap`) will be documented.
 
-M5 is subnet launch: register the repo on gittensor, wire the full
-submit → evaluate → rank loop, with the 3-axis rubric feeding emission weight.
+The next platform milestone is the OpenVang factory: role-scoped scheduler,
+build/QA, and read-only subnet adapters before any separately approved owner-action gateway.
 
 ---
 

@@ -1,203 +1,118 @@
-# Architecture & repository topology
+# OpenVang architecture
 
-This note records how the project is organized today and how it is expected to grow, so the
-repo structure stays deliberate rather than accidental.
+## Component model
 
-## Today: one repo, two halves
+OpenVang is one agent factory with explicit specialist roles. The repository
+currently carries the maintainer-intelligence component, its benchmark, and a
+private runtime. The factory policy is the authority boundary between them.
 
-Everything lives in `vanguarstew`, split in-code by ownership:
-
-- **`agent/` + `agent.py` — the miner-editable agent.** The `solve()` entrypoint and the
-  philosophy → plan → decide → implement steps. This is what a miner forks, edits, and submits.
-- **`benchmark/` — the validator-owned harness.** Freeze a repo at a point in time, generate
-  replay tasks from history, run agents, and judge them pairwise. Changes here affect how
-  everyone is scored.
-
-Keeping both in one repo is intentional while the design is still moving.
+- **`openvang/` — factory control plane.** Fixed role contracts, memory
+  scopes, publication rules, commitment-only owner-action intents, a durable
+  private scheduler, an approval-bound local sealed-execution adapter, and a
+  strict injected-source contract for read-only subnet snapshots. It has no
+  wallet, signer, Bittensor SDK, GitHub-write client, remote executor, or
+  public endpoint.
+- **`agent/` + `agent.py` — maintainer intelligence.** The fixed `solve()`
+  entrypoint and philosophy → plan → decide → implement workflow.
+- **`benchmark/` — integrity controller.** Historical replay, judging,
+  scoring, attestation, and controller-owned persistent memory.
+- **`vanguarstew_runtime/` — private maintainer service.** Durable local queue,
+  read-only GitHub intake, local result retention, loopback health checks, and
+  no GitHub write path.
 
 ## Layout
 
 ```
-agent/                 the maintainer agent (the part a contributor/miner edits)
-  llm.py               OpenAI-compatible client (managed-inference contract)
-  context.py           loads the frozen, knowable-at-T repo state
-  philosophy.py        step 1: infer the repo's maintainer philosophy
-  planner.py           step 3a: plan the next N actions / PRs
-  decider.py           step 3b: concrete decisions (merge/triage/release/patch)
-agent.py               the fixed entrypoint: solve(repo_path, request, ...)
-benchmark/             the evaluation harness (validator-owned; miners don't edit)
-  freeze.py            freeze a repo at commit T, build leakage-safe context
-  taskgen.py           generate replay tasks from GitHub history
-  judge.py             pairwise judge over philosophy + plan + reasoning
-  score.py             objective scoring anchor (module recall + release match)
-  runner.py            orchestrate the replay eval, tally decisive wins
-scripts/run_eval.py    CLI to run an end-to-end replay
-tools/                 dev & maintenance tooling — NOT part of the scored agent
-  codex_llm.py         optional local `codex`/OAuth LLM backend (dev only; never scored)
-vanguarstew_agent_files.json   manifest of miner-editable files (mirrors tau)
+openvang/                       factory authority and memory policy
+  factory.py                    eight role contracts and action-intent checks
+agent/                          maintainer-intelligence implementation
+  llm.py                        managed-inference client
+  context.py                    frozen, knowable-at-time repository state
+  philosophy.py                 infer repository direction and values
+  planner.py                    plan bounded next actions
+  decider.py                    make concrete maintainer decisions
+agent.py                        fixed solve(repo_path, request, ...) entrypoint
+benchmark/                      replay, scoring, memory, and attestation controller
+  freeze.py                     build leakage-safe history snapshots
+  taskgen.py                    generate replay tasks
+  judge.py                      pairwise evaluation
+  score.py                      objective scoring anchor
+  memory.py                     trusted persistent-memory controller
+  runner.py                     replay orchestration
+vanguarstew_runtime/            restart-safe private service runtime
+scripts/run_eval.py             end-to-end replay CLI
 ```
 
-## Agent contract
+## Maintainer-agent contract
 
-The harness invokes the agent with a fixed signature (generalized from ninja's `solve`):
+The benchmark invokes the maintainer component through a stable interface:
 
 ```python
 solve(
-    repo_path="/tmp/task_repo",        # frozen repo state at time T (+ .vanguarstew_context.json)
-    request="plan next 5 actions",     # the maintainer decision being asked for
+    repo_path="/tmp/task_repo",
+    request="plan next 5 actions",
     model="validator-managed-model",
     api_base="http://validator-proxy/v1",
     api_key="per-run-proxy-token",
-) -> {
-    "philosophy": {...},               # inferred repo direction / values
-    "plan": [...],                     # next maintainer actions / PRs
-    "action": "merge|...|plan|patch",
-    "patch": "<unified diff>|null",
-    "rationale": "...",                # the reasoning the judge evaluates
-    "logs": "...", "steps": 0, "cost": None, "success": True,
-}
+)
 ```
 
-## Planned split (around M2)
+The controller supplies managed inference and a frozen context. The component
+does not gain controller credentials, a memory-store handle, or external owner
+authority from this call.
 
-Once the miner/validator boundary stabilizes, split into two repos, mirroring how SN66
-separates its miner harness from its validator:
+## Factory authority model
 
-- **`vanguarstew`** — the miner agent harness only (fork / edit / submit). Small and stable.
-- **`vanguarstew-validator`** — task generation, freeze, judge, scoring, runner, and
-  deployment. Validator-owned; miners never edit it.
+The factory defines eight roles: validator, maintainer, miner QA, builder,
+product, QA, scheduler, and security QA. Each contract lists its non-privileged
+actions and readable/writable memory scopes.
 
-The split is about clean ownership, independent versioning/deploy of the validator, and
-matching the ecosystem's mental model — not secrecy.
+No role can automatically access a wallet, submit an on-chain transaction,
+change emissions, vote in governance, mutate GitHub, or publish. Such effects
+can only be represented as an immutable, commitment-bound owner intent. The
+policy always denies automatic execution.
 
-## Benchmark data
+Run `vanguarstew factory-policy` to inspect the static contract. It reads no
+runtime configuration or secrets and exposes no live work, reviews, memory, or
+subnet state.
 
-The curated, leakage-safe task sets — vetted repos and commit windows (recent / obscure,
-per the leakage constraints), frozen snapshots, and revealed-history references — will live
-as a separate benchmark dataset (its own repo or a hosted dataset) once M2 produces real
-tasks. This is the most reusable asset the project produces.
+## Memory and publication boundaries
 
-### Repo-set config + loader
+Persistent memory is controller-owned and remains distinct between live and
+benchmark use. Benchmark retrieval is time-safe at each freeze point; raw
+memory is excluded from public artifacts and TEE evidence.
 
-The list of repositories the benchmark replays is a **checked-in JSON config**, not a
-hardcoded array — so the curated, leakage-safe selection is reviewable and versioned. The
-shipped `benchmark/repo_sets/example.json` is a **starter/example** whose sources are
-placeholders (`OWNER/...`) — copy it and swap in vetted repos for a real run.
-`benchmark/repo_sets/curated.json` is the **operational** set with vetted public
-repositories; see `benchmark/repo_sets/README.md` for tier vetting criteria. `benchmark/
-repo_set.py` loads and **strictly validates** any config, at both the **top level** (only
-`name` / `description` / `strategy` / `repos` allowed; metadata must be strings; a stray or
-misspelled key is rejected) and per entry — since a leakage-safe set is only as trustworthy
-as its config.
+Factory policy adds role-private, shared-commitment, and
+publishable-commitment scopes. Role-private content—including private
+maintainer-review material—cannot cross role boundaries. Cross-role exchange
+is commitment-only. Publication remains an owner action even for a
+publishable-safe commitment.
 
-Each entry carries:
+The factory-specific vault is distinct from benchmark persistent memory. It is
+an owner-local append-only SQLite store with authenticated encryption for raw
+role-private records. It stores only pre-shaped digests for cross-role
+coordination and offers no operation that converts a private record into a
+shared or public fact. The encryption key is external to the repository and
+database; deployments must use an operator-managed secret source.
 
-- `name` — unique id; `source` — git URL or local path.
-- `tier` — `recent` or `obscure`, the two leakage-resistance strategies (past-cutoff recency
-  vs. low-traffic obscurity).
-- `held_out` — reserve the repo for generalization scoring (see the held-out eval above).
-- `freeze_window` — hints that map onto `run_replay`'s knobs: `recent_bias`, `rotation_seed`,
-  and `after` / `before` / `min_history` bounds for freeze-point selection.
+## Benchmark and TEE boundaries
 
-The loader returns a typed `RepoSet` with `tuned()` / `held_out()` / `by_tier()` /
-`sources()` views, so the runner consumes a validated selection instead of ad-hoc paths:
+The benchmark measures the maintainer component against real historical
+repository trajectories. It is not a source of owner authority.
 
-`load_repo_set(path)` takes a **required** path — there is no implicit default, so a config
-is always chosen deliberately (never the placeholder starter by accident). Use the exported
-`EXAMPLE_REPO_SET` to load the shipped example explicitly.
+Polaris receipts can bind a supported benchmark result to an integrity-checked
+execution. They do not make GPU work confidential and must not contain private
+review data, raw memory, credentials, or operational identifiers. See
+[persistent-memory.md](persistent-memory.md) and
+[polaris-benchmark-seal.md](polaris-benchmark-seal.md).
 
-```python
-from benchmark.repo_set import CURATED_REPO_SET, EXAMPLE_REPO_SET, load_repo_set
-rs = load_repo_set(CURATED_REPO_SET)          # operational vetted set
-# rs = load_repo_set(EXAMPLE_REPO_SET)      # schema starter only
-tuned   = [e.source for e in rs.tuned()]
-heldout = [e.source for e in rs.held_out()]
-```
+## Deployment evolution
 
-CLI replay from a repo set (clone listed repos locally, or use https sources to auto-clone):
-
-```bash
-VANGUARSTEW_OFFLINE=1 python -m scripts.run_eval \
-  --repo-set benchmark/repo_sets/curated.json --tasks 2 --horizon 5
-
-# held-out slice only (--held-out is shorthand for --repo-set-partition held_out)
-python -m scripts.run_eval --repo-set benchmark/repo_sets/curated.json --held-out --tasks 2 --horizon 5
-
-# every entry in the config
-python -m scripts.run_eval --repo-set benchmark/repo_sets/curated.json --repo-set-partition all --tasks 2 --horizon 5
-```
-
-The runner loads the config through `load_repo_set()`, replays the selected slice, and applies
-each entry's `freeze_window` hints (`recent_bias`, `rotation_seed`, `after`, `before`,
-`min_history`) to task selection. The checked-in `example.json` remains schema-valid but
-**must** fail at execution time because its `OWNER/...` sources are placeholders, not vetted repos.
-## Leakage defenses
-
-Because the reference is public GitHub history, the benchmark actively resists leakage:
-
-- **No internet in the sandbox** beyond the managed inference proxy.
-- **Knowable-at-T only** — the frozen context is built from commits/issues/PRs/releases that
-  existed at T; nothing created (or a release published) after T is included.
-- **As-of-T reconstruction of mutable fields** (`benchmark/github_context.py`) — some GitHub
-  fields the live REST snapshot exposes are mutable and would otherwise leak present-day state:
-  - *Milestone state* is derived from `created_at`/`closed_at` (`_milestone_at`) — `"closed"`
-    only when it was already closed by T.
-  - *Issue/PR label membership* is reconstructed by replaying the item's timeline
-    `labeled`/`unlabeled` events up to T (`_labels_at`); when the timeline can't be read
-    (offline, rate-limited, or no label events), labels are **omitted** (`labels_as_of_t:
-    false`) rather than copied live — fail-closed, never leak. Consumers must treat
-    `labels` as historically exact **only when** `labels_as_of_t` is true; `labels_as_of_t:
-    false` means "label history unavailable", not "this item had no labels at T". The
-    agent-facing prompt view follows that contract by omitting `labels` on such items.
-  - *Intentionally omitted* (not reconstructable from a cheap as-of-T source): the repo-wide
-    label catalog, milestone `due_on` and `title`, and the release display `name` are dropped
-    from the enriched context rather than copied live — milestones and releases expose no edit
-    stream to replay, so a post-T retitle would leak future direction (only the immutable
-    milestone `number` and release `tag`/`published_at` are kept).
-- **Forward-reference scrubbing** (`benchmark/leakage.py`) — even within knowable-at-T text,
-  issue/PR back-references (`#N`), GitHub issue/PR/commit links, and raw SHAs are masked, so a
-  commit subject or README can't cross-reference the future.
-- **As-of-T field guards** (`benchmark/github_context.py`) — mutable API fields such as
-  milestone `state` are derived from timestamps (`closed_at` vs. T), not copied from the live
-  response. Fields the REST API cannot time-filter (the repo label catalog, milestone
-  `due_on`/`title`, release `name`) are omitted from the frozen context rather than carried
-  as present-day snapshots.
-- **Recent-window + rotation** freeze-point selection (`benchmark/taskgen.py`) — prefer recent
-  points (past a model's training cutoff) and rotate deterministically so answers aren't reused.
-- **Judge-order telemetry** (`benchmark/judge.py`, `benchmark/runner.py`) — replay artifacts
-  persist each row's `judge_order` plus aggregate `judge_order_stats`, including
-  `disagreement_rate` when dual-order judging is enabled. If that rate rises, treat it as
-  a judge-stability warning worth inspecting for prompt/model drift or noisier scoring, not
-  as evidence that challenger and baseline are necessarily converging.
-- **Repo diversity / held-out repos** (M3) — generalization is scored on unseen repos.
-
-### Forward-reference scrubbing policy
-
-`strip_forward_refs()` (`benchmark/leakage.py`) neutralizes future-pointing references in the
-free-text fields of the frozen context (commit subjects, issue/PR titles, README excerpt,
-release/milestone names). It masks exactly three things:
-
-- **Issue/PR back-references** — `#123` → `#ref`.
-- **GitHub deep links** — `https://github.com/owner/repo/{issues,pull,commit,compare}/…` → `<link>`.
-- **Raw commit SHAs** — a 7–40 char hex token → `<sha>`, **but only when it contains a hex
-  letter (`a`–`f`)**.
-
-**Why bare numeric tokens are preserved:** a SHA's alphabet `[0-9a-f]` is a superset of the
-digits, so an all-numeric token (a count, a percentage, a year like `2024`, a version part) is
-indistinguishable from a short hex SHA by shape alone. Masking those would corrupt legitimate
-numeric content the agent needs, so `_looks_like_sha()` requires at least one `a`–`f` letter
-before a token is treated as a SHA. The trade-off is deliberate: an all-numeric SHA-shaped
-token is left intact rather than risk shredding real numbers — masking is scoped to tokens that
-are *unambiguously* hex.
-
-This policy is pinned by regression tests in `tests/test_leakage.py`:
-`test_strip_forward_refs_masks_refs_links_and_shas`,
-`test_strip_forward_refs_preserves_plain_numbers`, and
-`test_strip_forward_refs_still_masks_hex_shas_among_plain_numbers` (hex SHAs are still masked
-even when surrounded by plain numbers). Changes to the masking behavior should update these
-tests and this note together.
-
-## Principle
-
-Create a new repo only when it has real content to hold. Keep boundaries in-code until they
-stabilize, then promote them to separate repos.
+The current private service is suitable for a controlled maintainer-assist
+pilot. The first factory adapter binds a live role-specific task and external
+approval to the existing network-isolated sealed executor, then retains only a
+verified aggregate digest. The next adapter defines a fixed, identity-free
+read-only subnet-state projection but deliberately leaves its live data source
+outside the factory. Any later owner-action gateway must be a separately
+reviewed system with external signing, exact approvals, idempotency, and
+rollback/containment controls.

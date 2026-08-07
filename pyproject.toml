@@ -9,7 +9,7 @@ description = "A general repository-maintainer agent and its GitHub-history repl
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "gittensor-vanguard" }]
+authors = [{ name = "openvang" }]
 keywords = ["bittensor", "gittensor", "agent", "maintainer", "benchmark", "llm"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -31,9 +31,9 @@ tee = ["dcap-qvl==0.5.3"]
 vanguarstew = "vanguarstew_runtime.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/gittensor-vanguard/vanguarstew"
-Repository = "https://github.com/gittensor-vanguard/vanguarstew"
-Issues = "https://github.com/gittensor-vanguard/vanguarstew/issues"
+Homepage = "https://github.com/openvang/vanguarstew"
+Repository = "https://github.com/openvang/vanguarstew"
+Issues = "https://github.com/openvang/vanguarstew/issues"
 
 [tool.setuptools]
 packages = ["agent", "benchmark", "benchmark.judge_corpus", "benchmark.score_corpus", "openvang", "scripts", "vanguarstew_runtime"]

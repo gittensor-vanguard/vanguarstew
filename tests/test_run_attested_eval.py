@@ -33,6 +33,8 @@ def _args(**overrides):
         "baseline": "empty",
         "transcript": None,
         "offline_stub": True,
+        "memory_mode": "disabled",
+        "memory_store": None,
     }
     values.update(overrides)
     return type("Args", (), values)()
@@ -73,7 +75,45 @@ def test_offline_mode_emits_one_canonical_envelope(monkeypatch):
         "agent_commit": COMMIT,
         "eval_image": IMAGE,
         "transcript_digest": TranscriptStore().digest(),
+        "memory_commitment": None,
     }
+
+
+def test_benchmark_memory_is_explicit_and_binds_only_its_digest(tmp_path, monkeypatch):
+    _stub_repo(monkeypatch)
+    seen = {}
+    commitment = {
+        "memory_schema_version": 1,
+        "memory_policy_version": "vanguarstew-memory-v1",
+        "snapshot_root": "0" * 64,
+        "query_digest": "1" * 64,
+        "memory_view_digest": "2" * 64,
+    }
+
+    def replay(**kwargs):
+        seen.update(kwargs)
+        return {"tasks": 1, "composite_mean": 0.5, "memory_commitment": commitment}
+
+    monkeypatch.setattr(cli, "run_replay", replay)
+    envelope = json.loads(
+        cli.run(
+            _args(memory_mode="benchmark", memory_store=str(tmp_path / "memory.sqlite"))
+        )
+    )
+    assert type(seen["memory_provider"]).__name__ == "BenchmarkMemoryProvider"
+    assert envelope["evidence"]["inputs"]["memory_commitment"] == commitment
+    assert "memory.sqlite" not in json.dumps(envelope)
+
+
+def test_disabled_memory_rejects_a_controller_store(monkeypatch):
+    _stub_repo(monkeypatch)
+    monkeypatch.setattr(
+        cli,
+        "run_replay",
+        lambda **kwargs: pytest.fail("scoring path must not run"),
+    )
+    with pytest.raises(cli.AttestedEvalError, match="memory store requires"):
+        cli.run(_args(memory_store="/private/memory.sqlite"))
 
 
 def test_recorded_transcript_runs_through_loopback_proxy(tmp_path, monkeypatch):

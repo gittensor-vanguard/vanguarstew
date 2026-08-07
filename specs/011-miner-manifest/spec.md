@@ -3,7 +3,7 @@
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** agent
 - **Issue:** #726
-- **Constitution:** [`AGENTS.md`](../../AGENTS.md) → *Agent contract (M0)* · *Scoring (gittensor SN74)*
+- **Constitution:** [`AGENTS.md`](../../AGENTS.md) → *Component contract* · *Factory authority*
 - **Methodology:** [`blog/spec-driven-development.md`](../../blog/spec-driven-development.md)
 - **Related:** [`specs/001-solve-contract`](../001-solve-contract/spec.md) (entrypoint the manifest names)
 
