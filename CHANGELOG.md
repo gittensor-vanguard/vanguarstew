@@ -6,7 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-07
+
+This release also rolls up entries that had accumulated under _Unreleased_ since 0.3.0.
+
 ### Added
+- **Persistent agent memory** — a trust-boundary-aware memory layer (`benchmark/memory.py`,
+  `benchmark/source_memory.py`, `benchmark/memory_coverage.py`) threaded through the agent
+  context/runner, with a receipt-safe `memory_commitment` bound into the attestation. Opt-in
+  via the `private-memory` (`cryptography`) extra (#2374, #2235).
+- **Private product runtime** — a self-hostable maintainer-assist service: the openvang agent
+  factory (`openvang/`) and `vanguarstew_runtime` CLI/config/service, a systemd unit, and
+  `Dockerfile` / `docker-compose.yml` / `.env.example` (#2372, #2371).
 - Repo-set tooling: **freeze-window value validation** (`min_history >= 1`, non-empty
   `after`/`before`) and `scripts/validate_repo_set.py` CLI to check a repo-set JSON before
   replay (#325).
@@ -18,7 +29,17 @@ All notable changes to this project are documented here. The format is based on
   partition the config does not define is recorded with its error, so the report never aborts
   and the gap is reported only when both partitions scored a repo (#208).
 
+### Changed
+- **Rebrand to the `openvang` org** — repository transferred from `gittensor-vanguard` to
+  `openvang`; `pyproject` authors/URLs and site links updated (#2374).
+- `docker`: split the attested eval-image build-context allowlist into its own
+  `docker/eval.Dockerfile.dockerignore`, so the root `.dockerignore` becomes the product ignore
+  and the product image ships the `openvang/` + `vanguarstew_runtime/` packages. The attested
+  eval TCB is unchanged, just relocated (#2375).
+
 ### Fixed
+- Agent: the git-only context fallback omitted commit dates, silently disabling date-based
+  release-timing prediction; dates are now carried on the fallback path (#2362).
 - Benchmark gates (`benchmark/judge_gate.py`, `benchmark/regression.py`): the order-disagreement
   recompute accepted an incoherent telemetry block where `disagree > dual_order_tasks` — impossible,
   since `disagree` is a subset of `dual_order_tasks` (stale/hand-edited data). It produced a rate
