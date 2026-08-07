@@ -23,3 +23,9 @@ scripts/*
 !scripts/verify_attestation.py
 !pyproject.toml
 !vanguarstew_agent_files.json
+
+# Private runtime state must never enter a build context (openvang product runtime).
+.env
+data/
+*.sqlite3
+private-review-results/

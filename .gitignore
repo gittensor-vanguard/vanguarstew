@@ -12,3 +12,7 @@ venv/
 .coverage
 .coverage.*
 htmlcov/
+.env
+data/
+*.sqlite3
+private-review-results/
