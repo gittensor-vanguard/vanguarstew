@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "runtime": {
+    "data_dir": "./data",
+    "host": "127.0.0.1",
+    "port": 8080,
+    "poll_seconds": 300,
+    "max_jobs_per_cycle": 1,
+    "poll_enabled": false
+  },
+  "repositories": [
+    {
+      "name": "openvang/vanguarstew",
+      "enabled": true
+    }
+  ]
+}

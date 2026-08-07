@@ -63,7 +63,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install --upgrade pip pytest pytest-cov
+      - run: python -m pip install --upgrade pip pytest pytest-cov cryptography
       - name: Test (offline) with coverage floor
         env:
           VANGUARSTEW_OFFLINE: "1"

@@ -1,0 +1,14 @@
+services:
+  vanguarstew:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/var/lib/vanguarstew
+      - ./vanguarstew.json:/app/vanguarstew.json:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    init: true
+    security_opt:
+      - no-new-privileges:true

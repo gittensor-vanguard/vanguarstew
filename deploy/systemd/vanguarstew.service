@@ -1,0 +1,23 @@
+[Unit]
+Description=Vanguarstew private maintainer-assist runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vanguarstew
+Group=vanguarstew
+WorkingDirectory=/opt/vanguarstew
+EnvironmentFile=/etc/vanguarstew/env
+ExecStart=/opt/vanguarstew/.venv/bin/vanguarstew serve --config /etc/vanguarstew/vanguarstew.json
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vanguarstew
+
+[Install]
+WantedBy=multi-user.target
