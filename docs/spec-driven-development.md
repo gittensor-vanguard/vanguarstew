@@ -26,7 +26,7 @@ Human review at every phase boundary. No skipping.
 ## Project constitution
 
 `AGENTS.md` at the repo root contains durable project-wide rules written in
-EARS notation. Every agent, contributor, and CI check operates under these rules.
+EARS notation. Every agent, operator, and CI check operates under these rules.
 The constitution is the immutable backdrop — specifications inherit it.
 
 ## EARS notation
@@ -36,8 +36,8 @@ Acceptance criteria use EARS (Easy Approach to Requirements Syntax):
 | Pattern | Template | Example |
 |---|---|---|
 | Ubiquitous | The system shall [behavior] | The system shall reject PRs that lower coverage |
-| Event-driven | WHEN [trigger] THE system SHALL [response] | WHEN a contributor opens a PR against main THEN CI SHALL auto-close |
-| State-driven | WHILE [state] THE system SHALL [behavior] | WHILE a contributor has >2 open PRs THEN CI SHALL block new PRs |
+| Event-driven | WHEN [trigger] THE system SHALL [response] | WHEN a change targets main directly THEN CI SHALL redirect it |
+| State-driven | WHILE [state] THE system SHALL [behavior] | WHILE a private runtime lease is active THEN the scheduler SHALL not duplicate it |
 | Unwanted | IF [condition] THEN THE system SHALL [response] | IF the LLM emits a non-string field THEN the pipeline SHALL coerce and warn |
 | Optional | WHERE [feature] THE system SHALL [behavior] | WHERE `--generalization` is set THEN held-out repos SHALL score separately |
 
@@ -65,4 +65,4 @@ The benchmark pipeline is an implicit SDD system:
 | Tasks | Decomposed per-PR decisions (merge, labels, next-work) |
 | Verification | Objective anchor scores against history |
 
-The M5 `solve()` contract spec will make this explicit for subnet miners.
+The `solve()` contract spec makes this explicit for the maintainer component.

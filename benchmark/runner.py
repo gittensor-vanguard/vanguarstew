@@ -24,6 +24,13 @@ from benchmark.freeze import write_frozen
 from benchmark.github_context import enrich_context, open_issues_from_context
 from benchmark.judge import build_judge_report, judge_verbose, summarize_judge_orders
 from benchmark.leakage import scrub_context
+from benchmark.memory import (
+    attach_memory_view,
+    combine_memory_commitments,
+    frozen_context_timestamp,
+    memory_commitment,
+    verify_memory_view,
+)
 from benchmark.repo_set import RepoSetError, is_placeholder_source, load_repo_set
 from benchmark.score import (
     base_from_releases,
@@ -123,7 +130,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                recent_bias=False, rotation_seed=None, baseline=DEFAULT_BASELINE,
                w_judge=0.6, w_objective=0.4, dual_order_judge=True,
                min_history=10, after=None, before=None, horizon_days=None,
-               solve_fn=None) -> dict:
+               solve_fn=None, memory_provider=None, tasks_override=None) -> dict:
     """Run one replay using a local agent file or a trusted caller-supplied adapter.
 
     ``solve_fn`` is the isolation seam used by deployment: the trusted evaluator can keep
@@ -137,18 +144,35 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         solve = solve_fn
     else:
         raise TypeError("solve_fn must be callable")
+    if memory_provider is not None and not callable(memory_provider):
+        raise TypeError("memory_provider must be callable")
     opponent = get_baseline(baseline)
     llm = LLM(model=model, api_base=api_base, api_key=api_key)
-    tasks = generate_tasks(
-        repo_path, n_tasks, horizon, min_history=min_history,
-        recent_bias=recent_bias, rotation_seed=rotation_seed, after=after, before=before,
-        horizon_days=horizon_days)
+    if tasks_override is None:
+        tasks = generate_tasks(
+            repo_path, n_tasks, horizon, min_history=min_history,
+            recent_bias=recent_bias, rotation_seed=rotation_seed, after=after, before=before,
+            horizon_days=horizon_days)
+    else:
+        if not isinstance(tasks_override, list) or not tasks_override:
+            raise TypeError("tasks_override must be a non-empty controller task list")
+        tasks = []
+        for task in tasks_override:
+            if (
+                not isinstance(task, dict)
+                or not isinstance(task.get("freeze_commit"), str)
+                or not task["freeze_commit"]
+                or not isinstance(task.get("revealed"), list)
+            ):
+                raise TypeError("tasks_override contains an invalid controller task")
+            tasks.append(dict(task))
     if not tasks:
         return {"error": "no usable tasks (repo too small for horizon/min_history)", "tasks": 0}
 
     rng = random.Random(seed)
     tally = {"challenger": 0, "baseline": 0, "tie": 0}
     rows = []
+    memory_commitments = []
     base = work_dir or tempfile.mkdtemp(prefix="vanguarstew_work_")
     try:
         for k, task in enumerate(tasks):
@@ -164,11 +188,38 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
             # actions — "what lands in the next N days" is the question the ground truth answers.
             request = (f"plan the maintainer actions for the next {horizon_days} days"
                        if horizon_days else f"plan the next {horizon} maintainer actions")
-            challenger = solve(
-                repo_path=dest, request=request,
-                model=model or "validator-managed-model",
-                api_base=api_base or "", api_key=api_key or "offline", n=horizon,
-            )
+            solve_kwargs = {
+                "repo_path": dest,
+                "request": request,
+                "model": model or "validator-managed-model",
+                "api_base": api_base or "",
+                "api_key": api_key or "offline",
+                "n": horizon,
+            }
+            memory_view = None
+            if memory_provider is not None:
+                memory_view = memory_provider(
+                    task=task, context=ctx, request=request, task_index=k,
+                )
+                if not verify_memory_view(memory_view):
+                    raise RuntimeError("memory_provider returned an invalid memory view")
+                freeze_timestamp = frozen_context_timestamp(ctx)
+                if (
+                    memory_view["mode"] != "benchmark"
+                    or memory_view["boundary"]["frozen_at"] != freeze_timestamp
+                    or memory_view["boundary"]["public_only"] is not True
+                    or any(
+                        item["observed_at"] > freeze_timestamp
+                        or item["created_at"] > freeze_timestamp
+                        for item in memory_view["items"]
+                    )
+                ):
+                    raise RuntimeError("memory_provider crossed a benchmark memory boundary")
+                # Keep solve()'s miner-facing signature fixed.  The trusted controller places
+                # only the bounded view into the frozen read-only context the candidate receives.
+                with open(os.path.join(dest, CONTEXT_FILE), "w", encoding="utf-8") as handle:
+                    json.dump(attach_memory_view(ctx, memory_view), handle, indent=1)
+            challenger = solve(**solve_kwargs)
             if not isinstance(challenger, dict):
                 challenger = {}  # a miner agent may return a non-dict; degrade to empty, don't crash
             baseline_out = opponent(dest, request, context=ctx, n=horizon)
@@ -183,7 +234,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 base_version=base_from_releases(ctx.get("releases")),
                 open_issues=open_issues_from_context(ctx),
             )
-            rows.append({
+            row = {
                 "task": k,
                 "freeze": task["freeze_commit"][:10],
                 "winner": who,
@@ -191,7 +242,13 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
                 "overlap": trajectory_overlap(challenger.get("plan"), task["revealed"]),
                 "objective": obj,
                 "composite": composite_score(winner, obj, w_judge, w_objective),
-            })
+            }
+            if memory_view is not None:
+                # Only commitments enter the replay artifact.  The store, snapshot, and raw
+                # recalled evidence stay with the trusted controller/task sandbox.
+                row["memory_commitment"] = memory_commitment(memory_view)
+                memory_commitments.append(row["memory_commitment"])
+            rows.append(row)
     finally:
         if not work_dir:
             shutil.rmtree(base, ignore_errors=True)
@@ -203,7 +260,7 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
     judge_parts = [_JUDGE_COMPONENT[r["winner"]] for r in rows]
     objective_parts = [objective_component(r["objective"]) for r in rows]
     judge_order_stats = summarize_judge_orders(r.get("judge_order") for r in rows)
-    return {
+    result = {
         "tasks": len(tasks),
         "baseline": baseline,
         "tally": tally,
@@ -224,6 +281,11 @@ def run_replay(repo_path, agent_file="agent.py", n_tasks=3, horizon=5,
         "github_enriched": enrich_github,
         "judge_dual_order": dual_order_judge,
     }
+    if memory_commitments:
+        # Per-task rows retain their matching view commitment for local audit.  The top-level
+        # artifact additionally has an order-independent commitment that can be TEE-bound.
+        result["memory_commitment"] = combine_memory_commitments(memory_commitments)
+    return result
 
 
 # A small default grid of (w_judge, w_objective) blends for `weight_sweep`. Spans a

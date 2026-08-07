@@ -7,9 +7,6 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
-- CI contribution policy now auto-closes unapproved contributor PRs that touch the benchmark,
-  operational scripts, documentation, blog posts, or Markdown files. Maintainer-authored changes
-  and changes linked to a pre-approved open issue remain allowed (#2099).
 - Repo-set tooling: **freeze-window value validation** (`min_history >= 1`, non-empty
   `after`/`before`) and `scripts/validate_repo_set.py` CLI to check a repo-set JSON before
   replay (#325).
@@ -234,9 +231,6 @@ All notable changes to this project are documented here. The format is based on
 - M2: the pairwise judge now evaluates the **decision process** — the agent's inferred
   maintainer philosophy and reasoning are passed to the judge and weighed alongside
   trajectory/direction match, so when two plans point the same way the sounder reasoning wins.
-- Trustable contribution pipeline: a published review/scoring rubric (`REVIEW.md`), a
-  PR-integrity check (issue reference, no AI-attribution, non-trivial diff, tests-with-code,
-  per-author PR limit), `CODEOWNERS` review routing, and a CI coverage floor.
 
 ## [0.1.0] - 2026-07-02
 

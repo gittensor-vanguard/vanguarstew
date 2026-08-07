@@ -1,4 +1,4 @@
-# Spec 047 — partition task share summary
+# Spec 089 — partition task share summary
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** benchmark
@@ -94,5 +94,5 @@ Every summary SHALL include: `kind`, `total_tasks`, `partitions`.
 
 ## Verification
 
-- `tests/test_spec_047_partition_task_share.py` exercises each EARS block above.
+- `tests/test_spec_089_partition_task_share.py` exercises each EARS block above.
 - Broader coverage remains in `tests/test_partition_task_share.py`.

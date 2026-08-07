@@ -1,8 +1,11 @@
-# Spec 046 — repo task mean summary
+# Spec 088 — repo task mean summary
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** benchmark
 - **Issue:** #1132
+- **Supersedes:** [`specs/049-benchmark-repo-task-mean`](../049-benchmark-repo-task-mean/spec.md) (#1145),
+  [`specs/090-benchmark-repo-task-mean`](../090-benchmark-repo-task-mean/spec.md) (#1138) — see
+  [Canonical spec](#canonical-spec)
 - **Constitution:** [`AGENTS.md`](../../AGENTS.md) → *Benchmark integrity (M1–M3)*
 - **Methodology:** [`blog/spec-driven-development.md`](../../blog/spec-driven-development.md)
 - **Related:** [`benchmark/comparability.py`](../../benchmark/comparability.py) (artifact kind classification),
@@ -12,6 +15,23 @@ This spec makes the **existing, implicit** repo-task-mean contract explicit. It 
 as-built behavior of `benchmark/repo_task_mean.py`; it introduces **no behavior change**. A
 multi-repo headline can hide whether breadth came from many tasks everywhere or one heavy repo —
 that task-density signal must be written down and verified.
+
+## Canonical spec
+
+`benchmark/repo_task_mean.py` was specified three times — this document (#1132), spec 090 (#1138)
+and spec 049 (#1145) — by three contributors who each read the module as unspecified. The three
+agree on the module's behavior, so nothing was in conflict, but nothing marked which one a change
+is reviewed against either (#2143). **This document is the canonical spec for the module.** The
+other two are marked superseded and point here; they are kept because their contract tests still
+run against the criteria they state.
+
+This one is canonical because it states the module's contract most completely without contradicting
+it. Every criterion in spec 049 appears here; this is the only one of the three that pins the order
+`_rows_from_per_repo` returns surviving rows in, the coercion of a non-`dict` summary passed to the
+headline, and the never-raises guarantee; and it is the only one whose headline clause does not
+contradict `repo_task_mean_headline`, which formats the mean only for a *finite* non-boolean number
+— specs 049 and 090 both say "an int or float and not a bool", which would render a `nan` mean as
+`nan` where the module renders `n/a`.
 
 ## Why
 
@@ -86,3 +106,11 @@ dashboards. Making its contract explicit lets reviewers check task-density chang
 - `summarize_repo_task_mean` SHALL NOT mutate its input artifact.
 - The module SHALL perform no I/O and SHALL never raise on malformed input (malformed rows are
   logged and skipped).
+
+## Verification
+
+- `tests/test_spec_088_repo_task_mean.py` exercises each EARS block above.
+- Broader coverage remains in `tests/test_repo_task_mean.py`.
+- The superseded specs ([049](../049-benchmark-repo-task-mean/spec.md),
+  [090](../090-benchmark-repo-task-mean/spec.md)) keep the contract tests each names, which still
+  run; they assert the same as-built behavior from a narrower angle and are left in place.

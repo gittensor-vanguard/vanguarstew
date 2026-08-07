@@ -1,4 +1,4 @@
-# Plan 011 — agent knowable-at-T context
+# Plan 092 — agent knowable-at-T context
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #2007
@@ -7,7 +7,7 @@ Maps the [spec](./spec.md) onto `agent/context.py` as-built. No product code.
 
 ## EARS → test mapping
 
-| Spec section | Test group in `test_spec_011_agent_context.py` |
+| Spec section | Test group in `test_spec_092_agent_context.py` |
 | ------------ | ---------------------------------------------- |
 | Constants and alignment binding | `test_constants_and_probe_order`, `test_freeze_imports_probe_names`, `test_agent_issue_pr_list_alias_identity` |
 | Forward-reference scrubbing | `test_scrub_non_string_and_empty`, `test_scrub_masks_deep_links_scheme_and_schemeless`, `test_scrub_preserves_bare_repo_and_lookalike_host`, `test_scrub_peels_trailing_punctuation`, `test_scrub_masks_issue_refs`, `test_scrub_sha_length_windows`, `test_scrub_preserves_numeric_tokens` |

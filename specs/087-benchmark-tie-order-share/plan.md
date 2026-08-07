@@ -1,4 +1,4 @@
-# Plan 042 — tie-order share summary
+# Plan 087 — tie-order share summary
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1100
@@ -7,7 +7,7 @@ Maps the [spec](./spec.md) onto `benchmark/tie_order_share.py` as-built. No prod
 
 ## EARS → test mapping
 
-| Spec section | Test group in `test_spec_042_tie_order_share.py` |
+| Spec section | Test group in `test_spec_087_tie_order_share.py` |
 | ------------ | ------------------------------------------------- |
 | Input coercion | `test_non_dict_artifact_coerced_to_empty_dict`, `test_dict_helper_returns_dict_or_empty` |
 | Whole-number count semantics | `test_is_int_rejects_bool`, `test_is_int_rejects_float_whole_numbers` |

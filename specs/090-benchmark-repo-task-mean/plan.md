@@ -1,13 +1,13 @@
-# Plan 048 — repo task mean summary
+# Plan 090 — repo task mean summary
 
-- **Status:** draft (SDD Phase 2 — Plan)
+- **Status:** superseded by [`specs/088-benchmark-repo-task-mean`](../088-benchmark-repo-task-mean/plan.md) (#2143)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1138
 
 Maps the [spec](./spec.md) onto `benchmark/repo_task_mean.py` as-built. No product code changes.
 
 ## EARS -> test mapping
 
-| Spec section | Test group in `test_spec_048_repo_task_mean.py` |
+| Spec section | Test group in `test_spec_090_repo_task_mean.py` |
 | ------------ | ------------------------------------------------ |
 | Input coercion | `test_non_dict_artifact_returns_invalid_summary`, `test_dict_helper_returns_dict_or_empty` |
 | Whole-number task semantics | `test_is_int_rejects_bool_and_float`, `test_single_positive_integer_tasks_scores_one_repo`, `test_single_non_positive_or_non_int_tasks_score_zero` |

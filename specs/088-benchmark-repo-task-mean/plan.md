@@ -1,4 +1,4 @@
-# Plan 046 — repo task mean summary
+# Plan 088 — repo task mean summary
 
 - **Status:** draft (SDD Phase 2 — Plan)
 - **Spec:** [`spec.md`](./spec.md) · **Issue:** #1132
@@ -7,7 +7,7 @@ Maps the [spec](./spec.md) onto `benchmark/repo_task_mean.py` as-built. No produ
 
 ## EARS → test mapping
 
-| Spec section | Test group in `test_spec_046_repo_task_mean.py` |
+| Spec section | Test group in `test_spec_088_repo_task_mean.py` |
 | ------------ | ------------------------------------------------ |
 | Input coercion | `test_non_dict_artifact_coerced_to_empty_dict`, `test_dict_helper_returns_dict_or_empty` |
 | Whole-number count semantics | `test_is_int_rejects_bool`, `test_is_int_rejects_float_whole_numbers` |

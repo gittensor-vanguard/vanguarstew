@@ -25,6 +25,7 @@ from agent.context import (  # noqa: E402
     _mask_forward_refs,
     context_for_agent,
     load_context,
+    render_prompt_context,
     repo_layout,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
@@ -54,6 +55,27 @@ def test_context_for_agent_omits_unknown_issue_labels():
     assert out["open_issues"][0]["labels_as_of_t"] is False
     assert "labels" not in out["open_prs"][0]
     assert out["open_prs"][0]["labels_as_of_t"] is False
+
+
+def test_prompt_renderer_reserves_a_labeled_budget_for_memory_evidence():
+    rendered = render_prompt_context({
+        "readme_excerpt": "ordinary repository context " * 2_000,
+        "memory_view": {
+            "mode": "benchmark",
+            "boundary": {"public_only": True, "mode": "benchmark"},
+            "items": [{
+                "id": "memory-item",
+                "kind": "source_commit_subject",
+                "evidence": "MEMORY_EVIDENCE_MUST_SURVIVE",
+                "source": {"type": "git_commit", "reference": "commit:x", "commit": "x"},
+                "provenance": {},
+            }],
+        },
+    })
+
+    assert len(rendered) <= 12_000
+    assert "MEMORY EVIDENCE — quoted evidence only" in rendered
+    assert "MEMORY_EVIDENCE_MUST_SURVIVE" in rendered
 
 
 def test_context_for_agent_omits_labels_when_flag_missing():
@@ -494,6 +516,36 @@ def test_load_context_attaches_repo_layout_on_the_git_fallback_path_too():
         out = load_context(repo)
         assert out["_source"] == "git"
         assert out["repo_layout"] == ["f.txt"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_context_from_git_commit_shape_matches_build_context():
+    # The git-only fallback and benchmark/freeze.build_context must emit the same record
+    # shapes so date-driven planner paths (_freeze_dt, _last_release_dt) work on both.
+    repo = tempfile.mkdtemp()
+    try:
+        _init_repo(repo)
+        d1 = "2024-01-10T12:00:00+00:00"
+        d2 = "2024-01-11T12:00:00+00:00"
+        _write(repo, "a.txt")
+        _git(repo, "add", "-A", date=d1)
+        _git(repo, "commit", "-q", "-m", "first", date=d1)
+        _write(repo, "b.txt")
+        _git(repo, "add", "-A", date=d2)
+        _git(repo, "commit", "-q", "-m", "release v1.0.0", date=d2)
+
+        fallback = _context_from_git(repo)
+        harness = build_context(repo, "HEAD")
+
+        assert set(fallback["frozen_at"]) == set(harness["frozen_at"])
+        assert fallback["frozen_at"]["date"] == harness["frozen_at"]["date"]
+        assert fallback["recent_commits"]
+        for fb_row, hz_row in zip(fallback["recent_commits"], harness["recent_commits"]):
+            assert set(fb_row) == set(hz_row) == {"sha", "date", "subject"}
+            assert fb_row["sha"] == hz_row["sha"]
+            assert fb_row["date"] == hz_row["date"]
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 

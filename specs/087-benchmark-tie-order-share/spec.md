@@ -1,8 +1,10 @@
-# Spec 042 — tie-order share summary
+# Spec 087 — tie-order share summary
 
 - **Status:** draft (SDD Phase 1 — Specify)
 - **Owner:** benchmark
 - **Issue:** #1100
+- **Supersedes:** [`specs/041-benchmark-tie-order-share`](../041-benchmark-tie-order-share/spec.md) (#1098)
+  — see [Canonical spec](#canonical-spec)
 - **Constitution:** [`AGENTS.md`](../../AGENTS.md) → *Benchmark integrity (M1–M3)*
 - **Methodology:** [`blog/spec-driven-development.md`](../../blog/spec-driven-development.md)
 - **Related:** [`benchmark/comparability.py`](../../benchmark/comparability.py) (artifact kind classification),
@@ -12,6 +14,22 @@ This spec makes the **existing, implicit** tie-order-share contract explicit. It
 as-built behavior of `benchmark/tie_order_share.py` (merged #955); it introduces **no behavior
 change**. A judge that ties a large share of its categorized outcomes is a weaker discriminator
 than the headline suggests — that tie share must be written down and verified.
+
+## Canonical spec
+
+`benchmark/tie_order_share.py` was specified twice — this document (#1100) and spec 041 (#1098) —
+by two contributors who each read the module as unspecified, leaving no single document to review a
+change against (#2143). **This document is the canonical spec for the module.** Spec 041 is marked
+superseded and points here; it is kept because its contract tests still run against the criteria it
+states.
+
+This one is canonical because it states the module's contract most completely without contradicting
+it. It is the only one of the two to specify `_order_stats`, a helper the module re-exports in
+`__all__`, and to enumerate the five `judge_order_stats` keys and the malformed-partition branch by
+name. Spec 041 also carries one clause the module does not satisfy: it requires the
+`no judge stats available` headline whenever `total` is not a *non-negative* `int`, but the module
+takes that branch only for a non-`int` or zero `total` — a hand-built summary with `total = -5`
+renders as `tie-order share: n/a (-1/-5 categorized task(s))`.
 
 ## Why
 
@@ -99,3 +117,11 @@ tie-order-share changes against intent.
 - `summarize_tie_order_share` SHALL NOT mutate its input artifact.
 - The module SHALL perform no I/O and SHALL never raise on malformed input (malformed counts yield
   `None` share fields instead).
+
+## Verification
+
+- `tests/test_spec_087_tie_order_share.py` exercises each EARS block above.
+- Broader coverage remains in `tests/test_tie_order_share.py`.
+- The superseded spec ([041](../041-benchmark-tie-order-share/spec.md)) keeps the contract tests it
+  names, which still run; they assert the same as-built behavior from a narrower angle and are left
+  in place.

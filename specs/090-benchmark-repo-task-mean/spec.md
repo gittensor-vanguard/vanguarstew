@@ -1,11 +1,18 @@
-# Spec 048 — repo task mean summary
+# Spec 090 — repo task mean summary
 
-- **Status:** draft (SDD Phase 1 — Specify)
+- **Status:** superseded by [`specs/088-benchmark-repo-task-mean`](../088-benchmark-repo-task-mean/spec.md) (#2143)
 - **Owner:** benchmark
 - **Issue:** #1138
 - **Constitution:** [`AGENTS.md`](../../AGENTS.md) -> *Benchmark integrity*
 - **Related:** [`benchmark/repo_task_mean.py`](../../benchmark/repo_task_mean.py),
   [`benchmark/comparability.py`](../../benchmark/comparability.py)
+
+> **Superseded.** `benchmark/repo_task_mean.py` was specified three times; spec 088 is the
+> canonical document and is what a change to the module is reviewed against (#2143). This spec is
+> kept, not deleted, because `tests/test_spec_090_repo_task_mean.py` asserts the criteria below and
+> still runs. Where a clause here disagrees with spec 088, spec 088 governs — in particular the
+> headline clause below, which the module does not satisfy for a non-finite mean (see the
+> *Canonical spec* section of spec 088).
 
 This spec documents the as-built contract of `benchmark/repo_task_mean.py`. It introduces no
 behavior change.
@@ -90,5 +97,5 @@ Every summary SHALL include:
 
 ## Verification
 
-- `tests/test_spec_048_repo_task_mean.py` exercises each EARS block above.
+- `tests/test_spec_090_repo_task_mean.py` exercises each EARS block above.
 - Existing integration coverage remains in `tests/test_repo_task_mean.py`.

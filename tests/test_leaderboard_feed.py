@@ -70,6 +70,35 @@ def test_to_leaderboard_entry_keeps_public_per_repo_breakdown():
     ]
 
 
+def test_public_evidence_rejects_a_direct_raw_memory_payload():
+    """The feed boundary must be safe even if a caller bypasses build_evidence()."""
+    entry = to_leaderboard_entry(
+        _real_combined_report(),
+        pr_number=1400,
+        timestamp="2026-07-10T00:00:00+00:00",
+        evidence={
+            "inputs": {
+                "memory_commitment": {
+                    "memory_schema_version": 1,
+                    "memory_policy_version": "vanguarstew-memory-v1",
+                    "snapshot_root": "0" * 64,
+                    "query_digest": "1" * 64,
+                    "memory_view_digest": "2" * 64,
+                    "raw_memory": "protected source content must never be public",
+                },
+            },
+        },
+    )
+    assert entry["evidence"]["inputs"]["memory_commitment"] == {
+        "memory_schema_version": 1,
+        "memory_policy_version": "vanguarstew-memory-v1",
+        "snapshot_root": "0" * 64,
+        "query_digest": "1" * 64,
+        "memory_view_digest": "2" * 64,
+    }
+    assert "protected source content" not in json.dumps(entry)
+
+
 def test_to_leaderboard_entry_shape_and_values():
     combined = _real_combined_report()
     entry = to_leaderboard_entry(combined, pr_number=1400, timestamp="2026-07-10T00:00:00+00:00")

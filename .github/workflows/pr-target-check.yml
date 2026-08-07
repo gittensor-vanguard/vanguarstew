@@ -23,5 +23,5 @@ jobs:
           PR_NUMBER: ${{ github.event.number }}
         run: |
           gh pr close "$PR_NUMBER" \
-            --comment "Closing: this PR targets \`main\` directly. Contributors must open PRs against the \`test\` branch per [CONTRIBUTING.md](https://github.com/gittensor-vanguard/vanguarstew/blob/main/CONTRIBUTING.md#branches). Please open a new PR against \`test\`. Thanks!"
-          echo "::notice::Closed PR #$PR_NUMBER — contributors must target test, not main"
+            --comment "Closing: this PR targets \`main\` directly. Please open a new PR against \`test\`. Thanks!"
+          echo "::notice::Closed PR #$PR_NUMBER — changes must target test, not main"

@@ -232,9 +232,7 @@ def enforce(event: dict, repo: str) -> dict:
         "changes allowed in the same PR. Every other project path, including `.github/**`, is "
         "maintainer-directed. Please open an issue first, agree the scope with a maintainer, "
         f"and wait for the `{APPROVAL_LABEL}` label before submitting a PR. Then reference that "
-        "open issue with `Refs #<number>` and ask a maintainer to reopen this PR. See "
-        "[CONTRIBUTING.md](https://github.com/gittensor-vanguard/vanguarstew/blob/main/"
-        "CONTRIBUTING.md#agent-submissions-and-protected-project-changes).\n\n"
+        "open issue with `Refs #<number>` and ask a maintainer to reopen this PR.\n\n"
         f"{COMMENT_MARKER}"
     )
     _sync_close_comment(repo, number, comment)
