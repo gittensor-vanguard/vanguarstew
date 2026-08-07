@@ -13,11 +13,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from benchmark.memory import MemoryStore  # noqa: E402
 from benchmark.repo_set import RepoSetError  # noqa: E402
 from scripts.run_eval import (  # noqa: E402
     _weight_sweep_rows,
     check_score_floor,
     main,
+    open_benchmark_memory,
     result_summary_lines,
     write_result_artifact,
 )
@@ -82,6 +84,24 @@ def test_result_summary_lines_emit_judge_headline_when_present():
 
 def test_result_summary_lines_omit_missing_judge_report():
     assert result_summary_lines({"tasks": 0, "error": "no usable tasks"}) == []
+
+
+def test_open_benchmark_memory_is_explicit_and_public_only(tmp_path):
+    store, provider = open_benchmark_memory(
+        "benchmark", str(tmp_path / "memory.sqlite"), "owner/repo"
+    )
+    try:
+        assert provider.repository_id == "owner/repo"
+        assert provider.public_only is True
+    finally:
+        store.close()
+
+
+def test_open_benchmark_memory_rejects_partial_or_disabled_configuration(tmp_path):
+    with pytest.raises(ValueError, match="require --memory-mode"):
+        open_benchmark_memory("disabled", str(tmp_path / "memory.sqlite"), None)
+    with pytest.raises(ValueError, match="requires --memory-store"):
+        open_benchmark_memory("benchmark", None, "owner/repo")
 
 
 def test_check_score_floor_passes_when_above():
@@ -256,6 +276,41 @@ def test_main_catches_runtime_error_from_run_replay(monkeypatch, capsys):
             main()
     assert exc.value.code == 1
     assert "git thing failed: boom" in capsys.readouterr().err
+
+
+def test_main_passes_an_explicit_memory_provider_to_single_repo_replay(monkeypatch, capsys, tmp_path):
+    memory_path = tmp_path / "memory.sqlite"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        _argv(
+            "--repo", "/some/repo", "--memory-mode", "benchmark",
+            "--memory-store", str(memory_path), "--memory-repository-id", "owner/repo",
+        ),
+    )
+    captured = {}
+
+    def replay(**kwargs):
+        captured.update(kwargs)
+        return {"composite_mean": 0.6, "tasks": 1, "rows": []}
+
+    with patch("scripts.run_eval.run_replay", side_effect=replay):
+        main()
+    assert type(captured["memory_provider"]).__name__ == "BenchmarkMemoryProvider"
+    assert captured["memory_provider"].public_only is True
+    assert capsys.readouterr().out
+
+
+def test_main_rejects_memory_for_multi_repository_replay(monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        _argv("--repos", "/a", "/b", "--memory-mode", "benchmark"),
+    )
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "single --repo" in capsys.readouterr().err
 
 
 def test_main_catches_repo_set_error_from_run_multi_replay(monkeypatch, capsys):
@@ -468,6 +523,42 @@ def test_cli_still_replays_a_well_formed_repo(tmp_path):
     # --out actually wrote the same artifact that was printed to stdout
     with open(out_path, "r", encoding="utf-8") as f:
         assert json.load(f) == payload
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_cli_memory_mode_runs_a_time_safe_replay_without_emitting_recalled_content(tmp_path):
+    repo = _tiny_repo(str(tmp_path / "repo"), n=16)
+    memory_path = tmp_path / "memory.sqlite"
+    with MemoryStore(memory_path) as store:
+        store.validate(
+            repository_id="owner/repo",
+            runtime_role="maintainer",
+            kind="repository_policy",
+            structured_content={"fact": "maintainer actions require regression tests"},
+            source_type="commit",
+            source_reference="commit:abc",
+            source_commit="abc",
+            authority="maintainer",
+            observed_at=1,
+            created_at=1,
+            publication="publishable",
+        )
+    result = _run_cli(
+        "--repo", repo,
+        "--memory-mode", "benchmark",
+        "--memory-store", str(memory_path),
+        "--memory-repository-id", "owner/repo",
+        "--tasks", "1",
+        "--horizon", "1",
+    )
+    assert result.returncode == 0, result.stderr
+    artifact = json.loads(result.stdout)
+    assert set(artifact["memory_commitment"]) == {
+        "memory_schema_version", "memory_policy_version", "snapshot_root", "query_digest",
+        "memory_view_digest",
+    }
+    assert '"memory_view":' not in json.dumps(artifact)
+    assert "regression tests" not in json.dumps(artifact)
 
 
 # ---- --fail-under CLI gate --------------------------------------------------

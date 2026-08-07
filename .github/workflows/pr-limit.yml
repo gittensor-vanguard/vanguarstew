@@ -1,6 +1,6 @@
 name: PR limit
 
-# Enforce the per-contributor open-PR limit by auto-closing the excess. Runs when a PR is
+# Enforce the per-author open-PR limit by auto-closing the excess. Runs when a PR is
 # opened/reopened (closes it if it puts the author over the limit) and on a periodic sweep
 # (closes any lingering excess). The maintainer is exempt. Uses pull_request_target so it has a
 # write token for fork PRs; it never checks out PR code, so there is no code-execution risk.

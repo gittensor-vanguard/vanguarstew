@@ -12,7 +12,7 @@ from pathlib import Path
 MAINTAINERS = frozenset({"matedev01", "vanguarstew"})
 COMMENT_MARKER = "<!-- vanguarstew:pr-reopen-policy -->"
 COMMENT_BODY = (
-    "This pull request was re-closed automatically because contributors may not reopen a "
+    "This pull request was re-closed automatically because external authors may not reopen a "
     "pull request after it has been closed by a maintainer or repository automation. If you "
     "believe the closure reason has been resolved, ask a maintainer to reopen it. Please do "
     "not reopen it yourself.\n\n"

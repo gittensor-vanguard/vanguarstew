@@ -1,6 +1,6 @@
 """CLI: have the maintainer agent review a live PR and recommend an action.
 
-  python -m scripts.review_pr --repo gittensor-vanguard/vanguarstew --pr 30 \
+  python -m scripts.review_pr --repo openvang/vanguarstew --pr 30 \
       --model <m> --api-base <url> --api-key <key>     # live
   VANGUARSTEW_OFFLINE=1 python -m scripts.review_pr --repo <r> --pr <n>   # offline stub
 

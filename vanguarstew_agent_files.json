@@ -1,5 +1,5 @@
 {
-  "comment": "Manifest of miner-editable agent files (mirrors ninja's tau_agent_files.json). Up to 32 files. The benchmark/ harness, packaging, and this manifest are NOT editable.",
+  "comment": "Manifest of maintainer-agent component files. Up to 32 files. The benchmark harness, factory policy, packaging, and this manifest are controller-owned.",
   "entrypoint": "agent.py",
   "entrypoint_symbol": "solve",
   "files": [

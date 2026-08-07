@@ -6,8 +6,8 @@ or run after merge.
 
 The image and the `/v1/attest` adapter remain a separate path for deliberately public one-shot
 benchmark proofs. They are not the deployment surface for a persistent private workload. The
-existing `ghcr.io/gittensor-vanguard/vanguarstew-eval` package must remain private unless a future
-public-proof proposal receives its own review and explicit approval.
+existing evaluation image package must remain private unless a future public-proof proposal
+receives its own review and explicit approval.
 
 Persistent sealed workloads use Polaris's `/api/v2/sandbox` surface and the network-free planner
 documented in [Polaris sealed sandbox](polaris-sealed-sandbox.md). That path omits the image field

@@ -7,7 +7,7 @@
 - **Methodology:** [`blog/spec-driven-development.md`](../../blog/spec-driven-development.md)
 - **Related:** [`specs/001-solve-contract`](../001-solve-contract/spec.md) (entrypoint seam),
   [`specs/006-agent-decision`](../006-agent-decision/spec.md) (parallel action vocabulary),
-  [`REVIEW.md`](../../REVIEW.md) (maintainer rubric and the `perf:*`/`mult:contribution`
+  the project review schema (maintainer rubric and the `perf:*`/`mult:contribution`
   value labels)
 
 This spec makes the **existing, implicit** review contract explicit. It describes the as-built
@@ -61,7 +61,7 @@ making that contract explicit lets reviewers check review changes against intent
   runs a benchmark, so it can flag whether a PR is on the measured `agent/` surface
   (`perf:pending`) or the flat-rate one (`mult:contribution`), but it can NOT predict a
   `perf:xs`–`perf:xl` band; that requires an actual before/after
-  `scripts/score_pr_delta.py` run (see REVIEW.md).
+  `scripts/score_pr_delta.py` run.
 - WHEN the model emits a near-miss form (missing prefix, underscores, spaces, mixed case)
   THE system SHALL map it to the matching canonical tier.
 - WHEN `value_label` is blank, unknown (including a retired tier like the old `mult:*`

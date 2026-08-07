@@ -31,7 +31,7 @@ _INPUTS = {"repo_set": "curated.json", "seed": 1, "model": "m-1", "eval_image": 
 def test_constants_are_pinned():
     assert EVIDENCE_VERSION == 1
     assert _INPUT_FIELDS == ("repo_set", "repo_set_partition", "seed", "rotation_seed", "model",
-                             "agent_commit", "eval_image", "transcript_digest")
+                             "agent_commit", "eval_image", "transcript_digest", "memory_commitment")
 
 
 # --- build_evidence ------------------------------------------------------------------------------

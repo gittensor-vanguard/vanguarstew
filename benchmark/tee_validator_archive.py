@@ -17,6 +17,7 @@ _SOURCE_FILES = (
     "benchmark/attestation.py",
     "benchmark/judge_report_integrity.py",
     "benchmark/live_gate.py",
+    "benchmark/memory.py",
     "benchmark/objective_integrity.py",
     "benchmark/row_integrity.py",
     "benchmark/score.py",

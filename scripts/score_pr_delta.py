@@ -9,7 +9,7 @@ count against the baseline agent and the PR's agent respectively). This tool nev
 the benchmark itself — it only judges two already-produced results — so it has no model,
 network, or repo-set opinions of its own.
 
-Policy (the anti-Goodhart floor from docs/spec-driven-development.md / REVIEW.md):
+Policy (the anti-Goodhart floor from docs/spec-driven-development.md):
   - A regression on either the judge or the objective component (past the noise floor) is
     a hard merge block for ``agent/`` PRs — trading one axis off for the other (sounding
     better to the judge while the objective anchor quietly drops) counts as a regression,
@@ -63,7 +63,7 @@ BAND_THRESHOLDS = (
     ("xl", 0.15),
 )
 
-# gittensor label_multipliers this repo submits for the perf:* ladder (see REVIEW.md).
+# Configured label multipliers for the perf:* ladder.
 # Kept alongside the thresholds so the two never drift apart silently.
 BAND_MULTIPLIERS = {
     "xs": 0.5,
@@ -192,7 +192,7 @@ def score_pr_delta(baseline: dict, candidate: dict, noise_floor: float = DEFAULT
     ``band`` is one of:
       - ``"blocked"`` — a scored axis regressed past the noise floor, OR a scored axis
         reported a non-finite value so the floor cannot be certified (``corrupt_axes``,
-        #1867). Hard merge block for ``agent/`` PRs (see REVIEW.md).
+        #1867). Hard merge block for ``agent/`` PRs.
       - ``"none"``    — no measurable improvement past the noise floor. Still mergeable,
         earns no ``perf:*`` label / multiplier.
       - ``"xs"``..``"xl"`` — a measured composite improvement, bucketed by magnitude per

@@ -18,6 +18,7 @@ if ROOT not in sys.path:
 
 os.environ["VANGUARSTEW_OFFLINE"] = "1"
 
+from benchmark.memory import BenchmarkMemoryProvider, MemoryStore  # noqa: E402
 from benchmark.repo_set import RepoSetError  # noqa: E402
 from benchmark.runner import (  # noqa: E402
     CLONE_TIMEOUT_SECONDS,
@@ -27,6 +28,7 @@ from benchmark.runner import (  # noqa: E402
     run_multi_replay,
     run_replay,
 )
+from benchmark.taskgen import generate_tasks  # noqa: E402
 
 AGENT = os.path.join(ROOT, "agent.py")
 
@@ -87,6 +89,97 @@ def test_run_replay_uses_trusted_solve_adapter_without_importing_agent(monkeypat
         )
         assert result["tasks"] == 1
         assert len(calls) == 1
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_replay_uses_one_trusted_controller_task_override():
+    d = _tiny_repo(tempfile.mkdtemp())
+    calls = []
+    try:
+        task = generate_tasks(d, 1, 3, min_history=10)[0]
+
+        def isolated_adapter(**kwargs):
+            calls.append(kwargs)
+            return {"philosophy": {}, "plan": [], "rationale": ""}
+
+        result = run_replay(
+            d, solve_fn=isolated_adapter, tasks_override=[task], n_tasks=99, horizon=3, seed=0,
+        )
+        assert result["tasks"] == 1
+        assert result["rows"][0]["freeze"] == task["freeze_commit"][:10]
+        assert len(calls) == 1
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_run_replay_rejects_untrusted_or_empty_controller_task_override():
+    with pytest.raises(TypeError, match="non-empty controller task list"):
+        run_replay("unused", solve_fn=lambda **_kwargs: {}, tasks_override=[])
+    with pytest.raises(TypeError, match="invalid controller task"):
+        run_replay(
+            "unused", solve_fn=lambda **_kwargs: {},
+            tasks_override=[{"freeze_commit": "not-a-task", "revealed": "not-a-list"}],
+        )
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_replay_binds_time_safe_memory_without_retaining_raw_view(tmp_path):
+    d = _tiny_repo(tempfile.mkdtemp())
+    calls = []
+    supplied_views = []
+
+    def isolated_adapter(**kwargs):
+        calls.append(kwargs)
+        with open(os.path.join(kwargs["repo_path"], ".vanguarstew_context.json"), encoding="utf-8") as handle:
+            supplied_views.append(json.load(handle).get("memory_view"))
+        return {"philosophy": {}, "plan": [], "rationale": ""}
+
+    try:
+        with MemoryStore(tmp_path / "memory.sqlite") as store:
+            result = run_replay(
+                d,
+                solve_fn=isolated_adapter,
+                memory_provider=BenchmarkMemoryProvider(store, repository_id="repo-a"),
+                n_tasks=1,
+                horizon=3,
+                seed=0,
+            )
+        assert "memory_view" not in calls[0]  # fixed solve signature stays unchanged
+        assert supplied_views[0]["mode"] == "benchmark"
+        assert "memory_commitment" in result
+        assert set(result["rows"][0]["memory_commitment"]) == {
+            "memory_schema_version", "memory_policy_version", "snapshot_root", "query_digest",
+            "memory_view_digest",
+        }
+        assert "items" not in result["rows"][0]["memory_commitment"]
+        assert "memory_view" not in result["rows"][0]
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required")
+def test_run_replay_rejects_a_non_benchmark_or_non_public_memory_view():
+    d = _tiny_repo(tempfile.mkdtemp())
+
+    def unsafe_provider(**_kwargs):
+        from benchmark.memory import build_memory_view
+
+        return build_memory_view(
+            mode="disabled", repository_id="repo-a", runtime_role="maintainer", query="x"
+        )
+
+    try:
+        with pytest.raises(RuntimeError, match="benchmark memory boundary"):
+            run_replay(
+                d,
+                solve_fn=lambda **_kwargs: {"philosophy": {}, "plan": [], "rationale": ""},
+                memory_provider=unsafe_provider,
+                n_tasks=1,
+                horizon=3,
+                seed=0,
+            )
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

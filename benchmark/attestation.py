@@ -23,7 +23,9 @@ given, and that the score follows deterministically from them (see :mod:`benchma
 from __future__ import annotations
 
 import logging
+import re
 
+from benchmark.memory import MEMORY_POLICY_VERSION, SCHEMA_VERSION
 from benchmark.transcript import digest
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,28 @@ EVIDENCE_VERSION = 1
 # The run-identifying inputs bound alongside the artifact. Anything that changes which score is
 # correct belongs here; anything cosmetic must not, or the binding breaks on irrelevant churn.
 _INPUT_FIELDS = ("repo_set", "repo_set_partition", "seed", "rotation_seed", "model",
-                 "agent_commit", "eval_image", "transcript_digest")
+                 "agent_commit", "eval_image", "transcript_digest", "memory_commitment")
+_MEMORY_COMMITMENT_FIELDS = (
+    "memory_schema_version", "memory_policy_version", "snapshot_root", "query_digest",
+    "memory_view_digest",
+)
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def safe_memory_commitment(value):
+    """Keep only receipt-safe memory commitments; never bind raw recalled content."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return None
+    if (
+        value.get("memory_schema_version") != SCHEMA_VERSION
+        or value.get("memory_policy_version") != MEMORY_POLICY_VERSION
+        or any(not isinstance(value.get(field), str) or not _SHA256.fullmatch(value[field])
+               for field in _MEMORY_COMMITMENT_FIELDS[2:])
+    ):
+        return None
+    return {field: value[field] for field in _MEMORY_COMMITMENT_FIELDS}
 
 
 def build_evidence(artifact, inputs) -> dict:
@@ -48,6 +71,9 @@ def build_evidence(artifact, inputs) -> dict:
                        type(inputs).__name__)
         inputs = {}
     bound_inputs = {field: inputs.get(field) for field in _INPUT_FIELDS}
+    bound_inputs["memory_commitment"] = safe_memory_commitment(
+        bound_inputs["memory_commitment"]
+    )
     artifact_digest = digest(artifact)
     return {
         "version": EVIDENCE_VERSION,

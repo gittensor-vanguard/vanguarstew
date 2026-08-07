@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "mode": "pre_registered_time_safe_memory_quality",
+  "purpose": "Evaluate the relevance-gated source-memory policy before a new live-model quality claim.",
+  "repos": [
+    {"name": "jsonpickle", "source": "https://github.com/jsonpickle/jsonpickle", "held_out": true, "before": "2021-01-01", "min_history": 25, "rotation_seed": 19, "horizon_days": 90},
+    {"name": "hpack", "source": "https://github.com/python-hyper/hpack", "held_out": true, "before": "2021-01-01", "min_history": 30, "rotation_seed": 3, "horizon_days": 81},
+    {"name": "h2", "source": "https://github.com/python-hyper/h2", "held_out": true, "before": "2021-01-01", "min_history": 30, "rotation_seed": 7, "horizon_days": 14}
+  ],
+  "tasks_per_repo": 8,
+  "memory_items": 4,
+  "quality_gate": {
+    "minimum_pairs": 24,
+    "minimum_objective_effect": 0.05,
+    "bootstrap_lower_strictly_positive": true,
+    "two_sided_exact_sign_alpha": 0.05,
+    "no_material_agent_latency_regression": true
+  },
+  "coverage_report_required": true,
+  "publication": "local_only_until_separate_publication_review"
+}

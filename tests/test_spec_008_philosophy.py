@@ -29,7 +29,7 @@ from agent.philosophy import (  # noqa: E402
 
 DOCUMENTED_KEYS = {"summary", "values", "merge_bar", "direction", "evidence"}
 RENDER_WHITELIST = ["frozen_at", "recent_commits", "open_issues", "open_prs",
-                    "labels", "milestones", "releases", "readme_excerpt"]
+                    "labels", "milestones", "releases", "readme_excerpt", "memory_view"]
 RENDER_BUDGET = 12000
 
 

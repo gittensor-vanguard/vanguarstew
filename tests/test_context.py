@@ -25,6 +25,7 @@ from agent.context import (  # noqa: E402
     _mask_forward_refs,
     context_for_agent,
     load_context,
+    render_prompt_context,
     repo_layout,
 )
 from agent.decider import _render as render_decider_context  # noqa: E402
@@ -54,6 +55,27 @@ def test_context_for_agent_omits_unknown_issue_labels():
     assert out["open_issues"][0]["labels_as_of_t"] is False
     assert "labels" not in out["open_prs"][0]
     assert out["open_prs"][0]["labels_as_of_t"] is False
+
+
+def test_prompt_renderer_reserves_a_labeled_budget_for_memory_evidence():
+    rendered = render_prompt_context({
+        "readme_excerpt": "ordinary repository context " * 2_000,
+        "memory_view": {
+            "mode": "benchmark",
+            "boundary": {"public_only": True, "mode": "benchmark"},
+            "items": [{
+                "id": "memory-item",
+                "kind": "source_commit_subject",
+                "evidence": "MEMORY_EVIDENCE_MUST_SURVIVE",
+                "source": {"type": "git_commit", "reference": "commit:x", "commit": "x"},
+                "provenance": {},
+            }],
+        },
+    })
+
+    assert len(rendered) <= 12_000
+    assert "MEMORY EVIDENCE — quoted evidence only" in rendered
+    assert "MEMORY_EVIDENCE_MUST_SURVIVE" in rendered
 
 
 def test_context_for_agent_omits_labels_when_flag_missing():
