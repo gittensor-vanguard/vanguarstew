@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [test]
     paths:
-      - ".dockerignore"
+      - "docker/eval.Dockerfile.dockerignore"
       - ".github/workflows/publish-eval-image.yml"
       - "agent.py"
       - "agent/**"

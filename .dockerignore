@@ -1,31 +1,58 @@
-# The eval image is a deliberately small, auditable runtime allowlist.  In particular, build
-# context must never pick up a developer's dotenv, receipts, git metadata, caches, or untracked
-# working files merely because they happen to sit beside the source checkout.
-**
-!agent.py
-!agent/
-agent/*
-!agent/__init__.py
-!agent/llm.py
-!agent/context.py
-!agent/philosophy.py
-!agent/planner.py
-!agent/decider.py
-!benchmark/
-!benchmark/**
-!scripts/
-scripts/*
-!scripts/__init__.py
-!scripts/run_attested_eval.py
-!scripts/run_eval.py
-!scripts/prepare_attested_inputs.py
-!scripts/transcript_proxy.py
-!scripts/verify_attestation.py
-!pyproject.toml
-!vanguarstew_agent_files.json
+# Root build-context ignore for the PRODUCT image (./Dockerfile, `COPY . /app`).
+#
+# The attested EVAL image keeps its own, much tighter allowlist at
+# docker/eval.Dockerfile.dockerignore -- BuildKit uses that instead of this file when the build
+# is invoked with `-f docker/eval.Dockerfile`, so the eval TCB stays a deny-all-then-allowlist
+# while the product image below ships the full openvang/vanguarstew_runtime source tree.
+#
+# This file is a deny-list: keep secrets, receipts, VCS metadata, caches and dev/test artifacts
+# out of the product context, but ship all source (openvang/, vanguarstew_runtime/, agent/,
+# benchmark/, scripts/, pyproject.toml). If `COPY . /app` ever stops seeing the runtime package,
+# check that a new deny rule below isn't over-matching before touching the Dockerfile.
 
-# Private runtime state must never enter a build context (openvang product runtime).
+# --- Secrets & private runtime state (never in any image) ---
 .env
+.env.*
+!.env.example
+vanguarstew.json
+!vanguarstew.json.example
 data/
 *.sqlite3
 private-review-results/
+
+# --- VCS & CI metadata ---
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# --- Python caches / build artifacts ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+env/
+
+# --- Local dev / editor / OS cruft ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+.worktrees/
+
+# --- Non-shipping working files ---
+gh-pages-site/
+*.log
